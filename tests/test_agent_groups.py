@@ -165,12 +165,12 @@ def test_t3_subagents_table_supplies_lineage_without_thread_payload():
     assert len(result.groups[0].members) == 4
 
 
-def test_inactive_native_t3_subagent_is_not_resurrected():
+def test_settled_native_t3_subagent_retains_lineage_evidence():
     data = fixture("t3")
     _, links = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW,
                               subagents=[{"thread_id": "root", "child_thread_id": None, "status": "completed",
                                           "native_task_ref": {"driver": "codex", "nativeId": "old-worker"}}])
-    assert not any(link.child.endswith("old-worker") for link in links)
+    assert any(link.child == "codex:session:old-worker" and link.parent == "claude:session:native-root" for link in links)
 
 
 @pytest.mark.parametrize("parser,payload", [

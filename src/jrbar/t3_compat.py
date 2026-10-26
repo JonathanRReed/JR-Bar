@@ -269,6 +269,7 @@ class T3ThreadView:
     deep_link: str | None
     turn_state: str | None = None
     parent_links: tuple[ParentLink, ...] = ()
+    delegated_stop: bool = False
     _agent_status: AgentStatus | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
@@ -561,9 +562,23 @@ def _deep_link(environment_id: str | None, thread_id: str) -> str | None:
     )
 
 
+def delegated_infrastructure_stop(result: object) -> bool:
+    """T3's terminal worker result, never the prompt or arbitrary tool output."""
+    if not isinstance(result, str):
+        return False
+    text = result[:4096].casefold()
+    return any(reason in text for reason in (
+        "model is at capacity", "model at capacity", "transport error",
+        "transport closed", "connection closed", "cancelled", "canceled",
+        "interrupted", "orchestrator stopped",
+    ))
+
+
 def _agent_state_for_thread(
     thread: T3ThreadView,
 ) -> tuple[AgentMode, str, str | None]:
+    if thread.delegated_stop:
+        return AgentMode.ENDED_UNCONFIRMED, "StopInterrupted", "T3 Code task ended"
     if thread.pending_approval_count > 0:
         return (
             AgentMode.WAITING_FOR_INPUT,
@@ -585,10 +600,10 @@ def _agent_state_for_thread(
     status = (thread.session_status or "").casefold()
     if status in {"connecting", "starting", "running", "waiting"}:
         return AgentMode.WORKING, "UserPromptSubmit", None
+    if status in {"interrupted", "cancelled", "canceled"} or thread.turn_state in {"interrupted", "cancelled", "canceled"}:
+        return AgentMode.ENDED_UNCONFIRMED, "StopInterrupted", "T3 Code session ended"
     if status == "error" or thread.turn_state == "error":
         return AgentMode.BLOCKED_ERROR, "StopFailure", "T3 Code session failed"
-    if status == "interrupted" or thread.turn_state == "interrupted":
-        return AgentMode.UNKNOWN, "StopInterrupted", "T3 Code session interrupted"
     if thread.turn_state == "completed":
         return AgentMode.COMPLETED, "Stop", "Review the completed T3 Code task"
     if thread.turn_state in {"pending", "running"}:
@@ -981,6 +996,8 @@ _V2_FINISHED_AS_TURN = {
     "completed": "completed",
     "failed": "error",
     "interrupted": "interrupted",
+    "cancelled": "interrupted",
+    "rolled_back": "interrupted",
 }
 
 
@@ -1255,18 +1272,59 @@ def _read_v2_snapshot(
             placeholders = ",".join("?" for _ in lineage_rows)
             if lineage_rows:
                 native_ref = (
-                    "CASE WHEN child_thread_id IS NULL AND " + status_column
-                    + " IN ('running', 'starting', 'active', 'pending') THEN "
+                    "CASE WHEN child_thread_id IS NULL THEN "
                     "json_extract(CASE WHEN octet_length(payload_json) <= 65536 "
                     "THEN payload_json ELSE '{}' END, '$.nativeTaskRef') ELSE NULL END"
                 )
+                recent = ""
+                parameters = [row["thread_id"] for row in lineage_rows]
+                ordering = ""
+                if "updated_at" in subagent_columns:
+                    recent = " AND julianday(updated_at) >= julianday(?)"
+                    parameters.append((observed_at - timedelta(hours=24)).isoformat())
+                    ordering = " ORDER BY updated_at DESC"
+                binding_column = "provider_thread_id" if "provider_thread_id" in subagent_columns else "NULL"
                 subagents = [dict(row) for row in connection.execute(
                     f"SELECT thread_id, child_thread_id, {status_column} AS status, {instance_column} AS provider_instance_id, "
-                    f"{native_ref} AS native_task_ref "
+                    f"{binding_column} AS binding_id, {native_ref} AS native_task_ref, "
+                    "json_extract(CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{}' END, '$.result') AS result "
                     f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders}) "
-                    f"AND (child_thread_id IN ({placeholders}) OR {status_column} IN ('running', 'starting', 'active', 'pending')) LIMIT ?",
-                    (*[row["thread_id"] for row in lineage_rows], *[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS * 2),
+                    f"{recent}{ordering} LIMIT ?",
+                    (*parameters, T3_MAX_THREADS * 2),
                 )]
+        # Settled children leave the activity window before their native rows do.
+        # Keep identity-only evidence without inventing worker activity.
+        selected_ids = {row["thread_id"] for row in lineage_rows}
+        missing = {worker["binding_id"]: worker for worker in subagents
+                   if worker["child_thread_id"] not in selected_ids and worker["binding_id"]}
+        if has_driver_bindings and "thread_id" in binding_columns and missing:
+            placeholders = ",".join("?" for _ in missing)
+            extra_bindings = connection.execute(
+                "SELECT provider_thread_id, thread_id, driver, "
+                + ("provider_instance_id" if "provider_instance_id" in binding_columns else "NULL AS provider_instance_id")
+                + ", CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{}' END AS payload_json "
+                "FROM orchestration_v2_projection_provider_threads "
+                f"WHERE provider_thread_id IN ({placeholders}) LIMIT ?", (*missing, T3_MAX_THREADS * 2),
+            )
+            for binding_row in extra_bindings:
+                binding = dict(binding_row)
+                worker = missing[binding["provider_thread_id"]]
+                if binding["thread_id"] != worker["child_thread_id"]:
+                    continue
+                bindings.append(binding)
+                lineage_rows.append({"thread_id": binding["thread_id"], "default_provider": binding["driver"],
+                                     "active_provider_thread_id": binding["provider_thread_id"], "payload_json": {}})
+        latest_workers = {}
+        for worker in subagents:
+            latest_workers.setdefault(worker["child_thread_id"], worker)
+        stopped_children = {
+            worker["child_thread_id"] for worker in latest_workers.values()
+            if worker["status"] in {"cancelled", "interrupted"}
+            or (worker["status"] == "failed" and delegated_infrastructure_stop(worker.get("result")))
+        }
+        threads = [replace(thread, delegated_stop=True) if thread.thread_id in stopped_children
+                   and thread.active_turn_id is None and thread.turn_state in {"error", "interrupted"}
+                   else thread for thread in threads]
         observed_at = now()
         registry_providers = read_t3_registry_providers(database.parent / "settings.json")
         keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(),
@@ -1290,7 +1348,7 @@ def _read_v2_snapshot(
                 not (links or thread.thread_id in bound_thread_ids)
                 or (previous.provider == key.split(":", 1)[0] and previous.provider_thread_id == native)
             )
-            if thread.thread_id not in selected and same_targets and same_identity and cache.views.get(thread.thread_id) == views.get(thread.thread_id):
+            if thread.thread_id not in selected and same_targets and same_identity and previous.delegated_stop == thread.delegated_stop and cache.views.get(thread.thread_id) == views.get(thread.thread_id):
                 threads[index] = previous
             elif links or thread.thread_id in bound_thread_ids:
                 threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
@@ -1322,7 +1380,7 @@ def _read_v2_snapshot(
                 display_name="Worker", mode=AgentMode.UNKNOWN,
                 updated_at=observed_at, event_name="LineageObserved",
                 parent_links=tuple(links_by_child[child]),
-            ) for child in sorted({link.child for link in links} - set(keys.values()))),
+            ) for child in sorted({link.child for link in links} - {f"{thread.provider}:session:{thread.provider_thread_id}" for thread in threads})),
             truncated=truncated,
             reason=T3_REASON_TRUNCATED if truncated else None,
         )

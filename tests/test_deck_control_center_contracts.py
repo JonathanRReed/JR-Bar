@@ -183,3 +183,19 @@ def test_composite_bluetooth_promotion_never_reclassifies_usb_keyboard(monkeypat
                         lambda: frozenset({(0x303A, 0x8297, "CM-1", 1), (0x303A, 0x8297, "CM-1", 2)}))
     transport = HidApiTransport(SimpleNamespace(enumerate=lambda _: rows))
     assert [row["path"] for row in transport.enumerate()] == ["usb-vendor"]
+
+
+def test_deck_failure_expires_and_worker_and_cancelled_runs_never_signal():
+    from datetime import timedelta
+    now = NOW
+    board = DeckSessionBoard(clock=lambda: now)
+    failed = replace(status(), agent_id='codex:session:main', mode=AgentMode.BLOCKED_ERROR, event_name='StopFailure')
+    board.update([failed])
+    assert board.snapshot().slots[0].state == 'failure'
+    now = NOW + timedelta(seconds=5)
+    assert board.snapshot().slots[0].state == 'idle'
+    board.update([replace(failed, event_name='Interrupt')])
+    assert board.snapshot().slots[0].state == 'ended_unconfirmed'
+    worker_board = DeckSessionBoard(clock=lambda: NOW)
+    worker_board.update([replace(failed, agent_id='codex:agent:worker')])
+    assert all(slot.state != 'failure' for slot in worker_board.snapshot().slots)

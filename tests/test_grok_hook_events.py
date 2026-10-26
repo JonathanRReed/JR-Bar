@@ -1,12 +1,12 @@
-"""Grok's StopCancelled ends a turn that did not finish, so the row goes idle.
+"""Grok's StopCancelled ends a turn that did not finish, so the row reads ended.
 
 Grok runs StopCancelled INSTEAD of Stop when a turn ends without completing:
 the person presses Ctrl+C, a permission prompt is declined, the turn hits its
 turn limit, or Grok gives up making progress (the hooks guide in grok
 1.0.41). JR-Bar never registered it, so a cancelled turn left the row Working
 (and holding keep-awake) until the next prompt or the process exited. The
-meaning is the same as a Codex Interrupt: the session stays open, idle,
-waiting for the person.
+meaning is the same as a Codex Interrupt: the turn ended without a result.
+The session can accept another prompt.
 """
 
 from __future__ import annotations
@@ -114,15 +114,15 @@ def test_stop_cancelled_parses_in_both_payload_spellings() -> None:
     "reason",
     ["user_interrupt", "permission_rejected", "permission_cancelled", "max_turns", "no_progress", "unknown"],
 )
-def test_every_stop_cancelled_reason_returns_the_work_to_idle(reason: str) -> None:
-    # --- scenario: the reason is a vendor detail, so every reason means the same idle
+def test_every_stop_cancelled_reason_ends_the_work_without_a_failure(reason: str) -> None:
+    # --- scenario: the reason is a vendor detail, so every reason ends the turn
     normalized, event = _records(_cancelled(reason=reason))
 
     assert type(normalized) is NormalizedProviderRecord
     assert normalized.event_name is ProviderEventName.INTERRUPT
     assert event is not None
     (work,) = _batch(normalized).work_facts
-    assert work.lifecycle is WorkLifecycle.IDLE
+    assert work.lifecycle is WorkLifecycle.UNKNOWN
 
 
 def test_a_replayed_stop_cancelled_record_reduces_again() -> None:
@@ -147,7 +147,7 @@ def test_a_replayed_stop_cancelled_record_reduces_again() -> None:
     )
     assert type(again) is NormalizedProviderRecord
     (work,) = _batch(again).work_facts
-    assert work.lifecycle is WorkLifecycle.IDLE
+    assert work.lifecycle is WorkLifecycle.UNKNOWN
 
 
 def test_a_subagents_cancel_is_not_the_sessions_stop() -> None:
@@ -202,8 +202,8 @@ def _mode(monitor: LiveAgentMonitor) -> AgentMode:
     return statuses[0].mode
 
 
-def test_a_cancelled_turn_leaves_a_working_row_idle(tmp_path: Path) -> None:
-    # --- scenario: Ctrl+C mid-turn returns the row to idle
+def test_a_cancelled_turn_leaves_a_working_row_ended(tmp_path: Path) -> None:
+    # --- scenario: Ctrl+C mid-turn ends the row
     monitor = _replay(
         tmp_path,
         [
@@ -213,10 +213,10 @@ def test_a_cancelled_turn_leaves_a_working_row_idle(tmp_path: Path) -> None:
             _line("StopCancelled", 5.0, reason="user_interrupt", cancelledBy="user"),
         ],
     )
-    assert _mode(monitor) is AgentMode.IDLE_READY
+    assert _mode(monitor) is AgentMode.ENDED_UNCONFIRMED
 
 
-def test_a_declined_permission_prompt_leaves_a_waiting_row_idle(tmp_path: Path) -> None:
+def test_a_declined_permission_prompt_leaves_a_waiting_row_ended(tmp_path: Path) -> None:
     # --- scenario: a decline that sends only StopCancelled clears the ask
     monitor = _replay(
         tmp_path,
@@ -227,11 +227,11 @@ def test_a_declined_permission_prompt_leaves_a_waiting_row_idle(tmp_path: Path) 
             _line("StopCancelled", 5.0, reason="permission_rejected", cancelledBy="user"),
         ],
     )
-    assert _mode(monitor) is AgentMode.IDLE_READY
+    assert _mode(monitor) is AgentMode.ENDED_UNCONFIRMED
 
 
 def test_a_cancel_wins_a_same_stamp_tie_with_stop_but_not_with_session_end(tmp_path: Path) -> None:
-    # --- scenario: Stop then StopCancelled on one stamp reads idle (rank 83 over 81)
+    # --- scenario: Stop then StopCancelled on one stamp reads ended (rank 83 over 81)
     stamp = 5.0
     monitor = _replay(
         tmp_path,
@@ -242,7 +242,7 @@ def test_a_cancel_wins_a_same_stamp_tie_with_stop_but_not_with_session_end(tmp_p
             _line("StopCancelled", stamp),
         ],
     )
-    assert _mode(monitor) is AgentMode.IDLE_READY
+    assert _mode(monitor) is AgentMode.ENDED_UNCONFIRMED
 
     # --- scenario: StopCancelled then SessionEnd on one stamp ends the session
     other = tmp_path / "second"

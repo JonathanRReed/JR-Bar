@@ -481,6 +481,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// roster fetch. nil on older daemons.
     public var axes: CoreSessionAxes?
 
+    public var failureSignalUntil: Double?
     public var sourceIntegration: String?
     public var groupId: String?
     public var unlinkedWorker: Bool
@@ -492,7 +493,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 workersWaiting: Int? = nil, snoozedUntil: Double? = nil, remote: Bool = false,
                 event: String? = nil, tool: String? = nil, message: String? = nil,
                 axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil,
-                groupId: String? = nil, unlinkedWorker: Bool = false) {
+                groupId: String? = nil, unlinkedWorker: Bool = false, failureSignalUntil: Double? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -518,6 +519,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.tool = tool
         self.message = message
         self.axes = axes
+        self.failureSignalUntil = failureSignalUntil
         self.groupId = groupId
         self.unlinkedWorker = unlinkedWorker
         self.sourceIntegration = sourceIntegration
@@ -526,6 +528,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message, axes
+        case failureSignalUntil = "failure_signal_until"
         case groupId = "group_id"
         case unlinkedWorker = "unlinked_worker"
         case sourceIntegration = "source_integration"
@@ -565,6 +568,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         message = try c.decodeIfPresent(String.self, forKey: .message)
         axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
+        failureSignalUntil = try? c.decodeIfPresent(Double.self, forKey: .failureSignalUntil)
         groupId = try? c.decodeIfPresent(String.self, forKey: .groupId)
         unlinkedWorker = (try? c.decodeIfPresent(Bool.self, forKey: .unlinkedWorker)) ?? false
         sourceIntegration = try? c.decodeIfPresent(String.self, forKey: .sourceIntegration)

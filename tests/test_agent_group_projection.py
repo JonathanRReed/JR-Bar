@@ -137,7 +137,7 @@ def test_rejected_link_cannot_promote_an_idle_root_but_failure_stays_named():
     projection = project_attention(snapshot([root, child]), AgentMonitorSettings())
     assert projection.light_rows[0].lifecycle_mode.value == "idle"
     failed = replace(child, mode=AgentMode.BLOCKED_ERROR, event_name="StopFailure")
-    assert project_attention(snapshot([failed]), AgentMonitorSettings()).transient_signals[0].source_agent_id == failed.agent_id
+    assert project_attention(snapshot([failed]), AgentMonitorSettings()).transient_signals == ()
 
 
 def test_header_only_metadata_never_promotes_a_parent_to_working():

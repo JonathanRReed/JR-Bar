@@ -543,7 +543,7 @@ _CONFORMANCE = (
     ("claude", "SessionEnd", "session_end", WorkLifecycle.COMPLETED, False),
     # Not a hook Claude sends: the liveness sweep ends an Esc-stopped turn
     # from the session's own pid file and reduces it as Codex's Interrupt.
-    ("claude", "Interrupt", "interrupt", WorkLifecycle.IDLE, False),
+    ("claude", "Interrupt", "interrupt", WorkLifecycle.UNKNOWN, False),
     # Devin
     ("devin", "SessionStart", "session_start", WorkLifecycle.IDLE, False),
     ("devin", "UserPromptSubmit", "user_prompt_submit", WorkLifecycle.ACTIVE, False),
@@ -568,9 +568,9 @@ _CONFORMANCE = (
     ("grok", "Stop", "stop", WorkLifecycle.COMPLETED, False),
     ("grok", "StopFailure", "stop_failure", WorkLifecycle.FAILED, False),
     # A turn that ended unfinished (Ctrl+C, a declined prompt, the turn limit).
-    ("grok", "StopCancelled", "interrupt", WorkLifecycle.IDLE, False),
+    ("grok", "StopCancelled", "interrupt", WorkLifecycle.UNKNOWN, False),
     # The persisted normalized record's spelling, which a replay re-reads.
-    ("grok", "Interrupt", "interrupt", WorkLifecycle.IDLE, False),
+    ("grok", "Interrupt", "interrupt", WorkLifecycle.UNKNOWN, False),
     ("grok", "SessionEnd", "session_end", WorkLifecycle.COMPLETED, False),
     # Cursor native names
     ("cursor", "sessionStart", "session_start", WorkLifecycle.IDLE, False),

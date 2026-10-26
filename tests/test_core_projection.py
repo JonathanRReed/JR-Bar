@@ -1598,6 +1598,7 @@ def test_the_aggregate_is_always_derivable_from_the_rows() -> None:
         )
         assert aggregate["failed"] == sum(
             1 for row in mains if row["lifecycle"] == "failed" and not row["stale"]
+            and row.get("failure_signal_until") is not None
         )
         assert aggregate["ready"] == len(document["unseen_completions"])
 
@@ -2016,7 +2017,7 @@ def test_lights_strip_transfer_is_optional_and_gains_are_bounded():
     assert "strip_transfer" not in lights["surfaces"]["hardware"]
 
 
-def test_old_terminal_failures_leave_live_surfaces_but_keep_history_outcome() -> None:
+def test_old_terminal_failures_remain_in_panel_without_signalling() -> None:
     failed = _status(provider="claude", agent_id=CLAUDE_ID, session_id=CLAUDE_SID,
                      mode=AgentMode.BLOCKED_ERROR, event_name="StopFailure",
                      updated_at=datetime.fromtimestamp(NOW - 35 * 60, tz=timezone.utc))
@@ -2026,10 +2027,10 @@ def test_old_terminal_failures_leave_live_surfaces_but_keep_history_outcome() ->
                                collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc))
     state = build_state_document(generation=1, now=NOW, snapshot=snapshot, ask_statuses=[],
                                  unseen_completion_ids=frozenset())
-    assert [row["id"] for row in state["sessions"]] == [CODEX_ID]
+    assert {row["id"] for row in state["sessions"]} == {CLAUDE_ID, CODEX_ID}
     assert state["aggregate"]["mode"] == "working"
     assert state["aggregate"]["failed"] == 0
-    assert state["hidden_count"] == 1
+    assert state["hidden_count"] == 0
     history = session_document(failed, now=NOW, operator_state=None, ask_ids=frozenset(),
                                extras=None, workers=0)
     assert history["lifecycle"] == "failed"
@@ -2059,3 +2060,24 @@ def test_session_without_canonical_work_keeps_legacy_next_actor(mode, actor):
     row = session_document(_status(mode=mode), operator_state=None,
                            ask_ids=frozenset(), extras=None, workers=0)
     assert row["next_actor"] == actor
+
+
+def test_failure_signal_expires_but_the_panel_row_stays_until_cleared():
+    failed = _status(mode=AgentMode.BLOCKED_ERROR, event_name='StopFailure', updated_at=_at(0))
+    for elapsed in (0, 4.999, 5, 3600):
+        state = build_state_document(generation=1, now=NOW + elapsed,
+                                    snapshot=SimpleNamespace(statuses=(failed,), stale_statuses=(), collected_at=_at(-elapsed)),
+                                    ask_statuses=[], unseen_completion_ids=frozenset())
+        row = state['sessions'][0]
+        assert row['lifecycle'] == 'failed'
+        assert state['aggregate']['failed'] == (1 if elapsed < 5 else 0)
+        assert row['failure_signal_until'] == (NOW + 5 if elapsed < 5 else None)
+
+
+@pytest.mark.parametrize('event', ['Interrupt', 'StopCancelled', 'StopInterrupted', 'stop:aborted'])
+def test_interrupted_run_is_ended_even_if_its_last_mode_was_error(event):
+    row = session_document(_status(mode=AgentMode.BLOCKED_ERROR, event_name=event), now=NOW,
+                           operator_state=None, ask_ids=frozenset(), extras=None, workers=0)
+    assert row['lifecycle'] == 'ended'
+    assert row['mode'] == 'ended_unconfirmed'
+    assert row['failure_signal_until'] is None

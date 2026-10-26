@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from .attention import AttentionProjection, LifecycleMode, ProjectedAgentRow, light_signal_row
 
 _LIFECYCLE_PRIORITY = {
     LifecycleMode.WAITING: 0,
@@ -27,7 +27,7 @@ def _representative(
 ) -> ProjectedAgentRow | None:
     candidates = main_rows or tuple(row for row in worker_rows if row.actionable)
     return min(
-        candidates,
+        (light_signal_row(row) for row in candidates),
         key=lambda row: (
             _LIFECYCLE_PRIORITY[row.lifecycle_mode],
             -row.updated_at.timestamp(),

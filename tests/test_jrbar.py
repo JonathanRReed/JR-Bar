@@ -9986,7 +9986,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
         )
         sub_only = self._snapshot(self._status("claude:agent:w1", AgentMode.BLOCKED_ERROR))
         self.controller.settings = dataclass_replace(self.controller.settings, subagent_asks_alert=True)
-        self.assertEqual(self.controller.display_aggregate_mode(sub_only), AgentMode.BLOCKED_ERROR)
+        self.assertEqual(self.controller.display_aggregate_mode(sub_only), AgentMode.IDLE_READY)
 
     def _worker_ask_snapshot(self, *, with_main: bool):
         statuses = [self._status("claude:agent:w1", AgentMode.WAITING_FOR_INPUT)]
@@ -12362,7 +12362,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         return snapshot_from_statuses(
             statuses,
             sources=(),
-            collected_at=datetime.now(timezone.utc),
+            collected_at=max((row.updated_at for row in statuses), default=datetime(2026, 8, 12, tzinfo=timezone.utc)),
             stale_after_seconds=3600.0,
             tool_running_timeout_seconds=0.0,
             completed_visible_seconds=3600.0,
@@ -12374,10 +12374,10 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         # failure signal at all (see attention._FAILURE_EVENTS).
         return AgentStatus(
             provider="claude",
-            agent_id="claude:agent:worker",
-            display_name="Claude worker",
+            agent_id="claude:session:main",
+            display_name="Claude main",
             mode=AgentMode.BLOCKED_ERROR,
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime(2026, 8, 12, tzinfo=timezone.utc),
             event_name="StopFailure",
             session_id="main",
         )
@@ -12408,9 +12408,9 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         return device
 
     def test_failure_projection_contracts(self) -> None:
-        '''Stopped-worker failure and live-permission projections hold across
+        '''Top-level failure and live-permission projections hold across
         every surface.'''
-        # --- scenario: stopped_worker_failure_projection_contract_across_every_surface
+        # --- scenario: top_level_failure_projection_contract_across_every_surface
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.attention import LifecycleMode
 
@@ -12439,8 +12439,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
             LedDisplayState.FAILED,
         )
         pinned = self.controller.projected_rows_for_device(projection, device)
-        # The cue names the failure; an unlinked worker still has no fleet share.
-        self.assertEqual(tuple(row.agent_id for row in pinned), ())
+        self.assertEqual(tuple(row.agent_id for row in pinned), ("claude:session:main",))
         self.assertIsNone(self.controller.screen_bar_click_status())
         self.controller.track_ask_blocked(projection)
         self.assertIsNone(self.controller.ask_blocked_since)
@@ -12455,7 +12454,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         self.assertEqual(len(program.splitlines()), 5)
         timed_lines = [line for line in program.splitlines() if line.endswith("cosine")]
         timed_duration_ms = sum(int(line.split()[-2].removesuffix("ms")) for line in timed_lines)
-        self.assertEqual(timed_duration_ms, 1800)
+        self.assertEqual(timed_duration_ms, 5000)
         # The failure cue plays in the ERROR colour, not the Ask one. It was
         # ask_color until 2026-09-10, which is exactly why a failed strip and
         # a strip waiting on you were the same light.
@@ -12507,8 +12506,8 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
 
     def test_failure_signal_deadlines(self) -> None:
         '''The failure deadline schedules one explicit refresh; an early timer
-        keeps the cue and reschedules the lease; a late timer starts the
-        pending cue with a full lease; failed rows never crash the
+        keeps the cue and reschedules the lease; a late timer drops an
+        expired pending cue; failed rows never crash the
         multi-agent blend modes.'''
         # --- scenario: failure_signal_deadline_schedules_one_explicit_refresh
         self.setUp()  # fresh isolated controller per scenario
@@ -12529,7 +12528,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
 
         schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
         schedule.assert_called_once()
-        self.assertAlmostEqual(schedule.call_args.args[0], 1.8)
+        self.assertAlmostEqual(schedule.call_args.args[0], 5.0)
         self.assertEqual(schedule.call_args.args[2], "failureSignalExpired:")
         self.assertFalse(schedule.call_args.args[4])
 
@@ -12562,13 +12561,13 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
 
         active = self.controller.active_failure_signal(now=11.5)
         self.assertIsNotNone(active)
-        self.assertEqual(active.ends_at, 12.8)
+        self.assertEqual(active.ends_at, 16.0)
         schedule.assert_called_once()
-        self.assertAlmostEqual(schedule.call_args.args[0], 1.3)
+        self.assertAlmostEqual(schedule.call_args.args[0], 4.5)
         self.assertIs(self.controller.failure_signal_timer, replacement_timer)
         refresh.assert_called_once_with(None)
 
-        # --- scenario: late_failure_timer_starts_pending_cue_and_schedules_full_lease
+        # --- scenario: late_failure_timer_cannot_replay_an_expired_pending_cue
         self.setUp()  # fresh isolated controller per scenario
         from dataclasses import replace
 
@@ -12582,7 +12581,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         first_failure = self._failure()
         second_failure = replace(
             first_failure,
-            agent_id="claude:agent:second-worker",
+            agent_id="claude:session:second",
         )
         self.controller.update_attention_projection(self._snapshot(), now=10.0)
         with patch.object(self.status_bar, "NSTimer", timer_api):
@@ -12593,26 +12592,21 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
             schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
             schedule.reset_mock()
             with (
-                patch.object(self.status_bar.time, "monotonic", return_value=13.0),
+                patch.object(self.status_bar.time, "monotonic", return_value=16.1),
                 patch.object(self.controller, "refresh_") as refresh,
             ):
                 self.controller.failureSignalExpired_(first_timer)
 
-        active = self.controller.active_failure_signal(now=13.0)
-        self.assertIsNotNone(active)
-        self.assertEqual(active.signal.source_agent_id, second_failure.agent_id)
-        self.assertEqual(active.started_at, 13.0)
-        self.assertEqual(active.ends_at, 14.8)
-        schedule.assert_called_once()
-        self.assertAlmostEqual(schedule.call_args.args[0], 1.8)
-        self.assertIs(self.controller.failure_signal_timer, pending_timer)
+        self.assertIsNone(self.controller.active_failure_signal(now=16.1))
+        schedule.assert_not_called()
+        self.assertIsNone(self.controller.failure_signal_timer)
         refresh.assert_called_once_with(None)
 
         # --- scenario: failed_rows_do_not_crash_multi_agent_projection_blend_modes
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 
-        now = datetime.now(timezone.utc)
+        now = datetime(2026, 8, 12, tzinfo=timezone.utc)
         working = AgentStatus(
             provider="codex",
             agent_id="codex:session:main",

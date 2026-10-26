@@ -521,3 +521,55 @@ def test_the_quiet_set_is_empty_without_workers_and_when_the_setting_is_on() -> 
 
     assert quiet_worker_request_keys(state, subagent_asks_alert=False) == frozenset()
     assert quiet_worker_request_keys(state, subagent_asks_alert=True) == frozenset()
+
+
+def test_only_fresh_top_level_failures_signal_and_workers_never_promote_failure():
+    from datetime import timedelta
+
+    from jrbar.attention import settle_completed_for_lights
+    from jrbar.models import ParentLink
+    failed = status(provider='codex', agent_id='codex:session:root',
+                    event_name='StopFailure', mode=AgentMode.BLOCKED_ERROR)
+    for seconds in (0, 4.999, 5, 60):
+        now = failed.updated_at + timedelta(seconds=seconds)
+        snapshot = replace(snapshot_with(failed), collected_at=now)
+        projected = project_attention(snapshot, AgentMonitorSettings())
+        assert projected.visible_rows[0].lifecycle_mode is LifecycleMode.FAILED_VISIBLE
+        assert bool(projected.transient_signals) is (seconds < 5)
+        assert projected.light_rows[0].lifecycle_mode is (LifecycleMode.FAILED_VISIBLE if seconds < 5 else LifecycleMode.IDLE)
+    early = project_attention(snapshot_with(failed), AgentMonitorSettings())
+    assert settle_completed_for_lights(early, now=failed.updated_at + timedelta(seconds=5)).light_rows[0].lifecycle_mode is LifecycleMode.IDLE
+    idle = replace(failed, mode=AgentMode.IDLE_READY, event_name='SessionStart')
+    for linked in (False, True):
+        worker = replace(failed, agent_id='codex:agent:worker',
+                         parent_links=(ParentLink('codex:agent:worker', idle.agent_id, 'codex', failed.updated_at.timestamp()),) if linked else ())
+        projected = project_attention(snapshot_with(idle, worker), AgentMonitorSettings())
+        assert not projected.transient_signals
+        assert all(row.lifecycle_mode is not LifecycleMode.FAILED_VISIBLE for row in projected.light_rows)
+        assert projected.worker_rows[0].lifecycle_mode is LifecycleMode.FAILED_VISIBLE
+        alone = project_attention(snapshot_with(worker), AgentMonitorSettings())
+        assert not alone.transient_signals
+        assert alone.lifecycle_mode is not LifecycleMode.FAILED_VISIBLE
+
+
+def test_interruptions_are_ended_without_failure_signals():
+    for event in ('Interrupt', 'StopCancelled', 'StopInterrupted', 'stop:aborted'):
+        ended = status(event_name=event, mode=AgentMode.BLOCKED_ERROR)
+        projected = project_attention(snapshot_with(ended), AgentMonitorSettings())
+        assert projected.lifecycle_mode is LifecycleMode.IDLE
+        assert not projected.transient_signals
+
+
+def test_worker_failure_cannot_reach_alert_events_for_any_provider():
+    from types import SimpleNamespace
+
+    from jrbar.activity_ledger import ActivityKind
+    from jrbar.status_bar import StatusBarController
+    for provider in ('claude', 'codex', 'devin', 'factory', 'cursor', 'gemini', 'grok',
+                     'hermes', 'opencode', 'openclaw', 'pi', 'copilot', 'kiro', 'antigravity'):
+        worker = status(provider=provider, agent_id=f'{provider}:agent:worker',
+                        event_name='StopFailure', mode=AgentMode.BLOCKED_ERROR)
+        projected = project_attention(snapshot_with(worker), AgentMonitorSettings())
+        assert projected.transient_signals == ()
+        assert projected.light_rows == ()
+        assert StatusBarController.activity_entries_for_statuses(SimpleNamespace(), (worker,), ActivityKind.BLOCKED) == ()

@@ -534,3 +534,13 @@ def test_invalid_play_motion_flag_does_not_advance_the_monotonic_watermark__and_
     assert state.pending is None
     assert coordinator.budget == FiniteCueBudget()
 
+
+
+def test_failure_window_is_not_extended_by_delayed_observation_or_a_queue():
+    coordinator = FiniteSignalCoordinator()
+    first = replace(failure('first'), duration_seconds=4.5)
+    queued = replace(failure('queued'), duration_seconds=4.5)
+    coordinator.observe(projection_with(first, queued), now=0.5)
+    assert coordinator.active(0.5).ends_at == 5
+    assert coordinator.active(4.999) is not None
+    assert coordinator.active(5) is None

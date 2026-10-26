@@ -610,6 +610,7 @@ def aggregate_counts(
         "ready": sum(1 for identifier in set(ready_ids) if identifier in main_ids),
         "failed": sum(
             1 for row in mains if row.get("lifecycle") == "failed" and not row.get("stale")
+            and ("failure_signal_until" not in row or row.get("failure_signal_until") is not None)
         ),
         "total": len(mains),
     }
@@ -1096,6 +1097,11 @@ def session_document(
     session_id = getattr(status, "session_id", None)
     cwd = getattr(status, "cwd", None) or (extras.cwd if extras is not None else None)
     event_name = getattr(status, "event_name", None)
+    from .failure_policy import ended_without_failure, failure_signal_until
+
+    if ended_without_failure(status):
+        mode = AgentMode.ENDED_UNCONFIRMED
+        next_actor = "none"
     process_alive = extras.process_alive if extras is not None else None
     provider_ended = extras.provider_ended if extras is not None else None
     # A dead process without an end event is a session that stopped being
@@ -1141,6 +1147,9 @@ def session_document(
     # working-shaped mode -- and ``since`` says how long it has been quiet.
     if lifecycle in ("active", "stale") and mode is AgentMode.ENDED_UNCONFIRMED:
         mode = AgentMode.WORKING
+    failure_deadline = failure_signal_until(status)
+    if failure_deadline is not None and now is not None and now >= failure_deadline:
+        failure_deadline = None
     document: dict[str, Any] = {
         "id": agent_id,
         "provider": provider,
@@ -1162,6 +1171,7 @@ def session_document(
         "cwd": cwd,
         "mode": mode.value,
         "lifecycle": lifecycle,
+        "failure_signal_until": failure_deadline,
         "next_actor": next_actor,
         "since": updated_at,
         "updated_at": updated_at,
@@ -1589,16 +1599,20 @@ def _apply_agent_group_rows(rows, group_statuses, group_resolution, ask_ids, qui
         row["unlinked_worker"] = row["id"] in group_resolution.unlinked_workers
         if row["unlinked_worker"]:
             row["parent"] = None
+            row["failure_signal_until"] = None
         if group:
             is_child = row["id"] != group.root_work_key
             row["kind"] = "worker" if is_child else "main"
             row["parent"] = group.root_work_key if is_child else None
+            if is_child:
+                row["failure_signal_until"] = None
             live_workers = live_workers_by_group[group.id]
             row["workers"] = 0 if is_child else len(live_workers)
             if not is_child:
                 if quiet_worker_ids is not None:
                     row["workers_waiting"] = len(live_workers & quiet_worker_ids)
                 if (row["id"] not in ask_ids and row["mode"] not in {mode.value for mode in _WORKING_MODES}
+                        and row["mode"] != AgentMode.BLOCKED_ERROR.value
                         and group.id in working_groups):
                     row["mode"] = AgentMode.WORKING.value
                     row["lifecycle"] = "active"

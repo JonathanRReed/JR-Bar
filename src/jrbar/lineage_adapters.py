@@ -581,7 +581,8 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
         if len(valid) == 1:
             keys[tid] = valid[0]
         else:
-            ambiguous.add(tid)
+            if len(valid) > 1:
+                ambiguous.add(tid)
             provider = _provider(thread.get("default_provider"))
             keys[tid] = unbound_key(tid, provider)
     ambiguous.update(tid for tid, key in keys.items() if len(owners.get(key, ())) > 1)
@@ -610,8 +611,6 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
         child_tid = worker.get("child_thread_id")
         child = keys.get(child_tid)
         if child is None:
-            if worker.get("status") not in {"running", "starting", "active", "pending"}:
-                continue
             native = worker.get("native_task_ref")
             if type(native) is str:
                 try:

@@ -1104,7 +1104,7 @@ final class NotchToy: Toy {
             // meeting's thirty. Waiting those out read as a click that
             // did nothing, then a card popping open unasked. The fold
             // brings the capsule back while it is still fresh.
-            if let life = capsule.kind.life, life <= AlcoveCapsuleQueue.life {
+            if let life = capsule.kind.life, life <= AlcoveCapsuleQueue.life || capsule.kind == .failed {
                 bandExpandPending = true
                 return
             }
@@ -1902,6 +1902,10 @@ final class NotchToy: Toy {
     /// its turn) steps straight down instead of asking again.
     func showCurrentCapsule() {
         guard let current = capsuleQueue.current, islandVisible, !islandExpanded else { return }
+        if let expires = current.expiresAt, capsuleClock().timeIntervalSince1970 >= expires {
+            finishCapsule()
+            return
+        }
         if current.kind == .ask, !askHolds(current) {
             finishCapsule()
             return
@@ -1919,7 +1923,7 @@ final class NotchToy: Toy {
     private func armCapsuleLife() {
         capsuleWork?.cancel()
         capsuleWork = nil
-        guard let life = activeCapsule?.kind.life else { return }
+        guard let life = activeCapsule?.remainingLife(at: capsuleClock().timeIntervalSince1970) else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.finishCapsule() }
         }

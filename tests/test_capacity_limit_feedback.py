@@ -103,7 +103,7 @@ def test_stale_boot_limit_cannot_become_a_new_notice_when_the_same_event_freshen
     assert c.quota_blink_until == 0 and events == []
 
 
-def test_capacity_session_keeps_failed_history_but_does_not_claim_live_failure_attention():
+def test_capacity_session_keeps_ended_history_without_failure_attention():
     from jrbar.attention import LifecycleMode, project_attention
     from jrbar.core_projection import build_state_document, session_document
     from jrbar.settings import AgentMonitorSettings
@@ -119,7 +119,8 @@ def test_capacity_session_keeps_failed_history_but_does_not_claim_live_failure_a
     assert live["sessions"] == [] and live["aggregate"]["failed"] == 0
     history = session_document(limited, operator_state=None, ask_ids=frozenset(),
                                extras=None, workers=0, now=1000)
-    assert history["axes"]["outcome"] == "failed"
+    assert history["lifecycle"] == "ended"
+    assert history["axes"]["outcome"] == "unreported"
     assert history["terminal_cause"] == "claude_rate_limit"
 
 
@@ -244,3 +245,21 @@ def test_removed_usage_snapshot_does_not_turn_completion_into_recovery():
     apply(c, status(at=1002, mode=AgentMode.COMPLETED, capacity=False), wall=1002)
     apply(c, status(at=1003), wall=1003, tick=30)
     assert len(events) == 1 and c.quota_blink_until == 24
+
+
+def test_worker_capacity_failure_never_becomes_a_quota_notice_or_blink():
+    from dataclasses import replace
+
+    from jrbar.models import ParentLink
+    from jrbar.provider_facts import SourceFreshness
+    for linked in (False, True):
+        worker = replace(status(), agent_id='claude:agent:worker', parent_links=(
+            (ParentLink('claude:agent:worker', 'claude:session:root', 'claude', 1000),) if linked else ()
+        ))
+        event = SimpleNamespace(terminal_cause=worker.terminal_cause, subject_key=worker.work_key,
+                                occurred_at_epoch=1000, source_freshness=SourceFreshness.FRESH)
+        c, notices = controller()
+        apply(c)
+        apply(c, worker, events=(event,))
+        assert notices == []
+        assert c.quota_blink_until == 0

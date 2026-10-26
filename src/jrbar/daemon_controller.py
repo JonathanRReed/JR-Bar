@@ -2435,9 +2435,12 @@ class StatusBarController(NSObject):
                     and tier in signals_module.ESCALATION_TIERS_WITH_MENU_BAR
                 ):
                     actionable_episode_key += ":stage2"
+        failure_ids = {signal.source_agent_id for signal in projection.transient_signals}
+        failure_works = {row.work_key for row in projection.visible_rows if row.agent_id in failure_ids}
         failure = next(
             (event for event in operator_events
-             if event.kind is TransitionKind.FAILED and not is_capacity_terminal(event)),
+             if event.kind is TransitionKind.FAILED and not is_capacity_terminal(event)
+             and event.subject_key in failure_works),
             None,
         )
         completion = next(
@@ -4790,6 +4793,10 @@ class StatusBarController(NSObject):
         for status in statuses:
             if getattr(status, "is_subagent", False):
                 continue
+            if kind is ActivityKind.BLOCKED:
+                from .failure_policy import ended_without_failure
+                if ended_without_failure(status):
+                    continue
             label = safe_activity_text(
                 strip_session_short_id(status.display_name, status.session_id),
                 MAX_ACTIVITY_LABEL_LENGTH,

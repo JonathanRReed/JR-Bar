@@ -98,7 +98,7 @@ struct NotchCapsuleTests {
         // promotes past the minimum gap: two timers, fired in order.
         toy.offer(notice(.completed, key: "completed:c", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
-        #expect(timers.nextDue == AlcoveCapsuleQueue.life, "the replay arms B's own life")
+        #expect(timers.nextDue == AlcoveNoticeKind.failed.life, "the replay arms B's own life")
         #expect(runLine(timers, until: toy, draws: "c"),
                 "the queued capsule draws after the replay")
         #expect(toy.capsuleQueue.pending == nil)
@@ -177,7 +177,7 @@ struct NotchCapsuleTests {
 
         // Held past the capsule's own TTL the fold lets it go — and
         // clears the slot so the queue still answers new offers.
-        timers.advance(by: AlcoveCapsuleQueue.life + 0.4)
+        timers.advance(by: (AlcoveNoticeKind.failed.life ?? 5) + 0.4)
         toy.collapseFromBand()
         #expect(toy.activeCapsule == nil)
         #expect(toy.capsuleQueue.current == nil)

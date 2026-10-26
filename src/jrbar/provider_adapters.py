@@ -430,15 +430,12 @@ _SESSION_END = _rule(
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,
 )
-# Codex "Interrupt": the operator aborted the turn (Esc / Ctrl-C inside the
-# TUI). The session stays open and idle, awaiting the next prompt, so it
-# lands on the same lifecycle as SessionStart. Rank sits between Stop and
-# SessionEnd so an interrupt after a Stop tie-breaks as the newer truth
-# without outranking a real SessionEnd.
+# An interrupted turn ended without a result. The next prompt can start
+# new work even while the provider process stays open.
 _INTERRUPT = _rule(
     ProviderEventName.INTERRUPT,
-    WorkLifecycle.IDLE,
-    NextActor.USER,
+    WorkLifecycle.UNKNOWN,
+    NextActor.NONE,
     83,
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,

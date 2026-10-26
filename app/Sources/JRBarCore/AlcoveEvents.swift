@@ -89,9 +89,10 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .ask: return nil
         case .level, .capsLock: return AlcoveCapsuleQueue.feedbackLife
+        case .failed: return 5
         case .timer: return AlcoveCapsuleQueue.timerLife
         case .meeting: return AlcoveCapsuleQueue.meetingLife
-        case .completed, .failed, .quotaReset, .charging, .focus, .device, .display:
+        case .completed, .quotaReset, .charging, .focus, .device, .display:
             return AlcoveCapsuleQueue.life
         }
     }
@@ -146,11 +147,12 @@ public struct AlcoveNotice: Equatable, Sendable, Identifiable {
     /// The ask reached the `takeover` tier: the island grows into the
     /// ask card and holds it until the person acts.
     public var takeover: Bool
+    public var expiresAt: Double?
 
     public init(id: String, kind: AlcoveNoticeKind, title: String, subtitle: String,
                 provider: String? = nil, session: String? = nil, key: String,
                 ask: CoreAsk? = nil, glyph: String? = nil, fraction: Double? = nil,
-                muted: Bool = false, takeover: Bool = false) {
+                muted: Bool = false, takeover: Bool = false, expiresAt: Double? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -163,10 +165,16 @@ public struct AlcoveNotice: Equatable, Sendable, Identifiable {
         self.fraction = fraction
         self.muted = muted
         self.takeover = takeover
+        self.expiresAt = expiresAt
     }
 
     /// The glyph the capsule draws.
     public var symbol: String { glyph ?? kind.symbol }
+
+    public func remainingLife(at now: Double) -> TimeInterval? {
+        guard let life = kind.life else { return nil }
+        return expiresAt.map { max(0, min(life, $0 - now)) } ?? life
+    }
 }
 
 /// Which event kinds may raise a capsule — all on by default, since the
@@ -227,7 +235,7 @@ public enum AlcoveEventPolicy {
     /// deliberately absent: taking a question away is not news, and the
     /// ask's own row already leaves the card.
     public static func notice(for event: CoreEvent, session: CoreSession?,
-                              kinds: AlcoveCapsuleKinds) -> AlcoveNotice? {
+                              kinds: AlcoveCapsuleKinds, now: Double = Date().timeIntervalSince1970) -> AlcoveNotice? {
         let kind: AlcoveNoticeKind
         switch event.kind {
         case "ask_opened": kind = .ask
@@ -237,10 +245,15 @@ public enum AlcoveEventPolicy {
         default: return nil
         }
         guard kinds.isOn(kind) else { return nil }
+        if kind == .failed {
+            guard event.notify != false, session?.isSubagent != true, session?.unlinkedWorker != true else { return nil }
+            if let at = event.at, now < at || now >= at + 5 { return nil }
+        }
 
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }
-        let label = event.label.flatMap { $0.isEmpty ? nil : $0 }
+        let project = kind == .failed ? session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } : nil
+        let label = project ?? event.label.flatMap { $0.isEmpty ? nil : $0 }
             ?? session?.displayLabel
             ?? providerName
 
@@ -261,9 +274,9 @@ public enum AlcoveEventPolicy {
             } else {
                 title = label ?? providerName ?? "Agent"
             }
-            subtitle = event.detail.flatMap { $0.isEmpty ? nil : $0 }
+            subtitle = kind == .failed ? kind.verb : (event.detail.flatMap { $0.isEmpty ? nil : $0 }
                 ?? (kind == .ask ? session?.ask?.summary : nil)
-                ?? kind.verb
+                ?? kind.verb)
         }
 
         // An ask's identity is its episode: once one is answered, the
@@ -271,9 +284,11 @@ public enum AlcoveEventPolicy {
         // cooldown — so the pin joins the key when the event names one.
         var key = "\(kind.rawValue):\(event.session ?? provider ?? event.id)"
         if kind == .ask, let request = event.request, !request.isEmpty { key += "|\(request)" }
+        if kind == .failed { key += "|\(event.id)" }
         return AlcoveNotice(id: event.id, kind: kind, title: title, subtitle: subtitle,
                             provider: provider, session: event.session, key: key,
-                            ask: kind == .ask ? askSnapshot(for: event, session: session) : nil)
+                            ask: kind == .ask ? askSnapshot(for: event, session: session) : nil,
+                            expiresAt: kind == .failed ? event.at.map { $0 + 5 } : nil)
     }
 
     /// The ask an `ask_opened` capsule answers: the session's ask when
@@ -412,11 +427,20 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
 
     @discardableResult
     public mutating func offer(_ notice: AlcoveNotice, at now: Date) -> AlcoveCapsuleVerdict {
+        if let expires = notice.expiresAt, now.timeIntervalSince1970 >= expires { return .suppressed }
         recent = recent.filter { now.timeIntervalSince($0.value) < Self.sameKeyCooldown }
         if let seen = recent[notice.key], now.timeIntervalSince(seen) < Self.sameKeyCooldown {
             return .suppressed
         }
         recent[notice.key] = now
+        if let shown = current,
+           (notice.kind == .failed && shown.kind != .ask && shown.kind != .failed)
+            || (notice.kind == .ask && shown.kind == .failed) {
+            if shown.kind.isMacAnnouncement { onEvict?(shown) }
+            current = notice
+            currentShownAt = now
+            return .now
+        }
         guard current == nil else {
             wait(notice, at: now)
             return .queued
@@ -447,6 +471,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         let waitedSince = pendingAt
         pending = nil
         pendingAt = nil
+        if let expires = next.expiresAt, now.timeIntervalSince1970 >= expires { return .idle }
         if next.kind != .ask, let waitedSince,
            now.timeIntervalSince(waitedSince) >= Self.pendingStaleAfter {
             return .idle

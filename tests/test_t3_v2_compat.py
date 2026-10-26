@@ -224,9 +224,9 @@ def test_a_running_v2_thread_is_working_with_its_provider_and_options(tmp_path: 
         ("waiting", AgentMode.WORKING),
         ("completed", AgentMode.COMPLETED),
         ("failed", AgentMode.BLOCKED_ERROR),
-        ("interrupted", AgentMode.UNKNOWN),
-        ("cancelled", AgentMode.IDLE_READY),
-        ("rolled_back", AgentMode.IDLE_READY),
+        ("interrupted", AgentMode.ENDED_UNCONFIRMED),
+        ("cancelled", AgentMode.ENDED_UNCONFIRMED),
+        ("rolled_back", AgentMode.ENDED_UNCONFIRMED),
     ),
 )
 def test_v2_run_status_maps_to_the_same_modes_as_v1_turn_state(
@@ -869,3 +869,75 @@ def test_worker_cutoff_and_order_compare_instants_not_iso_spelling(tmp_path, mon
     assert [row.thread_id for row in snapshot.threads] == [
         'newest-root', 'fractional-root', 'after-cutoff', 'at-cutoff',
     ]
+
+
+@pytest.mark.parametrize('outcome,result,expected', [
+    ('failed', 'Selected model is at capacity. Please try a different model.', AgentMode.ENDED_UNCONFIRMED),
+    ('failed', 'Transport error: connection closed', AgentMode.ENDED_UNCONFIRMED),
+    ('failed', 'Task assertion failed', AgentMode.BLOCKED_ERROR),
+    ('cancelled', None, AgentMode.ENDED_UNCONFIRMED),
+    ('interrupted', None, AgentMode.ENDED_UNCONFIRMED),
+])
+def test_delegated_worker_without_native_binding_keeps_its_explicit_parent(tmp_path, outcome, result, expected):
+    from jrbar.agent_groups import resolve_agent_groups
+    database = _v2(tmp_path)
+    _thread(database, 'thread-parent', active_provider_thread_id='parent-binding')
+    _run(database, 'thread-parent', 1, 'running')
+    _thread(database, 'child', provider='codex', relationship='subagent', active_provider_thread_id='child-binding')
+    _run(database, 'child', 1, outcome)
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE orchestration_v2_projection_provider_threads '
+                           '(provider_thread_id TEXT, thread_id TEXT, driver TEXT, status TEXT, payload_json TEXT)')
+        connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
+                           ('parent-binding', 'thread-parent', 'claudeAgent', 'active',
+                            json.dumps({'nativeThreadRef': {'driver': 'claudeAgent', 'nativeId': 'native-parent'}})))
+        connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
+                           ('child-binding', 'child', 'codex', 'not_loaded', '{}'))
+        connection.execute('CREATE TABLE orchestration_v2_projection_subagents '
+                           '(thread_id TEXT, child_thread_id TEXT, status TEXT, payload_json TEXT)')
+        connection.execute('INSERT INTO orchestration_v2_projection_subagents VALUES (?,?,?,?)',
+                           ('thread-parent', 'child', outcome, json.dumps({'result': result})))
+    before = database.read_bytes()
+    now = datetime.fromisoformat(NOW)
+    observed = read_t3_snapshot(base_dir=tmp_path, now=lambda: now)
+    assert observed.compatible
+    statuses = observed.agent_statuses()
+    worker = next(status for status in statuses if status.is_subagent)
+    assert worker.parent_agent_id == 'claude:session:native-parent'
+    assert worker.mode is expected
+    groups = resolve_agent_groups(statuses, now=now.timestamp())
+    assert not groups.unlinked_workers
+    assert len(groups.groups) == 1
+    assert database.read_bytes() == before
+    _run(database, 'child', 2, 'completed')
+    resumed = read_t3_snapshot(base_dir=tmp_path, now=lambda: now)
+    assert next(thread for thread in resumed.threads if thread.thread_id == 'child').to_agent_status().mode is AgentMode.COMPLETED
+
+
+def test_settled_native_children_keep_lineage_after_the_activity_window(tmp_path):
+    from jrbar.agent_groups import resolve_agent_groups
+    database = _v2(tmp_path)
+    _thread(database, 'root', active_provider_thread_id='parent-binding')
+    _run(database, 'root', 1, 'running')
+    _thread(database, 'old-child', provider='codex', updated_at=EARLIER, active_provider_thread_id='child-binding')
+    _run(database, 'old-child', 1, 'interrupted')
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE orchestration_v2_projection_provider_threads '
+                           '(provider_thread_id TEXT, thread_id TEXT, driver TEXT, status TEXT, payload_json TEXT)')
+        for tid, handle, driver, native in [('root', 'parent-binding', 'claudeAgent', 'native-root'),
+                                            ('old-child', 'child-binding', 'codex', 'native-child')]:
+            connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
+                               (handle, tid, driver, 'idle', json.dumps({'nativeThreadRef': {'driver': driver, 'nativeId': native}})))
+        connection.execute('CREATE TABLE orchestration_v2_projection_subagents '
+                           '(thread_id TEXT, child_thread_id TEXT, provider_thread_id TEXT, status TEXT, updated_at TEXT, payload_json TEXT)')
+        connection.execute('INSERT INTO orchestration_v2_projection_subagents VALUES (?,?,?,?,?,?)',
+                           ('root', 'old-child', 'child-binding', 'interrupted', EARLIER, '{}'))
+    now = datetime.fromisoformat(NOW)
+    observed = read_t3_snapshot(base_dir=tmp_path, now=lambda: now)
+    assert observed.compatible
+    assert [thread.thread_id for thread in observed.threads] == ['root']
+    assert len(observed.native_workers) == 1
+    assert observed.native_workers[0].event_name == 'LineageObserved'
+    groups = resolve_agent_groups(observed.agent_statuses(), now=now.timestamp())
+    assert groups.groups[0].members == ('claude:session:native-root', 'codex:session:native-child')
+    assert not groups.unlinked_workers

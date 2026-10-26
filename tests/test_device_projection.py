@@ -131,3 +131,12 @@ def test_pin_without_matching_rows_returns_idle_projection__and_2_more() -> None
     assert projected.visible_rows == ()
     assert projected.worker_rows == (worker,)
 
+
+
+def test_provider_pin_cannot_restore_a_retained_failure_signal():
+    from dataclasses import replace
+    row = _row('codex:session:root', 'codex', LifecycleMode.FAILED_VISIBLE)
+    projected = replace(_projection(), visible_rows=(row,), worker_rows=())
+    pinned = projection_for_provider(projected, 'codex')
+    assert pinned.lifecycle_mode is LifecycleMode.IDLE
+    assert all(item.lifecycle_mode is LifecycleMode.IDLE for item in pinned.light_rows)
