@@ -151,7 +151,7 @@ struct DeckAbsentPad: View {
             DeckNotice(symbol: "power",
                        title: "Turn on your Creator Micro 2 or plug it in",
                        text: "It connects over USB or Bluetooth (USB wins when both are up). The first pad seen with a stable serial is offered for approval here. The slots work without it.",
-                       footnote: "JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Devices & Lighting.")
+                       footnote: "JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings > Devices.")
             PadIllustration(store: store)
                 .opacity(0.72)
         }

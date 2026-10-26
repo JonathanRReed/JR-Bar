@@ -1251,7 +1251,7 @@ struct AssignSheet: View {
             Picker("State", selection: $store.draftTarget) {
                 ForEach(EffectSemantic.assignable) { Text($0.label).tag($0.rawValue) }
             }
-            Text("Ask and Error keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Devices & Lighting.")
+            Text("Ask and Error keep their reserved alerts. Change their colours in Settings > Devices.")
                 .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

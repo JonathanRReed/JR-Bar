@@ -22,9 +22,19 @@ struct SettingsFeatureRow: View {
         HStack(spacing: JRBarTokens.Space.md) {
             Button { store.openFeature(toy.id) } label: {
                 HStack(spacing: JRBarTokens.Space.md) {
-                    SidebarIcon(symbol: toy.symbol, tint: ToyCard.tint(for: toy.id, page: .blue))
-                    Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+                        HStack(spacing: JRBarTokens.Space.sm) {
+                            Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
+                                .lineLimit(1).layoutPriority(1)
+                            if toy.status.showsChip {
+                                Text(toy.status.text).foregroundStyle(toy.status.tint).jrbarType(.caption)
+                                    .lineLimit(1).help(toy.status.text)
+                            }
+                        }
+                        Text(toy.blurb).foregroundStyle(.secondary).jrbarType(.caption)
+                            .lineLimit(1).help(toy.blurb)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -33,7 +43,7 @@ struct SettingsFeatureRow: View {
             Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
                 .labelsHidden().toggleStyle(.switch)
         }
-        .padding(JRBarTokens.Space.md)
+        .settingsRowInsets()
     }
 }
 
