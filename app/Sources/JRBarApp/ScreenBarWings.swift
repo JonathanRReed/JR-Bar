@@ -760,7 +760,7 @@ struct ScreenBarWingsView: View {
                     ring(age.fraction(at: context.date), slot: slot, tint: tint, diameter: ringDiameter)
                 }
             } else if let provider = slot.provider {
-                glyph(.style(for: provider), size: ScreenBarWingSlot.providerMarkSize(width: markZone.width), tint: tint)
+                glyph(NotchProviderTile.style(for: provider), size: ScreenBarWingSlot.providerMarkSize(width: markZone.width), tint: tint)
             } else if !slot.showsSensors {
                 // A slot with words but no mark still holds its claim —
                 // the lone dot is the resting grammar.
@@ -920,11 +920,11 @@ struct ScreenBarWingsView: View {
             Circle()
                 .inset(by: inset)
                 .trim(from: 0, to: min(1, max(0, fraction)))
-                .stroke(tint ?? (slot.provider.map { ProviderStyle.style(for: $0).accent } ?? .white),
+                .stroke(tint ?? (slot.provider.map { NotchProviderTile.style(for: $0).accent } ?? .white),
                         style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             if let provider = slot.provider {
-                glyph(.style(for: provider), size: 8, tint: tint)
+                glyph(NotchProviderTile.style(for: provider), size: 8, tint: tint)
             }
         }
         .frame(width: diameter, height: diameter)

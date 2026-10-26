@@ -133,8 +133,6 @@ struct NotchAnnouncerTests {
         var settled: [Bool] = []
         watcher.onChange = { _, on in said.append(on) }
         watcher.onSettle = { _, on in settled.append(on) }
-        // Only a Mac whose Assertions.json is unreadable relays.
-        watcher.readFile = { nil }
         watcher.noteDaemon(mode: "off", source: nil)
         #expect(said.isEmpty, "no 'Focus off' at launch")
         #expect(settled == [false])

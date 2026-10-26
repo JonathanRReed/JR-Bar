@@ -67,7 +67,6 @@ struct U5RenderProofTests {
             #expect(toy.cardModel.rows.contains { $0.workerCount == 6 })
             for expanded in [false, true] {
                 let card = NotchCardView(model: toy.cardModel, style: .island, width: 400, pinnedLayout: true, stillTurn: 1, stillReduced: true)
-                    .proofExpandedGroups(expanded ? [ids[0]] : [])
                     .padding(.top, 32).background(.black, in: NotchSilhouette(notchDepth: 32, restingRadius: 8))
                     .padding(24)
                 try await U5Proof.render(card, name: expanded ? "notch-group-expanded" : "notch-group-collapsed", width: 500, dark: dark)

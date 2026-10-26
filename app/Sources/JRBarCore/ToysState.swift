@@ -1284,7 +1284,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// boring.notch's minimum hover, MewNotch's slider. 0 opens at once;
     /// an arrival down from the menu bar's row still waits its own floor.
     public var hoverOpenDelay: Double = NotchSettings.defaultHoverOpenDelay
-    public static let defaultHoverOpenDelay: Double = 0.15
+    public static let defaultHoverOpenDelay: Double = 0.12
     public static let hoverOpenDelayRange: ClosedRange<Double> = 0...1
     /// Which display the island and the Screen Bar live on.
     public var notchDisplay: NotchDisplay = .builtIn
@@ -1410,7 +1410,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true
         let savedHoverDelay = try? c.decodeIfPresent(Double.self, forKey: .hoverOpenDelay)
         hoverOpenDelay = Self.clampedHoverOpenDelay(
-            savedHoverDelay == 0.12 ? Self.defaultHoverOpenDelay : savedHoverDelay ?? Self.defaultHoverOpenDelay)
+            savedHoverDelay ?? Self.defaultHoverOpenDelay)
         notchDisplay = (try? c.decodeIfPresent(NotchDisplay.self, forKey: .notchDisplay)) ?? .builtIn
         shelfEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .shelfEnabled)) ?? true
         shelfDragOut = (try? c.decodeIfPresent(ShelfDragOut.self, forKey: .shelfDragOut)) ?? .copy

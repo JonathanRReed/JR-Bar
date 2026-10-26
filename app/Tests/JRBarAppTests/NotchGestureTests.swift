@@ -176,15 +176,14 @@ struct NotchGestureTests {
         toy.offer(notice(.completed, key: "completed:a", id: "a"))
         toy.offer(notice(.charging, key: "power", id: "c"))
         #expect(toy.capsuleQueue.pending?.id == "c")
-        // The ask interrupts the shown news and keeps the waiting blip.
+        // The ask outranks the waiting blip — newest-wins keeps working
+        // inside the rank gate.
         toy.offer(notice(.ask, key: "ask:b", id: "b"))
-        #expect(toy.activeCapsule?.id == "b")
-        #expect(toy.capsuleQueue.pending?.id == "c")
+        #expect(toy.capsuleQueue.pending?.id == "b")
+        // …and nothing outranks the ask back: even a failure waits.
         toy.offer(notice(.failed, key: "failed:d", id: "d"))
-        #expect(toy.activeCapsule?.id == "b", "a failure cannot interrupt the ask")
-        #expect(toy.capsuleQueue.pending?.id == "d")
-        toy.finishCapsule()
-        #expect(toy.capsuleQueue.current?.id == "d", "ordinary news resumes after the ask")
+        #expect(toy.capsuleQueue.pending?.id == "b",
+                "nothing displaces a waiting ask")
     }
 
     @Test("a refused offer spends nothing — its key can still arrive later")

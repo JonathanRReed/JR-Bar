@@ -87,35 +87,6 @@ import Testing
         #expect(scheduled.isEmpty)
     }
 
-    @Test(arguments: [false, true])
-    func keyboardFromOpenCardStartsAtFirstAskAndTabsWithoutTakeoverSpeech(hasCapsule: Bool) {
-        let first = CoreAsk(session: "claude:first", openedAt: 1, summary: "Run tests?", answerable: true, request: "one")
-        let second = CoreAsk(session: "codex:second", openedAt: 2, summary: "Run checks?", answerable: true, request: "two")
-        let state = CoreState(sessions: [
-            CoreSession(id: "claude:first", provider: "claude", ask: first),
-            CoreSession(id: "codex:second", provider: "codex", ask: second),
-        ], asks: [first, second])
-        let (toy, owner, _) = NotchSurfaceRenderProofTests.makeToy(state: state)
-        defer { withExtendedLifetime(owner) {} }
-        var spoken: [String] = []
-        if hasCapsule {
-            toy.offer(AlcoveNotice(id: "old", kind: .ask, title: "Old ask", subtitle: "Run tests?", session: first.session,
-                key: "old", ask: first, takeover: true))
-        }
-        toy.speak = { spoken.append($0) }
-        toy.expand(held: true)
-        #expect(toy.engageAskKeyboard())
-        #expect(toy.activeCapsule?.session == first.session)
-        toy.askKey(.tab)
-        #expect(toy.activeCapsule?.session == second.session)
-        #expect(toy.capsuleQueue.current?.session == second.session)
-        #expect(toy.activeCapsule?.takeover == false)
-        #expect(spoken.count == 2)
-        #expect(spoken.allSatisfy { !$0.contains("needs you") })
-        toy.askKey(.backTab)
-        #expect(toy.activeCapsule?.session == first.session)
-    }
-
     @Test func incompleteDetectionNeverCommitsOrAnnounces() {
         var commits = 0
         var found: [String] = []
@@ -137,8 +108,8 @@ import Testing
         #expect(found == ["gemini"])
     }
 
-    @Test func defaultHoverMigrationPreservesCustomDelays() throws {
-        for (saved, expected) in [(0.12, 0.15), (0.0, 0.0), (0.24, 0.24), (0.15, 0.15)] {
+    @Test func savedHoverDelaysArePreserved() throws {
+        for (saved, expected) in [(0.12, 0.12), (0.0, 0.0), (0.24, 0.24), (0.15, 0.15)] {
             let data = Data("{\"hoverOpenDelay\":\(saved)}".utf8)
             let settings = try JSONDecoder().decode(NotchSettings.self, from: data)
             #expect(settings.hoverOpenDelay == expected)
@@ -153,10 +124,13 @@ import Testing
         #expect(summary.rows.count == 1)
         #expect(summary.rows[0].members.map(\.activity) == [.working, .failed])
         #expect(summary.rows[0].members.map(\.role) == ["Lead", "Worker"])
-        #expect(NotchCardView.memberState(.failed) == .failed)
-        for activity in [SessionActivity.done, .idle, .ended] {
-            #expect(NotchCardView.memberState(activity) == .done)
-        }
+        #expect(NotchCardView.rowLabel(summary.rows[0]) == "\(summary.rows[0].label) · 1 worker · 1 failed")
+    }
+
+    @Test func notchProviderStyleKeepsTheOriginalDefaults() {
+        #expect(NotchProviderTile.style(for: "grok").accentHex == "#636366")
+        #expect(NotchProviderTile.style(for: "claude").accentHex == "#D97757")
+        #expect(NotchProviderTile.style(for: "codex").accentHex == "#2B8FFF")
     }
 
     @Test func honestOverviewCostsAndActionableLimits() {

@@ -120,6 +120,8 @@ public enum ProviderMarkInk {
         /// Bare black: the Screen Bar's ears and the notch.
         case black
         case blackPlate
+        /// The tile backgrounds used by the 0.9.17.2 notch.
+        case notchDarkPlate, notchLightPlate
         /// Material over the approved light or dark window background.
         case lightGlass, darkGlass
     }
@@ -177,6 +179,13 @@ public enum ProviderMarkInk {
         switch surface {
         case .darkPlate:
             return lifted(accent, toward: .white, against: plate(accent, over: darkSurface))
+        case .notchDarkPlate:
+            let oldSurface = RGB(red: 44 / 255, green: 44 / 255, blue: 44 / 255)
+            return lifted(accent, toward: .white, against: plate(accent, over: oldSurface))
+        case .notchLightPlate:
+            let clearOfBlack = lifted(accent, toward: .white, against: plate(accent, over: .black))
+            let oldSurface = RGB(red: 236 / 255, green: 236 / 255, blue: 236 / 255)
+            return lifted(clearOfBlack, toward: .black, against: plate(accent, over: oldSurface))
         case .darkGlass:
             return lifted(accent, toward: .white, against: plate(accent, over: darkGlassSurface))
         case .lightGlass:

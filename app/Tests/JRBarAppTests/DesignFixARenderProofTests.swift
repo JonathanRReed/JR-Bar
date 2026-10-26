@@ -29,8 +29,7 @@ struct DesignFixARenderProofTests {
             toy.cardModel.rows = toy.islandSummary.rows
             toy.cardModel.meters = NotchIsland.meters(state.usage)
             let card = NotchCardView(model: toy.cardModel, style: .island, width: 400,
-                pinnedLayout: true, stillTurn: 1, stillReduced: true, proofNow: Date(timeIntervalSince1970: stamp))
-                .proofExpandedGroups([root.id])
+                pinnedLayout: true, stillTurn: 1, stillReduced: true)
                 .padding(.top, 32)
                 .background(.black, in: NotchSilhouette(notchDepth: 32, restingRadius: 8))
                 .padding(JRBarTokens.Space.xl)

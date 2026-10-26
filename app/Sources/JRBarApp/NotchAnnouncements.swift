@@ -188,12 +188,7 @@ final class NotchAnnouncements {
     }
 }
 
-/// Focus state without the Focus Status entitlement: macOS keeps the
-/// live assertion set in `~/Library/DoNotDisturb/DB/Assertions.json`,
-/// rewriting the file on every toggle. We watch the directory (the
-/// system swaps the file atomically, which a file watch would lose on
-/// the first rename) and announce when the set flips between empty and
-/// non-empty.
+/// Announces the daemon's Focus state without reading the protected Focus database.
 @MainActor
 final class FocusWatcher {
     /// A flip worth announcing — never the baseline.
@@ -202,63 +197,15 @@ final class FocusWatcher {
     /// flip's `onChange`.
     var onSettle: (_ mode: String, _ on: Bool) -> Void = { _, _ in }
 
-    private var source: DispatchSourceFileSystemObject?
-    private var debounce: DispatchWorkItem?
     /// The baseline read at start — never announces, only diffs.
     private var active: (on: Bool, mode: String)?
-    /// The Assertions.json read; the tests stand in an unreadable one.
-    var readFile: () -> (on: Bool, mode: String)? = { FocusWatcher.read() }
-
-    private static var dbDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/DoNotDisturb/DB", isDirectory: true)
-    }
 
     isolated deinit { stop() }
 
-    func stop() {
-        debounce?.cancel()
-        debounce = nil
-        source?.cancel()
-        source = nil
-        active = nil
-    }
+    func stop() { active = nil }
 
     func start() {
-        guard source == nil else { return }
-        active = readFile()
-        if let active { onSettle(active.mode, active.on) }
-        let fd = open(Self.dbDirectory.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        source.setEventHandler { [weak self] in
-            guard let self, self.source != nil else { return }
-            // The DB rewrite can be a few writes in a burst — one read
-            // per settle, never per event.
-            self.debounce?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated { self?.readChanged() }
-            }
-            self.debounce = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-        }
-        source.setCancelHandler { close(fd) }
-        source.resume()
-        self.source = source
-    }
-
-    private func readChanged() {
-        guard source != nil else { return }
-        let now = readFile()
-        let same = (now?.on == active?.on && now?.mode == active?.mode)
-            || (now == nil && active == nil)
-        guard !same else { return }
-        let before = active
-        active = now
-        guard let now else { return }
-        onChange(Self.announcedName(now: now, before: before), now.on)
-        onSettle(now.mode, now.on)
+        active = nil
     }
 
     /// Off reads as the mode that just ended ("Work · Focus off"), not
@@ -269,11 +216,8 @@ final class FocusWatcher {
         return before.mode
     }
 
-    /// The daemon's view of the same DB. Used only when our own read
-    /// came back unreadable — the two feeds read one file, and a
-    /// readable file outranks a relayed one.
+    /// The daemon supplies the state through the existing core protocol.
     func noteDaemon(mode: String?, source: String?) {
-        guard readFile() == nil else { return }
         let (on, name) = Self.daemonFocus(mode: mode, source: source)
         // The first relayed document is a baseline, like the file's
         // first read: it settles and says nothing.
@@ -297,24 +241,6 @@ final class FocusWatcher {
         let mode = mode?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
         let quiet = !mode.isEmpty && mode != "off" && mode != "normal"
         return (quiet && source?.lowercased() == "focus", "Focus")
-    }
-
-    /// `(mode name, focused)` — nil when the file is missing or
-    /// unreadable, so a schema change can never announce a lie.
-    static func read() -> (on: Bool, mode: String)? {
-        let url = dbDirectory.appendingPathComponent("Assertions.json")
-        guard let data = try? Data(contentsOf: url),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let store = root["data"] as? [String: Any],
-              let records = store["storeAssertionRecords"] as? [[String: Any]]
-        else { return nil }
-        // A record carrying a mode identifier is a live assertion; the
-        // empty array is focus off.
-        guard let record = records.first,
-              let details = record["assertionDetails"] as? [String: Any],
-              let identifier = details["assertionDetailsModeIdentifier"] as? String
-        else { return (false, "Focus") }
-        return (true, modeName(for: identifier))
     }
 
     /// `com.apple.donotdisturb.mode.default` → "Do Not Disturb";

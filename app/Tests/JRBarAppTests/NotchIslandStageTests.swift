@@ -312,7 +312,7 @@ struct NotchIslandStageTests {
         #expect(toy.stage.shape == nil, "no stage left behind")
         #expect(window.presentedFrame == window.frame)
         #expect(shapeHeights.count > 15)
-        #expect(shapeHeights.allSatisfy { $0 <= card.height }, "the shared curve never overshoots")
+        #expect(shapeHeights.contains { $0 > card.height }, "the original spring settles after its overshoot")
     }
 
     @Test("in flight the shape moves between device pixels, and it lands on them")

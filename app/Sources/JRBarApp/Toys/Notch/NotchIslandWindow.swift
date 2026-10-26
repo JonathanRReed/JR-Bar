@@ -491,9 +491,8 @@ final class NotchIslandWindow: NSPanel {
 
     private var pullBase: (frame: NSRect, surface: NotchPullGesture.Surface)?
 
-    /// The display link advances the shared bounded curve. A retarget
-    /// starts at the frame already on screen and never overshoots.
-    private var spring: NotchFrameTransition?
+    /// The frame spring preserves velocity when a move changes direction.
+    private var spring: NotchFrameSpring?
     private var springLink: CADisplayLink?
     private var springTickAt: CFTimeInterval = 0
     /// Where a face change runs between: the resting island's height and
@@ -740,8 +739,8 @@ final class NotchIslandWindow: NSPanel {
             return
         }
         if let flip { morph = flip }
-        var spring = spring ?? NotchFrameTransition(at: presentedFrame)
-        spring.retarget(frame)
+        var spring = spring ?? NotchFrameSpring(at: presentedFrame)
+        spring.retarget(frame, motion: NotchFrameSpring.motion(from: spring.frame, to: frame))
         self.spring = spring
         // The notch is read once per morph, not once per display tick.
         springNotch = surroundingsOverride.map(\.floor) ?? toy?.notchFloor
@@ -787,7 +786,7 @@ final class NotchIslandWindow: NSPanel {
     /// where it is going, set before the first tick draws. The shape
     /// goes onto the stage in the same turn, so the view never fills a
     /// window larger than the shape for even a frame.
-    private func holdStage(for spring: NotchFrameTransition) {
+    private func holdStage(for spring: NotchFrameSpring) {
         guard Self.stagedMotion else { return }
         let want = NotchStage.frame(presented: spring.frame, target: spring.target,
                                     motion: spring.motion, within: stageBounds, scale: springScale)

@@ -554,13 +554,11 @@ struct NotchCardView: View {
     var stillTurn: CGFloat?
     /// And under Reduce Motion (the environment value cannot be set).
     var stillReduced = false
-    var proofNow: Date?
     /// The custom-timer popover — `ViewState`, not `@State`: the
     /// Command Line Tools ship no `SwiftUIMacros` plugin.
     @ViewState private var timerEntryShown = false
     @ViewState private var timerEntryName = ""
     @ViewState private var timerEntryMinutes = 10
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Narrow enough to read as the notch's own drop-down, wide enough
@@ -607,7 +605,7 @@ struct NotchCardView: View {
     }
 
     private var pageAnimation: Animation {
-        JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion)
+        reduceMotion ? .easeOut(duration: NotchMotion.reduceMotionFade) : NotchMotion.pageTurn.animation
     }
 
     /// One row's place in the reveal: on the island it reads the shape's
@@ -636,13 +634,7 @@ struct NotchCardView: View {
             // is never taller than the page it shows.
             Group {
                 switch model.page {
-                case .now:
-                    if let proofNow { nowPage(steps, now: proofNow) }
-                    else {
-                        TimelineView(.periodic(from: .now, by: 30)) { context in
-                            nowPage(steps, now: context.date)
-                        }
-                    }
+                case .now: nowPage(steps)
                 case .shelf: shelfPage(steps)
                 }
             }
@@ -668,7 +660,6 @@ struct NotchCardView: View {
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
         .environment(\.cardPopoverHold, model.popoverHold)
-        .environment(\.colorScheme, style == .island ? .dark : scheme)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
             guard model.tray.shelfEnabled() else { return false }
@@ -692,16 +683,16 @@ struct NotchCardView: View {
     private var wingHintRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "hand.draw")
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                .font(.system(size: 10, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.faintColor)
             Text("Flick an ear outward to hide it · swipe the bar sideways to bring it back")
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.faintColor)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button { model.dismissWingHint() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold)) // jrbar-token-exception: glyph in a 12 pt frame
+                    .font(.system(size: 8, weight: .bold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.faintColor)
                     .frame(width: 12, height: 12)
                     .notchHitArea(horizontal: 6, vertical: 6)
@@ -725,7 +716,7 @@ struct NotchCardView: View {
         let tile = RoundedRectangle(cornerRadius: tileSide * 0.28, style: .continuous)
         return HStack(alignment: .center, spacing: 9) {
             if let style = model.focus.style {
-                ProviderTile(style: style, size: tileSide)
+                NotchProviderTile(style: style, size: tileSide)
             } else {
                 // Nobody in focus: JR-Bar's own mark on a quiet tile the
                 // provider's would fill.
@@ -739,7 +730,7 @@ struct NotchCardView: View {
             VStack(alignment: .leading, spacing: pinned ? -2 : 1) {
                 HStack(spacing: 4) {
                     Text(model.focus.label)
-                        .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.titleColor)
                         .lineLimit(1)
                     if pinned {
@@ -751,13 +742,13 @@ struct NotchCardView: View {
                 // the light's reason sit, for a few seconds.
                 if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
                     Text(refusal)
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(.orange)
                         .lineLimit(1)
                         .help(refusal)
                 } else {
                     focusLine
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .lineLimit(1)
                 }
             }
@@ -809,7 +800,7 @@ struct NotchCardView: View {
                 // accent "Open" read as a warning.
                 Button { model.onOpenSession?() } label: {
                     Text("Open")
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.titleColor)
                         .fixedSize()
                         .padding(.horizontal, 10)
@@ -847,7 +838,7 @@ struct NotchCardView: View {
     /// while what it opens is open.
     private func headerMark(_ symbol: String, lit: Bool = false) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             .foregroundStyle(lit ? style.titleColor : style.subColor)
             .frame(width: 22, height: 22)
             .background(Circle().fill(lit ? style.chipFill : style.chipFaint))
@@ -859,13 +850,13 @@ struct NotchCardView: View {
     private var timerEntry: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Custom timer")
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             TextField("Label (optional)", text: $timerEntryName)
                 .textFieldStyle(.roundedBorder)
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             Stepper(value: $timerEntryMinutes, in: 1...720, step: 1) {
                 Text("\(timerEntryMinutes) min")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
             }
             HStack {
@@ -894,16 +885,16 @@ struct NotchCardView: View {
     /// Each run is its own block, so the card reads in three glances,
     /// not one list.
     @ViewBuilder
-    private func nowPage(_ steps: NotchCardRevealSteps, now: Date) -> some View {
+    private func nowPage(_ steps: NotchCardRevealSteps) -> some View {
         if !model.rows.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
                         id: \.element.id) { index, row in
-                    revealRow(steps.sessions + index, workingRow(row, now: now))
+                    revealRow(steps.sessions + index, sessionRow(row))
                 }
                 if model.rows.count > NotchIsland.rowLimit {
                     revealRow(steps.more, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 10.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.faintColor)
                         .padding(.leading, 15))
                 }
@@ -911,11 +902,8 @@ struct NotchCardView: View {
         }
         if !model.meters.isEmpty || model.privacyLine != nil {
             VStack(alignment: .leading, spacing: 7) {
-                if !model.meters.isEmpty {
-                    UsageGaugeHeader(windowNames: usageWindowNames)
-                }
                 ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(steps.meters + index, meterRow(meter, now: now))
+                    revealRow(steps.meters + index, meterRow(meter))
                 }
                 if let privacy = model.privacyLine {
                     revealRow(steps.privacy, privacyRow(privacy))
@@ -973,9 +961,9 @@ struct NotchCardView: View {
                 Button { model.onOpenOverview?() } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "square.grid.2x2")
-                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         Text("Agent Overview")
-                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                            .font(.system(size: 11, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     }
                     .foregroundStyle(style.subColor)
                     .padding(.horizontal, 10)
@@ -993,7 +981,7 @@ struct NotchCardView: View {
         let selected = model.page == page
         return Button { model.show(page) } label: {
             Text(title)
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: selected ? .semibold : .medium))
+                .font(.system(size: 11, weight: selected ? .semibold : .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(selected ? style.titleColor : style.faintColor)
                 .padding(.horizontal, 10)
                 .frame(height: 18)
@@ -1018,7 +1006,7 @@ struct NotchCardView: View {
             }
             .frame(width: 13, alignment: .leading)
             Text(line)
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.subColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1031,49 +1019,22 @@ struct NotchCardView: View {
     /// measured height does not depend on how long a command is.
     private static let askDetailHeight: CGFloat = 118
 
-    @ViewState private var expandedGroups: Set<String> = []
-
-    func proofExpandedGroups(_ groups: Set<String>) -> Self {
-        var copy = self
-        copy._expandedGroups = ViewState(initialValue: groups)
-        return copy
+    static func rowLabel(_ row: NotchIslandRow) -> String {
+        guard row.workerCount > 0 else { return row.label }
+        let failed = row.members.filter { $0.activity == .failed }.count
+        let unit = row.workerCount == 1 ? "worker" : "workers"
+        let count = "\(row.label) · \(row.workerCount) \(unit)"
+        return failed > 0 ? "\(count) · \(failed) failed" : count
     }
 
-    static func memberState(_ activity: SessionActivity) -> StateDot.State {
-        switch activity {
-        case .working: return .working
-        case .waiting: return .asking
-        case .failed: return .failed
-        case .done, .idle, .ended: return .done
-        }
-    }
-
-    @ViewBuilder
-    private func workingRow(_ row: NotchIslandRow, now: Date) -> some View {
-        if (row.unlinked && row.activity != .waiting) || (row.activity == .working && row.workerCount > 0) {
-            let marks = Array(Set(row.members.map(\.provider))).sorted()
-            let expansion = Binding(get: { expandedGroups.contains(row.id) }, set: { expanded in
-                if expanded { expandedGroups.insert(row.id) } else { expandedGroups.remove(row.id) }
-            })
-            AgentGroupRow(provider: row.provider, name: ProviderPalette.displayName(for: row.provider),
-                project: row.project, subtitle: row.label, elapsed: elapsed(row, now: now), state: Self.memberState(row.activity), memberMarks: marks,
-                workerCount: row.workerCount, unlinked: row.unlinked, expanded: expansion) {
-                    ForEach(Array(row.members.enumerated()), id: \.element.id) { index, member in
-                        let memberState = Self.memberState(member.activity)
-                        AgentMemberRow(provider: member.provider, name: member.label,
-                            role: member.role, elapsed: elapsed(member, now: now), state: memberState,
-                            isLast: index == row.members.count - 1)
-                    }
-                }
-                .environment(\.colorScheme, style == .island ? .dark : scheme)
-        } else {
-            sessionRow(row, now: now)
-        }
-    }
-
-    /// A session's provider, task, elapsed time and state. Waiting rows
-    /// keep their individual answer controls and refusal messages.
-    private func sessionRow(_ row: NotchIslandRow, now: Date) -> some View {
+    /// One live session under the header: the provider's dot, its label,
+    /// and the same activity word the island would say. A click opens
+    /// the session. A waiting row carries its verbs inline instead of
+    /// the word — each drawn only where `AskVerbs` says the daemon can
+    /// deliver it, and every one sent through the shared desk — with
+    /// the question itself on a faint second line; a refused answer or
+    /// open takes that line and says why, and the ask stays open.
+    private func sessionRow(_ row: NotchIslandRow) -> some View {
         let desk = model.askDesk()
         let pending = desk?.isPending(row.id) ?? false
         let openRefusal = model.openRefusals[row.id]
@@ -1093,17 +1054,13 @@ struct NotchCardView: View {
         let answering = answerable && ask.map(AskVerbs.approves) == true
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
-                ProviderLogoTile(provider: row.provider)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("\(ProviderPalette.displayName(for: row.provider)) · \(row.label)")
-                        .font(JRBarTokens.TypeStyle.headline.font)
-                        .foregroundStyle(style.titleColor)
-                        .lineLimit(1).truncationMode(.tail)
-                    if let project = row.project {
-                        Text(project).font(JRBarTokens.TypeStyle.caption.font)
-                            .foregroundStyle(style.subColor).lineLimit(1)
-                    }
-                }
+                NotchDot(color: isDemo ? DemoAskLook.tint : NotchProviderTile.style(for: row.provider).accent, size: 6)
+                    .frame(width: 7)
+                Text(Self.rowLabel(row))
+                    .font(.system(size: 12, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                    .foregroundStyle(style == .island ? .white.opacity(0.9) : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if isDemo { DemoAskBadge() }
                 Spacer(minLength: 4)
                 if row.activity == .waiting, ask?.isDestructive == true {
@@ -1139,22 +1096,17 @@ struct NotchCardView: View {
                     // person, so no loud "Waiting on you" beside a card
                     // that draws no verb.
                     Text(decidedLine)
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                        .font(.system(size: 11, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.subColor)
-                } else if row.activity != .working {
+                } else {
                     Text(row.activity.word)
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                        .font(.system(size: 11, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(row.activity.wordColor)
                 }
-                if let elapsed = elapsed(row, now: now) {
-                    Text(elapsed).font(JRBarTokens.TypeStyle.callout.font)
-                        .foregroundStyle(style.subColor).monospacedDigit()
-                }
-                StateDot(Self.memberState(row.activity))
             }
             if let refusal {
                 Text(refusal)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(openRefusal == nil && desk?.note(for: row.id)?.refused == false
                                      ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
@@ -1164,7 +1116,7 @@ struct NotchCardView: View {
             } else if let summary {
                 NotchAskCopy.line(summary, preview: row.activity == .waiting ? ask?.previewLine : nil,
                                   destructive: ask?.isDestructive == true, style: style, size: 10)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1190,10 +1142,10 @@ struct NotchCardView: View {
                         .padding(.leading, 15)
                 }
             }
-            if row.activity == .waiting, refusal == nil, let stale = ask?.staleLine(now: now) {
+            if row.activity == .waiting, refusal == nil, let stale = ask?.staleLine(now: Date()) {
                 // A long-unanswered ask is still an ask; it says how long.
                 Text(stale)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1256,46 +1208,60 @@ struct NotchCardView: View {
         }
     }
 
-    private func elapsed(_ row: NotchIslandRow, now: Date) -> String? {
-        PanelStore.elapsed(since: row.since.map { Date(timeIntervalSince1970: $0) }, now: now)
-    }
-
-    private func usage(_ meter: NotchIslandMeter) -> CoreProviderUsage {
-        meter.usage ?? CoreProviderUsage(id: meter.provider,
-            windows: [CoreUsageWindow(name: meter.window, usedPct: meter.percent, resetsAt: meter.resetsAt)],
-            state: meter.stale ? "stale" : "ready")
-    }
-
-    private var usageWindowNames: [String] {
-        UsageGaugeRow.orderedWindowNames(model.meters.flatMap { usage($0).windows.map(\.name) })
-    }
-
-    private func meterRow(_ meter: NotchIslandMeter, now: Date) -> some View {
-        let provider = usage(meter)
-        return HStack(spacing: JRBarTokens.Space.xs) {
-            UsageGaugeRow(provider: provider,
-                name: provider.instanceLabel ?? ProviderPalette.displayName(for: meter.provider),
-                now: now.timeIntervalSince1970, style: .compact, windowNames: usageWindowNames)
+    /// One quota meter: provider, window, a continuous bar, the percent
+    /// — with the reset countdown the ear's drain arc only hints at (a
+    /// broken source's fix once the reset is past), and the status
+    /// feed's incident mark when the vendor is having a day.
+    private func meterRow(_ meter: NotchIslandMeter) -> some View {
+        let accent = NotchProviderTile.style(for: meter.provider).accent
+        return HStack(spacing: 7) {
+            Text(NotchProviderTile.style(for: meter.provider).name)
+                .font(.system(size: 11.5, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                .foregroundStyle(style.titleColor.opacity(0.88))
+                .lineLimit(1)
+            Text(meter.window)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                .foregroundStyle(style.subColor)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule(style: .continuous).fill(style.chipFaint))
+            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date(), fix: meter.fix) {
+                Text(countdown)
+                    .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                    .monospacedDigit()
+                    .foregroundStyle(style.faintColor)
+                    .lineLimit(1)
+            }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(JRBarTokens.Ink.attention)
+                    .font(.system(size: 9, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                    .foregroundStyle(.orange)
                     .help("The provider's status feed reports an incident")
             }
+            Spacer(minLength: 4)
+            NotchLevelBar(fraction: (meter.percent ?? 0) / 100, tint: accent,
+                          track: style.chipFill, height: 5,
+                          dimmed: meter.percent == nil, glows: style == .island)
+                .frame(width: 64)
+            Text(meter.percentText)
+                .font(.system(size: 11, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+                .monospacedDigit()
+                .foregroundStyle(style.subColor)
+                .frame(width: 34, alignment: .trailing)
         }
-        .environment(\.colorScheme, style == .island ? .dark : scheme)
+        .contentShape(Rectangle())
         .contextMenu {
-            ForEach(provider.windows, id: \.id) { window in
-                if let resetsAt = window.resetsAt,
-                   resetsAt > now.timeIntervalSince1970,
-                   resetsAt - now.timeIntervalSince1970 <= ShelfTimerModel.maxDuration {
-                    Button("Remind Me When \(window.name) Resets") {
-                        model.timers.add(label: "\(ProviderPalette.displayName(for: meter.provider)) \(window.name) reset",
-                                         until: Date(timeIntervalSince1970: resetsAt))
-                    }
+            // A timer set to the window's own reset — "tell me when I
+            // can go again" without watching a countdown.
+            if let resetsAt = meter.resetsAt,
+               Date(timeIntervalSince1970: resetsAt).timeIntervalSinceNow <= ShelfTimerModel.maxDuration {
+                Button("Remind Me When \(meter.window) Resets") {
+                    model.timers.add(label: "\(NotchProviderTile.style(for: meter.provider).name) \(meter.window) reset",
+                                     until: Date(timeIntervalSince1970: resetsAt))
                 }
             }
         }
+        .accessibilityElement(children: .combine)
     }
 
 }
@@ -1328,14 +1294,14 @@ private struct ShelfMediaRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         NotchTrackLine(key: media.title) {
                             Text(media.title)
-                                .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
+                                .font(.system(size: 13, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .foregroundStyle(style.titleColor)
                                 .lineLimit(1)
                         }
                         if let byline = Self.byline(media) {
                             NotchTrackLine(key: byline) {
                                 Text(byline)
-                                    .font(JRBarTokens.TypeStyle.caption.font)
+                                    .font(.system(size: 11.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                     .foregroundStyle(style.subColor)
                                     .lineLimit(1)
                             }
@@ -1352,7 +1318,7 @@ private struct ShelfMediaRow: View {
                                 }
                             }
                             Text(utility.sourceName ?? "Now playing")
-                                .font(JRBarTokens.TypeStyle.caption.font)
+                                .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .foregroundStyle(style.faintColor)
                                 .lineLimit(1)
                         }
@@ -1368,7 +1334,7 @@ private struct ShelfMediaRow: View {
                         let shown = utility.elapsedShown(at: context.date)
                         HStack(spacing: 8) {
                             Text(Self.clock(shown))
-                                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
+                                .font(.system(size: 9.5, weight: .medium, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
                                 .frame(width: 30, alignment: .leading)
@@ -1383,7 +1349,7 @@ private struct ShelfMediaRow: View {
                                           }, onCancel: { utility.cancelScrub() })
                                 .id(utility.mediaTrack)
                             Text("−" + Self.clock(duration - shown))
-                                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
+                                .font(.system(size: 9.5, weight: .medium, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
                                 .frame(width: 34, alignment: .trailing)
@@ -1400,7 +1366,7 @@ private struct ShelfMediaRow: View {
                     // CoreAudio path the level HUD reads.
                     HStack(spacing: 8) {
                         Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.fill")
-                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .font(.system(size: 9)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .foregroundStyle(style.faintColor)
                             .frame(width: 30, alignment: .leading)
                         NotchScrubber(value: volume, range: 0...1, step: 0.05,
@@ -1416,7 +1382,7 @@ private struct ShelfMediaRow: View {
                     // names itself and can hand the sound elsewhere.
                     HStack(spacing: 8) {
                         Text(utility.currentOutput?.name ?? "Sound output")
-                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .foregroundStyle(style.faintColor)
                             .lineLimit(1)
                         Spacer(minLength: 4)
@@ -1444,7 +1410,7 @@ private struct ShelfMediaRow: View {
             transportButton("backward.fill", size: 11, label: "Previous track") { utility.send(.previousTrack) }
             Button { utility.send(.togglePlayPause) } label: {
                 Image(systemName: media.playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.titleColor)
                     .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                     .frame(width: 32, height: 32)
@@ -1466,9 +1432,9 @@ private struct ShelfMediaRow: View {
         Button { utility.agreeToLyrics() } label: {
             HStack(spacing: 5) {
                 Image(systemName: "quote.bubble")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 9)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 Text("Show synced lyrics — looks the song up on LRCLIB")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .lineLimit(1)
             }
             .foregroundStyle(style.faintColor)
@@ -1652,14 +1618,14 @@ struct LyricLines: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let line = lyrics.line(at: at) {
                     Text(line)
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                        .font(.system(size: 11.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.subColor)
                         .overlay {
                             if live, let progress = position.progress {
                                 // The sweep: the same text, brighter,
                                 // revealed left to right as the line plays.
                                 Text(line)
-                                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                                    .font(.system(size: 11.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                     .foregroundStyle(style.titleColor)
                                     .mask(alignment: .leading) {
                                         GeometryReader { geo in
@@ -1673,7 +1639,7 @@ struct LyricLines: View {
                 }
                 if let next = position.next {
                     Text(next)
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 10.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.faintColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1728,7 +1694,7 @@ private struct ShelfTogglesRow: View {
             }
             if let caption = toggles.caption {
                 Text(caption)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.faintColor)
                     .lineLimit(2)
             }
@@ -1752,13 +1718,13 @@ private struct ShelfTogglesRow: View {
             // as one phrase — the longest gives up a few percent instead.
             VStack(spacing: 5) {
                 Image(systemName: toggle.symbol)
-                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
                     .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
                 Text(title)
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                    .font(.system(size: 9, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(on ? style.titleColor : style.faintColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -1822,7 +1788,7 @@ struct NotchOutputPicker: View {
             // A 10 pt glyph on a 22 pt target: the frame keeps the row's
             // height, the shape reaches past it so the click lands.
             Image(systemName: current?.symbol ?? "hifispeaker")
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                .font(.system(size: 10, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.subColor)
                 .frame(width: 22, height: 14, alignment: .trailing)
                 .contentShape(Rectangle().inset(by: -4))
@@ -1900,7 +1866,7 @@ private struct ShelfBatteryRow: View {
                                   plugged: power.onAC, style: style)
                 Text(AlcovePower.batteryLine(power, adapterWatts: adapterWatts, working: working,
                                              heldAwake: heldAwake()))
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 11.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
             }
@@ -1931,7 +1897,7 @@ struct NotchBatteryGlyph: View {
                     .padding(2)
                 if plugged {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 7, weight: .heavy)) // jrbar-token-exception: battery glyph in an 11 pt frame
+                        .font(.system(size: 7, weight: .heavy)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(tone == nil ? style.inverseInk : AnyShapeStyle(Color.white))
                         .frame(maxWidth: .infinity)
                 }
@@ -1994,12 +1960,12 @@ struct ShelfTrayRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: CGFloat(max(0, rows)) * Self.tileHeight + CGFloat(max(0, rows - 1)) * Self.tileSpacing)
+                .frame(height: CGFloat(rows) * Self.tileHeight + CGFloat(rows - 1) * Self.tileSpacing)
             }
             if tray.canUndoClear {
                 Button { tray.undoClear() } label: {
                     Label("Undo Clear Shelf", systemImage: "arrow.uturn.backward")
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.subColor)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
@@ -2010,7 +1976,7 @@ struct ShelfTrayRow: View {
             }
             if let notice = tray.evictionNotice {
                 Text(notice)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 9.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -2025,7 +1991,7 @@ struct ShelfTrayRow: View {
             }
             if let notice = tray.actionNotice {
                 Text(notice)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 9.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(style.titleColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -2045,10 +2011,10 @@ struct ShelfTrayRow: View {
         Button { tray.paste() } label: {
             VStack(spacing: 4) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: JRBarTokens.TypeStyle.title3.size, weight: .medium))
+                    .font(.system(size: 15, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .frame(height: 28)
                 Text("Paste")
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                    .font(.system(size: 9.5, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             }
             .foregroundStyle(style.subColor)
             .frame(width: Self.tileWidth, height: Self.tileHeight)
@@ -2196,7 +2162,7 @@ struct ShelfTrayRow: View {
         VStack(spacing: 4) {
             if item.missing {
                 Image(systemName: "doc.questionmark")
-                    .font(JRBarTokens.TypeStyle.title3.font)
+                    .font(.system(size: 16)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .frame(width: 28, height: 28)
             } else {
                 // The file's own face — its Quick Look thumbnail once one
@@ -2209,7 +2175,7 @@ struct ShelfTrayRow: View {
                     .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
             }
             Text(item.missing ? "\(item.name) (moved)" : item.name)
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 9.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: Self.tileWidth - 10)
@@ -2278,7 +2244,7 @@ private struct ShelfStackChip: View {
             }
             .frame(width: 44, height: 28)
             Text("\(tray.stackName(stack)) · \(stack.items.count)")
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 9.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: ShelfTrayRow.tileWidth - 10)
@@ -2325,7 +2291,7 @@ private struct ShelfStackChip: View {
     private var grid: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(tray.stackName(stack))
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                .font(.system(size: 11, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 56),
                                          spacing: 6)],
                       spacing: 6) {
@@ -2335,7 +2301,7 @@ private struct ShelfStackChip: View {
                             .resizable()
                             .frame(width: 24, height: 24)
                         Text(item.name)
-                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .font(.system(size: 8)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -2346,7 +2312,7 @@ private struct ShelfStackChip: View {
                                                      style: .continuous))
                     .opacity(item.missing ? 0.38 : 1)
                     .background(ShelfDragSource(
-                        urls: { FileManager.default.fileExists(atPath: item.path) ? [item.url] : [] },
+                        urls: { item.missing ? [] : [item.url] },
                         policy: { tray.dragOutPolicy() },
                         ended: { operation, outside in
                             if ShelfDragOutRule.removes(operation: operation, outside: outside,
@@ -2417,7 +2383,7 @@ struct ShelfTimersRow: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewportWidth = $0 }
             .accessibilityHint("Scroll horizontally for more timers")
             Image(systemName: "arrow.left.and.right")
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
+                .font(.system(size: 10, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.faintColor)
                 .frame(width: 14)
                 .opacity(hasOverflow ? 1 : 0)
@@ -2451,17 +2417,17 @@ struct ShelfTimersRow: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: overdue ? "checkmark.circle.fill" : (entry.paused ? "pause.circle.fill" : "timer"))
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(overdue ? AnyShapeStyle(Color.green)
                                          : entry.paused ? AnyShapeStyle(style.subColor)
                                          : AnyShapeStyle(Color.orange))
                     VStack(alignment: .leading, spacing: 0) {
                         Text(overdue ? "Done" : remainingText(entry, now: now))
-                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .monospacedDigit()
                             .lineLimit(1)
                         Text(entry.label)
-                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .font(.system(size: 9)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .foregroundStyle(style.faintColor)
                             .lineLimit(1)
                             .frame(maxWidth: 76, alignment: .leading)
@@ -2482,7 +2448,7 @@ struct ShelfTimersRow: View {
                 ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
                     Button("+\(Int(seconds / 60))") { timers.extend(entry, by: seconds) }
                         .buttonStyle(.plain)
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .padding(.horizontal, 6)
                         .frame(height: 20)
                         .background(Capsule(style: .continuous).fill(style.chipFill))
@@ -2550,7 +2516,7 @@ struct ShelfCalendarRow: View {
             EmptyView()
         case .idle:
             Label("Nothing in the next 24 hours", systemImage: "calendar")
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.faintColor)
         case .events(let events):
             VStack(alignment: .leading, spacing: 5) {
@@ -2574,7 +2540,7 @@ struct ShelfCalendarRow: View {
                     .foregroundStyle(lead ? style.titleColor : style.subColor)
                     .lineLimit(1)
                 Text(Self.span(event))
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
@@ -2625,7 +2591,7 @@ struct ShelfRemindersRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Label("No reminders due", systemImage: "checklist")
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.faintColor)
                     Spacer(minLength: 4)
                     addButton(line: false)
@@ -2643,7 +2609,7 @@ struct ShelfRemindersRow: View {
                     Spacer(minLength: 4)
                     if items.count > ShelfRemindersModel.rowLimit {
                         Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
-                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .foregroundStyle(style.faintColor)
                     }
                 }
@@ -2657,7 +2623,7 @@ struct ShelfRemindersRow: View {
     private var writeNotice: some View {
         if let notice = reminders.writeNotice {
             Text(notice)
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(Color.orange)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2680,7 +2646,7 @@ struct ShelfRemindersRow: View {
                     .background(Circle().fill(line ? Color.clear : style.chipFaint))
                 if line {
                     Text("New reminder")
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 11.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.faintColor)
                 }
             }
@@ -2692,18 +2658,18 @@ struct ShelfRemindersRow: View {
         .popover(isPresented: WindowPresenter.presentation($adding), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("New reminder")
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 TextField("Call Sam tomorrow at 3pm", text: $draft)
                     .textFieldStyle(.roundedBorder)
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 11)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .onSubmit(save)
                 Text(Self.preview(draft))
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let notice = reminders.writeNotice {
                     Text(notice)
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -2751,14 +2717,14 @@ struct ShelfRemindersRow: View {
             .help("Mark done")
             .accessibilityLabel("Mark \(entry.title) done")
             Text(entry.title)
-                .font(JRBarTokens.TypeStyle.caption.font)
+                .font(.system(size: 11.5)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.titleColor)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if let due = entry.due {
                 Text(due < Date() ? "Overdue"
                     : due.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
+                    .font(.system(size: 10, weight: .medium, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
                     .foregroundStyle(due < Date() ? Color.orange : style.faintColor)
             }
@@ -2826,11 +2792,11 @@ private struct ShelfMirrorRow: View {
             if busy {
                 ProgressView().controlSize(.small).accessibilityHidden(true)
             } else {
-                Image(systemName: "camera.fill").font(JRBarTokens.TypeStyle.title3.font)
+                Image(systemName: "camera.fill").font(.system(size: 16)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .accessibilityHidden(true)
             }
-            Text(title).font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium)).foregroundStyle(style.titleColor)
-            Text(detail).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(style.faintColor)
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(style.titleColor) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
+            Text(detail).font(.system(size: 10)).foregroundStyle(style.faintColor) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) { actions() }
@@ -2872,10 +2838,10 @@ struct NotchVerbButton: View {
             HStack(spacing: 4) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 }
                 Text(title)
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: prominent ? .semibold : .medium))
+                    .font(.system(size: 11, weight: prominent ? .semibold : .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .lineLimit(1)
             }
             .opacity(busy && prominent ? 0 : 1)
@@ -2974,11 +2940,11 @@ struct NotchHoldSchedule: TimelineSchedule {
 /// that does not fit is cut, never the question.
 enum NotchAskCopy {
     static func line(_ summary: String, preview: String?, destructive: Bool,
-                     style: NotchCardStyle = .island, size: CGFloat = JRBarTokens.TypeStyle.caption.size) -> Text {
+                     style: NotchCardStyle = .island, size: CGFloat = 10.5) -> Text {
         guard let preview else { return Text(summary) }
         let dot = Text(verbatim: " · ").foregroundStyle(style.faintColor)
         let run = Text(preview)
-            .font(.system(size: max(JRBarTokens.TypeStyle.caption.size, size), design: .monospaced))
+            .font(.system(size: size, design: .monospaced))
             .foregroundStyle(destructive ? AnyShapeStyle(Color.red.opacity(0.9)) : AnyShapeStyle(style.subColor))
         return Text("\(Text(summary))\(dot)\(run)")
     }
@@ -3016,7 +2982,7 @@ struct NotchAskChoices: View {
                                    send: { Task { await desk.sendPicks(for: ask) } })
             } label: {
                 Text(AskChoiceLayout.menuTitle(choices, picks: picks))
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -3092,5 +3058,51 @@ struct NotchStillTurn: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+struct NotchProviderTile: View {
+    let style: ProviderStyle
+    var size: CGFloat = 22
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// How much of the tile's side the mark's box takes. A symbol at half
+    /// the side in points carried its own padding; a mark's path does not.
+    static let markShare: CGFloat = 0.58
+
+    static func style(for provider: String) -> ProviderStyle {
+        originalStyle(ProviderStyle.style(for: provider))
+    }
+
+    private static func originalStyle(_ style: ProviderStyle) -> ProviderStyle {
+        guard style.id == "grok", style.accentHex == "#8E8E93" else { return style }
+        return ProviderStyle(id: style.id, name: style.name, accentHex: "#636366", glyph: style.glyph, fallback: style.fallback)
+    }
+
+    var body: some View {
+        // The plate keeps the raw accent; the mark's ink clears 3:1 on it.
+        let style = Self.originalStyle(self.style)
+        let ink = style.markInk(on: colorScheme == .dark ? .notchDarkPlate : .notchLightPlate)
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(style.accent.opacity(0.18))
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .strokeBorder(style.accent.opacity(0.35), lineWidth: 0.5)
+            switch style.mark {
+            case .logo(let logo):
+                ProviderLogoMark(logo: logo, size: (size * Self.markShare).rounded())
+                    .foregroundStyle(ink)
+            case .symbol(let name):
+                Image(systemName: name)
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundStyle(ink)
+            case .text(let text):
+                Text(text)
+                    .font(.system(size: size * 0.56, weight: .semibold, design: .rounded))
+                    .foregroundStyle(ink)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(style.name)
     }
 }

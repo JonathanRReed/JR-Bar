@@ -1735,7 +1735,7 @@ final class NotchToy: Toy {
         NotchCardPresenter.publishedSurface = notchSurface
     }
 
-    /// Releases the island and its sources. Reopening builds a new window.
+    /// Keeps the island window for the next open and stops its sources while hidden.
     private func parkIsland() {
         cardPresentationGeneration &+= 1
         islandExpanded = false
@@ -1786,9 +1786,7 @@ final class NotchToy: Toy {
         stage.noteFace(expanded: false, settled: true)
         islandVisible = false
         publishSurface()
-        island?.contentView = nil
-        island?.close()
-        island = nil
+        island?.orderOut(nil)
         syncMediaMonitor()
         syncPowerMonitor()
         syncSensorMonitor()
