@@ -979,3 +979,22 @@ def test_the_stream_deck_endpoint_reports_off_as_off(
     controller._core_sync_serve_server()
     reply = controller._core_dispatch("serve_token", {})
     assert reply["enabled"] is True and reply["running"] is False
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["sidepulse", "pulsedot"])
+def test_disabled_device_receives_zero_commands(rig: Rig, index: int) -> None:
+    rig.plan()
+    device = (rig.pro, rig.dot)[index]
+    rig.set(f"devices.{index}.enabled", False)
+    submitted = []
+    rig.controller._hardware_write_worker = SimpleNamespace(
+        submit=submitted.append, discard_pending_prefix=lambda _prefix: None,
+    )
+    before = device.target.read_bytes()
+    rig.plan()
+    assert submitted  # The enabled sibling still receives commands.
+    for command in submitted:
+        payload = command.payload
+        requests = getattr(payload, "requests", (payload,))
+        assert all(request.device.device_id != device.device_id for request in requests)
+    assert device.target.read_bytes() == before

@@ -26,7 +26,7 @@ struct WindowsRenderProofTests {
     /// Writes `view` at the requested width and at least the requested
     /// height, once per appearance, over the window's material plate.
     static func write<V: View>(_ name: String, size: CGSize, plate: Plate = .window,
-                               @ViewBuilder _ view: () -> V) throws {
+                               requiresKey: Bool = true, @ViewBuilder _ view: () -> V) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let content = view()
         for dark in [false, true] {
@@ -38,7 +38,8 @@ struct WindowsRenderProofTests {
             .frame(minHeight: size.height)
             .environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.renderSnapshot, true)
-            let rep = try SettingsRenderProofTests.snapshot(framed, size: size, dark: dark, growToFit: true)
+            let rep = try SettingsRenderProofTests.snapshot(framed, size: size, dark: dark, growToFit: true,
+                                                             requiresKey: requiresKey)
             let png = try #require(rep.representation(using: .png, properties: [:]))
             try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
         }

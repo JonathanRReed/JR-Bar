@@ -215,7 +215,8 @@ struct SettingsRenderProofTests {
     /// Draws `view` in an offscreen window at `size` under the given
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
-    static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false) throws -> NSBitmapImageRep {
+    static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false,
+                                  requiresKey: Bool = true) throws -> NSBitmapImageRep {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
@@ -236,7 +237,7 @@ struct SettingsRenderProofTests {
             window.setContentSize(captureSize)
             hosting.frame = NSRect(origin: .zero, size: captureSize)
         }
-        if enabled {
+        if enabled && requiresKey {
             try WindowPresenter.renderProofKey(window)
             if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
             #expect(window.isKeyWindow)
