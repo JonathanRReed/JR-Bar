@@ -2503,9 +2503,12 @@ final class DockEnhanceController {
     ///
     /// Capped at 60: the pop is a quick-open surface, not Finder.
     nonisolated static func folderListing(of url: URL, sort: DockFolderSort = .name) -> DockFolderListing {
-        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        let policy = ExternalFilePolicy(home: NSHomeDirectory(), dockFolders: [url.standardizedFileURL.path])
         guard policy.allows(url) else { return DockFolderListing(failed: true) }
-        guard policy.available(url) else { return DockFolderListing(failed: true) }
+        guard policy.available(url) else {
+            let denied = errno == EACCES || errno == EPERM
+            return DockFolderListing(denied: denied, failed: !denied)
+        }
         guard let dir = opendir(url.path) else {
             // Downloads/Desktop/Documents gate behind Files-and-Folders
             // consent — the denial surfaces as EACCES/EPERM, or EINTR

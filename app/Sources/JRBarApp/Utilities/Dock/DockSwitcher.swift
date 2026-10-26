@@ -479,8 +479,9 @@ enum DockSwitcherList {
     /// (two window-list passes, no AX), and titles are left out because
     /// a terminal's spinner retitles it several times a second.
     static func signature(rows: [SwitcherWindowRow], offRows: [SwitcherWindowRow],
-                          marks: [DockAgentMark]) -> Set<String> {
+                          marks: [DockAgentMark], metadataVersion: Int = 0) -> Set<String> {
         var parts = Set((rows + offRows).map { "w\($0.windowID)" })
+        parts.insert("metadata:\(metadataVersion)")
         for mark in marks { parts.insert("s\(mark.sessionID):\(mark.activity.rawValue)") }
         return parts
     }
@@ -1449,7 +1450,8 @@ final class DockSwitcherController {
     private func currentSignature() -> Set<String> {
         var signature = DockSwitcherList.signature(rows: DockSwitcherList.onScreenRows(),
                                                    offRows: DockSwitcherList.offScreenRows(),
-                                                   marks: agentMarks())
+                                                   marks: agentMarks(),
+                                                   metadataVersion: ExternalFileMetadata.shared.version)
         signature.formUnion(excludedBundleIDs().map { "excluded:\($0)" })
         if appMode {
             for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
