@@ -29,7 +29,7 @@ struct PaletteSection: Hashable, Sendable {
     static let menuBar = PaletteSection(id: "menuBar", title: "Menu Bar", order: 20)
     static let quiet = PaletteSection(id: "quiet", title: "Quiet", order: 30)
     static let lights = PaletteSection(id: "lights", title: "Lights", order: 40)
-    static let controlCenter = PaletteSection(id: "controlCenter", title: "Control Center", order: 50)
+    static let controlCenter = PaletteSection(id: "controlCenter", title: "Creator Micro", order: 50)
     static let usage = PaletteSection(id: "usage", title: "Usage", order: 55)
     static let automation = PaletteSection(id: "automation", title: "Profiles & Rules", order: 60)
     /// Feed the Tank, the tank itself, Confetti.

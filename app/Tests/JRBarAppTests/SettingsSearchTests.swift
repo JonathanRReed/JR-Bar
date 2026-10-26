@@ -14,8 +14,8 @@ import Testing
     @Test func aRowsOwnWordsLandOnTheRow() {
         let lid = SettingsSearch.search("lid closed", in: entries).first
         #expect(lid?.title == "Lid closed")
-        #expect(lid?.page == .general, "Power sits on General now")
-        #expect(lid?.chapter == .general)
+        #expect(lid?.page == .utilities)
+        #expect(lid?.chapter == .utilities)
         #expect(SettingsSearch.search("alert burst", in: entries).first?.title == "Alert burst")
         #expect(SettingsSearch.search("launch at login", in: entries).first?.chapter == .general)
     }
@@ -23,7 +23,7 @@ import Testing
     @Test @MainActor func usageCenterSearchRevealsItsEntry() throws {
         let entry = try #require(SettingsSearch.search("usage center", in: entries).first)
         #expect(entry.title == "Usage Center")
-        #expect(entry.group == "Usage Center")
+        #expect(entry.group == "Usage")
         #expect(entry.chapter == .usage)
         let settings = SettingsStore(core: CoreModel())
         settings.reveal(entry)
@@ -199,8 +199,8 @@ import Testing
         let searchable = settings.searchEntries
         let lyrics = SettingsSearch.search("synced lyrics", in: searchable).first
         #expect(lyrics?.title == "Synced lyrics")
-        #expect(lyrics?.chapter == .utilities)
-        #expect(lyrics?.page == .utilities)
+        #expect(lyrics?.chapter == .notch)
+        #expect(lyrics?.page == .notch)
         #expect(lyrics?.card == "notch")
         #expect(SettingsSearch.search("lrclib", in: searchable).first?.card == "notch")
         let screensaver = SettingsSearch.search("screensaver", in: searchable).first
@@ -208,16 +208,16 @@ import Testing
         #expect(screensaver?.chapter == .toys)
         #expect(screensaver?.page == .utilities, "Toys sit on the Utilities & Toys page")
         // The notch card itself is searchable, on the Utilities page.
-        #expect(searchable.contains { $0.title == "Notch" && $0.chapter == .utilities && $0.card == "notch" })
+        #expect(searchable.contains { $0.title == "Notch" && $0.chapter == .notch && $0.card == "notch" })
         withExtendedLifetime(toys) {}
     }
 
     @Test @MainActor func revealingACardRowOpensAndLightsTheCard() {
         let settings = SettingsStore(core: CoreModel())
-        let hit = SettingsSearchEntry(.utilities, "Notch", "Synced lyrics", card: "notch")
+        let hit = SettingsSearchEntry(.notch, "Notch", "Synced lyrics", card: "notch")
         let before = settings.revealRequest
         settings.reveal(hit)
-        #expect(settings.page == .utilities)
+        #expect(settings.page == .notch)
         #expect(settings.searchHit == hit)
         #expect(settings.expandedCards.contains("notch"))
         #expect(settings.highlightedCard == "notch")

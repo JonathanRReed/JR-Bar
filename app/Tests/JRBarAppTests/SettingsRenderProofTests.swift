@@ -1,3 +1,5 @@
+import JRBarUI
+import QuartzCore
 import AppKit
 import Foundation
 import SwiftUI
@@ -136,11 +138,11 @@ struct SettingsRenderProofTests {
         let utilities: UtilitiesStore
     }
 
-    private static func fixture() throws -> Fixture {
+    private static func fixture(firmware: FirmwareStore? = nil) throws -> Fixture {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-render-proof.sock")
         core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
                                           document: try document())))
-        let settings = SettingsStore(core: core)
+        let settings = SettingsStore(core: core, firmware: firmware)
         let toys = ToysStore(core: core, settings: settings, state: ToysState(),
                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         settings.toys = toys
@@ -745,4 +747,140 @@ struct SettingsRenderProofTests {
         core.handle(.connected)
         core.apply(.state(CoreState(sessions: [], asks: [])))
     }
+}
+
+extension SettingsRenderProofTests {
+    @Test("Approved Settings pages as key windows", .enabled(if: Self.enabled))
+    func organizedKeyWindows() async throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let status: JSONValue = .object([
+            "catalog": .array([]),
+            "devices": .array(["pro", "dot"].map { kind in .object([
+                "id": .string("fixture-\(kind)"), "name": .string(kind == "pro" ? "SidePulse" : "PulseDot"),
+                "model": .string(kind), "mounted": .bool(true), "version": .string("1.0.0"),
+                "latest": .string("1.0.0"), "update_available": .bool(false), "can_update": .bool(false),
+            ]) }),
+        ])
+        let firmware = FirmwareStore { _, _ in CoreReply(id: "proof", ok: true, result: status) }
+        await firmware.refresh()
+        let fixture = try Self.fixture(firmware: firmware)
+        defer { fixture.toys.shutdown() }
+        Self.goLive(fixture.core)
+        let hardware = fixture.settings.deviceEntries.filter { $0.kind == "pro" || $0.kind == "dot" }.map {
+            CoreDevice(id: $0.id, kind: $0.kind, connected: true)
+        }
+        fixture.core.apply(.state(CoreState(devices: hardware)))
+        fixture.settings.launchAtLoginStatus = { false }
+        let previousHolders = KeepAwakeUtility.shared.proofHolders
+        KeepAwakeUtility.shared.proofHolders = []
+        defer { KeepAwakeUtility.shared.proofHolders = previousHolders }
+        let providerData = Data("""
+        [{"id":"claude","enabled":true,"supports_quota":true,"usage_consent":{"granted":true,"version":1,"detail":"Reads account quota.","question":"Read Claude usage?"}},
+         {"id":"codex","enabled":true,"supports_quota":true,"usage_consent":{"granted":false,"version":1}},
+         {"id":"gemini","enabled":false,"supports_quota":true},
+         {"id":"factory","enabled":true,"supports_local_tokens":true,"usage_consent":{"granted":false,"version":1}}]
+        """.utf8)
+        let providers = try JSONDecoder().decode([ProviderRow].self, from: providerData)
+        fixture.settings.providerList.readRows = { providers }
+        await fixture.settings.providerList.refresh()
+        fixture.settings.t3Integration.receive(T3CodeStatus(present: true, enabled: true, readOnly: true,
+                                                          observation: nil, running: false, installed: true))
+        for page in SettingsStore.Page.allCases {
+            fixture.settings.page = page
+            let heights: [SettingsStore.Page: CGFloat] = [
+                .alerts: 3200, .shortcuts: 2400, .remote: 2200, .advanced: 2400,
+                .privacy: 1500, .devices: 2600, .notch: 5000, .agents: 1400,
+            ]
+            let height = heights[page] ?? 1000
+            for dark in [false, true] {
+                try await Self.keySnapshot(SettingsRootView(store: fixture.settings),
+                                           name: "u3-\(page.rawValue)", height: height, dark: dark)
+            }
+        }
+        for page in [SettingsStore.Page.agents, .alerts, .shortcuts] {
+            fixture.settings.page = page
+            fixture.settings.subpage = "advanced"
+            for dark in [false, true] {
+                try await Self.keySnapshot(SettingsRootView(store: fixture.settings),
+                                           name: "u3-\(page.rawValue)-advanced", height: page == .alerts ? 2800 : 1600, dark: dark)
+            }
+        }
+        fixture.settings.page = .devices
+        fixture.settings.subpage = "calibration"
+        for dark in [false, true] {
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "u3-calibration", height: 1400, dark: dark)
+        }
+        fixture.settings.page = .agents
+        fixture.settings.selectedProvider = "claude"
+        for dark in [false, true] {
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "u3-provider-detail", height: 1000, dark: dark)
+        }
+        fixture.settings.page = .utilities
+        fixture.settings.subpage = "keepAwake"
+        for dark in [false, true] {
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "u3-keep-awake", height: 1700, dark: dark)
+        }
+        for id in Self.cardIDs(fixture) where id != fixture.toys.notch?.id {
+            fixture.settings.subpage = id
+            fixture.settings.expandedCards.insert(id)
+            let height: CGFloat = id == "menuBar" ? 6000 : id == "dock" ? 4500 : 2600
+            for dark in [false, true] {
+                try await Self.keySnapshot(SettingsRootView(store: fixture.settings),
+                                           name: "u3-detail-\(id)", height: height, dark: dark)
+            }
+        }
+        fixture.settings.page = .devices
+        fixture.core.handle(.disconnected(reason: "Synthetic disconnect"))
+        for dark in [false, true] {
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "u3-devices-offline", height: 2600, dark: dark)
+        }
+    }
+
+    private static func keySnapshot<V: View>(_ view: V, name: String, height: CGFloat, dark: Bool) async throws {
+        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+        NSApplication.shared.setActivationPolicy(.regular)
+        let previousAppearance = NSApp.appearance
+        NSApp.appearance = appearance
+        defer { NSApp.appearance = previousAppearance }
+        let size = NSSize(width: 900, height: height)
+        let root = view.environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.controlActiveState, .key)
+            .jrbarAccessibility(reduceMotion: true)
+            .frame(width: size.width, height: size.height)
+        let window = SettingsKeyProofWindow(contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: size),
+                                            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = appearance
+        let controller = WindowContentLifecycle.attach(to: window, title: "JR-Bar Settings") {
+            SettingsHostingController(rootView: AnyView(CheckedContent(content: root)))
+        }
+        let host = controller.view
+        host.appearance = appearance
+        host.frame = NSRect(origin: .zero, size: size)
+        try WindowPresenter.renderProofKey(window)
+        defer { WindowContentLifecycle.detach(from: window); window.close() }
+        if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
+        #expect(window.isKeyWindow)
+        if let table = SettingsWindowController.sidebarTable(in: host) { window.makeFirstResponder(table) }
+        for _ in 0..<6 {
+            host.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await drainMainQueue()
+        }
+        CATransaction.flush()
+        #expect(window.isKeyWindow, "The page is captured as a native key window")
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        appearance.performAsCurrentDrawingAppearance {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+        }
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        try data.write(to: Self.directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+    }
+}
+
+@MainActor
+private final class SettingsKeyProofWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

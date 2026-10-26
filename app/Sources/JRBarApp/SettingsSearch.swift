@@ -46,7 +46,7 @@ struct SettingsSearchEntry: Hashable, Identifiable, Sendable {
 
 enum SettingsSearch {
     /// The daemon pages' titled rows, by page and group.
-    nonisolated static let rows: [SettingsSearchEntry] = listed.map(withHint)
+    nonisolated static let rows: [SettingsSearchEntry] = listed.compactMap(currentEntry).map(withHint)
 
     /// What makes a conditional row appear, by page, group and title.
     /// A row not named here is always drawn.
@@ -55,8 +55,8 @@ enum SettingsSearch {
         var map: [String: String] = [
             "devices/Screen Bar/Corner radius": "Shown when Notch shape is Custom.",
             "devices/Pro & Dot/The Dot sits": "Shown when Look continues the strip into the Dot.",
-            "devices/Creator Micro 2/Details": "Shown once the Creator Micro 2 is connected.",
-            "devices/Creator Micro 2/Layers": "Shown once the Creator Micro 2 is connected.",
+            "devices/Creator Micro/Details": "Shown once the Creator Micro is connected.",
+            "devices/Creator Micro/Layers": "Shown once the Creator Micro is connected.",
             "devices/Devices/Eject guard": "Shown for a SidePulse Pro once it is connected.",
             "devices/Firmware/Firmware": "Shown once a SidePulse is connected.",
             "devices/Firmware/Review update…": "Shown when a connected SidePulse has an available update.",
@@ -76,8 +76,37 @@ enum SettingsSearch {
                       "Strip direction"] {
             map["devices/Devices/\(title)"] = device
         }
-        return map
+        var normalized: [String: String] = [:]
+        for (key, hint) in map {
+            let parts = key.split(separator: "/", maxSplits: 2).map(String.init)
+            guard let original = listed.first(where: { $0.chapter.rawValue == parts[0] && $0.group == parts[1] && $0.title == parts[2] }),
+                  let moved = currentEntry(original) else { continue }
+            normalized["\(moved.chapter.rawValue)/\(moved.group)/\(moved.title)"] = hint
+        }
+        return normalized
     }()
+
+    private nonisolated static func currentEntry(_ entry: SettingsSearchEntry) -> SettingsSearchEntry? {
+        // Lighting and animation controls moved into Studio.
+        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Travel", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
+        if entry.chapter == .lighting || (entry.chapter == .devices && entry.group == "Pro & Dot")
+            || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
+            return SettingsSearchEntry(.lighting, entry.group, entry.title, subtitle: entry.subtitle,
+                                       keywords: entry.keywords, card: entry.card, hint: entry.hint)
+        }
+        if ["Providers in the icon", "Show meters for", "Remove Hooks"].contains(entry.title) { return nil }
+        var chapter = entry.chapter
+        var group = entry.group
+        if ["Watch transcripts", "Mic and camera presence", "Keep history", "Keep for", "Provider status pages", "Check for agent updates"].contains(entry.title) { chapter = .privacy }
+        if entry.chapter == .general && ["Setup", "Release channel"].contains(entry.group) { chapter = .advanced }
+        if entry.group == "Power" { chapter = .utilities; group = "Keep Awake" }
+        if entry.title == "T3 Code" { chapter = .integrations }
+        if ["Provider status pages", "Check for agent updates"].contains(entry.title) { group = "Network requests" }
+        if entry.title == "Usage Center" { group = "Usage" }
+        if entry.title == "Lead with" || entry.title == "Graph range" { group = "Usage" }
+        return SettingsSearchEntry(chapter, group, entry.title, subtitle: entry.subtitle,
+                                   keywords: entry.keywords, card: entry.card ?? (group == "Keep Awake" ? "keepAwake" : nil), hint: entry.hint)
+    }
 
     private nonisolated static func withHint(_ entry: SettingsSearchEntry) -> SettingsSearchEntry {
         guard entry.hint == nil, let hint = hints["\(entry.chapter.rawValue)/\(entry.group)/\(entry.title)"] else { return entry }
@@ -96,6 +125,12 @@ enum SettingsSearch {
 
     private nonisolated static let listed: [SettingsSearchEntry] = [
         .init(.general, "Startup", "Launch at login"),
+        .init(.agents, "Providers", "Track"),
+        .init(.agents, "Providers", "Menu bar", keywords: ["menu bar meters", "meter", "icon"]),
+        .init(.agents, "Providers", "Panel"),
+        .init(.agents, "Providers", "Remove integration", keywords: ["remove hooks", "uninstall", "delete", "hook"], hint: "Open a provider's settings."),
+        .init(.usage, "Usage", "Token history"),
+        .init(.devices, "", "Open Studio", keywords: ["lighting", "colors", "animations", "blend", "colour calibration", "color calibration", "calibration", "dot role", "maximum brightness"]),
         .init(.general, "Setup", "Setup", subtitle: "The first-run walkthrough: agents, permissions, menu bar."),
         .init(.general, "Software Update", "Version"),
         .init(.general, "Software Update", "Automatically check for updates"),
@@ -177,12 +212,12 @@ enum SettingsSearch {
               keywords: ["update firmware", "upgrade", "install", "flash", "download", "ota"]),
         .init(.devices, "Firmware", "Check firmware", subtitle: "Reads the device's firmware version again. Makes no network request.",
               keywords: ["firmware", "refresh", "recheck"]),
-        .init(.devices, "Creator Micro 2", "Enable Creator Micro 2", subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs."),
-        .init(.devices, "Creator Micro 2", "Session keys", subtitle: "The thirteen keys follow the session board; only the dial, joystick and analog sectors take explicit mappings."),
-        .init(.devices, "Creator Micro 2", "Analog joystick sectors", subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center."),
-        .init(.devices, "Creator Micro 2", "Details"),
-        .init(.devices, "Creator Micro 2", "Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over."),
-        .init(.devices, "Creator Micro 2", "Control Center", subtitle: "Pins, banks, the rail, input check and the keymap.",
+        .init(.devices, "Creator Micro", "Enable Creator Micro", subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs."),
+        .init(.devices, "Creator Micro", "Session keys", subtitle: "The thirteen keys follow the session board; only the dial, joystick and analog sectors take explicit mappings."),
+        .init(.devices, "Creator Micro", "Analog joystick sectors", subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in Creator Micro."),
+        .init(.devices, "Creator Micro", "Details"),
+        .init(.devices, "Creator Micro", "Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over."),
+        .init(.devices, "Creator Micro", "Creator Micro", subtitle: "Pins, banks, the rail, input check and the keymap.",
               keywords: ["creator micro", "keymap", "pad", "window"]),
         .init(.devices, "Screen Bar", "Display", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
@@ -376,6 +411,9 @@ enum SettingsSearch {
         .shortcuts: ["hotkey", "keyboard", "key", "chord", "links", "url", "jrbar://", "toggles", "raycast", "alfred"],
         .remote: ["peers", "tailscale", "serve", "ingest", "token", "fleet", "other mac", "endpoint"],
         .advanced: ["doctor", "logs", "reset", "diagnostics", "socket", "debug"],
+        .notch: ["notch", "shelf", "island", "media", "files"],
+        .privacy: ["privacy", "permissions", "transcripts", "history", "consent"],
+        .integrations: ["t3", "integration", "compatibility"],
     ]
 
     /// Every page itself, so a page name or one of its keywords lands

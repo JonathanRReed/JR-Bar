@@ -14,22 +14,23 @@ import UserNotifications
 @MainActor
 @Observable
 final class SettingsStore {
-    /// The seven pages the sidebar lists. Each holds one or two chapters:
-    /// the twelve areas Settings used to list as pages of their own. A
-    /// chapter keeps its old name, so a link, a search hit or a saved
-    /// choice that names one still lands on it.
+    /// Sidebar pages and the older chapter names accepted by deep links.
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, alerts, devices, utilities, shortcuts, remote
+        case general, agents, alerts, devices, notch, utilities, shortcuts, remote, privacy, integrations, advanced
 
         var id: String { rawValue }
 
         /// The chapters this page holds, top to bottom.
         var chapters: [Chapter] {
             switch self {
-            case .general: return [.general, .advanced]
+            case .general: return [.general]
             case .agents: return [.agents, .usage]
             case .alerts: return [.notifications, .sounds]
             case .devices: return [.devices, .lighting]
+            case .notch: return [.notch]
+            case .privacy: return [.privacy]
+            case .integrations: return [.integrations]
+            case .advanced: return [.advanced]
             case .utilities: return [.utilities, .toys]
             case .shortcuts: return [.shortcuts]
             case .remote: return [.remote]
@@ -39,12 +40,16 @@ final class SettingsStore {
         var title: String {
             switch self {
             case .general: return "General"
-            case .agents: return "Agents & Usage"
+            case .agents: return "Providers"
             case .alerts: return "Alerts & Sounds"
-            case .devices: return "Devices & Lighting"
+            case .devices: return "Devices"
             case .utilities: return "Utilities & Toys"
             case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
+            case .notch: return "Notch & Shelf"
+            case .privacy: return "Privacy"
+            case .integrations: return "Integrations"
+            case .advanced: return "Advanced"
             }
         }
 
@@ -57,6 +62,10 @@ final class SettingsStore {
             case .utilities: return "wrench.and.screwdriver.fill"
             case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
+            case .notch: return "macbook"
+            case .privacy: return "hand.raised.fill"
+            case .integrations: return "puzzlepiece.extension.fill"
+            case .advanced: return "slider.horizontal.3"
             }
         }
 
@@ -70,13 +79,56 @@ final class SettingsStore {
             case .utilities: return Color(nsColor: .systemIndigo)
             case .shortcuts: return Color(nsColor: .systemPurple)
             case .remote: return Color(nsColor: .systemTeal)
+            case .notch: return Color(nsColor: .systemGray)
+            case .privacy: return Color(nsColor: .systemGreen)
+            case .integrations: return Color(nsColor: .systemCyan)
+            case .advanced: return Color(nsColor: .systemGray)
             }
         }
 
         /// The daemon-document pages this page resets: every chapter
         /// that has keys, apart from Advanced (which only holds tools).
         var resettable: [SettingsKey.Page] {
-            chapters.filter { $0 != .advanced }.compactMap(\.catalogue)
+            switch self {
+            case .general: return [.general]
+            case .agents: return [.agents, .usage]
+            case .alerts, .utilities: return [.notifications]
+            case .devices: return [.devices]
+            case .privacy: return [.agents, .usage, .notifications]
+            case .remote: return [.remote]
+            default: return []
+            }
+        }
+
+        private static let powerPaths: Set<String> = [
+            "agent_keep_awake_enabled", "keep_display_awake", "closed_lid_awake_policy",
+            "closed_lid_grace_minutes", "keep_awake_on_battery",
+        ]
+        private static let privacyPaths: Set<String> = [
+            "presence_enabled", "capacity_history_enabled", "capacity_history_retention_days",
+            "provider_status_feeds_enabled", "provider_update_checks_enabled",
+        ]
+        private static let devicePaths: Set<String> = [
+            "virtual_status_device_enabled", "screen_bar_follow_alcove", "screen_bar_show_in_full_screen",
+            "screen_bar_gap_width", "screen_bar_wing_length", "screen_bar_notch_wings",
+            "screen_bar_notch_profile", "screen_bar_notch_corner", "screen_bar_hidden_apps",
+        ]
+
+        func resetPaths(in document: SettingsDocument) -> [String] {
+            resettable.flatMap { SettingsKey.resetPaths(on: $0, in: document) }.filter { path in
+                let power = Self.powerPaths.contains(path)
+                let privacy = Self.privacyPaths.contains(path) || path.hasPrefix("transcript_monitoring.")
+                switch self {
+                case .utilities: return power
+                case .privacy: return privacy
+                case .devices:
+                    if path.hasPrefix("devices.") {
+                        return ["enabled", "brightness", "auto_brightness_enabled", "led_direction", "red_gain", "green_gain", "blue_gain", "resting_glow"].contains(path.components(separatedBy: ".").last ?? "")
+                    }
+                    return Self.devicePaths.contains(path)
+                default: return !power && !privacy
+                }
+            }
         }
 
         /// A page or chapter named in a link, a script or an old
@@ -84,6 +136,7 @@ final class SettingsStore {
         /// into view when the name is a chapter's.
         static func destination(named name: String) -> (page: Page, chapter: Chapter?)? {
             let key = name.lowercased()
+            if key == "providers" { return (.agents, nil) }
             if let chapter = Chapter(rawValue: key) { return (chapter.page, chapter) }
             if let page = Page(rawValue: key) { return (page, nil) }
             return nil
@@ -91,20 +144,24 @@ final class SettingsStore {
 
         /// Every name a link may use: the pages and the chapters.
         static var linkNames: Set<String> {
-            Set(allCases.map(\.rawValue)).union(Chapter.allCases.map(\.rawValue))
+            Set(allCases.map(\.rawValue)).union(Chapter.allCases.map(\.rawValue)).union(["providers"])
         }
     }
 
     /// The twelve areas Settings has grown, each now a chapter of a page.
     /// Search entries, resets, cards and deep links still speak in them.
     enum Chapter: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, utilities, lighting, toys, notifications, sounds, shortcuts, remote, advanced
+        case general, agents, usage, devices, notch, utilities, lighting, toys, notifications, sounds, shortcuts, remote, privacy, integrations, advanced
 
         var id: String { rawValue }
 
         var page: Page {
             switch self {
-            case .general, .advanced: return .general
+            case .general: return .general
+            case .advanced: return .advanced
+            case .notch: return .notch
+            case .privacy: return .privacy
+            case .integrations: return .integrations
             case .agents, .usage: return .agents
             case .notifications, .sounds: return .alerts
             case .devices, .lighting: return .devices
@@ -127,6 +184,9 @@ final class SettingsStore {
             case .sounds: return "Sounds"
             case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
+            case .notch: return "Notch & Shelf"
+            case .privacy: return "Privacy"
+            case .integrations: return "Integrations"
             case .advanced: return "Advanced"
             }
         }
@@ -144,6 +204,9 @@ final class SettingsStore {
             case .sounds: return "speaker.wave.2.fill"
             case .shortcuts: return "command"
             case .remote: return "antenna.radiowaves.left.and.right"
+            case .notch: return "macbook"
+            case .privacy: return "hand.raised.fill"
+            case .integrations: return "puzzlepiece.extension.fill"
             case .advanced: return "slider.horizontal.3"
             }
         }
@@ -159,11 +222,14 @@ final class SettingsStore {
             case .lighting: return Color(nsColor: .systemPink)
             // The Toys tint is a warm magenta from the contract, not the
             // palette's pink — Lighting already owns that one.
-            case .toys: return Color(red: 0.93, green: 0.30, blue: 0.62)
+            case .toys: return Color(nsColor: .systemPink)
             case .notifications: return Color(nsColor: .systemRed)
             case .sounds: return Color(nsColor: .systemPurple)
             case .shortcuts: return Color(nsColor: .systemBlue)
             case .remote: return Color(nsColor: .systemTeal)
+            case .notch: return Color(nsColor: .systemGray)
+            case .privacy: return Color(nsColor: .systemGreen)
+            case .integrations: return Color(nsColor: .systemCyan)
             case .advanced: return Color(nsColor: .systemGray)
             }
         }
@@ -177,10 +243,15 @@ final class SettingsStore {
     let providerUsage = ProviderUsageSwitchesModel(active: false)
     /// Settings › Devices & Lighting › Firmware (`FirmwareStore.swift`).
     let firmware: FirmwareStore
+    let t3Integration = T3CodeModel()
+    var subpage: String?
+    var selectedProvider: String?
+
     var page: Page = .general {
         // A search hit names its row only on its own page; choosing any
         // other page retires it.
         didSet {
+            if oldValue != page { subpage = nil; selectedProvider = nil }
             if searchHit?.page != page {
                 searchHit = nil
                 highlightedCard = nil
@@ -195,7 +266,7 @@ final class SettingsStore {
     weak var utilities: UtilitiesStore?
     /// Lighting › Effects… opens the Effect Studio window.
     var onOpenEffects: (@MainActor () -> Void)?
-    /// Devices › Creator Micro 2 › Open Control Center…
+    /// Devices opens the Creator Micro window.
     var onOpenControlCenter: (@MainActor () -> Void)?
     /// Usage › Open Usage Center… — where the graphs actually live.
     var onOpenUsageCenter: (@MainActor () -> Void)?
@@ -522,7 +593,22 @@ final class SettingsStore {
     /// the titled rows inside their cards.
     var searchEntries: [SettingsSearchEntry] {
         var entries = SettingsSearch.rows + SettingsSearch.pages + SettingsSearch.shortcutRows
-        entries += providerUsage.searchEntries
+        entries += providerList.providers.flatMap { row -> [SettingsSearchEntry] in
+            let name = ProviderPalette.displayName(for: row.id)
+            let card = "provider:\(row.id)"
+            var rows = [SettingsSearchEntry(.agents, "Providers", name, card: card)]
+            if row.usageConsent != nil {
+                rows.append(SettingsSearchEntry(.usage, "Provider usage", "Show \(name) usage",
+                                                subtitle: row.usageConsent?.detail, card: card))
+            }
+            if ["factory", "kimi", "kilo"].contains(row.id) {
+                rows.append(SettingsSearchEntry(.usage, "Provider usage", "\(name) API key", card: card))
+            }
+            return rows
+        }
+        if !ProviderUsageRoadmap.upcoming(availableProviderIDs: Set(providerList.providers.map(\.id))).isEmpty {
+            entries.append(SettingsSearchEntry(.usage, "Coming soon", "Coming soon", keywords: ["copilot"]))
+        }
         entries += MenuBarHotkeyAction.allCases.map {
             SettingsSearchEntry(.shortcuts, "Menu bar", MenuBarHotkeys.title(for: $0))
         }
@@ -533,7 +619,7 @@ final class SettingsStore {
         }
         if let toys {
             // The notch reads as a utility and sits on that page.
-            if let notch = toys.notch { cards.append((.utilities, notch)) }
+            if let notch = toys.notch { cards.append((.notch, notch)) }
             cards += toys.toys.map { (.toys, $0) }
         }
         for (chapter, toy) in cards {
@@ -543,7 +629,7 @@ final class SettingsStore {
                                     keywords: $0.keywords, card: toy.id)
             }
         }
-        return entries
+        return entries.filter { $0.page != .integrations || t3Integration.status?.installed == true }
     }
 
     /// `searchEntries` with their words folded, rebuilt only when the
@@ -588,11 +674,22 @@ final class SettingsStore {
     /// A result picked: its page, named at the top — and for a row in a
     /// toy or utility card, that card opened, scrolled to and lit.
     func reveal(_ entry: SettingsSearchEntry) {
+        if entry.chapter == .lighting || entry.title == "Open Studio" {
+            openFolds.formUnion(folds(holding: entry))
+            onOpenEffects?()
+            return
+        }
         searchHit = entry
         pendingChapter = nil
         page = entry.page
+        subpage = entry.card ?? (SettingsFold.isAdvanced(chapter: entry.chapter, group: entry.group) ? "advanced" : nil)
+        selectedProvider = entry.title == "Read plan limits" ? "claude" : nil
+        if entry.group == "Calibration profiles" { subpage = "calibration" }
         openFolds.formUnion(folds(holding: entry))
-        if let card = entry.card {
+        if let card = entry.card, card.hasPrefix("provider:") {
+            selectedProvider = String(card.dropFirst("provider:".count))
+            subpage = nil
+        } else if let card = entry.card {
             expandedCards.insert(card)
             highlightedCard = card
         } else {
@@ -611,6 +708,9 @@ final class SettingsStore {
         highlightedCard = nil
         pendingChapter = chapter
         page = chapter.page
+        subpage = nil
+        selectedProvider = nil
+        if chapter == .lighting { onOpenEffects?() }
         revealRequest += 1
     }
 
@@ -654,10 +754,7 @@ final class SettingsStore {
 
     private func groupFolds(holding entry: SettingsSearchEntry) -> [String] {
         switch (entry.chapter, entry.group) {
-        case (.devices, "Devices"):
-            return DevicesPage.Layout(entries: deviceEntries).devices.map { SettingsFold.device($0.id) }
-        case (.devices, "Screen Bar"): return [SettingsFold.screenBar]
-        case (.devices, "Creator Micro 2"): return [SettingsFold.creatorMicro]
+        case (.devices, "Creator Micro"): return [SettingsFold.creatorMicro]
         case (.devices, "Stream Deck"): return [SettingsFold.streamDeck]
         case (.lighting, "Provider colours"): return [SettingsFold.providerColours]
         case (.shortcuts, "Actions"): return [SettingsFold.shortcutActions]
@@ -687,10 +784,10 @@ final class SettingsStore {
 
     /// The launch-at-login state is read by the General page when it
     /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
-    init(core: CoreModel, providerList: ProviderListStore? = nil) {
+    init(core: CoreModel, providerList: ProviderListStore? = nil, firmware: FirmwareStore? = nil) {
         self.core = core
         self.providerList = providerList ?? ProviderListStore(core: core)
-        self.firmware = FirmwareStore { name, args in try await core.send(name, args: args) }
+        self.firmware = firmware ?? FirmwareStore { name, args in try await core.send(name, args: args) }
         watchSettings()
         watchFacts()
         syncMirrors()
@@ -1882,7 +1979,7 @@ final class SettingsStore {
         switch page {
         case .general: text += " The menu bar icon returns to its default look."
         case .agents: text += " That includes how a click opens each session."
-        case .devices: text += " That includes every strip's brightness, colour gains and resting glow, and the Screen Bar's hidden apps."
+        case .devices: text += " That includes device switches, brightness, colour gains and resting glow, direction, Screen Bar placement and hidden apps."
         case .alerts: text += " That includes your per-Focus dim rules."
         default: break
         }
@@ -1891,7 +1988,7 @@ final class SettingsStore {
 
     func resetPage(_ page: Page) {
         let document = SettingsDocument(core.settings?.document ?? .object([:]))
-        let paths = page.resettable.flatMap { SettingsKey.resetPaths(on: $0, in: document) }
+        let paths = page.resetPaths(in: document)
         guard !paths.isEmpty else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -1902,7 +1999,9 @@ final class SettingsStore {
                     // the status item read; the monitor's reset does not reach it.
                     if page == .general {
                         self.menuBarIconStyle = StatusIconStyle.agents.rawValue
-                        self.menuBarProviders = .init()
+                    }
+                    if page == .agents, document.contains("provider_display") {
+                        try await self.providerList.setPreferences(.init())
                     }
                     self.show(status: "\(page.title) is back to its defaults")
                 } else {
@@ -2058,25 +2157,22 @@ enum SettingsFold {
     /// The groups that sit inside their page's Advanced disclosure, by
     /// chapter. Everything in the Advanced chapter does.
     static let advancedGroups: [SettingsStore.Chapter: Set<String>] = [
-        .general: ["Setup", "Release channel"],
-        .agents: ["Ask lifetime", "Updates", "Transcripts"],
-        .usage: ["Incidents", "Claude Code status line", "Hooks", "History"],
+        .agents: ["Ask lifetime"],
+        .usage: ["Claude Code status line", "Hooks"],
         .notifications: ["Silent sessions", "Calendar & reminders", "Escalation", "Battery", "Webhook"],
         .sounds: ["Output", "Your own sounds"],
-        .devices: ["Calibration profiles"],
-        .lighting: ["Pulse range", "Auto-dim", "Ambient cues"],
         .shortcuts: ["Command line", "Links"],
     ]
 
     /// Whether a search hit's row sits behind its page's Advanced fold.
     static func isAdvanced(chapter: SettingsStore.Chapter, group: String) -> Bool {
-        chapter == .advanced || advancedGroups[chapter]?.contains(group) == true
+        advancedGroups[chapter]?.contains(group) == true
     }
 
     /// Rows listed in search that live inside one of those disclosures.
     static let nested: [(chapter: SettingsStore.Chapter, group: String, titles: Set<String>, fold: String)] = [
-        (.devices, "Screen Bar", ["Phase nudge", "Minimum glow", "Gap width", "Wing length"], screenBarAdvanced),
-        (.devices, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
+        (.devices, "Screen Bar", ["Gap width", "Wing length"], screenBarAdvanced),
+        (.lighting, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
     ]
 }
 

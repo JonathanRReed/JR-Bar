@@ -14,7 +14,7 @@ import Testing
     }
 
     private func pageSource() throws -> String {
-        try String(contentsOf: appSources.appending(path: "SettingsPagesA.swift"), encoding: .utf8)
+        try String(contentsOf: appSources.appending(path: "SettingsOrganizedPages.swift"), encoding: .utf8)
     }
 
     @Test func thePageStillBindsTheDaemonsKey() throws {

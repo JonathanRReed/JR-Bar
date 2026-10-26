@@ -335,11 +335,7 @@ struct SettingsStorePathTests {
     func revealUnfoldsItsFold() {
         let (core, store) = Self.store()
         #expect(store.openFolds.isEmpty)
-        store.reveal(SettingsSearchEntry(.devices, "Screen Bar", "Notch wings"))
-        #expect(store.isFoldOpen(SettingsFold.screenBar))
-        store.reveal(SettingsSearchEntry(.devices, "Devices", "Brightness"))
-        #expect(store.isFoldOpen(SettingsFold.device("sidepulse:pro:A1")), "a device row unfolds the device cards")
-        store.reveal(SettingsSearchEntry(.devices, "Creator Micro 2", "Session keys"))
+        store.reveal(SettingsSearchEntry(.devices, "Creator Micro", "Session keys"))
         #expect(store.isFoldOpen(SettingsFold.creatorMicro))
         store.reveal(SettingsSearchEntry(.devices, "Stream Deck", "Status URL"))
         #expect(store.isFoldOpen(SettingsFold.streamDeck))
@@ -356,42 +352,50 @@ struct SettingsStorePathTests {
         let open = store.openFolds
         store.reveal(SettingsSearchEntry(.general, "Power", "Lid closed"))
         #expect(store.openFolds == open, "a row outside every fold opens none")
-        store.setFold(SettingsFold.screenBar, open: false)
-        #expect(!store.isFoldOpen(SettingsFold.screenBar), "folding by hand is the person's")
+        store.setFold(SettingsFold.creatorMicro, open: false)
+        #expect(!store.isFoldOpen(SettingsFold.creatorMicro), "folding by hand is the person's")
         withExtendedLifetime(core) {}
     }
 
-    @Test("Screen Bar search opens its single card and hardware search keeps its own folds")
+    @Test("hardware search stays in Devices and animation search opens Studio")
     func screenBarSharedControlsHaveTheirOwnSearchDestination() throws {
         let (_, store) = Self.store(.object(["devices": .array([
             .object(["id": .string("sidepulse:pro:A1"), "name": .string("SidePulse Pro")]),
             .object(["id": .string("virtual:status-bar"), "name": .string("Screen Bar")]),
             .object(["id": .string("dot"), "name": .string("SidePulse Dot")]),
         ])]))
-        for title in ["Display", "Brightness", "Auto-brightness", "Pin to", "Asks only", "Blend", "Colour calibration"] {
+        var studioOpens = 0
+        store.onOpenEffects = { studioOpens += 1 }
+        for title in ["Brightness", "Auto-brightness", "Colour calibration"] {
             let hit = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
             store.openFolds.removeAll()
             store.reveal(hit)
-            #expect(store.openFolds == [SettingsFold.screenBar])
+            #expect(store.page == .devices)
+            #expect(store.openFolds.isEmpty, "hardware rows are visible without a disclosure")
             #expect(store.searchHit?.group == "Screen Bar")
         }
         store.openFolds.removeAll()
         let hardware = try #require(SettingsSearch.rows.first { $0.group == "Devices" && $0.title == "Brightness" })
         store.reveal(hardware)
-        #expect(store.openFolds == [SettingsFold.device("sidepulse:pro:A1"), SettingsFold.device("dot")])
-        let advanced = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == "Phase nudge" })
+        #expect(store.openFolds.isEmpty)
+        for title in ["Display", "Pin to", "Asks only", "Blend", "Phase nudge", "Minimum glow"] {
+            let lighting = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
+            #expect(lighting.chapter == .lighting)
+            store.reveal(lighting)
+        }
+        #expect(studioOpens == 6)
+        let advanced = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == "Gap width" })
         store.openFolds.removeAll()
         store.reveal(advanced)
-        #expect(store.openFolds == [SettingsFold.screenBar, SettingsFold.screenBarAdvanced])
+        #expect(store.openFolds == [SettingsFold.screenBarAdvanced])
     }
 
     @Test("a hit on a row inside a nested Advanced or Clock disclosure unfolds it")
     func nestedDisclosuresOpenForTheirHits() {
         let (core, store) = Self.store()
         let cases: [(String, String)] = [
-            ("Update channel", SettingsFold.advanced(.general)),
-            ("Phase nudge", SettingsFold.screenBarAdvanced),
-            ("Minimum glow", SettingsFold.screenBarAdvanced),
+            ("Gap width", SettingsFold.screenBarAdvanced),
+            ("Wing length", SettingsFold.screenBarAdvanced),
             ("Keep in step", SettingsFold.dotClock),
             ("Sync tolerance", SettingsFold.dotClock),
         ]
@@ -403,6 +407,9 @@ struct SettingsStorePathTests {
             store.reveal(row)
             #expect(store.isFoldOpen(fold), "\(title) sits behind a disclosure the hit must open")
         }
+        let update = SettingsSearch.rows.first { $0.title == "Update channel" }
+        if let update { store.reveal(update) }
+        #expect(store.page == .advanced, "release controls have their own page")
         withExtendedLifetime(core) {}
     }
 
@@ -434,7 +441,7 @@ struct SettingsStorePathTests {
     @Test("every listed row on a folded run names a fold to open")
     func everyFoldedGroupMapsToAFold() {
         let (core, store) = Self.store()
-        let folded: Set<String> = ["Devices", "Screen Bar", "Creator Micro 2", "Stream Deck"]
+        let folded: Set<String> = ["Creator Micro", "Stream Deck"]
         for row in SettingsSearch.rows where row.chapter == .devices && folded.contains(row.group) {
             #expect(!store.folds(holding: row).isEmpty, "\(row.title) sits in a fold the search cannot open")
         }

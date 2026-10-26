@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -2342,8 +2343,8 @@ struct PanelFooterTrailing: View {
             if let hold = store.awakeHold {
                 // The hold on sleep is a mark, not a sentence: the words
                 // live in the tooltip, and a click opens the Power rows.
-                Button { store.openSettings(page: .alerts) } label: {
-                    Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
+                Button { store.openSettings(page: .utilities) } label: {
+                    Image(systemName: hold.symbol).font(JRBarTokens.TypeStyle.caption.font.weight(.medium))
                 }
                 .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
                 .help(hold.text)

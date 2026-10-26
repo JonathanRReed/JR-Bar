@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import EventKit
 import JRBarCore
@@ -102,6 +103,7 @@ struct LightingPage: View {
                           path: "active_scene", options: Self.scenes, default: "calm")
             ScenePackPicker(store: store)
         }
+        DeviceLightingOverrides(store: store)
     }
 
     /// The lit states' colours for the vision check — idle is the dark
@@ -525,7 +527,7 @@ struct MilestoneStepsField: View {
 
     var body: some View {
         Provided(store, "milestone_odometer_steps") {
-            LabeledContent {
+            SettingsRow("Milestones", subtitle: "Finished-session counts that earn the cue — up to sixteen.") {
                 TextField("", text: Binding(get: { focused ? draft : currentText }, set: { draft = $0 }),
                           prompt: Text("10, 25, 50, 100"))
                     .labelsHidden()
@@ -538,8 +540,6 @@ struct MilestoneStepsField: View {
                     .textFieldStyle(.roundedBorder)
                     .monospacedDigit()
                     .frame(width: 180)
-            } label: {
-                SettingLabel(title: "Milestones", subtitle: "Finished-session counts that earn the cue — up to sixteen.")
             }
         }
     }
@@ -764,7 +764,7 @@ struct AutoDimReadoutRow: View {
     private var unavailable: Bool { result.map { !$0.available } ?? false }
 
     var body: some View {
-        LabeledContent {
+        SettingsRow("Right now", subtitle: AutoDimReadoutRow.smoothingNote(result)) {
             HStack(spacing: 6) {
                 Image(systemName: unavailable ? "exclamationmark.triangle.fill" : symbol)
                     .foregroundStyle(unavailable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
@@ -777,8 +777,6 @@ struct AutoDimReadoutRow: View {
             }
             .contentTransition(.numericText())
             .animation(.easeInOut(duration: 0.2), value: line)
-        } label: {
-            SettingLabel(title: "Right now", subtitle: AutoDimReadoutRow.smoothingNote(result))
         }
         .accessibilityLabel("Auto-dim right now: \(line)")
     }
@@ -892,7 +890,7 @@ struct SwatchTitle: View {
                 Text(name)
                     .fixedSize()
                 Text(hex.uppercased())
-                    .font(.system(size: 9.5, design: .monospaced))
+                    .font(JRBarTokens.TypeStyle.caption.font.monospaced())
                     .foregroundStyle(.tertiary)
                     .fixedSize()
             }
@@ -911,7 +909,7 @@ struct FadeRow: View {
         let floorPath = "colors.fade_floor.\(mode)"
         let ceilingPath = "colors.fade_ceiling.\(mode)"
         Provided(store, floorPath, ceilingPath) {
-            LabeledContent(mode.capitalized) {
+            SettingsRow(mode.capitalized) {
                 HStack(spacing: 10) {
                     Text("Floor").font(.callout).foregroundStyle(.secondary)
                     Slider(value: store.double(floorPath, default: 0.01), in: 0...1).frame(width: 90)
@@ -988,9 +986,6 @@ struct NotificationsPage: View {
                 .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false) || store.values.string("dnd_schedule_mode") != "dim")
         }
 
-        SettingGroup("Presence") {
-            SettingToggle(store, "Mic and camera presence", path: "presence_enabled", default: true)
-        }
         SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
             SettingToggle(store, "React to Focus modes", subtitle: "Focus Status reads whether Focus is on. Full Disk Access adds named-mode rules.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
@@ -1298,7 +1293,7 @@ struct FocusRuleRow: View {
     }
 
     private var row: some View {
-        LabeledContent {
+        SettingsRow(name, subtitle: "Dim to this level while the Focus is on.") {
             HStack(spacing: 10) {
                 Toggle("Rule", isOn: Binding(
                     get: { rule != nil },
@@ -1310,8 +1305,6 @@ struct FocusRuleRow: View {
                     .disabled(rule == nil)
                 ValueText(text: rule.map(SettingsStore.percent) ?? "idle dim")
             }
-        } label: {
-            SettingLabel(title: name, subtitle: "Dim to this level while the Focus is on.")
         }
     }
 }
@@ -1332,7 +1325,7 @@ struct RemotePage: View {
             MachineList(store: store, path: "remote_peers.unmuted_machines", title: "Unmuted machines")
                 .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
             if store.values.bool("remote_peers.enabled") ?? false, let peers = store.peers {
-                LabeledContent("Fleet") {
+                SettingsRow("Fleet") {
                     if peers.isEmpty {
                         Text("No peers found").foregroundStyle(.secondary)
                     } else {
@@ -1432,7 +1425,7 @@ struct MachineList: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent(title) {
+            SettingsRow(title) {
                 VStack(alignment: .leading, spacing: 6) {
                     let machines = store.values.strings(SettingsPath(path)) ?? []
                     if machines.isEmpty {
@@ -1507,7 +1500,7 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.") {
+        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
             SettingRow("Endpoint") {
                 StatusPill(statusText, tint: statusColor)
             }
@@ -1575,11 +1568,11 @@ struct AdvancedPage: View {
     var body: some View {
         SettingGroup("Diagnostics") {
             ConnectionWordRow(store: store)
-            LabeledContent("Core version", value: store.core.hello?.coreVersion ?? "—")
-            LabeledContent("Socket") {
+            SettingsRow("Core version") { Text(store.core.hello?.coreVersion ?? "—").foregroundStyle(.secondary) }
+            SettingsRow("Socket") {
                 Text(store.core.socketPath).font(.callout.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
-            LabeledContent("Capabilities") {
+            SettingsRow("Capabilities") {
                 Text(store.core.hello?.capabilities.joined(separator: ", ") ?? "—")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.trailing)
@@ -1619,7 +1612,7 @@ struct ResetGroup: View {
     var body: some View {
         SettingGroup("Reset to defaults", note: "Each button puts that page's settings back. Devices keep their identities.") {
             ForEach(SettingsStore.Page.allCases.filter { !$0.resettable.isEmpty }) { page in
-                LabeledContent(page.title) {
+                SettingsRow(page.title) {
                     Button("Reset…") { store.resetTarget = page }
                         .disabled(!store.isLive)
                 }
@@ -1634,7 +1627,7 @@ struct ConnectionWordRow: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        LabeledContent("Connection", value: connectionWord)
+        SettingsRow("Connection") { Text(connectionWord).foregroundStyle(.secondary) }
     }
 
     private var connectionWord: String {
@@ -1654,7 +1647,7 @@ struct GenerationsRow: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        LabeledContent("Generations", value: "state \(store.core.state?.generation ?? 0) · settings \(store.generation)")
+        SettingsRow("Generations") { Text("state \(store.core.state?.generation ?? 0) · settings \(store.generation)").foregroundStyle(.secondary) }
     }
 }
 

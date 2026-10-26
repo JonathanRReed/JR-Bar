@@ -16,8 +16,8 @@ enum SettingsHome: String, CaseIterable, Sendable {
     var chapter: SettingsStore.Chapter {
         switch self {
         case .hotkeys: return .shortcuts
-        case .meters: return .usage
-        case .brightness: return .lighting
+        case .meters: return .agents
+        case .brightness: return .devices
         }
     }
 
@@ -28,8 +28,8 @@ enum SettingsHome: String, CaseIterable, Sendable {
     var title: String {
         switch self {
         case .hotkeys: return "Show the panel"
-        case .meters: return "Show meters for"
-        case .brightness: return "Maximum brightness"
+        case .meters: return "Menu bar"
+        case .brightness: return "Open Studio"
         }
     }
 
@@ -37,8 +37,8 @@ enum SettingsHome: String, CaseIterable, Sendable {
     var line: String {
         switch self {
         case .hotkeys: return "Hotkeys are on Shortcuts."
-        case .meters: return "Which providers get a meter is under Agents & Usage."
-        case .brightness: return "The brightness cap is under Devices & Lighting."
+        case .meters: return "Choose providers on Providers."
+        case .brightness: return "Lighting is in Studio."
         }
     }
 
@@ -46,8 +46,8 @@ enum SettingsHome: String, CaseIterable, Sendable {
     var linkTitle: String {
         switch self {
         case .hotkeys: return "Open Shortcuts"
-        case .meters: return "Open Usage"
-        case .brightness: return "Open Lighting"
+        case .meters: return "Open Providers"
+        case .brightness: return "Open Studio"
         }
     }
 
@@ -62,6 +62,7 @@ extension SettingsStore {
     /// does. `titled` names another row on the same page (the shelf's
     /// key, beside the panel's).
     func revealHome(_ home: SettingsHome, titled: String? = nil) {
+        if home == .brightness { onOpenEffects?(); return }
         let title = titled ?? home.title
         if let entry = SettingsSearch.rows.first(where: { $0.chapter == home.chapter && $0.title == title }) {
             reveal(entry)

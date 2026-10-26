@@ -33,7 +33,7 @@ struct ScreenBarCameraHoldTests {
 
     @Test func theOffRowPointsAtTheSwitchThatStartsTheReading() {
         let off = ScreenBarCameraHold.subtitle(cameraReadable: false)
-        #expect(off.contains("Utilities › Notch"))
+        #expect(off.contains("Notch & Shelf"))
         #expect(off.contains("Mic & camera indicators"))
     }
 

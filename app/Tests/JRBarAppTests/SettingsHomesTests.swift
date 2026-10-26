@@ -34,8 +34,8 @@ struct SettingsHomesTests {
             #expect(entry?.chapter == home.chapter)
         }
         #expect(SettingsHome.hotkeys.chapter == .shortcuts)
-        #expect(SettingsHome.meters.chapter == .usage)
-        #expect(SettingsHome.brightness.chapter == .lighting)
+        #expect(SettingsHome.meters.chapter == .agents)
+        #expect(SettingsHome.brightness.chapter == .devices)
         #expect(SettingsHome.meters.page == .agents)
         #expect(SettingsHome.brightness.page == .devices)
     }
@@ -49,7 +49,7 @@ struct SettingsHomesTests {
         let brightness = SettingsSearch.search("maximum brightness", in: entries).first
         #expect(brightness?.chapter == .lighting && brightness?.title == "Maximum brightness")
         let meters = SettingsSearch.search("menu bar meters", in: entries).first
-        #expect(meters?.chapter == .usage && meters?.title == "Show meters for")
+        #expect(meters?.chapter == .agents && meters?.title == "Menu bar")
         #expect(!SettingsSearch.rows.contains { $0.chapter == .general && $0.title.hasSuffix("hotkey") },
                 "General lists no hotkey row of its own")
         #expect(!SettingsSearch.rows.contains { $0.chapter == .general && $0.title == "Maximum brightness" })
@@ -65,8 +65,10 @@ struct SettingsHomesTests {
         #expect(store.searchHit?.title == "Show the panel")
         #expect(store.revealRequest == before + 1)
         store.page = .general
+        var studioOpened = false
+        store.onOpenEffects = { studioOpened = true }
         store.revealHome(.brightness)
-        #expect(store.page == .devices && store.searchHit?.title == "Maximum brightness")
+        #expect(studioOpened)
         store.revealHome(.hotkeys, titled: "Open the shelf")
         #expect(store.searchHit?.title == "Open the shelf")
         store.revealHome(.meters)
@@ -99,11 +101,11 @@ struct SettingsHomesTests {
         // The brightness cap: one slider, on Lighting.
         #expect(count("\"global_brightness_scale\"", in: general) == 0)
         #expect(count("\"global_brightness_scale\"", in: lighting) == 1)
-        // The menu bar meters: one picker, on Usage.
-        let usage = try source("SettingsPagesA.swift")
-        #expect(count("MultiSelectMenu(store, \"Show meters for\"", in: usage) == 1)
-        #expect(count("path: \"usage_graph_providers\"", in: usage) == 1, "one control writes the meters' providers")
-        #expect(count("SettingsPointerRow(store: store, home:", in: general) == 3)
+        let providers = try source("SettingsProvidersPage.swift")
+        #expect(providers.contains("store.providerList"))
+        #expect(providers.contains("list.setMenuBarVisible"))
+        #expect(!general.contains("MenuBarProviderPicker(store:"))
+        #expect(count("SettingsPointerRow(store: store, home:", in: general) == 1)
     }
 
     @Test("General's line about the summon keys says what they are and where to change them")

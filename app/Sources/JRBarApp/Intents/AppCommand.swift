@@ -444,6 +444,7 @@ enum SettingsPageName {
     nonisolated static let known: Set<String> = [
         "general", "agents", "alerts", "devices", "utilities", "shortcuts", "remote",
         "usage", "lighting", "toys", "notifications", "sounds", "advanced",
+        "providers", "notch", "privacy", "integrations",
     ]
 }
 
