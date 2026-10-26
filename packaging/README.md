@@ -45,6 +45,7 @@ already owns.
    (`app/scripts/build-app.sh` with `JRBAR_SPARKLE_FRAMEWORK_DIR`, unsigned,
    framework not embedded), the shim (`hook/build.sh`) and the daemon
    (`pyinstaller --onedir --windowed`, entry `packaging/jrbar_entry.py`).
+   The daemon excludes PyObjC and its GUI framework wrappers.
 4. Assembles the bundle, embeds the Sparkle framework, writes the
    Info.plist keys.
 5. Signs inside out (`packaging/sign_macos_app.py`): every Mach-O, then the
@@ -54,7 +55,14 @@ already owns.
 6. Verifies: `verify_macos_app.py` (identity, layout, every Mach-O links
    only Apple libraries or code inside the bundle, the Python runtime lives
    in the daemon bundle, no hard links or escaping symlinks),
-   `verify_entitlements.py`, `verify_sparkle_bundle.py`.
+   `verify_daemon_runtime.py`, `verify_entitlements.py`,
+   `verify_sparkle_bundle.py`. The runtime check starts the frozen daemon in
+   a temporary home on a temporary socket, with hardware discovery, external
+   commands and Python network connections disabled. After the native fallback
+   starts, four RSS samples and an in-process image/import inventory must
+   contain no AppKit, WebKit or PyObjC images or GUI Python bridges.
+   System `libobjc` and JavaScriptCore's C API remain allowed. The receipt
+   goes to `release-evidence-raw/daemon-runtime.json`.
 7. Notarizes and staples the app when it can (below), makes the ZIP
    (`scripts/package_sparkle_archive.py`), the PKG
    (`scripts/package_macos_artifact.py`), notarizes the PKG when it can, and

@@ -1,0 +1,151 @@
+{
+  "baseline_revision": "76c59a9e206c1abac4248373b0d69cefa8e10666",
+  "installed_revision": "98ba9d0e72e9e3cf9ad8787ecff9575c4cc5e018",
+  "root_fix_commit": "3bccf2c4",
+  "rss": {
+    "before": {
+      "median_mib": 79.46484375,
+      "range_mib": [
+        73.875,
+        80.078125
+      ],
+      "runs": 5,
+      "helper_sha256": "e8e8a53b40f7ba0d2747ca193011eb48036803b2306de3159e582f567bd45109"
+    },
+    "after": {
+      "median_mib": 76.55859375,
+      "range_mib": [
+        76.29296875,
+        76.8125
+      ],
+      "runs": 5,
+      "helper_sha256": "c3e6bcd3b2c0edfd214a4b2460d45fcda00a8f5b8ae4b88550c067746d93ce09"
+    },
+    "median_difference_mib": -2.90625
+  },
+  "trials": [
+    {
+      "side": "before",
+      "trial": 0,
+      "mean_rss_bytes": 83046400,
+      "image_failures": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ],
+      "load_average": [
+        8.48779296875,
+        11.20849609375,
+        13.30859375
+      ]
+    },
+    {
+      "side": "after",
+      "trial": 0,
+      "mean_rss_bytes": 80240640,
+      "image_failures": [],
+      "load_average": [
+        8.6337890625,
+        11.1513671875,
+        13.263671875
+      ]
+    },
+    {
+      "side": "before",
+      "trial": 1,
+      "mean_rss_bytes": 83439616,
+      "image_failures": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ],
+      "load_average": [
+        9.87158203125,
+        11.328125,
+        13.30078125
+      ]
+    },
+    {
+      "side": "after",
+      "trial": 1,
+      "mean_rss_bytes": 80277504,
+      "image_failures": [],
+      "load_average": [
+        9.43603515625,
+        11.18505859375,
+        13.2265625
+      ]
+    },
+    {
+      "side": "before",
+      "trial": 2,
+      "mean_rss_bytes": 77463552,
+      "image_failures": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ],
+      "load_average": [
+        13.48486328125,
+        11.9951171875,
+        13.50048828125
+      ]
+    },
+    {
+      "side": "after",
+      "trial": 2,
+      "mean_rss_bytes": 80310272,
+      "image_failures": [],
+      "load_average": [
+        13.24951171875,
+        11.99462890625,
+        13.482421875
+      ]
+    },
+    {
+      "side": "before",
+      "trial": 3,
+      "mean_rss_bytes": 83324928,
+      "image_failures": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ],
+      "load_average": [
+        12.515625,
+        11.87890625,
+        13.423828125
+      ]
+    },
+    {
+      "side": "after",
+      "trial": 3,
+      "mean_rss_bytes": 79998976,
+      "image_failures": [],
+      "load_average": [
+        11.7470703125,
+        11.734375,
+        13.35400390625
+      ]
+    },
+    {
+      "side": "before",
+      "trial": 4,
+      "mean_rss_bytes": 83968000,
+      "image_failures": [
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ],
+      "load_average": [
+        11.564453125,
+        11.69384765625,
+        13.3203125
+      ]
+    },
+    {
+      "side": "after",
+      "trial": 4,
+      "mean_rss_bytes": 80543744,
+      "image_failures": [],
+      "load_average": [
+        11.5703125,
+        11.6875,
+        13.298828125
+      ]
+    }
+  ],
+  "probe_sha256": "a2de084c2157a97e80baae598165866ed222ffe2d7b2189ddd7e60d2d6c534f0",
+  "runtime_accepted": true,
+  "source_modules_matched": 372
+}

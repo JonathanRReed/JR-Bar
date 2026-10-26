@@ -97,7 +97,9 @@ def test_package_builder_assembles_the_swift_app_daemon_and_shim__and_2_more() -
     assert 'Add :LSAppNapIsDisabled bool true" "$CORE_PLIST"' in text
     assert ":JRBarCommit string $COMMIT" in text
     # Everything the old PyInstaller UI bundle needed is gone.
-    assert "--collect-submodules Cocoa" in text
+    assert "--collect-submodules Cocoa" not in text
+    for module in ("objc", "Cocoa", "AppKit", "Foundation", "Quartz", "WebKit", "JavaScriptCore", "EventKit"):
+        assert f"--exclude-module {module}" in text
     assert "status-bar" not in text
 
     # --- scenario: package_builder_picks_the_best_keychain_identity_and_notarizes_when_it_can

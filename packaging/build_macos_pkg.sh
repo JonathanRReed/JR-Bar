@@ -474,7 +474,14 @@ echo "==> daemon (PyInstaller $PINNED_PYINSTALLER, onedir app bundle)"
     --workpath "$BUILD_DIR/work" \
     --specpath "$BUILD_DIR" \
     --collect-submodules jrbar \
-    --collect-submodules Cocoa \
+    --exclude-module objc \
+    --exclude-module Cocoa \
+    --exclude-module AppKit \
+    --exclude-module Foundation \
+    --exclude-module Quartz \
+    --exclude-module WebKit \
+    --exclude-module JavaScriptCore \
+    --exclude-module EventKit \
     --collect-data jrbar.resources \
     --recursive-copy-metadata jrbar \
     --copy-metadata setuptools \
@@ -610,6 +617,8 @@ if [ "$SIGN_KIND" = "developer-id" ]; then
 fi
 
 "$VENV_DIR/bin/python" "$ROOT_DIR/packaging/verify_macos_app.py" "$APP_PATH"
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/verify_daemon_runtime.py" "$APP_PATH" \
+    --receipt "$RAW_EVIDENCE_DIR/daemon-runtime.json"
 "$VENV_DIR/bin/python" "$ROOT_DIR/packaging/verify_entitlements.py" "$APP_PATH"
 sparkle_verify_args=("$APP_PATH")
 if [ "$SIGN_KIND" = "developer-id" ]; then
