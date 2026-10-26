@@ -351,12 +351,14 @@ final class SettingsStore {
             if !copyingImportedIconStyle { set("menu_bar_icon_style", .string(menuBarIconStyle)) }
         }
     }
-    var menuBarProviders = MenuBarProviderPreferences() {
-        didSet {
-            if menuBarProviders != oldValue { onSetMenuBarProviders?(menuBarProviders) }
+    let providerList: ProviderListStore
+    var menuBarProviders: MenuBarProviderPreferences {
+        get { providerList.preferences }
+        set {
+            let choices = newValue
+            Task { try? await providerList.setPreferences(choices) }
         }
     }
-    var onSetMenuBarProviders: (@MainActor (MenuBarProviderPreferences) -> Void)?
 
     @ObservationIgnored private var copyingImportedIconStyle = false
     /// Persists the choice; wired to `AppState` by the delegate.
@@ -685,8 +687,9 @@ final class SettingsStore {
 
     /// The launch-at-login state is read by the General page when it
     /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
-    init(core: CoreModel) {
+    init(core: CoreModel, providerList: ProviderListStore? = nil) {
         self.core = core
+        self.providerList = providerList ?? ProviderListStore(core: core)
         self.firmware = FirmwareStore { name, args in try await core.send(name, args: args) }
         watchSettings()
         watchFacts()

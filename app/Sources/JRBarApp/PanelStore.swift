@@ -307,6 +307,7 @@ final class PanelStore {
     }
 
     let core: CoreModel
+    let providerList: ProviderListStore
     /// Per-session model, tokens, cost and context — shared with the
     /// Overview, which the app delegate hands it to.
     let sessionUsage: SessionUsageStore
@@ -396,9 +397,10 @@ final class PanelStore {
     @ObservationIgnored private var brightnessSentAt = Date.distantPast
     @ObservationIgnored private var toastClear: DispatchWorkItem?
 
-    init(core: CoreModel, draftsDefaults: UserDefaults = .standard,
+    init(core: CoreModel, providerList: ProviderListStore? = nil, draftsDefaults: UserDefaults = .standard,
          mediaFeed: MediaFeed = .shared, screenBarShown: Bool = true) {
         self.core = core
+        self.providerList = providerList ?? ProviderListStore(core: core)
         self.sessionUsage = SessionUsageStore(core: core)
         self.askDesk = AskAnswerDesk(core: core)
         self.fetchUsageHistory = { [weak core] provider, range in
@@ -1432,12 +1434,20 @@ final class PanelStore {
 
     /// Providers that earn a full row: a window with something on it,
     /// from a source that is on and found.
-    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.panelVisible && !Self.foldsIntoQuietRow($0) } : [] }
+    var usage: [CoreProviderUsage] {
+        guard core.isLive else { return [] }
+        let visible = core.usage.filter { $0.panelVisible && !Self.foldsIntoQuietRow($0) }
+        return providerList.arranged(visible, provider: { $0.id }, surface: .panel)
+    }
     /// The providers with nothing to say — every window at 0 %, no window
     /// at all, the source not found or switched off: one trailing row
     /// names them and opens the Usage Center, so they neither vanish
     /// silently nor take a 50 pt row each to say "nothing".
-    var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.panelVisible && Self.foldsIntoQuietRow($0) } : [] }
+    var quietUsage: [CoreProviderUsage] {
+        guard core.isLive else { return [] }
+        let quiet = core.usage.filter { $0.panelVisible && Self.foldsIntoQuietRow($0) }
+        return providerList.arranged(quiet, provider: { $0.id }, surface: .panel)
+    }
 
     func runUsageAction(_ usage: CoreProviderUsage, action: String? = nil) {
         Task { [weak self] in

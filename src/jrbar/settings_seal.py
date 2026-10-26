@@ -86,6 +86,7 @@ SEALED_KEYS: Final[tuple[str, ...]] = (
 #: why. A setting that is in neither list, nor ``OPEN_SETTING_ROOTS`` in
 #: ``core_auth``, fails the drift test until somebody decides which it is.
 UNSEALED_PRIVILEGED: Final[Mapping[str, str]] = {
+    "provider_display": "provider order and menu visibility only; never enables collection or grants consent",
     **dict.fromkeys(
         (
             "agent_keep_awake_enabled",

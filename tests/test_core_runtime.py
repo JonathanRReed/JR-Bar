@@ -5361,3 +5361,17 @@ def test_dot_failure_cue_expires_to_steady_and_startup_failures_do_not_pulse(hea
     assert not controller._core_dot_beacon_facts().failure_active
     controller._core_documents["state"]["aggregate"]["needs_you"] = 1
     assert beacon_program(controller._core_dot_beacon_facts())[1] == "waiting"
+
+
+def test_shared_provider_display_roundtrips_through_existing_command(headless):
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    display = {"order": ["codex", "claude"], "hidden": ["claude"]}
+    reply = controller._core_dispatch("set_setting", {"path": "provider_display", "value": display})
+    assert reply["value"] == display
+    assert controller.settings.provider_display == display
+    assert controller.settings.provider_status_feeds_enabled is False
+    with pytest.raises(CommandError) as caught:
+        controller._core_dispatch("set_setting", {"path": "provider_display.order", "value": ["codex", "codex"]})
+    assert caught.value.code == "invalid_value"
+    assert controller.settings.provider_display == display

@@ -23,6 +23,7 @@ def test_fast_gate_has_explicit_ordered_evidence_layers__and_2_more() -> None:
 
     assert tuple(step.name for step in steps) == (
         "Ruff",
+        "Design tokens",
         "Import smoke",
         "Contract tests",
         "Tracked secret scan",
@@ -158,6 +159,7 @@ def test_fast_gate_list_mode_is_read_only(capsys) -> None:
 
     for name in (
         "Ruff",
+        "Design tokens",
         "Import smoke",
         "Contract tests",
         "Tracked secret scan",

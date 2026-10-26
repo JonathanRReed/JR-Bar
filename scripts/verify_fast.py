@@ -46,6 +46,7 @@ CONTRACT_TESTS: Final = (
     "tests/test_provider_logo_data.py",
     # The protocol doc names every command the daemon answers.
     "tests/test_core_protocol_doc_contract.py",
+    "tests/test_design_token_guard.py",
 )
 FIXTURE_TESTS: Final = (
     "tests/test_provider_adapters.py",
@@ -117,6 +118,7 @@ def build_steps(*, python: str, root: Path, fix: bool) -> tuple[GateStep, ...]:
     )
     ordinary = (
         GateStep("Ruff", (python, "-m", "ruff", "check", *CHECK_PATHS)),
+        GateStep("Design tokens", (python, str(root / "scripts" / "check_design_tokens.py"), "--root", str(root))),
         GateStep("Import smoke", (python, "-c", import_code)),
         _pytest_step(python, "Contract tests", CONTRACT_TESTS),
         GateStep(

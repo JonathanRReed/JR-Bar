@@ -1,0 +1,899 @@
+{
+  "app/Sources/JRBarApp/AskAnswerViews.swift": {
+    "animation: duration: 1": 1,
+    "radius: cornerRadius: 4": 2
+  },
+  "app/Sources/JRBarApp/AskDetailViews.swift": {
+    "animation: duration: 0.14": 1,
+    "font: .system(size: 10": 2,
+    "font: .system(size: 10.5": 1,
+    "font: .system(size: 11": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 5": 3
+  },
+  "app/Sources/JRBarApp/ControlCenterView.swift": {
+    "animation: duration: 0.01": 1,
+    "animation: duration: 0.12": 2,
+    "animation: duration: 0.15": 3,
+    "animation: duration: 0.2": 3,
+    "font: .system(size: 10": 3,
+    "font: .system(size: 10.5": 1,
+    "font: .system(size: 11": 5,
+    "font: .system(size: 12": 2,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 18": 1,
+    "font: .system(size: 20": 1,
+    "font: .system(size: 30": 3,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 8.5": 1,
+    "font: .system(size: 9": 3,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 16": 7,
+    "radius: cornerRadius: 18": 1,
+    "radius: cornerRadius: 30": 2,
+    "radius: cornerRadius: 5": 1,
+    "radius: cornerRadius: 6": 1,
+    "radius: cornerRadius: 8": 3
+  },
+  "app/Sources/JRBarApp/DeckRailController.swift": {
+    "animation: duration: 0.15": 1,
+    "animation: duration: 1": 1,
+    "font: .system(size: 10": 2,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 5": 1,
+    "font: .system(size: 9": 2,
+    "radius: cornerRadius: 12": 1,
+    "radius: cornerRadius: 5": 3,
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/DemoAskPanel.swift": {
+    "font: .system(size: 13": 1,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/DotRoleControls.swift": {
+    "radius: cornerRadius: 7": 2
+  },
+  "app/Sources/JRBarApp/EffectStudioMoments.swift": {
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 10": 1,
+    "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/EffectStudioProgram.swift": {
+    "font: .system(size: 13": 3,
+    "radius: cornerRadius: 8": 2
+  },
+  "app/Sources/JRBarApp/EffectStudioView.swift": {
+    "animation: duration: 0.15": 1,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 13": 1,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 9": 2,
+    "radius: cornerRadius: 6": 1,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/FirmwareCard.swift": {
+    "font: .system(size: 4": 1
+  },
+  "app/Sources/JRBarApp/HistoryView.swift": {
+    "font: .system(size: 10": 10,
+    "font: .system(size: 10.5": 1,
+    "font: .system(size: 11": 13,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 2,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 7.5": 1,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 9": 4,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/KeepAwakeFooter.swift": {
+    "font: .system(size: 11": 1
+  },
+  "app/Sources/JRBarApp/LEDPreviewStrip.swift": {
+    "radius: cornerRadius: 6": 1
+  },
+  "app/Sources/JRBarApp/NotchHUD.swift": {
+    "font: .system(size: 12": 2,
+    "font: .system(size: 13": 1,
+    "font: .system(size: 8": 1
+  },
+  "app/Sources/JRBarApp/Overview/OverviewGraphScene.swift": {
+    "colour: Color(red: 0.082": 1,
+    "colour: Color(red: 0.1": 1,
+    "colour: Color(red: 0.118": 1,
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 0.2": 1,
+    "colour: Color(red: 0.94": 1,
+    "colour: Color(red: 0.972": 1,
+    "colour: Color(red: 0.985": 1,
+    "font: .system(size: 10": 2,
+    "font: .system(size: 10.5": 2,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 24": 1
+  },
+  "app/Sources/JRBarApp/Overview/OverviewGraphView.swift": {
+    "animation: duration: 0.14": 1,
+    "animation: duration: 0.18": 1,
+    "animation: duration: 0.4": 1,
+    "animation: duration: 0.6": 2,
+    "font: .system(size: 10": 4,
+    "font: .system(size: 10.5": 4,
+    "font: .system(size: 11": 4,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 12.5": 2,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 12": 4,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/Overview/OverviewInspector.swift": {
+    "font: .system(size: 10": 4,
+    "font: .system(size: 10.5": 5,
+    "font: .system(size: 11": 11,
+    "font: .system(size: 11.5": 6,
+    "font: .system(size: 12": 2,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 15": 3,
+    "font: .system(size: 8.5": 2,
+    "font: .system(size: 9": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 6": 1,
+    "radius: cornerRadius: 7": 1,
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/Overview/OverviewStrips.swift": {
+    "font: .system(size: 10": 1,
+    "font: .system(size: 10.5": 1,
+    "font: .system(size: 11": 3
+  },
+  "app/Sources/JRBarApp/Overview/OverviewView.swift": {
+    "font: .system(size: 10": 10,
+    "font: .system(size: 11": 10,
+    "font: .system(size: 12": 3,
+    "font: .system(size: 13": 1,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 15": 3,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 9": 4,
+    "radius: cornerRadius: 8": 3
+  },
+  "app/Sources/JRBarApp/Overview/ReconstructedTimelineView.swift": {
+    "font: .system(size: 10": 3,
+    "font: .system(size: 10.5": 4,
+    "font: .system(size: 11": 9,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 3,
+    "font: .system(size: 8.5": 1,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 10": 2,
+    "radius: cornerRadius: 6": 2
+  },
+  "app/Sources/JRBarApp/Overview/UsageComparisonView.swift": {
+    "font: .system(size: 10": 2,
+    "font: .system(size: 11": 4,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 28": 1,
+    "font: .system(size: 9": 1
+  },
+  "app/Sources/JRBarApp/Overview/UsageCompositionView.swift": {
+    "font: .system(size: 10": 3,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 9": 2
+  },
+  "app/Sources/JRBarApp/Overview/UsageCostCoverageView.swift": {
+    "font: .system(size: 11": 1,
+    "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/Overview/UsageGraphView.swift": {
+    "font: .system(size: 10": 9,
+    "font: .system(size: 11": 14,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 22": 1,
+    "font: .system(size: 8": 5,
+    "font: .system(size: 9": 5,
+    "radius: cornerRadius: 1.5": 2,
+    "radius: cornerRadius: 6": 3
+  },
+  "app/Sources/JRBarApp/Overview/UsageIntegrationSourcesView.swift": {
+    "font: .system(size: 10": 1,
+    "font: .system(size: 11": 1,
+    "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/Palette/PaletteView.swift": {
+    "font: .system(size: 11": 4,
+    "font: .system(size: 12": 5,
+    "font: .system(size: 13": 7,
+    "font: .system(size: 13.5": 1,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 16": 1,
+    "font: .system(size: 17": 2,
+    "font: .system(size: 20": 1,
+    "radius: cornerRadius: 12": 2,
+    "radius: cornerRadius: 4": 1,
+    "radius: cornerRadius: 7": 1,
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/PanelController.swift": {
+    "font: .system(size: 10": 2,
+    "font: .system(size: 11": 5,
+    "font: .system(size: 12": 2,
+    "radius: cornerRadius: 10": 1
+  },
+  "app/Sources/JRBarApp/PanelMotion.swift": {
+    "animation: response: 0.32": 1
+  },
+  "app/Sources/JRBarApp/PanelView.swift": {
+    "animation: duration: 0.9": 1,
+    "animation: duration: 1.3": 1,
+    "animation: duration: 1.4": 1,
+    "font: .system(size: 10": 23,
+    "font: .system(size: 11": 21,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 11,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 8.5": 1,
+    "font: .system(size: 9": 5,
+    "radius: cornerRadius: 20": 1,
+    "radius: cornerRadius: 6": 1,
+    "radius: cornerRadius: 7": 7
+  },
+  "app/Sources/JRBarApp/ScreenBarPeek.swift": {
+    "font: .system(size: 10": 1,
+    "font: .system(size: 11": 3,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/ScreenBarView.swift": {
+    "animation: response: 0.2": 1,
+    "animation: response: 0.25": 1,
+    "animation: response: 0.3": 1
+  },
+  "app/Sources/JRBarApp/ScreenBarWings.swift": {
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 4.5": 1
+  },
+  "app/Sources/JRBarApp/SettingsAtoms.swift": {
+    "animation: duration: 0.12": 1,
+    "animation: duration: 0.28": 2,
+    "font: .system(size: 10": 1,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 9": 1
+  },
+  "app/Sources/JRBarApp/SettingsPagesA.swift": {
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 6": 1
+  },
+  "app/Sources/JRBarApp/SettingsPagesB.swift": {
+    "animation: duration: 0.2": 1,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 6": 3,
+    "radius: cornerRadius: 8": 2
+  },
+  "app/Sources/JRBarApp/SettingsStore.swift": {
+    "colour: Color(red: 0.93": 1
+  },
+  "app/Sources/JRBarApp/SettingsView.swift": {
+    "animation: duration: 0.15": 2,
+    "animation: duration: 0.3": 2
+  },
+  "app/Sources/JRBarApp/Setup/SetupView.swift": {
+    "font: .system(size: 13": 4,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 15": 4,
+    "font: .system(size: 20": 1,
+    "radius: cornerRadius: 14": 2,
+    "radius: cornerRadius: 8": 3
+  },
+  "app/Sources/JRBarApp/ShortcutRecorder.swift": {
+    "font: .system(size: 11.5": 1,
+    "radius: cornerRadius: 4.5": 2,
+    "radius: cornerRadius: 7": 2
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumAmbient.swift": {
+    "font: .system(size: 14": 1,
+    "font: .system(size: 46": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumControls.swift": {
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumCreatureArt.swift": {
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 0.04": 2,
+    "colour: Color(red: 0.05": 3,
+    "colour: Color(red: 0.10": 3,
+    "colour: Color(red: 0.12": 1,
+    "colour: Color(red: 0.20": 2,
+    "colour: Color(red: 0.22": 1,
+    "colour: Color(red: 0.24": 2,
+    "colour: Color(red: 0.30": 3,
+    "colour: Color(red: 0.32": 1,
+    "colour: Color(red: 0.35": 1,
+    "colour: Color(red: 0.40": 1,
+    "colour: Color(red: 0.42": 2,
+    "colour: Color(red: 0.46": 1,
+    "colour: Color(red: 0.47": 1,
+    "colour: Color(red: 0.50": 1,
+    "colour: Color(red: 0.55": 2,
+    "colour: Color(red: 0.56": 1,
+    "colour: Color(red: 0.62": 3,
+    "colour: Color(red: 0.70": 2,
+    "colour: Color(red: 0.72": 1,
+    "colour: Color(red: 0.78": 1,
+    "colour: Color(red: 0.80": 4,
+    "colour: Color(red: 0.84": 1,
+    "colour: Color(red: 0.86": 1,
+    "colour: Color(red: 0.88": 1,
+    "colour: Color(red: 0.90": 1,
+    "colour: Color(red: 0.92": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.94": 1,
+    "colour: Color(red: 0.95": 2,
+    "colour: Color(red: 0.98": 3,
+    "colour: Color(red: 1.0": 13,
+    "radius: cornerRadius: 1.1": 1,
+    "radius: cornerRadius: 3.2": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishArt.swift": {
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 0.30": 2,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.40": 1,
+    "colour: Color(red: 0.55": 1,
+    "colour: Color(red: 0.84": 1,
+    "colour: Color(red: 0.90": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.95": 1,
+    "colour: Color(red: 0.99": 1,
+    "colour: Color(red: 1.0": 3
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishFront.swift": {
+    "colour: Color(red: 0.30": 1,
+    "colour: Color(red: 0.36": 2,
+    "colour: Color(red: 1.0": 2
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishKits.swift": {
+    "colour: Color(red: 1.0": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishWear.swift": {
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 0.03": 1,
+    "colour: Color(red: 0.04": 2,
+    "colour: Color(red: 0.05": 6,
+    "colour: Color(red: 0.07": 1,
+    "colour: Color(red: 0.08": 1,
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.12": 2,
+    "colour: Color(red: 0.13": 1,
+    "colour: Color(red: 0.14": 1,
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 0.20": 3,
+    "colour: Color(red: 0.25": 2,
+    "colour: Color(red: 0.26": 1,
+    "colour: Color(red: 0.34": 1,
+    "colour: Color(red: 0.36": 3,
+    "colour: Color(red: 0.45": 4,
+    "colour: Color(red: 0.48": 1,
+    "colour: Color(red: 0.50": 2,
+    "colour: Color(red: 0.52": 2,
+    "colour: Color(red: 0.55": 8,
+    "colour: Color(red: 0.60": 1,
+    "colour: Color(red: 0.62": 3,
+    "colour: Color(red: 0.70": 3,
+    "colour: Color(red: 0.72": 1,
+    "colour: Color(red: 0.76": 1,
+    "colour: Color(red: 0.80": 1,
+    "colour: Color(red: 0.84": 1,
+    "colour: Color(red: 0.85": 4,
+    "colour: Color(red: 0.86": 6,
+    "colour: Color(red: 0.90": 2,
+    "colour: Color(red: 0.92": 2,
+    "colour: Color(red: 0.93": 2,
+    "colour: Color(red: 0.95": 3,
+    "colour: Color(red: 0.96": 1,
+    "colour: Color(red: 0.98": 2,
+    "colour: Color(red: 1.0": 12,
+    "radius: cornerRadius: 0.005": 1,
+    "radius: cornerRadius: 0.01": 1,
+    "radius: cornerRadius: 0.014": 1,
+    "radius: cornerRadius: 0.018": 1,
+    "radius: cornerRadius: 0.02": 1,
+    "radius: cornerRadius: 0.035": 1,
+    "radius: cornerRadius: 0.055": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumPaint.swift": {
+    "colour: Color(red: 0.08": 1,
+    "colour: Color(red: 0.30": 1,
+    "colour: Color(red: 0.62": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumView.swift": {
+    "colour: Color(red: 0.015": 1,
+    "colour: Color(red: 0.02": 1,
+    "font: .system(size: 9.5": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewAlien.swift": {
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.12": 2,
+    "colour: Color(red: 0.18": 1,
+    "colour: Color(red: 0.20": 1,
+    "colour: Color(red: 0.28": 1,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.40": 1,
+    "colour: Color(red: 0.55": 3,
+    "colour: Color(red: 0.62": 1,
+    "colour: Color(red: 0.66": 1,
+    "colour: Color(red: 0.7": 1,
+    "colour: Color(red: 0.72": 1,
+    "colour: Color(red: 0.8": 1,
+    "colour: Color(red: 0.86": 1,
+    "colour: Color(red: 0.90": 1,
+    "colour: Color(red: 1.0": 1,
+    "radius: cornerRadius: 4": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewAmbientLife.swift": {
+    "colour: Color(red: 0.04": 1,
+    "colour: Color(red: 0.05": 1,
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 0.21": 1,
+    "colour: Color(red: 0.24": 1,
+    "colour: Color(red: 0.26": 1,
+    "colour: Color(red: 0.30": 1,
+    "colour: Color(red: 0.38": 1,
+    "colour: Color(red: 0.42": 2,
+    "colour: Color(red: 0.45": 1,
+    "colour: Color(red: 0.46": 2,
+    "colour: Color(red: 0.48": 1,
+    "colour: Color(red: 0.68": 1,
+    "colour: Color(red: 0.72": 1,
+    "colour: Color(red: 0.74": 1,
+    "colour: Color(red: 0.76": 1,
+    "colour: Color(red: 0.78": 1,
+    "colour: Color(red: 0.80": 1,
+    "colour: Color(red: 0.82": 1,
+    "colour: Color(red: 0.84": 1,
+    "colour: Color(red: 0.88": 2,
+    "colour: Color(red: 0.90": 1,
+    "colour: Color(red: 0.92": 1,
+    "colour: Color(red: 0.94": 1,
+    "colour: Color(red: 0.98": 2,
+    "colour: Color(red: 1.0": 6,
+    "radius: cornerRadius: 1": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewChrome.swift": {
+    "animation: duration: 0.14": 1,
+    "animation: duration: 0.3": 1,
+    "animation: duration: 0.32": 1,
+    "animation: duration: 0.35": 1,
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 0.03": 1,
+    "colour: Color(red: 0.06": 1,
+    "colour: Color(red: 0.12": 1,
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 0.20": 2,
+    "colour: Color(red: 0.24": 1,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.42": 1,
+    "colour: Color(red: 0.46": 1,
+    "colour: Color(red: 0.62": 1,
+    "colour: Color(red: 0.72": 2,
+    "colour: Color(red: 0.78": 1,
+    "colour: Color(red: 0.86": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.96": 2,
+    "colour: Color(red: 1.0": 4,
+    "font: .system(size: 10": 5,
+    "font: .system(size: 10.5": 6,
+    "font: .system(size: 11": 7,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 4,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 17": 1,
+    "font: .system(size: 8": 1,
+    "radius: cornerRadius: 10": 1,
+    "radius: cornerRadius: 8": 1,
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewCompletion.swift": {
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 1": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewDecor.swift": {
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.42": 1,
+    "colour: Color(red: 0.46": 1,
+    "colour: Color(red: 0.50": 1,
+    "colour: Color(red: 0.52": 1,
+    "colour: Color(red: 0.55": 1,
+    "colour: Color(red: 0.58": 1,
+    "colour: Color(red: 0.62": 2,
+    "colour: Color(red: 0.70": 1,
+    "colour: Color(red: 0.80": 1,
+    "colour: Color(red: 0.86": 1,
+    "colour: Color(red: 0.92": 2,
+    "colour: Color(red: 0.95": 1,
+    "colour: Color(red: 0.98": 1,
+    "colour: Color(red: 1.0": 5,
+    "radius: cornerRadius: 0.02": 1,
+    "radius: cornerRadius: 0.03": 1,
+    "radius: cornerRadius: 0.06": 2
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewEvents.swift": {
+    "colour: Color(red: 0.05": 2,
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.14": 2,
+    "colour: Color(red: 0.30": 2,
+    "colour: Color(red: 0.35": 1,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.38": 1,
+    "colour: Color(red: 0.45": 1,
+    "colour: Color(red: 0.50": 1,
+    "colour: Color(red: 0.52": 1,
+    "colour: Color(red: 0.54": 1,
+    "colour: Color(red: 0.60": 1,
+    "colour: Color(red: 0.62": 4,
+    "colour: Color(red: 0.72": 2,
+    "colour: Color(red: 0.80": 1,
+    "colour: Color(red: 0.86": 3,
+    "colour: Color(red: 0.94": 1,
+    "colour: Color(red: 0.96": 1,
+    "colour: Color(red: 0.98": 2,
+    "colour: Color(red: 1": 1,
+    "colour: Color(red: 1.0": 15,
+    "radius: cornerRadius: 1": 1,
+    "radius: cornerRadius: 1.2": 1,
+    "radius: cornerRadius: 2.5": 1,
+    "radius: cornerRadius: 4": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewFish.swift": {
+    "colour: Color(red: 0.02": 1,
+    "font: .system(size: 11": 1,
+    "font: .system(size: 9": 6
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewFloor.swift": {
+    "colour: Color(red: 0.25": 1,
+    "colour: Color(red: 0.30": 1,
+    "colour: Color(red: 0.60": 1,
+    "radius: cornerRadius: 16": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewOwnedDecor.swift": {
+    "colour: Color(red: 0.02": 1,
+    "colour: Color(red: 0.04": 1,
+    "colour: Color(red: 0.05": 1,
+    "colour: Color(red: 0.06": 1,
+    "colour: Color(red: 0.08": 1,
+    "colour: Color(red: 0.10": 2,
+    "colour: Color(red: 0.12": 5,
+    "colour: Color(red: 0.14": 3,
+    "colour: Color(red: 0.20": 2,
+    "colour: Color(red: 0.26": 1,
+    "colour: Color(red: 0.30": 2,
+    "colour: Color(red: 0.32": 1,
+    "colour: Color(red: 0.34": 1,
+    "colour: Color(red: 0.36": 4,
+    "colour: Color(red: 0.38": 1,
+    "colour: Color(red: 0.40": 2,
+    "colour: Color(red: 0.42": 2,
+    "colour: Color(red: 0.44": 1,
+    "colour: Color(red: 0.45": 1,
+    "colour: Color(red: 0.46": 3,
+    "colour: Color(red: 0.48": 1,
+    "colour: Color(red: 0.52": 2,
+    "colour: Color(red: 0.54": 2,
+    "colour: Color(red: 0.55": 3,
+    "colour: Color(red: 0.56": 2,
+    "colour: Color(red: 0.58": 2,
+    "colour: Color(red: 0.60": 1,
+    "colour: Color(red: 0.62": 2,
+    "colour: Color(red: 0.70": 2,
+    "colour: Color(red: 0.72": 3,
+    "colour: Color(red: 0.74": 2,
+    "colour: Color(red: 0.76": 3,
+    "colour: Color(red: 0.78": 1,
+    "colour: Color(red: 0.80": 2,
+    "colour: Color(red: 0.85": 2,
+    "colour: Color(red: 0.86": 4,
+    "colour: Color(red: 0.90": 1,
+    "colour: Color(red: 0.92": 2,
+    "colour: Color(red: 0.94": 4,
+    "colour: Color(red: 0.95": 4,
+    "colour: Color(red: 0.96": 2,
+    "colour: Color(red: 0.97": 1,
+    "colour: Color(red: 0.98": 3,
+    "colour: Color(red: 1": 2,
+    "colour: Color(red: 1.0": 15,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 0.6": 2,
+    "radius: cornerRadius: 1.2": 1,
+    "radius: cornerRadius: 1.4": 1,
+    "radius: cornerRadius: 1.5": 1,
+    "radius: cornerRadius: 1.7": 1,
+    "radius: cornerRadius: 3": 1,
+    "radius: cornerRadius: 3.5": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewOyster.swift": {
+    "colour: Color(red: 0.20": 1,
+    "colour: Color(red: 0.34": 1,
+    "colour: Color(red: 0.66": 1,
+    "colour: Color(red: 0.93": 2,
+    "colour: Color(red: 0.96": 1,
+    "colour: Color(red: 1": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewPets.swift": {
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 0.34": 1,
+    "colour: Color(red: 0.36": 1,
+    "colour: Color(red: 0.46": 1,
+    "colour: Color(red: 0.60": 1,
+    "colour: Color(red: 0.66": 1,
+    "colour: Color(red: 0.76": 1,
+    "colour: Color(red: 0.92": 1,
+    "colour: Color(red: 0.96": 1
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewToyReef.swift": {
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.24": 1,
+    "colour: Color(red: 0.45": 1,
+    "colour: Color(red: 0.70": 1,
+    "colour: Color(red: 0.95": 2,
+    "colour: Color(red: 1.0": 3
+  },
+  "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewWater.swift": {
+    "colour: Color(red: 0.03": 1,
+    "colour: Color(red: 0.52": 1,
+    "colour: Color(red: 1.0": 1
+  },
+  "app/Sources/JRBarApp/Toys/BuddyCardPanel.swift": {
+    "font: .system(size: 11": 2,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 15": 1
+  },
+  "app/Sources/JRBarApp/Toys/BuddyPanel.swift": {
+    "animation: duration: 0.2": 1
+  },
+  "app/Sources/JRBarApp/Toys/ConfettiBurst.swift": {
+    "animation: duration: 0.26": 1
+  },
+  "app/Sources/JRBarApp/Toys/ConfettiCard.swift": {
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.24": 1,
+    "radius: cornerRadius: 12": 2
+  },
+  "app/Sources/JRBarApp/Toys/ConfettiPalette.swift": {
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.99": 1
+  },
+  "app/Sources/JRBarApp/Toys/Fold/FoldCardLive.swift": {
+    "font: .system(size: 17": 1,
+    "font: .system(size: 26": 1
+  },
+  "app/Sources/JRBarApp/Toys/Fold/FoldToy.swift": {
+    "radius: cornerRadius: 12": 2
+  },
+  "app/Sources/JRBarApp/Toys/Notch/NotchCardView.swift": {
+    "animation: duration: 0.15": 1,
+    "animation: duration: 1": 1,
+    "animation: duration: 20": 1,
+    "font: .system(size: 10": 20,
+    "font: .system(size: 10.5": 7,
+    "font: .system(size: 11": 19,
+    "font: .system(size: 11.5": 8,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 16": 2,
+    "font: .system(size: 7": 1,
+    "font: .system(size: 8": 2,
+    "font: .system(size: 9": 5,
+    "font: .system(size: 9.5": 9,
+    "radius: cornerRadius: 1.6": 1,
+    "radius: cornerRadius: 11": 2,
+    "radius: cornerRadius: 14": 4,
+    "radius: cornerRadius: 3.2": 1,
+    "radius: cornerRadius: 4": 1,
+    "radius: cornerRadius: 6": 1
+  },
+  "app/Sources/JRBarApp/Toys/Notch/NotchIslandView.swift": {
+    "font: .system(size: 10": 2,
+    "font: .system(size: 11": 3,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 12": 3,
+    "font: .system(size: 7": 1,
+    "font: .system(size: 9": 1,
+    "font: .system(size: 9.5": 3,
+    "radius: cornerRadius: 3.5": 2
+  },
+  "app/Sources/JRBarApp/Toys/Notch/NotchTimerGlance.swift": {
+    "font: .system(size: 10": 1,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 10": 1
+  },
+  "app/Sources/JRBarApp/Toys/NotchBuddyBodies.swift": {
+    "colour: Color(red: 0.45": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.95": 1,
+    "colour: Color(red: 1.0": 3,
+    "radius: cornerRadius: 3.0": 1,
+    "radius: cornerRadius: 5.6": 1
+  },
+  "app/Sources/JRBarApp/Toys/NotchBuddyToy.swift": {
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 11": 1
+  },
+  "app/Sources/JRBarApp/Toys/NotchBuddyView.swift": {
+    "colour: Color(red: 0.28": 1,
+    "colour: Color(red: 0.35": 1,
+    "colour: Color(red: 0.5": 1,
+    "colour: Color(red: 0.52": 1,
+    "colour: Color(red: 0.85": 1,
+    "colour: Color(red: 0.86": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.95": 1,
+    "colour: Color(red: 0.96": 1,
+    "colour: Color(red: 0.97": 1,
+    "colour: Color(red: 0.98": 5,
+    "colour: Color(red: 1.0": 5,
+    "font: .system(size: 4.5": 1,
+    "font: .system(size: 4.6": 1,
+    "font: .system(size: 5": 1,
+    "font: .system(size: 5.2": 1,
+    "font: .system(size: 5.4": 1,
+    "font: .system(size: 5.5": 1,
+    "font: .system(size: 7": 1,
+    "font: .system(size: 8.5": 1,
+    "radius: cornerRadius: 0.5": 2,
+    "radius: cornerRadius: 0.55": 1,
+    "radius: cornerRadius: 0.9": 1,
+    "radius: cornerRadius: 2.3": 1,
+    "radius: cornerRadius: 3.2": 1,
+    "radius: cornerRadius: 4.8": 1,
+    "radius: cornerRadius: 5.2": 1
+  },
+  "app/Sources/JRBarApp/Toys/Toy.swift": {
+    "animation: duration: 0.3": 1,
+    "animation: duration: 0.35": 1,
+    "radius: cornerRadius: 10": 1
+  },
+  "app/Sources/JRBarApp/UsageCenterView.swift": {
+    "animation: duration: 0.15": 4,
+    "animation: duration: 0.25": 1,
+    "animation: duration: 0.9": 1,
+    "animation: response: 0.45": 1,
+    "animation: response: 0.6": 2,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 22": 1,
+    "font: .system(size: 26": 1,
+    "font: .system(size: 7": 1,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 9": 1,
+    "radius: cornerRadius: 10": 2
+  },
+  "app/Sources/JRBarApp/UsageResetBudget.swift": {
+    "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockChrome.swift": {
+    "animation: duration: 0.12": 1,
+    "colour: Color(red: 0.16": 1,
+    "colour: Color(red: 1.0": 3,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 8": 1,
+    "font: .system(size: 9.5": 1
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockEnhance.swift": {
+    "animation: duration: 2.4": 1
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockEnhancePanel.swift": {
+    "animation: duration: 0.12": 4,
+    "animation: duration: 0.18": 1,
+    "font: .system(size: 10": 2,
+    "font: .system(size: 10.5": 2,
+    "font: .system(size: 11": 13,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 12": 4,
+    "font: .system(size: 12.5": 5,
+    "font: .system(size: 13": 1,
+    "font: .system(size: 14": 1,
+    "font: .system(size: 8.5": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 11": 1,
+    "radius: cornerRadius: 12": 4,
+    "radius: cornerRadius: 4": 2,
+    "radius: cornerRadius: 5": 1,
+    "radius: cornerRadius: 8": 3
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockPreviewSample.swift": {
+    "colour: Color(red: 0.10": 1,
+    "colour: Color(red: 0.20": 1,
+    "colour: Color(red: 0.24": 1,
+    "colour: Color(red: 0.62": 1,
+    "colour: Color(red: 0.93": 1,
+    "colour: Color(red: 0.98": 1,
+    "font: .system(size: 11": 1,
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 10": 2,
+    "radius: cornerRadius: 20": 1
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockSwitcher.swift": {
+    "animation: duration: 0.08": 1,
+    "animation: duration: 0.12": 1,
+    "font: .system(size: 10.5": 1,
+    "font: .system(size: 11": 4,
+    "font: .system(size: 11.5": 3,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 13": 1,
+    "radius: cornerRadius: 5": 2
+  },
+  "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarBar.swift": {
+    "animation: duration: 0.08": 1,
+    "animation: duration: 0.12": 1,
+    "font: .system(size: 11.5": 1,
+    "font: .system(size: 12": 4,
+    "font: .system(size: 7": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarHidingBanner.swift": {
+    "font: .system(size: 15": 1
+  },
+  "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarPositionPanel.swift": {
+    "font: .system(size: 10": 2,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 9": 1,
+    "font: .system(size: 9.5": 1,
+    "radius: cornerRadius: 10": 2,
+    "radius: cornerRadius: 12": 2,
+    "radius: cornerRadius: 7": 1
+  },
+  "app/Sources/JRBarApp/WhatsNew/WhatsNewView.swift": {
+    "animation: duration: 0.15": 1,
+    "animation: duration: 0.18": 1,
+    "font: .system(size: 11": 1,
+    "font: .system(size: 12": 1,
+    "font: .system(size: 13": 2,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 20": 1,
+    "radius: cornerRadius: 14": 2,
+    "radius: cornerRadius: 5": 2,
+    "radius: cornerRadius: 9": 1
+  },
+  "app/Sources/JRBarApp/WindowChrome.swift": {
+    "font: .system(size: 11": 3,
+    "font: .system(size: 11.5": 2,
+    "font: .system(size: 12": 3,
+    "font: .system(size: 12.5": 1,
+    "font: .system(size: 13": 1,
+    "font: .system(size: 15": 1,
+    "font: .system(size: 24": 1
+  },
+  "app/Sources/JRBarCore/NotchMotion.swift": {
+    "animation: response: 0.14": 1,
+    "animation: response: 0.18": 1,
+    "animation: response: 0.20": 2,
+    "animation: response: 0.23": 1,
+    "animation: response: 0.24": 1,
+    "animation: response: 0.30": 1,
+    "animation: response: 0.34": 1,
+    "animation: response: 0.42": 1
+  }
+}

@@ -89,47 +89,47 @@ struct ProviderStyle: Hashable, Sendable {
     /// (`xai`), the full OpenClaw mascot (`openclaw.molty`) and the rounded
     /// Gemini sparkle (`gemini.lobe`), so a mark below can be swapped for one.
     static let table: [String: ProviderStyle] = Dictionary(uniqueKeysWithValues: [
-        ProviderStyle(id: "claude", name: "Claude", accentHex: "#D97757", glyph: .logo("claude"),
+        ProviderStyle(id: "claude", name: "Claude", accentHex: ProviderPalette.hex(for: "claude"), glyph: .logo("claude"),
                       fallback: .symbol("asterisk")),
         // The OpenAI blossom, the ChatGPT mark people know Codex by.
-        ProviderStyle(id: "codex", name: "Codex", accentHex: "#2B8FFF", glyph: .logo("openai"),
+        ProviderStyle(id: "codex", name: "Codex", accentHex: ProviderPalette.hex(for: "codex"), glyph: .logo("openai"),
                       fallback: .symbol("chevron.left.forwardslash.chevron.right")),
-        ProviderStyle(id: "gemini", name: "Gemini", accentHex: "#34C759", glyph: .logo("gemini"),
+        ProviderStyle(id: "gemini", name: "Gemini", accentHex: ProviderPalette.hex(for: "gemini"), glyph: .logo("gemini"),
                       fallback: .symbol("sparkle")),
-        ProviderStyle(id: "pi", name: "Pi", accentHex: "#007AFF", glyph: .logo("pi"), fallback: .text("π")),
-        ProviderStyle(id: "grok", name: "Grok", accentHex: "#636366", glyph: .logo("grok"), fallback: .symbol("bolt.fill")),
-        ProviderStyle(id: "devin", name: "Devin", accentHex: "#5C84B0", glyph: .logo("devin"),
+        ProviderStyle(id: "pi", name: "Pi", accentHex: ProviderPalette.hex(for: "pi"), glyph: .logo("pi"), fallback: .text("π")),
+        ProviderStyle(id: "grok", name: "Grok", accentHex: ProviderPalette.hex(for: "grok"), glyph: .logo("grok"), fallback: .symbol("bolt.fill")),
+        ProviderStyle(id: "devin", name: "Devin", accentHex: ProviderPalette.hex(for: "devin"), glyph: .logo("devin"),
                       fallback: .symbol("diamond.fill")),
-        ProviderStyle(id: "opencode", name: "OpenCode", accentHex: "#AF52DE", glyph: .logo("opencode"),
+        ProviderStyle(id: "opencode", name: "OpenCode", accentHex: ProviderPalette.hex(for: "opencode"), glyph: .logo("opencode"),
                       fallback: .symbol("terminal.fill")),
         // OpenClaw's own menu-bar critter: it reads at every size, where
         // the full mascot blurs below 16 pt.
-        ProviderStyle(id: "openclaw", name: "OpenClaw", accentHex: "#B23400", glyph: .logo("openclaw"),
+        ProviderStyle(id: "openclaw", name: "OpenClaw", accentHex: ProviderPalette.hex(for: "openclaw"), glyph: .logo("openclaw"),
                       fallback: .symbol("pawprint.fill")),
-        ProviderStyle(id: "antigravity", name: "Antigravity", accentHex: "#ABE17E", glyph: .logo("antigravity"),
+        ProviderStyle(id: "antigravity", name: "Antigravity", accentHex: ProviderPalette.hex(for: "antigravity"), glyph: .logo("antigravity"),
                       fallback: .symbol("arrow.up.to.line")),
-        ProviderStyle(id: "cursor", name: "Cursor", accentHex: "#FFCC00", glyph: .logo("cursor"),
+        ProviderStyle(id: "cursor", name: "Cursor", accentHex: ProviderPalette.hex(for: "cursor"), glyph: .logo("cursor"),
                       fallback: .symbol("cursorarrow")),
-        ProviderStyle(id: "hermes", name: "Hermes Agent", accentHex: "#FF9500", glyph: .logo("hermes"),
+        ProviderStyle(id: "hermes", name: "Hermes Agent", accentHex: ProviderPalette.hex(for: "hermes"), glyph: .logo("hermes"),
                       fallback: .symbol("paperplane.fill")),
-        ProviderStyle(id: "kiro", name: "Kiro", accentHex: "#A00848", glyph: .logo("kiro"), fallback: .text("K")),
+        ProviderStyle(id: "kiro", name: "Kiro", accentHex: ProviderPalette.hex(for: "kiro"), glyph: .logo("kiro"), fallback: .text("K")),
         // A usage source rather than an agent: the daemon reports it in
         // `state.usage.providers` (`provider_usage_cli.py`), so the Usage
         // Center needs a name for it that is not "Openai-api". The same
         // blossom as Codex; the colour and the name tell them apart.
-        ProviderStyle(id: "kimi", name: "Kimi Code", accentHex: "#3178D4", glyph: .text("K")),
-        ProviderStyle(id: "kilo", name: "Kilo", accentHex: "#C27C00", glyph: .symbol("bolt.horizontal.fill")),
-        ProviderStyle(id: "factory", name: "Factory", accentHex: "#E76F32", glyph: .symbol("shippingbox.fill")),
-        ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: "#10A37F", glyph: .logo("openai"),
+        ProviderStyle(id: "kimi", name: "Kimi Code", accentHex: ProviderPalette.hex(for: "kimi"), glyph: .text("K")),
+        ProviderStyle(id: "kilo", name: "Kilo", accentHex: ProviderPalette.hex(for: "kilo"), glyph: .symbol("bolt.horizontal.fill")),
+        ProviderStyle(id: "factory", name: "Factory", accentHex: ProviderPalette.hex(for: "factory"), glyph: .symbol("shippingbox.fill")),
+        ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: ProviderPalette.hex(for: "openai-api"), glyph: .logo("openai"),
                       fallback: .symbol("key.horizontal.fill")),
         // A usage source the daemon appends to the usage graph when its
         // T3 coverage exists — matches the daemon's own "T3 Code" label.
-        ProviderStyle(id: "t3code", name: "T3 Code", accentHex: "#00B8D9", glyph: .logo("t3code"),
+        ProviderStyle(id: "t3code", name: "T3 Code", accentHex: ProviderPalette.hex(for: "t3code"), glyph: .logo("t3code"),
                       fallback: .symbol("cube")),
         // JR-Bar's own rows: the daemon bundles orphaned workers of mixed
         // providers into one "Background agents" row under this id
         // (`mailbox._candidate_for_orphan_workers`). JR-Bar's notch-cap mark.
-        ProviderStyle(id: "jrbar", name: "JR-Bar", accentHex: "#5E5CE6", glyph: .logo("jrbar"),
+        ProviderStyle(id: "jrbar", name: "JR-Bar", accentHex: ProviderPalette.hex(for: "jrbar"), glyph: .logo("jrbar"),
                       fallback: .symbol("square.stack.3d.up.fill")),
     ].map { ($0.id, $0) })
 
@@ -138,7 +138,7 @@ struct ProviderStyle: Hashable, Sendable {
         if let known = table[key] { return known }
         // Unknown providers get a neutral tile and a readable name, never a blank.
         let name = key.isEmpty ? "Agent" : key.prefix(1).uppercased() + key.dropFirst()
-        return ProviderStyle(id: key, name: name, accentHex: "#8E8E93", glyph: .symbol(unknownSymbol))
+        return ProviderStyle(id: key, name: name, accentHex: ProviderPalette.hex(for: key), glyph: .symbol(unknownSymbol))
     }
 
     /// The default style with a configured `colors.agent_colors.<id>`

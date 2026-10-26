@@ -59,6 +59,7 @@ from .private_io import (
     read_private_text,
 )
 from .product_identity import PRODUCT_DISPLAY_NAME
+from .provider_display import load_provider_display
 from .providers import PROVIDER_REGISTRY
 from .remote_peers import RemotePeerSettings
 from .scenes import (
@@ -577,6 +578,7 @@ class AgentMonitorSettings:
     # on this Mac, so "the provider is down" is not read as "your fetch broke".
     # Off by default -- it is a request that leaves the Mac, so nothing is
     # contacted until the person turns it on.
+    provider_display: dict[str, list[str]] | None = None
     provider_status_feeds_enabled: bool = False
     # Settings > Agents & Usage' "Check for agent updates" switch: when on, the daemon asks
     # registry.npmjs.org for the latest version of each installed agent CLI that
@@ -1928,6 +1930,7 @@ class AgentMonitorSettings:
             "presence_enabled": self.presence_enabled,
             "serve_enabled": self.serve_enabled,
             "serve_answer_enabled": self.serve_answer_enabled,
+            "provider_display": load_provider_display(self.provider_display),
             "provider_status_feeds_enabled": self.provider_status_feeds_enabled,
             "provider_update_checks_enabled": self.provider_update_checks_enabled,
             "ntfy_enabled": self.ntfy_enabled,
@@ -2371,6 +2374,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
         presence_enabled=_bool_setting(data.get("presence_enabled"), True),
         serve_enabled=_bool_setting(data.get("serve_enabled"), False),
         serve_answer_enabled=_bool_setting(data.get("serve_answer_enabled"), False),
+        provider_display=load_provider_display(data.get("provider_display")),
         provider_status_feeds_enabled=_bool_setting(
             data.get("provider_status_feeds_enabled"), False
         ),
