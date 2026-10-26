@@ -838,13 +838,6 @@
   },
   "app/Sources/JRBarApp/WhatsNew/WhatsNewView.swift": {
     "animation: duration: 0.15": 1,
-    "animation: duration: 0.18": 1,
-    "font: .system(size: 11": 1,
-    "font: .system(size: 12": 1,
-    "font: .system(size: 13": 2,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 20": 1,
-    "radius: cornerRadius: 14": 2,
     "radius: cornerRadius: 5": 2,
     "radius: cornerRadius: 9": 1
   },
