@@ -2,6 +2,7 @@ import AppKit
 @testable import JRBarCore
 import JRBarUI
 import QuartzCore
+import ObjectiveC
 import SwiftUI
 import Testing
 @testable import JRBarApp
@@ -12,12 +13,15 @@ struct U5RenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
     static let stamp = 1_792_947_600.0
 
+    init() throws { try U5Proof.pinDefaultAccent() }
+
     @Test(.enabled(if: enabled))
     func notchOwnerMatrix() async throws {
         for dark in [false, true] {
             let (toy, owner, monitor) = NotchSurfaceRenderProofTests.makeToy()
             defer { withExtendedLifetime(owner) {} }
             NotchSurfaceRenderProofTests.fill(toy.cardModel, monitor: monitor)
+            toy.cardModel.wingHint = true
             defer { NotchSurfaceRenderProofTests.clearTray(toy.cardModel) }
             for page in [NotchCardModel.Page.now, .shelf] {
                 toy.cardModel.show(page)
@@ -52,6 +56,7 @@ struct U5RenderProofTests {
                 parent: index == 0 ? nil : ids[0], label: index == 0 ? "Sample project" : "Worker \(index)", mode: "working")
         }
         sessions[1].ask = ask
+        sessions[2].lifecycle = "failed"
         sessions.append(CoreSession(id: "codex:unlinked", provider: "codex", label: "Unlinked", mode: "working", unlinkedWorker: true))
         for dark in [false, true] {
             let (toy, owner, _) = NotchSurfaceRenderProofTests.makeToy(state: CoreState(sessions: sessions, asks: [ask], agentGroups: [group]))
@@ -140,6 +145,90 @@ struct U5RenderProofTests {
     }
 
     @Test(.enabled(if: enabled))
+    func fixStatesMatrix() async throws {
+        let now = Date(timeIntervalSince1970: Self.stamp)
+        for dark in [false, true] {
+            for tokens in [0, 100] {
+                let singleton = UsageHistory(provider: "claude", range: "7d", days: [UsageHistoryDay(date: "2026-10-25", tokensIn: tokens)])
+                try await U5Proof.render(UsageTokenChart(history: singleton, range: .week, accent: .blue).padding(24),
+                    name: "usage-singleton-\(tokens)", width: 720, dark: dark)
+            }
+            let history = UsageHistory(provider: "claude", range: "30d", days: Self.days, stale: true)
+            try await U5Proof.render(UsageTokenChart(history: history, range: .month, accent: .blue)
+                .proofSelection(Self.days[12].day, cacheVisible: true).padding(24),
+                name: "usage-stale-series", width: 720, dark: dark)
+            try await U5Proof.render(UsageTokenChart(history: history, range: .month, accent: .blue, metric: .cost)
+                .padding(24), name: "usage-cost", width: 720, dark: dark)
+            var graph = CoreUsageGraph()
+            graph.labels = Self.days.map(\.date)
+            graph.series = ["claude", "codex", "gemini"].enumerated().map { index, provider in
+                .init(providerId: provider, values: Self.days.map { Double($0.totalTokens) / Double(index + 1) })
+            }
+            try await U5Proof.render(UsageOverviewChart(graph: graph, states: ["claude": "ready", "codex": "failed", "gemini": "disk_full"])
+                .padding(24), name: "usage-overview-stale", width: 850, dark: dark)
+            for mode in ["running", "paused", "done"] {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let timers = ShelfTimerModel(storeURL: directory.appendingPathComponent("timers.json"), schedulingEnabled: false, clock: { now })
+                let timer = timers.add(label: "Review the final presentation", duration: 125,
+                    now: mode == "done" ? now.addingTimeInterval(-130) : now)
+                if mode == "paused" { timers.pause(timer) }
+                if mode == "done" { timers.sweep() }
+                try await U5Proof.render(NotchTimerGlanceRow(timers: timers, style: .island, onOpenShelf: {}, stillDate: now)
+                    .padding(16).background(.black), name: "notch-timer-" + mode, width: 400, dark: dark)
+            }
+            var provider = CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 42)])
+            provider.tokenHistoryState = "ready"
+            let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-u5-unpriced.sock")
+            core.handle(.connected)
+            core.apply(.state(CoreState(usage: CoreUsage(providers: [provider]))))
+            let store = UsageCenterStore(core: core)
+            store.now = now
+            store.overviewGraph = graph
+            let unpriced = UsageHistory(provider: "claude", range: "7d", days: [UsageHistoryDay(date: "2026-10-25", tokensIn: 1000, cacheRead: 5000)])
+            store.readHistory = { _, _ in unpriced }
+            await store.load(provider: provider)?.value
+            try await U5Proof.render(UsageOverviewTable(store: store, showCost: true, select: { _ in }).padding(24),
+                name: "usage-overview-unpriced", width: 850, dark: dark)
+
+            let risky = CoreAsk(session: "claude:risky", summary: "Delete the sample output?", answerable: true, request: "fixture", risk: "destructive")
+            let riskyState = CoreState(sessions: [CoreSession(id: "claude:risky", provider: "claude", label: "Sample project", ask: risky)], asks: [risky])
+            let (toy, owner, _) = NotchSurfaceRenderProofTests.makeToy(state: riskyState)
+            defer { withExtendedLifetime(owner) {} }
+            toy.activeCapsule = AlcoveNotice(id: "risky", kind: .ask, title: "Sample project", subtitle: "Delete the sample output?", provider: "claude",
+                session: risky.session, key: "risky", ask: risky)
+            #expect(toy.engageAskKeyboard())
+            try await U5Proof.render(NotchIslandView(toy: toy).frame(width: 400, height: 148).padding(24),
+                name: "notch-destructive-keyboard", width: 520, dark: dark)
+            try await U5Proof.render(NotchBatteryGlyph(fraction: 0.7, tone: .green, plugged: true, style: .island)
+                .padding(24).background(.black), name: "notch-battery-glyph", width: 200, dark: dark)
+
+            let ask = CoreAsk(session: "claude:fixture", summary: "Review plan", detail: CoreAskDetail(plan: "Run the checks"))
+            try await U5Proof.render(AskDetailToggle(ask: ask, labelled: true, size: 8.5, tint: .blue).padding(24),
+                name: "notch-ask-detail", width: 300, dark: dark)
+            try await U5Proof.render(WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {})
+                .proofRefusal("Monitor not connected", entry: "mix"), name: "whats-new-refusal", width: WhatsNewView.width, dark: dark)
+        }
+    }
+
+    @Test(.enabled(if: enabled))
+    func smallMediaGlyphs() async throws {
+        for dark in [false, true] {
+            let (toy, owner, _) = NotchSurfaceRenderProofTests.makeToy(state: CoreState())
+            defer { withExtendedLifetime(owner) {} }
+            toy.reduceMotion = { true }
+            var media = NotchSurfaceRenderProofTests.media()
+            media.artworkData = nil
+            toy.noteMedia(media)
+            let layout = toy.idleLayout
+            let width = 185 + 2 * layout.windowShoulder
+            try await U5Proof.render(NotchIslandView(toy: toy).frame(width: width, height: 32).padding(24),
+                name: "notch-media-glyph", width: 520, dark: dark)
+        }
+    }
+
+    @Test(.enabled(if: enabled))
     func welcomeMatrix() async throws {
         for dark in [false, true] {
             var model = SetupModel()
@@ -168,16 +257,31 @@ struct U5RenderProofTests {
 
 @MainActor
 enum U5Proof {
+    private static var accentPinned = false
+
+    static func pinDefaultAccent() throws {
+        guard !accentPinned else { return }
+        let defaults = UserDefaults.standard
+        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments["AppleAccentColor"] = 4
+        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+        let accentMethod = try #require(class_getClassMethod(NSColor.self, #selector(getter: NSColor.controlAccentColor)))
+        let blueMethod = try #require(class_getClassMethod(NSColor.self, #selector(NSColor.u5ProofBlueAccent)))
+        // Pin the test process before fixtures initialize semantic colours. No preferences are saved.
+        method_exchangeImplementations(accentMethod, blueMethod)
+        accentPinned = true
+    }
+
     static func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool) async throws {
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u5-proof")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try pinDefaultAccent()
         let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
         NSApplication.shared.setActivationPolicy(.regular)
-        let staged = view.environment(\.colorScheme, dark ? .dark : .light)
+        let staged = view.tint(.blue).accentColor(.blue).environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.controlActiveState, .key).environment(\.renderSnapshot, true)
             .jrbarAccessibility(reduceMotion: true).frame(width: width)
             .fixedSize(horizontal: false, vertical: true).background(JRBarTokens.Ink.window)
-            .compositingGroup()
         let hosting = NSHostingView(rootView: staged)
         hosting.appearance = appearance
         let window = U5ProofWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 100),
@@ -195,17 +299,8 @@ enum U5Proof {
         settle(hosting, window: window)
         CATransaction.flush()
         #expect(window.isKeyWindow, "Render proof must be a key window")
-        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2),
-            pixelsHigh: Int(size.height * 2), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        bitmap.size = size
-        let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
-        NSGraphicsContext.saveGraphicsState()
-        defer { NSGraphicsContext.restoreGraphicsState() }
-        NSGraphicsContext.current = context
-        appearance.performAsCurrentDrawingAppearance {
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        }
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
     }
@@ -249,4 +344,8 @@ enum U5Proof {
 private final class U5ProofWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
+
+private extension NSColor {
+    @objc class func u5ProofBlueAccent() -> NSColor { .systemBlue }
 }
