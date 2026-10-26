@@ -44,7 +44,8 @@ than the remaining name space permits, the columns wrap below the name.
 Place `UsageGaugeHeader(windowNames:)` once above compact rows. Pass the
 same names to each row so mixed window sets align. A missing slot is a
 dash. `orderedWindowNames(_:)` deduplicates names and places 5h before 7d.
-Rows identify columns by window name. Detail rows label their own lanes.
+Rows identify columns by window name. Overview passes `compactColumnWidth` to
+fit its two-line headers. Other callers keep the 64 pt default. Detail rows label their own lanes.
 Percentages clamp to 0...100. Missing values have no track. Elapsed
 windows say Reset; an unmeasured window says No reading.
 

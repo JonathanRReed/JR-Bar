@@ -93,6 +93,7 @@ public struct UsageGaugeRow: View {
     private let tileAccent: Color?
     public let style: Style
     public let windowNames: [String]
+    public let compactColumnWidth: CGFloat
     public let suppressDisconnectedStatus: Bool
     public let snapshotReceivedAt: Double?
     public let locale: Locale
@@ -108,7 +109,9 @@ public struct UsageGaugeRow: View {
                 accent: Color? = nil, style: Style = .detail, windowNames: [String]? = nil,
                 snapshotReceivedAt: Double? = nil, suppressDisconnectedStatus: Bool = false, locale: Locale = .current, timeZone: TimeZone = .current,
                 pace: [String: Double] = [:], fix: String? = nil,
-                onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil) {
+                onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil,
+                compactColumnWidth: CGFloat = UsageGaugeRow.columnWidth) {
+        self.compactColumnWidth = compactColumnWidth
         self.provider = provider
         self.name = name
         self.now = now
@@ -212,7 +215,7 @@ public struct UsageGaugeRow: View {
                             identity
                         }
                         if showsWindows {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.columnWidth, maximum: Self.columnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: compactColumnWidth, maximum: compactColumnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
                                 ForEach(windowNames, id: \.self) { name in
                                     VStack(alignment: .trailing, spacing: 4) {
                                         Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
@@ -265,11 +268,11 @@ public struct UsageGaugeRow: View {
             let reading = UsageGaugeReading(window: window, provider: provider, now: now, connected: connected,
                                             locale: locale, timeZone: timeZone)
             UsageGaugeColumn(reading: reading, accent: accent, compact: compact, pace: pace[name])
-                .frame(width: compact ? Self.columnWidth : nil)
+                .frame(width: compact ? compactColumnWidth : nil)
                 .frame(maxWidth: compact ? nil : .infinity)
         } else {
             Text("–").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
-                .frame(width: compact ? Self.columnWidth : nil, alignment: .trailing)
+                .frame(width: compact ? compactColumnWidth : nil, alignment: .trailing)
                 .frame(maxWidth: compact ? nil : .infinity)
                 .accessibilityLabel("\(name): no window")
         }
