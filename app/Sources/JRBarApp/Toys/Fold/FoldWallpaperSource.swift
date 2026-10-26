@@ -108,15 +108,17 @@ final class FoldWallpaperSource: FoldFrameSource {
     /// of its own so the main actor never waits on the decode.
     nonisolated static func frame(from url: URL, into pixels: CGSize, layout: Layout,
                                   fill: CGColor) async -> Result<Frame, FoldWallpaperError> {
-        await Task.detached(priority: .userInitiated) {
-            guard let image = NSImage(contentsOf: url),
+        let cache = BackgroundLookupCache<Int, Result<Frame, FoldWallpaperError>>(load: { _ in
+            guard ExternalFilePolicy(home: NSHomeDirectory()).available(url),
+                  let image = NSImage(contentsOf: url),
                   let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
             else { return .failure(.noWallpaper) }
             guard let buffer = render(cgImage, into: pixels, layout: layout, fill: fill) else {
                 return .failure(.noBuffer)
             }
             return .success(Frame(buffer: buffer))
-        }.value
+        })
+        return await cache.resolve(0) ?? .failure(.noWallpaper)
     }
 
     // MARK: Pure layout
