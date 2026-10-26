@@ -37,9 +37,11 @@ Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
 snapshotReceivedAt:locale:timeZone:pace:fix:onAction:onRetry:)` renders
 supplied facts without polling. The default `.detail` layout has 6 pt
 lanes and optional pace ticks. Use `.compact` in the panel and drawer.
-It has a 20 pt tile, 64 pt right-aligned window columns, 4 pt gauges and
-7/12 pt padding. It adds no other outer spacing. When more columns fit
-than the remaining name space permits, the columns wrap below the name.
+It has a 20 pt tile and a 100 pt identity column. Window columns share
+all remaining width, with a 64 pt minimum. Each percentage sits beside
+its 4 pt gauge, with the reset time below. Normal panel rows are 44 pt
+tall with 4/12 pt padding. Status and action rows keep extra height.
+Columns wrap below the name when they cannot fit beside it.
 
 Place `UsageGaugeHeader(windowNames:)` once above compact rows. Pass the
 same names to each row so mixed window sets align. A missing slot is a

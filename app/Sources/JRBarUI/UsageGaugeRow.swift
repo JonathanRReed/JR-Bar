@@ -69,11 +69,11 @@ public struct UsageGaugeHeader: View {
 
     public var body: some View {
         HStack(spacing: 10) {
-            Spacer(minLength: 0)
+            Color.clear.frame(width: UsageGaugeRow.compactIdentityWidth)
             ForEach(windowNames, id: \.self) { name in
                 Text("\(name) used").font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail)
-                    .frame(width: UsageGaugeRow.columnWidth, alignment: .trailing)
+                    .frame(minWidth: UsageGaugeRow.columnWidth, maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, 12).padding(.bottom, 2)
@@ -85,6 +85,8 @@ public struct UsageGaugeRow: View {
     @Environment(\.jrbarInk) private var neutralInk
     public enum Style: Sendable { case compact, detail }
     public static let columnWidth: CGFloat = 64
+    fileprivate static let compactIdentityWidth: CGFloat = 100
+    fileprivate static let compactPercentWidth: CGFloat = 36
     public let provider: CoreProviderUsage
     public let name: String
     public let now: Double
@@ -145,7 +147,8 @@ public struct UsageGaugeRow: View {
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
         if !provider.quotaSource { return "Sessions only" }
-        return provider.statusText ?? (showsWindows ? nil : "No quota reading")
+        let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
+        return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : "No quota reading")
     }
 
     public var body: some View {
@@ -201,17 +204,17 @@ public struct UsageGaugeRow: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                        identity.frame(minWidth: 60, idealWidth: 60, maxWidth: .infinity)
-                        if showsWindows {
+                        compactIdentity.frame(width: Self.compactIdentityWidth - 30)
+                        if !windowNames.isEmpty {
                             ForEach(windowNames, id: \.self) { column($0, compact: true) }
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 10) {
                             ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                            identity
+                            compactIdentity
                         }
-                        if showsWindows {
+                        if !windowNames.isEmpty {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.columnWidth, maximum: Self.columnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
                                 ForEach(windowNames, id: \.self) { name in
                                     VStack(alignment: .trailing, spacing: 4) {
@@ -223,13 +226,42 @@ public struct UsageGaugeRow: View {
                         }
                     }
                 }
+                if isStale && showsWindows { compactReadingStatus.padding(.leading, 30) }
                 actions.padding(.leading, 30)
             }
         }
-        .padding(.vertical, 7).padding(.horizontal, 12)
+        .padding(.vertical, JRBarTokens.Space.xs).padding(.horizontal, JRBarTokens.Space.md)
         .frame(minHeight: 44)
         .background(hovering ? neutralInk.hover : .clear, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
         .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder private var compactIdentity: some View {
+        if isStale && showsWindows {
+            Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            identity
+        }
+    }
+
+    private var compactReadingStatus: some View {
+        let age = UsageGaugeReading.age(provider: provider, now: now, snapshotReceivedAt: snapshotReceivedAt ?? fallbackSnapshotAt)
+        return HStack(spacing: JRBarTokens.Space.sm) {
+            if let status {
+                HStack(spacing: 3) {
+                    if provider.availability == "failing" {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(JRBarTokens.Ink.failure)
+                    }
+                    Text(status).foregroundStyle(provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
+                }
+                .lineLimit(1).truncationMode(.tail).help(status)
+            }
+            Label(age, systemImage: "clock").foregroundStyle(neutralInk.stale)
+                .fixedSize().help(age)
+            Spacer(minLength: 0)
+        }
+        .font(JRBarTokens.TypeStyle.caption.font)
     }
 
     private var detail: some View {
@@ -261,18 +293,53 @@ public struct UsageGaugeRow: View {
     }
 
     @ViewBuilder private func column(_ name: String, compact: Bool) -> some View {
-        if let window = provider.windows.first(where: { $0.name == name }) {
+        if let window = provider.windows.first(where: { $0.name == name }), !compact || showsWindows {
             let reading = UsageGaugeReading(window: window, provider: provider, now: now, connected: connected,
                                             locale: locale, timeZone: timeZone)
-            UsageGaugeColumn(reading: reading, accent: accent, compact: compact, pace: pace[name])
-                .frame(width: compact ? Self.columnWidth : nil)
-                .frame(maxWidth: compact ? nil : .infinity)
+            Group {
+                if compact {
+                    CompactUsageGaugeColumn(reading: reading, accent: accent)
+                } else {
+                    UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
+                }
+            }
+            .frame(minWidth: compact ? Self.columnWidth : nil, maxWidth: .infinity)
         } else {
             Text("–").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
-                .frame(width: compact ? Self.columnWidth : nil, alignment: .trailing)
-                .frame(maxWidth: compact ? nil : .infinity)
+                .frame(width: compact ? Self.compactPercentWidth : nil, alignment: .trailing)
+                .frame(minWidth: compact ? Self.columnWidth : nil, maxWidth: .infinity, alignment: compact ? .leading : .center)
                 .accessibilityLabel("\(name): no window")
         }
+    }
+}
+
+private struct CompactUsageGaugeColumn: View {
+    @Environment(\.jrbarInk) private var neutralInk
+    let reading: UsageGaugeReading
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if let used = reading.percentUsed {
+                HStack(spacing: JRBarTokens.Space.xs) {
+                    Text("\(Int(used.rounded()))%")
+                        .font(JRBarTokens.TypeStyle.headline.font).monospacedDigit()
+                        .foregroundStyle(reading.stale ? neutralInk.stale : neutralInk.label)
+                        .frame(width: UsageGaugeRow.compactPercentWidth, alignment: .trailing)
+                    JRBarGauge(value: used, tint: accent, stale: reading.stale, height: 4)
+                }
+            } else {
+                Text(reading.elapsed ? "Reset" : "No reading")
+                    .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .caption).font).lineLimit(1)
+                    .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text(reading.footnote).font(JRBarTokens.TypeStyle.caption.font)
+                .foregroundStyle(neutralInk.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.footnote)")
     }
 }
 
