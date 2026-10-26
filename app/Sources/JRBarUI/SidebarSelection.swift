@@ -3,11 +3,14 @@ import SwiftUI
 public extension View {
     func jrbarSidebarSelection(_ selected: Bool) -> some View {
         self
-            .jrbarType(.body)
             .foregroundStyle(selected ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+            .jrbarType(.body)
             .frame(maxWidth: .infinity, minHeight: JRBarTokens.Space.xxxl, alignment: .leading)
             .padding(.horizontal, JRBarTokens.Space.sm)
-            .background(selected ? JRBarTokens.Ink.accent : .clear,
-                        in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+            .background {
+                RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
+                    .fill(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
+            }
+            .tint(JRBarTokens.Ink.accent)
     }
 }
