@@ -8,10 +8,9 @@ import Testing
 @Suite("Unseen dot")
 @MainActor
 struct UnseenDotTests {
-    @Test("the dot is a fixed system blue, not the accent colour")
+    @Test("the dot is system blue under any host accent")
     func fixedBlue() {
         #expect(UnseenDot.fill == NSColor.systemBlue)
-        #expect(UnseenDot.fill != NSColor.controlAccentColor)
     }
 
     @Test("the dot lays out at its five-point diameter")

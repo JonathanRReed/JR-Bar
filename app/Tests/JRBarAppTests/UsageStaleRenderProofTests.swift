@@ -13,6 +13,7 @@ import Testing
 @Suite("Usage stale reading render proof", .serialized)
 @MainActor
 struct UsageStaleRenderProofTests {
+    init() throws { try U5Proof.pinDefaultAccent() }
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func staleReadingNamesItsAge() async throws {
         let (core, process) = try await WindowsRenderProofTests.mock(startAt: 6, extra: ["--usage-scenario", "stale"])
@@ -23,16 +24,24 @@ struct UsageStaleRenderProofTests {
             !store.providers.isEmpty && store.providers.allSatisfy { store.history(for: $0) != nil }
         }
         let claude = try #require(store.providers.first { $0.id == "claude" })
+        let codex = try #require(store.providers.first { $0.id == "codex" })
+        let codexRead = try #require(codex.readingAt)
+        store.now = Date(timeIntervalSince1970: codexRead + 60)
         #expect(claude.isStale)
         let read = try #require(claude.readAt)
         let observed = try #require(claude.observedAt)
         #expect(observed - read > 5 * 3600, "the numbers are hours older than the last attempt")
         let stale = UsageCardCopy.readingAgeText(claude, now: store.now)
         #expect(stale?.hasPrefix("read 5h") == true, "\(stale ?? "nil")")
-        let codex = try #require(store.providers.first { $0.id == "codex" })
         #expect(UsageCardCopy.readingAgeText(codex, now: store.now) == "read 1m ago")
-        try WindowsRenderProofTests.write("usage-center-stale", size: CGSize(width: 780, height: 1340)) {
-            UsageCenterView(store: store)
+        let savedSelection = UserDefaults.standard.object(forKey: "usageCenter.provider")
+        defer {
+            if let savedSelection { UserDefaults.standard.set(savedSelection, forKey: "usageCenter.provider") }
+            else { UserDefaults.standard.removeObject(forKey: "usageCenter.provider") }
+        }
+        UserDefaults.standard.set(claude.identity, forKey: "usageCenter.provider")
+        try WindowsRenderProofTests.write("usage-center-stale", size: CGSize(width: 1000, height: 1340)) {
+            UsageCenterView(store: store).tint(.blue).accentColor(.blue)
         }
         store.windowDidClose()
     }

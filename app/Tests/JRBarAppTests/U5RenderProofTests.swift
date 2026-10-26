@@ -272,7 +272,7 @@ enum U5Proof {
         accentPinned = true
     }
 
-    static func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool) async throws {
+    static func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool, title: String? = nil) async throws {
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u5-proof")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try pinDefaultAccent()
@@ -285,22 +285,28 @@ enum U5Proof {
         let hosting = NSHostingView(rootView: staged)
         hosting.appearance = appearance
         let window = U5ProofWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 100),
-                                   styleMask: [.borderless], backing: .buffered, defer: false)
+                                   styleMask: title == nil ? [.borderless] : [.titled, .closable, .miniaturizable, .resizable],
+                                   backing: .buffered, defer: false)
+        if let title { window.title = title }
         window.isReleasedWhenClosed = false
         window.appearance = appearance
         window.contentView = hosting
+        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
         defer { window.contentView = nil; window.close() }
         try WindowPresenter.renderProofKey(window)
         if !window.isKeyWindow { runUntilKey(window) }
+        let initiallyKey = window.isKeyWindow
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         window.setContentSize(size)
+        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
         hosting.frame = NSRect(origin: .zero, size: size)
         settle(hosting, window: window)
         CATransaction.flush()
-        #expect(window.isKeyWindow, "Render proof must be a key window")
-        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        #expect(window.isKeyWindow, "Render proof must be key: initially=\(initiallyKey), active=\(NSApp.isActive), visible=\(window.isVisible)")
+        let capturedView = title == nil ? hosting : (hosting.superview ?? hosting)
+        let bitmap = try #require(capturedView.bitmapImageRepForCachingDisplay(in: capturedView.bounds))
+        capturedView.cacheDisplay(in: capturedView.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
     }
@@ -344,6 +350,7 @@ enum U5Proof {
 private final class U5ProofWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 private extension NSColor {
