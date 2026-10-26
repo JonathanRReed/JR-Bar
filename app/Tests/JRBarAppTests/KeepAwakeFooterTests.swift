@@ -22,10 +22,10 @@ struct KeepAwakeFooterTests {
         #expect(store.awakeHold == nil)
     }
 
-    @Test func compactDeviceControlsKeepTheirAllocatedHeight() {
+    @Test func devicePopoverControlsStayCompact() {
         let store = PanelCompositionTests.store()
         let size = NSHostingView(rootView: PanelDevicesRow(store: store)).fittingSize
-        #expect(size.height == PanelComposition.devicesHeight)
+        #expect(size.height > 0 && size.height <= 80)
         #expect(size.width <= 320)
     }
 }

@@ -29,6 +29,9 @@ Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
 - `ProviderPalette` owns provider defaults, display names and logo IDs.
   Studio overrides still come from `colors.agent_colors` in the daemon's
   document. Pass an overridden accent when available.
+- `.jrbarSidebarSelection(_:)` gives sidebar rows an accent fill and selected text colour.
+  Apply selection ink before `.jrbarType` so it overrides the type token's
+  default label ink.
 
 `UsageGaugeRow(provider:name:now:connected:accent:style:windowNames:
 snapshotReceivedAt:locale:timeZone:pace:fix:onAction:onRetry:)` renders

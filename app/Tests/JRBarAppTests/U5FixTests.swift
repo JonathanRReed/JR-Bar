@@ -151,7 +151,8 @@ import Testing
         let failed = CoreSession(id: "codex:worker", provider: "codex", parent: root.id, lifecycle: "failed")
         let summary = NotchIsland.summarize([root, failed], groups: [group], allSessions: [root, failed])
         #expect(summary.rows.count == 1)
-        #expect(summary.rows[0].members.map(\.activity) == [.failed])
+        #expect(summary.rows[0].members.map(\.activity) == [.working, .failed])
+        #expect(summary.rows[0].members.map(\.role) == ["Lead", "Worker"])
         #expect(NotchCardView.memberState(.failed) == .failed)
         for activity in [SessionActivity.done, .idle, .ended] {
             #expect(NotchCardView.memberState(activity) == .done)

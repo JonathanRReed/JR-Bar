@@ -14,6 +14,9 @@ struct PanelFooterLayoutTests {
         #expect(store.undoCountdown != nil)
         let footer = NSHostingView(rootView: PanelActionsFooter(store: store))
         #expect(footer.fittingSize.width <= 320)
-        #expect(footer.fittingSize.height == PanelComposition.footerHeight)
+        #expect(footer.fittingSize.height <= 72)
+        store.undoOffer = nil
+        let ordinary = NSHostingView(rootView: PanelActionsFooter(store: store))
+        #expect(ordinary.fittingSize.height == 44)
     }
 }

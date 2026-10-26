@@ -10,8 +10,7 @@ struct PanelComposition {
     static let rowHeight: CGFloat = 44
     static let memberHeight: CGFloat = 28
     static let sectionHeight: CGFloat = 28
-    static let footerHeight: CGFloat = 72
-    static let devicesHeight: CGFloat = 64
+    static let footerHeight: CGFloat = 44
     let asksHeight: CGFloat
     let askDetailHeight: CGFloat
     let usageLimit: Int
@@ -40,7 +39,8 @@ struct PanelComposition {
         let moreRoom: CGFloat = rows > 1 ? Self.sectionHeight : 0
         let sectionLabels = Self.sectionHeight * 2 + (asks.isEmpty ? 0 : Self.sectionHeight)
         let editHint: CGFloat = store.editingProviders ? 56 : 0
-        let chrome = Self.rowHeight + banner + Self.footerHeight + Self.devicesHeight + editHint + sectionLabels + earlier + 4
+        let undoHeight = store.undoCountdown == nil ? 0 : Self.sectionHeight
+        let chrome = Self.rowHeight + banner + Self.footerHeight + undoHeight + editHint + sectionLabels + earlier + 3
         let minimum = chrome + header + minimumUsage + moreRoom + minimumAsks + Self.rowHeight
         let target = max(CGFloat(store.screenHeight) * 0.85, minimum)
         let cap = min(CGFloat(store.screenHeight) - JRBarTokens.Space.md, target)
@@ -164,7 +164,14 @@ struct PanelAgentView: View {
 
     var body: some View {
         Group {
-            if !agent.members.isEmpty || (agent.workerCount > 0 && !agent.unlinked) {
+            if agent.unlinked {
+                Button { store.open(agent.row) } label: {
+                    AgentGroupRow(provider: agent.row.style.id, name: agent.row.style.name,
+                        workerCount: 0, unlinked: true, expanded: .constant(false)) { EmptyView() }
+                }
+                .buttonStyle(.plain)
+                .contextMenu { SessionContextMenu(row: agent.row, store: store) }
+            } else if !agent.members.isEmpty || agent.workerCount > 0 {
                 AgentGroupRow(provider: agent.row.style.id, name: agent.row.style.name,
                               project: agent.row.cwdTail, subtitle: agent.row.label,
                               elapsed: agent.row.elapsedText(now: store.now), state: agent.row.panelState,
@@ -351,26 +358,31 @@ struct PanelProviderSection: View {
 
 struct PanelActionsFooter: View {
     @Bindable var store: PanelStore
+    @ViewState private var devicesShown = false
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: JRBarTokens.Space.sm) {
-                Button("Studio") { store.openEffects() }.buttonStyle(.plain)
-                if (UserDefaults.standard.object(forKey: SettingsStore.studioHotkeyDefaultsKey) as? Bool ?? true),
-                   let chord = HotkeyChordDefaults.chord(for: PanelHotkey.studioID, fallback: PanelHotkey.studioDefault) {
-                    Text(chord.displayString).font(JRBarTokens.TypeStyle.caption.font)
-                        .foregroundStyle(JRBarTokens.Ink.secondary)
-                        .padding(.horizontal, JRBarTokens.Space.xs)
-                        .background(JRBarTokens.Ink.fill, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+                Button { store.openEffects() } label: {
+                    HStack(spacing: JRBarTokens.Space.sm) {
+                        Text("Studio")
+                        PanelStudioMirror(store: store)
+                    }
                 }
-                Spacer(minLength: 0)
-                PanelStudioMirror(store: store)
-            }.frame(height: PanelComposition.sectionHeight)
-            HStack(spacing: JRBarTokens.Space.sm) {
+                .help(studioHelp)
+                .contextMenu {
+                    Button("Why this light") { store.whyHover(true, frame: store.whyRowFrame) }
+                        .disabled(store.lightExplanation == nil)
+                }
                 Button("Usage Center") { store.openUsageCenter() }.help("Usage Center (⌘U)")
-                if let countdown = store.undoCountdown {
-                    Button("Undo \(countdown)") { store.undoClear() }.help("Undo clear (⌘Z)")
-                }
                 Spacer(minLength: 0)
+                Button { devicesShown.toggle() } label: { Image(systemName: "slider.horizontal.3") }
+                    .help("Devices").accessibilityLabel("Devices")
+                    .popover(isPresented: WindowPresenter.presentation($devicesShown)) {
+                        PanelDevicesRow(store: store)
+                            .frame(width: PanelComposition.width - JRBarTokens.Space.xl)
+                            .padding(.vertical, JRBarTokens.Space.sm)
+                    }
                 Button { store.openSettings() } label: { Image(systemName: "gearshape") }
                     .help("Settings… (⌘,)").accessibilityLabel("Settings")
                 Menu {
@@ -386,11 +398,23 @@ struct PanelActionsFooter: View {
                 } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.button).menuIndicator(.hidden).help("More…").accessibilityLabel("More")
             }
-            .buttonStyle(.bordered).controlSize(.small)
-            .frame(height: PanelComposition.rowHeight)
+            .buttonStyle(.plain).controlSize(.small)
+            .frame(height: PanelComposition.footerHeight)
+            if let countdown = store.undoCountdown {
+                Button("Undo \(countdown)") { store.undoClear() }
+                    .buttonStyle(.plain).help("Undo clear (⌘Z)")
+                    .frame(maxWidth: .infinity, minHeight: PanelComposition.sectionHeight, alignment: .trailing)
+            }
         }
         .font(JRBarTokens.TypeStyle.callout.font)
-        .padding(.horizontal, JRBarTokens.Space.md).frame(height: PanelComposition.footerHeight)
+        .padding(.horizontal, JRBarTokens.Space.md)
+    }
+
+    private var studioHelp: String {
+        guard UserDefaults.standard.object(forKey: SettingsStore.studioHotkeyDefaultsKey) as? Bool ?? true,
+              let chord = HotkeyChordDefaults.chord(for: PanelHotkey.studioID, fallback: PanelHotkey.studioDefault)
+        else { return "Studio" }
+        return "Studio (\(chord.displayString))"
     }
 }
 
@@ -425,20 +449,20 @@ struct PanelTitleBar: View {
 struct PanelStudioMirror: View {
     @Bindable var store: PanelStore
     var body: some View {
-        Button { store.whyHover(true, frame: store.whyRowFrame) } label: {
+        Group {
             if let surface = store.core.lights?.hardware ?? store.core.lights?.screenBar, !surface.program.isEmpty {
-                LEDStripPreview(program: surface.program, ledCount: surface.ledCount ?? 8, dotSize: 6, spacing: 4,
+                LEDStripPreview(program: surface.program, ledCount: surface.ledCount ?? 8, dotSize: 4, spacing: 2,
                                 paused: !store.isOpen || !store.isLive || store.reduceMotion,
                                 showsBackground: false, phase: max(0, store.now.timeIntervalSince1970 - (surface.anchor ?? store.now.timeIntervalSince1970)), displayLEDCount: 8)
-                    .frame(width: 80, height: JRBarTokens.Space.lg)
             } else {
-                HStack(spacing: JRBarTokens.Space.xs) {
-                    ForEach(0..<8) { _ in Circle().fill(JRBarTokens.Ink.tertiary).frame(width: 6, height: 6) }
-                }.frame(width: 80, height: JRBarTokens.Space.lg)
+                HStack(spacing: 2) {
+                    ForEach(0..<8) { _ in Circle().fill(JRBarTokens.Ink.tertiary).frame(width: 4, height: 4) }
+                }
             }
         }
-        .buttonStyle(.plain).disabled(store.lightExplanation == nil)
+        .frame(width: 48, height: JRBarTokens.Space.lg)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { store.whyRowFrame = $0 }
+        .onHover { store.whyHover($0, frame: store.whyRowFrame) }
         .help(store.lightExplanation.map { "Why this light: \($0.headline)" } ?? "No light reading")
         .accessibilityLabel("Why this light")
     }

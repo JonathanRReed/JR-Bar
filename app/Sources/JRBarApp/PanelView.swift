@@ -42,8 +42,6 @@ struct PanelView: View {
                 PanelAgentsSection(store: store, composition: composition)
             }
             Hairline()
-            PanelDevicesRow(store: store)
-            Hairline()
             PanelActionsFooter(store: store)
         }
         .font(JRBarTokens.TypeStyle.body.font)
@@ -1493,7 +1491,7 @@ struct PanelDevicesRow: View {
             .padding(.bottom, JRBarTokens.Space.sm)
             .help(brightnessHelp)
         }
-        .frame(height: PanelComposition.devicesHeight, alignment: .top)
+        .frame(height: PanelComposition.sectionHeight * 2 + JRBarTokens.Space.sm, alignment: .top)
         .clipped()
     }
 

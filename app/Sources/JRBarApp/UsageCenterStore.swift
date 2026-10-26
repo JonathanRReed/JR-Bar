@@ -354,6 +354,7 @@ final class UsageCenterStore {
     @ObservationIgnored private var isOpen = false
     // Keep quota readings through a monitor restart.
     private var lastUsage: CoreUsage?
+    private(set) var usageSnapshotReceivedAt: Double = Date().timeIntervalSince1970
 
     init(core: CoreModel, sessionUsage: SessionUsageStore? = nil) {
         self.core = core
@@ -369,6 +370,7 @@ final class UsageCenterStore {
                 browser: request.browser, profile: request.profile, instance: request.instance)
         }
         lastUsage = core.isLive ? core.state?.usage : nil
+        usageSnapshotReceivedAt = core.lastStateAt?.timeIntervalSince1970 ?? Date().timeIntervalSince1970
     }
 
     // MARK: Lifecycle
@@ -590,6 +592,9 @@ final class UsageCenterStore {
 
     private func rememberUsage() {
         guard core.isLive, let usage = core.state?.usage else { return }
+        if usage != lastUsage {
+            usageSnapshotReceivedAt = core.lastStateAt?.timeIntervalSince1970 ?? Date().timeIntervalSince1970
+        }
         lastUsage = usage
     }
 

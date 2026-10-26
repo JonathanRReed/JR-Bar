@@ -90,14 +90,20 @@ public struct NotchIslandRow: Equatable, Sendable, Identifiable {
     public var members: [NotchIslandRow] = []
     public var workerCount: Int = 0
     public var unlinked = false
+    public var since: Double?
+    public var project: String?
+    public var role: String?
 
     public init(id: String, label: String, provider: String, activity: SessionActivity,
-                ask: CoreAsk? = nil) {
+                ask: CoreAsk? = nil, since: Double? = nil, project: String? = nil, role: String? = nil) {
         self.id = id
         self.label = label
         self.provider = provider
         self.activity = activity
         self.ask = ask
+        self.since = since
+        self.project = project
+        self.role = role
     }
 }
 
@@ -127,10 +133,12 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
     /// The daemon marks this reading old (`CoreProviderUsage.isStale`): the
     /// figure is the last good one, and a surface that draws it says so.
     public var stale: Bool
+    /// All supplied windows and their reading time, retained for the card.
+    public var usage: CoreProviderUsage?
 
     public init(id: String, provider: String, window: String, percent: Double?,
                 resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false,
-                fix: String? = nil, stale: Bool = false) {
+                fix: String? = nil, stale: Bool = false, usage: CoreProviderUsage? = nil) {
         self.id = id
         self.provider = provider
         self.window = window
@@ -140,6 +148,7 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
         self.incident = incident
         self.fix = fix
         self.stale = stale
+        self.usage = usage
     }
 
     /// `42%`, or `—` when the provider stated no number.
@@ -244,7 +253,8 @@ public enum NotchIsland {
                                                 id: session.id, provider: session.provider),
                     provider: session.provider,
                     activity: activity,
-                    ask: activity == .waiting ? liveAsk(for: session, asks: asks) : nil))
+                    ask: activity == .waiting ? liveAsk(for: session, asks: asks) : nil,
+                    since: session.since, project: session.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }))
             case .done, .ended, .idle: break
             }
         }
@@ -259,11 +269,13 @@ public enum NotchIsland {
             guard let root = byID[group.rootWorkKey], members.contains(where: { SessionActivity.reduce($0) == .working }) else { continue }
             let memberIDs = Set(group.members)
             s.rows.removeAll { memberIDs.contains($0.id) && ($0.activity == .working || $0.activity == .failed) }
-            var row = NotchIslandRow(id: root.id, label: root.displayLabel, provider: group.rootProvider, activity: .working)
+            var row = NotchIslandRow(id: root.id, label: root.displayLabel, provider: group.rootProvider, activity: .working,
+                since: root.since, project: root.cwd.map { URL(fileURLWithPath: $0).lastPathComponent })
             if s.rows.contains(where: { $0.id == row.id }) { row.id = "group:" + group.id }
             row.workerCount = group.workerCount
-            row.members = members.filter { $0.id != root.id }.map {
-                NotchIslandRow(id: $0.id, label: $0.displayLabel, provider: $0.provider, activity: SessionActivity.reduce($0))
+            row.members = members.filter { SessionActivity.reduce($0) != .waiting }.map {
+                NotchIslandRow(id: $0.id, label: $0.displayLabel, provider: $0.provider, activity: SessionActivity.reduce($0),
+                    since: $0.since, role: $0.id == root.id ? "Lead" : "Worker")
             }
             s.rows.append(row)
         }
@@ -310,7 +322,7 @@ public enum NotchIsland {
                                     resetsAt: window.resetsAt,
                                     windowSpan: UsageWindowLabel.windowSpan(id: window.id, name: window.name),
                                     incident: provider.incident?.isEmpty == false,
-                                    fix: provider.staleFix, stale: provider.isStale)
+                                    fix: provider.staleFix, stale: provider.isStale, usage: provider)
         }.prefix(meterLimit).map { $0 }
     }
 

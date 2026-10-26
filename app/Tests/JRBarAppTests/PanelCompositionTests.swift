@@ -315,7 +315,7 @@ struct PanelCompositionTests {
         store.editingProviders = true
         store.screenHeight = 600
         let composition = PanelComposition(store: store)
-        #expect(composition.usageLimit == 2)
+        #expect(composition.usageLimit == 4)
         #expect(composition.totalHeight <= 588)
     }
 

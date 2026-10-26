@@ -8,6 +8,7 @@ struct UsageOverviewTable: View {
     let showCost: Bool
     let select: (String) -> Void
     private var windows: [String] { UsageGaugeRow.orderedWindowNames(store.providers.flatMap { $0.windows.map(\.name) }) }
+    private var quotaWidth: CGFloat { max(360, 200 + CGFloat(windows.count) * (UsageGaugeRow.columnWidth + JRBarTokens.Space.sm)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
@@ -15,8 +16,10 @@ struct UsageOverviewTable: View {
             ScrollView(.horizontal) {
                 Grid(alignment: .leading, horizontalSpacing: JRBarTokens.Space.lg, verticalSpacing: JRBarTokens.Space.lg) {
                     GridRow {
-                        Text("Provider")
-                        ForEach(windows, id: \.self) { Text($0) }
+                        HStack {
+                            Text("Provider")
+                            UsageGaugeHeader(windowNames: windows)
+                        }.frame(width: quotaWidth)
                         Text("Today's tokens incl. cache reads")
                         if showCost { Text("Estimated cost") }
                     }.font(JRBarTokens.TypeStyle.section.font).foregroundStyle(JRBarTokens.Ink.secondary)
@@ -24,25 +27,12 @@ struct UsageOverviewTable: View {
                     ForEach(store.providers, id: \.identity) { provider in
                         GridRow {
                             Button { select(provider.identity) } label: {
-                                HStack(spacing: JRBarTokens.Space.sm) {
-                                    ProviderLogoTile(provider: provider.id)
-                                    Text(store.providerTitle(provider))
-                                }
+                                UsageGaugeRow(provider: provider, name: store.providerTitle(provider),
+                                    now: store.now.timeIntervalSince1970, connected: store.isLive, style: .compact,
+                                    windowNames: windows, snapshotReceivedAt: store.usageSnapshotReceivedAt,
+                                    suppressDisconnectedStatus: true)
+                                    .frame(width: quotaWidth)
                             }.buttonStyle(.plain)
-                            ForEach(windows, id: \.self) { name in
-                                if let window = provider.windows.first(where: { $0.name == name }) {
-                                    let reading = UsageGaugeReading(window: window, provider: provider,
-                                        now: store.now.timeIntervalSince1970, connected: store.isLive)
-                                    VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
-                                        Text(reading.percentUsed.map { "\(Int($0.rounded()))%" } ?? "—")
-                                            .monospacedDigit().foregroundStyle(reading.stale ? JRBarTokens.Ink.stale : JRBarTokens.Ink.label)
-                                        JRBarGauge(value: reading.percentUsed, tint: ProviderPalette.color(for: provider.id),
-                                            stale: reading.stale, height: 6, pace: store.quotaPace(for: provider)[window.name])
-                                        Text(reading.footnote).font(JRBarTokens.TypeStyle.caption.font)
-                                            .foregroundStyle(JRBarTokens.Ink.secondary)
-                                    }.frame(minWidth: 56)
-                                } else { Text("—").foregroundStyle(JRBarTokens.Ink.secondary) }
-                            }
                             let today = today(for: provider)
                             Text(today.map { UsageFormat.tokens($0.totalTokens) } ?? "—").monospacedDigit()
                             if showCost { Text(today.map(Self.costLabel) ?? "—").monospacedDigit() }
