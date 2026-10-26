@@ -32,13 +32,13 @@ struct ShelfRelocationCollisionTests {
     }
 
     @Test("Moves retain one reference per path and remap selected chips", arguments: [false, true], [false, true])
-    func fileCollision(destinationFirst: Bool, cleared: Bool) throws {
+    func fileCollision(destinationFirst: Bool, cleared: Bool) async throws {
         for layout in 0...2 {
-            try checkFileCollision(destinationFirst: destinationFirst, cleared: cleared, layout: layout)
+            try await checkFileCollision(destinationFirst: destinationFirst, cleared: cleared, layout: layout)
         }
     }
 
-    private func checkFileCollision(destinationFirst: Bool, cleared: Bool, layout: Int) throws {
+    private func checkFileCollision(destinationFirst: Bool, cleared: Bool, layout: Int) async throws {
         let f = try Fixture()
         defer { f.clean() }
         let source = try f.file("source/note.txt")
@@ -60,7 +60,8 @@ struct ShelfRelocationCollisionTests {
         f.tray.toggleSelection(sourceChip)
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: destination)
-        f.tray.revalidate()
+        await f.tray.refreshMetadata()
+        await f.tray.refreshMetadata()
         #expect(f.tray.items.first { $0.path == destination.path }?.missing == true)
         if cleared { f.tray.removeAll() }
         let result = ShelfActions.transfer([source], to: destination.deletingLastPathComponent(), move: true)
@@ -74,6 +75,7 @@ struct ShelfRelocationCollisionTests {
         let expectedPaths = Set([destination.path, neighbor.path] + (layout == 0 ? [] : [companion.path]))
         #expect(Set(paths) == expectedPaths)
         #expect(paths.count == expectedPaths.count)
+        await f.tray.refreshMetadata()
         #expect(f.tray.items.allSatisfy { !$0.missing })
         #expect(try Data(contentsOf: destination) == Data("source/note.txt".utf8))
         if layout != 0 { #expect(try Data(contentsOf: companion) == Data(companion.path.replacingOccurrences(of: f.root.path + "/", with: "").utf8)) }
@@ -101,7 +103,7 @@ struct ShelfRelocationCollisionTests {
     }
 
     @Test("Moving a directory deduplicates descendant references and keeps neighboring bytes", arguments: [false, true])
-    func descendantCollision(cleared: Bool) throws {
+    func descendantCollision(cleared: Bool) async throws {
         let f = try Fixture()
         defer { f.clean() }
         let child = try f.file("source/Project/note.txt")
@@ -112,7 +114,7 @@ struct ShelfRelocationCollisionTests {
         f.tray.add([sourceFolder, child])
         f.tray.add([neighbor])
         try FileManager.default.removeItem(at: destinationChild.deletingLastPathComponent())
-        f.tray.revalidate()
+        await f.tray.refreshMetadata()
         if cleared { f.tray.removeAll() }
         let destinationFolder = destinationChild.deletingLastPathComponent().deletingLastPathComponent()
         let result = ShelfActions.transfer([sourceFolder, child], to: destinationFolder, move: true)
@@ -123,12 +125,13 @@ struct ShelfRelocationCollisionTests {
         let expected = Set([destinationChild.path, destinationChild.deletingLastPathComponent().path, neighbor.path])
         #expect(Set(f.tray.items.map(\.path)) == expected)
         #expect(f.tray.items.count == expected.count)
+        await f.tray.refreshMetadata()
         #expect(f.tray.items.allSatisfy { !$0.missing })
         #expect(try Data(contentsOf: destinationChild) == Data("source/Project/note.txt".utf8))
         #expect(try Data(contentsOf: neighbor) == Data("source/Project2/neighbor.txt".utf8))
     }
     @Test("Loading old duplicate references keeps every distinct file and surviving stack metadata")
-    func persistedDuplicates() throws {
+    func persistedDuplicates() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("files/first.txt")
@@ -156,7 +159,7 @@ struct ShelfRelocationCollisionTests {
     }
 
     @Test("Moving a directory keeps an absent descendant missing", arguments: [false, true])
-    func absentDescendant(cleared: Bool) throws {
+    func absentDescendant(cleared: Bool) async throws {
         let f = try Fixture()
         defer { f.clean() }
         let child = try f.file("source/Project/present.txt")
@@ -166,20 +169,22 @@ struct ShelfRelocationCollisionTests {
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
         f.tray.add([folder, child, absent])
         try FileManager.default.removeItem(at: absent)
-        f.tray.revalidate()
+        await f.tray.refreshMetadata()
         if cleared { f.tray.removeAll() }
         let result = ShelfActions.transfer([folder], to: destination, move: true)
         #expect(result.failure == nil)
         f.tray.finishTransfer(result, to: destination, move: true)
         if cleared { f.tray.undoClear() }
         let moved = destination.appendingPathComponent("Project")
+        await f.tray.refreshMetadata()
         #expect(f.tray.items.first { $0.path == moved.appendingPathComponent("absent.txt").path }?.missing == true)
+        await f.tray.refreshMetadata()
         #expect(f.tray.items.first { $0.path == moved.appendingPathComponent("present.txt").path }?.missing == false)
         #expect(try Data(contentsOf: moved.appendingPathComponent("present.txt")) == Data("source/Project/present.txt".utf8))
     }
 
     @Test("Loading an unchanged shelf does not rewrite its store")
-    func unchangedLoadDoesNotPersist() throws {
+    func unchangedLoadDoesNotPersist() async throws {
         let f = try Fixture()
         defer { f.clean() }
         #expect(f.defaults.object(forKey: "jrbar.shelfTray.paths") == nil)
@@ -191,7 +196,7 @@ struct ShelfRelocationCollisionTests {
     }
 
     @Test("Replacing a missing destination retires its old thumbnail", arguments: [false, true])
-    func replacedDestinationThumbnail(cached: Bool) throws {
+    func replacedDestinationThumbnail(cached: Bool) async throws {
         let f = try Fixture()
         defer { f.clean() }
         let source = try f.file("source/note.txt")
@@ -201,17 +206,19 @@ struct ShelfRelocationCollisionTests {
         f.tray.add([destination])
         f.tray.add([source])
         let original = try #require(f.tray.items.first { $0.path == destination.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: original)
         #expect(replies.count == 1)
         let staleImage = NSImage(size: NSSize(width: 32, height: 32))
         if cached { replies[0](staleImage) }
         try FileManager.default.removeItem(at: destination)
-        f.tray.revalidate()
+        await f.tray.refreshMetadata()
         let folder = destination.deletingLastPathComponent()
         let result = ShelfActions.transfer([source], to: folder, move: true)
         #expect(result.failure == nil)
         f.tray.finishTransfer(result, to: folder, move: true)
         let current = try #require(f.tray.items.first { $0.path == destination.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: current)
         #expect(replies.count == 2)
         guard replies.count == 2 else { return }

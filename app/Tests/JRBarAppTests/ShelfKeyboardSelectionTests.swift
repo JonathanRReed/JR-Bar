@@ -271,7 +271,7 @@ struct ShelfKeyboardSelectionTests {
 
     @Test("a mixed selection reports missing files even when the remaining files open",
           arguments: [false, true])
-    func partialSelectionOpenIsReported(_ refused: Bool) throws {
+    func partialSelectionOpenIsReported(_ refused: Bool) async throws {
         let f = try Fixture()
         defer { f.clean() }
         let missing = try f.file("missing.txt", folder: "one")
@@ -281,6 +281,7 @@ struct ShelfKeyboardSelectionTests {
         for entry in f.tray.entries { f.tray.toggleSelection(entry) }
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: missing)
+        await f.tray.refreshMetadata()
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return !refused }
         let expected = refused
@@ -292,7 +293,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("a deleted file is revalidated and never passed to the opener")
-    func deletedFileAndRemovedSelection() throws {
+    func deletedFileAndRemovedSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "one")
@@ -303,6 +304,7 @@ struct ShelfKeyboardSelectionTests {
         f.tray.openURL = { opened.append($0); return true }
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: first)
+        await f.tray.refreshMetadata()
         #expect(f.tray.openKeyboardSelection() == "The selected files moved or were deleted.")
         #expect(f.tray.actionNotice == "The selected files moved or were deleted.")
         #expect(opened.isEmpty)
@@ -315,7 +317,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("Return opens live stack members and reports missing ones")
-    func stackSelection() throws {
+    func stackSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "stack")
@@ -326,6 +328,7 @@ struct ShelfKeyboardSelectionTests {
         f.tray.openURL = { opened.append($0); return true }
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: first)
+        await f.tray.refreshMetadata()
         #expect(f.tray.openKeyboardSelection() == "Some selected files moved or were deleted.")
         #expect(f.tray.actionNotice == "Some selected files moved or were deleted.")
         #expect(opened == [second])

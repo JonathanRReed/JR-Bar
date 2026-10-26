@@ -131,7 +131,7 @@ import JRBarCore
         #expect(!tray.items.contains { $0.name == "a.txt" })
     }
 
-    @Test func missingFilesMarkNotVanish() {
+    @Test func missingFilesMarkNotVanish() async {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "jrbar.shelfTray.paths")
         let tray = ShelfTrayModel()
@@ -144,7 +144,7 @@ import JRBarCore
         tray.add([real])
         tray.add([gone])
 
-        tray.revalidate()
+        await tray.refreshMetadata()
         #expect(tray.items.count == 2)
         #expect(tray.items.first { $0.path == real.path }?.missing == false)
         #expect(tray.items.first { $0.path == gone.path }?.missing == true)
@@ -152,11 +152,11 @@ import JRBarCore
         // Deleting after the add flips it on the next revalidation —
         // the entry stays, marked, until the user removes it.
         try? FileManager.default.removeItem(at: real)
-        tray.revalidate()
+        await tray.refreshMetadata()
         #expect(tray.items.first { $0.path == real.path }?.missing == true)
     }
 
-    @Test func missingEntryCannotRevealOrShare() {
+    @Test func missingEntryCannotRevealOrShare() async {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "jrbar.shelfTray.paths")
         let tray = ShelfTrayModel()
@@ -164,7 +164,7 @@ import JRBarCore
 
         let gone = URL(fileURLWithPath: "/tmp/jrbar-gone-\(UUID().uuidString)")
         tray.add([gone])
-        tray.revalidate()
+        await tray.refreshMetadata()
         let entry = tray.entries.first!
         #expect(tray.presentURLs(of: [entry]).isEmpty, "nothing to drag, share or reveal")
         #expect(!tray.canAttachCopy(entry))

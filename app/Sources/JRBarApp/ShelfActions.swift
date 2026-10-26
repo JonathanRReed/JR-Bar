@@ -194,6 +194,9 @@ enum ShelfActions {
     /// reads in an image (on this Mac; nothing is sent anywhere), or a
     /// text file's contents. nil when there is none.
     nonisolated static func text(of url: URL) throws -> String? {
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url) else {
+            throw ActionError.failed("the file is unavailable locally")
+        }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
         let raw: String?
         if type.conforms(to: .pdf) {
@@ -219,7 +222,8 @@ enum ShelfActions {
     /// `e5rtError … 13`). The same request then runs on the CPU, which
     /// always takes it: slower, and the same words.
     nonisolated static func recognizeText(in url: URL) throws -> String? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let up = orientation(of: source)
         do {
@@ -274,7 +278,8 @@ enum ShelfActions {
         guard !format.holds(url) else {
             throw ActionError.failed("\(url.lastPathComponent) is already a \(format.title)")
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               CGImageSourceGetCount(source) > 0,
               CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
             throw ActionError.failed("\(url.lastPathComponent) isn't an image ImageIO can read")

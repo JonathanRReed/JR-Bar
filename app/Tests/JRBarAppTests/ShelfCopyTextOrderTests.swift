@@ -147,6 +147,7 @@ struct ShelfCopyTextOrderTests {
         let validEntry = try f.entry("valid.txt")
         let missingEntry = try f.entry("missing.txt")
         try FileManager.default.removeItem(at: missingEntry.items[0].url)
+        await f.tray.refreshMetadata()
         let pending = f.tray.copyText([validEntry], to: f.board,
                                      reader: { await reader.read($0) })
         let task = try #require(pending)

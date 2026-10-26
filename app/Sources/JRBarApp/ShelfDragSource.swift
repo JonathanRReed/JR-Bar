@@ -126,7 +126,7 @@ struct ShelfDragSource: NSViewRepresentable {
         private func items(for urls: [URL], at point: NSPoint) -> [NSDraggingItem] {
             urls.enumerated().map { index, url in
                 let item = NSDraggingItem(pasteboardWriter: url as NSURL)
-                let icon = NSWorkspace.shared.icon(forFile: url.path)
+                let icon = ExternalFileMetadata.shared.cachedIcon(url) ?? NSWorkspace.shared.icon(for: .data)
                 let side: CGFloat = 32
                 let offset = CGFloat(min(index, 4)) * 4
                 item.setDraggingFrame(NSRect(x: point.x - side / 2 + offset, y: point.y - side / 2 - offset,
