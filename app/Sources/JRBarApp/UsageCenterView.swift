@@ -13,13 +13,23 @@ struct UsageCenterView: View {
     var body: some View {
         HStack(spacing: 0) {
             List(selection: Binding(get: { visibleSelection }, set: { selection = $0 })) {
-                Label("Overview", systemImage: "tablecells").tag("overview")
+                Label {
+                    Text("Overview")
+                        .foregroundStyle(visibleSelection == "overview" ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+                } icon: { Image(systemName: "tablecells") }
+                    .jrbarSidebarSelection(visibleSelection == "overview")
+                    .listRowBackground(Color.clear)
+                    .tag("overview")
                 Section("Providers") {
                     ForEach(store.providers, id: \.identity) { provider in
                         HStack(spacing: JRBarTokens.Space.sm) {
                             ProviderLogoTile(provider: provider.id)
                             Text(store.providerTitle(provider))
-                        }.tag(provider.identity)
+                                .foregroundStyle(visibleSelection == provider.identity ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+                        }
+                        .jrbarSidebarSelection(visibleSelection == provider.identity)
+                        .listRowBackground(Color.clear)
+                        .tag(provider.identity)
                     }
                 }
             }
