@@ -536,7 +536,7 @@ def test_modern_t3_without_native_thread_id_stays_read_only_and_scoped(tmp_path)
 
 @pytest.mark.parametrize("turn_state,expected", [
     (None, AgentMode.IDLE_READY), ("completed", AgentMode.COMPLETED),
-    ("interrupted", AgentMode.UNKNOWN), ("error", AgentMode.BLOCKED_ERROR),
+    ("interrupted", AgentMode.ENDED_UNCONFIRMED), ("error", AgentMode.BLOCKED_ERROR),
     ("running", AgentMode.WORKING),
 ])
 def test_idle_transport_is_not_inferred_success(tmp_path, turn_state, expected):
