@@ -100,16 +100,35 @@ public enum JRBarTokens {
             reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98))
         }
 
-        public var animation: Animation {
-            if self == .reduced { return .linear(duration: duration) }
-            if self == .quick || self == .notchClose {
-                return .timingCurve(0.4, 0, 1, 1, duration: duration)
-            }
-            if self == .notchSettle {
-                return .timingCurve(0.45, 0, 0.25, 1, duration: duration)
-            }
-            return .timingCurve(0.2, 0.8, 0.2, 1, duration: duration)
+        private var controlPoints: (Double, Double, Double, Double) {
+            if self == .reduced { return (0, 0, 1, 1) }
+            if self == .quick || self == .notchClose { return (0.4, 0, 1, 1) }
+            if self == .notchSettle { return (0.45, 0, 0.25, 1) }
+            return (0.2, 0.8, 0.2, 1)
         }
+
+        public var animation: Animation {
+            let points = controlPoints
+            return .timingCurve(points.0, points.1, points.2, points.3, duration: duration)
+        }
+
+        /// Native windows use the same curve as SwiftUI, with an exact end time.
+        public func progress(at elapsed: Double) -> Double {
+            let fraction = min(1, max(0, elapsed / duration))
+            if fraction == 0 || fraction == 1 { return fraction }
+            let points = controlPoints
+            func cubic(_ time: Double, _ first: Double, _ second: Double) -> Double {
+                let rest = 1 - time
+                return 3 * rest * rest * time * first + 3 * rest * time * time * second + time * time * time
+            }
+            var low = 0.0, high = 1.0
+            for _ in 0..<32 {
+                let middle = (low + high) / 2
+                if cubic(middle, points.0, points.2) < fraction { low = middle } else { high = middle }
+            }
+            return cubic((low + high) / 2, points.1, points.3)
+        }
+
     }
 
     public enum Ink {
