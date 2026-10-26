@@ -69,10 +69,12 @@ enum AquariumSun {
 
     /// The table, read once. A missing file is an empty table — the tank
     /// just keeps the fixed hours.
-    static let zoneTable: [String: Coordinate] = {
+    private static let zones = BackgroundLookupCache<Int, [String: Coordinate]>(lifetime: 86_400, load: { _ in
         guard let text = try? String(contentsOfFile: zoneTabPath, encoding: .utf8) else { return [:] }
         return parseZoneTab(text)
-    }()
+    })
+    static var zoneTable: [String: Coordinate] { zones.value(for: 0) ?? [:] }
+    static func loadZoneTable() async -> [String: Coordinate] { await zones.resolve(0) ?? [:] }
 
     /// Where the Mac's time zone is named after, or nil.
     static func coordinate(for zone: TimeZone, table: [String: Coordinate] = zoneTable) -> Coordinate? {
