@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// One moment the lights could meet: an event, whose it is, the scene in
@@ -141,9 +142,9 @@ struct EffectSituationPanel: View {
     private static let events: [EffectSemantic] = [.completion, .notification, .asking, .failure]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Try a situation").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 4) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+            Text("Try a situation").foregroundStyle(.secondary).jrbarType(.caption).fontWeight(.semibold)
+            Grid(alignment: .leading, horizontalSpacing: JRBarTokens.Space.sm, verticalSpacing: JRBarTokens.Space.xs) {
                 GridRow {
                     picker("Event", selection: $situation.semantic) {
                         ForEach(Self.events) { Text($0.label).tag($0) }
@@ -175,9 +176,11 @@ struct EffectSituationPanel: View {
                 }
             }
             Text("Device, project, provider account, provider, scene, event, then Everywhere. The first matching assignment wins. Asks and failures keep their reserved alerts.")
-                .font(.caption).foregroundStyle(.secondary)
+                .foregroundStyle(.secondary).jrbarType(.caption)
             outcome
         }
+        .padding(JRBarTokens.Space.md)
+        .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
         .onAppear {
             guard !seeded else { return }
             seeded = true
@@ -228,42 +231,43 @@ struct EffectSituationPanel: View {
         let resolved = resolvedSituation
         let outcome = answer.flatMap { $0.key == requestKey ? $0.outcome : nil }
             ?? EffectSituationResolver.resolve(resolved, in: store.assignments)
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             if outcome.reserved {
                 Text("\(situation.semantic == .asking ? "An ask" : "A failure") plays its reserved alert in every scene — no assignment can replace it.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary).jrbarType(.caption)
             } else if let winner = outcome.winner {
                 let effect = store.catalog?.effect(winner.effectID)
-                HStack(spacing: 6) {
+                HStack(spacing: JRBarTokens.Space.sm) {
                     if let effect {
                         LEDStripPreview(program: effect.preview?.program ?? "off", ledCount: effect.preview?.ledCount ?? 8,
                                         style: .band, dotSize: 5, showsBackground: false)
                             .frame(width: 34)
                     }
                     Text(Self.sentence(winner: winner, effect: effect, where: store.targetTitle(for: winner)))
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     if effect != nil, winner.effectID != "none" {
                         Button("Show") { store.selectedID = winner.effectID }
-                            .buttonStyle(.link).font(.caption)
+                            .buttonStyle(.link).foregroundStyle(.tint).jrbarType(.caption)
                     }
                 }
                 ForEach(outcome.shadowed) { row in
                     Text("Shadows \(row.scope.label) · \(store.targetTitle(for: row)) (\(store.catalog?.effect(row.effectID)?.label ?? row.effectID))")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .foregroundStyle(.tertiary).jrbarType(.caption)
                 }
             } else {
                 Text("No assignment names this; the monitor's own \(situation.semantic.label.lowercased()) light plays.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary).jrbarType(.caption)
             }
             if resolved.device != nil, resolved.device != surface {
                 Text("The Dot follows the strip while linked, so it plays what the strip plays.")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .foregroundStyle(.tertiary).jrbarType(.caption)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .windowWell(padding: 8)
+        .padding(JRBarTokens.Space.md)
+        .background(JRBarTokens.Ink.content, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
     }
 
     /// "Plays Aurora — Provider · Codex decides."
@@ -279,6 +283,6 @@ struct EffectSituationPanel: View {
         Picker(title, selection: selection, content: content)
             .pickerStyle(.menu)
             .controlSize(.small)
-            .font(.caption)
+            .jrbarType(.caption)
     }
 }

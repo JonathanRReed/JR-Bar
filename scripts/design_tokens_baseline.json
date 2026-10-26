@@ -56,7 +56,7 @@
     "radius: cornerRadius: 7": 2
   },
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
-    "font: .system(size: 13": 3
+    "font: .system(size: 13": 2
   },
   "app/Sources/JRBarApp/FirmwareCard.swift": {
     "font: .system(size: 4": 1

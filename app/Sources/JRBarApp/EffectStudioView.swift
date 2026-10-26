@@ -759,13 +759,13 @@ struct EffectAssignmentsPane: View {
 
     var body: some View {
         SnapshotScrollView { content }
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            .background(JRBarTokens.Ink.window)
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Active scene").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                Text("Active scene").foregroundStyle(.secondary).jrbarType(.caption).fontWeight(.semibold)
                 Picker("Active scene", selection: Binding(get: { store.activeScene }, set: { _ = store.setActiveScene($0) })) {
                     ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }
                 }
@@ -773,32 +773,32 @@ struct EffectAssignmentsPane: View {
                 .pickerStyle(.menu)
                 .disabled(store.sceneChanging)
                 if store.sceneChanging {
-                    Text("Changing scene…").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
+                    Text("Changing scene…").foregroundStyle(.secondary).jrbarType(.caption)
                 }
                 if store.activeSceneIsAutomatic {
                     HStack {
                         Text("Automatic scene. Saved choice: \(EffectScene(rawValue: store.selectedScene)?.label ?? store.selectedScene).")
-                            .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
+                            .foregroundStyle(.secondary).jrbarType(.caption)
                         Spacer()
                         Button("Keep \(EffectScene(rawValue: store.activeScene)?.label ?? store.activeScene)") {
                             _ = store.setActiveScene(store.activeScene)
                         }
-                        .buttonStyle(.link).font(.caption)
+                        .buttonStyle(.link).foregroundStyle(.tint).jrbarType(.caption)
                         .disabled(store.sceneChanging)
                         .help("Use this scene after the rule ends")
                     }
                 }
                 Text("Scene assignments apply while that scene is active; asks and failures keep their reserved effects in every scene.")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
-            Divider()
+            .padding(JRBarTokens.Space.md)
+            .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             if store.scenePacksSupported {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                     if store.scenePackChanging {
-                        Text("Changing scene pack…").font(.caption).foregroundStyle(.secondary)
+                        Text("Changing scene pack…").foregroundStyle(.secondary).jrbarType(.caption)
                     }
                     ForEach(store.scenePacks) { pack in
                         ScenePackRow(pack: pack, store: store)
@@ -808,30 +808,28 @@ struct EffectAssignmentsPane: View {
                     // state is visible and one tap restores the built-ins.
                     if let activeID = store.activeScenePackID,
                        !store.scenePacks.contains(where: { $0.id == activeID }) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: JRBarTokens.Space.sm) {
                             Text("Active pack “\(activeID)” is no longer installed")
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                .foregroundStyle(.secondary).jrbarType(.caption).lineLimit(1)
                             Spacer()
                             Button("Use built-in scenes") { _ = store.setActiveScenePack(nil) }
                                 .buttonStyle(.link)
                                 .disabled(store.scenePackChanging)
-                                .font(.caption)
+                                .jrbarType(.caption)
                         }
                         .padding(.vertical, 1)
                     }
                     Button("Import scene pack…") { store.importScenePack() }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .help("Installs a data-only JSON scene pack; the monitor validates the file")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                Divider()
+                .padding(JRBarTokens.Space.md)
+                .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             }
             if !store.providerPlayback.isEmpty || !store.devicePlayback.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    EffectLiveOutput(lights: store.core.lights, connected: store.core.isLive)
-                    Text("Provider assignments").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+                    Text("Provider assignments").foregroundStyle(.secondary).jrbarType(.caption).fontWeight(.semibold)
                     ForEach(store.providerPlayback) { playback in
                         ProviderPlaybackRow(playback: playback, store: store)
                     }
@@ -839,18 +837,14 @@ struct EffectAssignmentsPane: View {
                         DevicePlaybackRow(assignment: assignment, store: store)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                Divider()
+                .padding(JRBarTokens.Space.md)
+                .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             }
             if store.assignments != nil {
                 EffectSituationPanel(store: store)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                Divider()
             }
             if let document = store.assignments, !document.assignments.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
                     ForEach(document.byScope, id: \.scope) { group in
                         Section {
                             ForEach(group.assignments) { assignment in
@@ -869,24 +863,28 @@ struct EffectAssignmentsPane: View {
                             Text(group.scope == .global ? "Everywhere" : group.scope.label)
                         }
                     }
-                }.padding(12)
+                }.padding(JRBarTokens.Space.md)
+                .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             } else {
-                WindowEmptyState(symbol: "list.bullet.rectangle", title: "No assignments",
-                                 text: "Everything follows the monitor's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
-            }
-            Divider()
-            HStack {
-                Button {
-                    if let effect = store.selected { store.beginAssigning(effect) }
-                } label: {
-                    Label("Assign selected effect…", systemImage: "plus")
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                    Text("No assignments").jrbarType(.headline)
+                    Button("Choose an effect") { store.mode = .effects }.buttonStyle(.link)
                 }
-                .disabled(store.selected == nil)
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(JRBarTokens.Space.md)
+                .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             }
-            .controlSize(.small)
-            .padding(10)
+            if let selected = store.selected {
+                HStack {
+                    Button { store.beginAssigning(selected) }
+                    label: { Label("Assign selected effect…", systemImage: "plus") }
+                    Spacer()
+                }
+                .controlSize(.small)
+                .padding(JRBarTokens.Space.md)
+            }
         }
+        .padding(JRBarTokens.Space.lg)
     }
 }
 
@@ -921,25 +919,25 @@ struct ScenePackRow: View {
                     }
                 }
                 Text(pack.scenes.isEmpty ? "No scenes listed" : pack.scenes.joined(separator: ", "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .foregroundStyle(.secondary).jrbarType(.caption).lineLimit(1)
             }
             Spacer()
             if isActive {
                 Button("Built-in scenes") { _ = store.setActiveScenePack(nil) }
                     .disabled(store.scenePackChanging)
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .help("Stop applying this pack's scene policies")
             } else {
                 Button("Use this pack") { _ = store.setActiveScenePack(pack.id) }
                     .disabled(store.scenePackChanging)
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .help("Apply this pack's policies over the built-in scenes")
             }
             Button(preview == nil ? "Preview" : "Preview again") { store.previewScenePack(pack) }
                 .buttonStyle(.link)
-                .font(.caption)
+                .jrbarType(.caption)
         }
         .padding(.vertical, 1)
     }
@@ -953,12 +951,12 @@ struct EffectLiveOutput: View {
         if let lights, !lights.surfaces.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text(connected ? "Current output" : "Last output · disconnected")
-                    .font(.caption.weight(.semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                 ForEach(lights.surfaces.keys.sorted(), id: \.self) { name in
                     if let surface = lights.surfaces[name] {
                         HStack(spacing: 8) {
-                            Text(Self.label(name)).font(.caption)
+                            Text(Self.label(name)).jrbarType(.caption)
                             Spacer(minLength: 4)
                             LEDStripPreview(program: surface.program, ledCount: surface.ledCount ?? 8,
                                             style: .dots, dotSize: 5, spacing: 3, paused: !connected, showsBackground: true)
@@ -1020,7 +1018,7 @@ struct ProviderPlaybackRow: View {
                     Text(playback.name).font(.callout).lineLimit(1)
                     Spacer(minLength: 4)
                     Text(motionText)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(playback.provider == nil ? HierarchicalShapeStyle.tertiary : .secondary)
                         .lineLimit(1)
                 }
@@ -1043,10 +1041,10 @@ struct ProviderPlaybackRow: View {
         Button { store.selectedID = assignment.effectID } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.turn.down.right")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                 Text("\(effectLabel(assignment)) on \(detail)")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -1069,18 +1067,18 @@ struct DevicePlaybackRow: View {
         Button { store.selectedID = assignment.effectID } label: {
             HStack(spacing: 7) {
                 Image(systemName: "lightstrip")
-                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(store.targetTitle(for: assignment)).font(.callout).lineLimit(1)
                     if let note = store.assignmentNote(assignment) {
-                        Text(note).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.orange).lineLimit(1)
+                        Text(note).foregroundStyle(.orange).jrbarType(.caption).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 4)
                 Text(store.catalog?.effect(assignment.effectID)?.label ?? assignment.effectID)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -1118,13 +1116,13 @@ struct AssignmentRow: View {
                 Text(title).lineLimit(1)
                 HStack(spacing: 4) {
                     Text(suppressed ? "Hidden in this scope" : (effect?.label ?? "Effect unavailable: \(assignment.effectID)"))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .foregroundStyle(.secondary).jrbarType(.caption).lineLimit(1)
                     if !assignment.parameters.isEmpty, let effect, assignment.parameters != effect.defaultParameters {
-                        Text("· tuned").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
+                        Text("· tuned").foregroundStyle(.tertiary).jrbarType(.caption)
                     }
                 }
                 if let note {
-                    Text(note).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.orange).lineLimit(1)
+                    Text(note).foregroundStyle(.orange).jrbarType(.caption).lineLimit(1)
                 }
             }
             Spacer()
@@ -1171,7 +1169,7 @@ struct AssignSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Assign “\(effect?.label ?? "")”").font(.title3.weight(.semibold))
                     Text("Pick where this look applies. More specific scopes win: device › project › instance › provider › scene › state › everywhere.")
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1193,24 +1191,24 @@ struct AssignSheet: View {
             .disabled(store.assignmentSavingThisDraft)
             if let error = store.assignmentError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !store.assignmentEffectAvailable {
                 Text("This effect is no longer in the library. Close this sheet and choose another effect.")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let effect, effect.safety.warns {
                 Label("\(effect.safety.label) effect: it will blink on that scope. The monitor clamps it to 2 Hz.", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(effect.safety == .critical ? .red : .orange)
             }
             if let problem = draft?.problem {
                 Label(Self.describe(problem), systemImage: "xmark.circle")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.red)
             } else if let existing = store.existingAssignmentForDraft,
                       let effect, existing.effectID != effect.id {
@@ -1218,18 +1216,18 @@ struct AssignSheet: View {
                 let name = store.catalog?.effect(existing.effectID)?.label ?? existing.effectID
                 Label("Replaces \(name) on \(draft?.scope.label.lowercased() ?? "") \(store.targetTitle(for: existing))",
                       systemImage: "arrow.triangle.swap")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack {
                 if let draft, store.isRemoving(draft) {
                     Text("Removing this scope's assignment…")
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if store.assignmentSaving, !store.assignmentSavingThisDraft {
                     Text("Finishing previous assignment…")
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -1254,11 +1252,11 @@ struct AssignSheet: View {
                 ForEach(EffectSemantic.assignable) { Text($0.label).tag($0.rawValue) }
             }
             Text("Ask and Error keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Devices & Lighting.")
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Working, idle and the rest are looks, not events — set them per provider or under Lighting.")
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         case .scene:
