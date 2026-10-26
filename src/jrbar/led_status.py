@@ -1603,6 +1603,7 @@ class AgentLedController:
         self.last_error: str | None = None
         self.last_target: Path | None = None
         self.last_attempt_monotonic = 0.0
+        self.last_applied_monotonic: float | None = None
         self.last_device_uptime_ms: float | None = None
         self.last_uptime_check_monotonic = 0.0
         self.pending_reboot_repaint = False
@@ -1624,6 +1625,7 @@ class AgentLedController:
         self.last_error = None
         self.last_target = None
         self.last_attempt_monotonic = 0.0
+        self.last_applied_monotonic = None
 
     def _for_strip(self, program: str, state: LedDisplayState | None = None) -> str:
         """The strip's last step, in the one place every write goes through.
@@ -2092,6 +2094,7 @@ class AgentLedController:
             self.pending_reboot_repaint = False
             self.last_program_identity = None
             self.last_attempt_monotonic = 0.0
+            self.last_applied_monotonic = None
 
         if (
             not force
@@ -2135,9 +2138,16 @@ class AgentLedController:
                 self._reassert_cadence_at = now
                 return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         self.last_attempt_monotonic = now
-        trim = reassert and trim_on_reassert
-        to_write = _steady_state_variant(program, single_track=single_track) if trim else program
-        running_nominal = _steady_state_variant(nominal, single_track=single_track) if trim else nominal
+        from .linked_sync import DeviceTiming, PhaseRotationUnavailable, fits_budget, rotate_program
+
+        to_write = program
+        running_nominal = nominal
+        if reassert and self.last_applied_monotonic is not None and timing is None:
+            # Rotate the program actually running, including its full loop.
+            # Dropping an approach here would change the period on every lap.
+            to_write = self.last_program or program
+            running_nominal = self.last_nominal_program or nominal
+            timing = DeviceTiming(anchor=self.last_applied_monotonic, preserve_phase=True)
         extra = {} if timing is None else {"timing": timing}
         from .device_writer import take_receipt
 
@@ -2151,6 +2161,11 @@ class AgentLedController:
                 preserve_existing_inode=not self.dry_run,
                 **extra,
             )
+        except PhaseRotationUnavailable:
+            # A full program can have no room for a sliced curve. Keep its
+            # running clock rather than restart it at a different phase.
+            self._reassert_cadence_at = now
+            return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         except (DeviceWriteError, OSError) as exc:
             self.last_state = state
             self.last_program = program
@@ -2164,18 +2179,28 @@ class AgentLedController:
                 error=self.last_error,
             )
         receipt = take_receipt()
+        applied_at = receipt.applied_at if receipt is not None else time.monotonic()
+        if receipt is not None and timing is not None and getattr(timing, "preserve_phase", False):
+            rotated_nominal = rotate_program(
+                running_nominal, receipt.timed.phase_ms,
+                led_count=led_count_for_target(written_target),
+            )
+            # Nominal and delivered programs have the same timing. A nominal
+            # cut can cost more bytes; use the delivered text if it cannot fit.
+            running_nominal = (rotated_nominal if rotated_nominal and fits_budget(rotated_nominal)
+                               else receipt.program)
+            to_write = receipt.program
+        if receipt is not None:
+            to_write = receipt.program
+        self.last_applied_monotonic = applied_at
         # Cue apply/restore writes do not move the base's reassert clock.
         if force or cadence_changed or now - cadence_at >= self.reassert_after_seconds:
             self._reassert_cadence_at = now
         self._reassert_cadence_token = cadence_token
 
         self.last_state = state
-        # Report what is RUNNING, not what was asked for: on a reassert the
-        # device plays the steady-state variant (the approach frame is
-        # dropped), so the strip's loop is that much shorter. Publishing the
-        # full program would have a linked Screen Bar -- and a linked Dot --
-        # looping a span the strip is not running, drifting further off
-        # phase every lap.
+        # Publish the rotated bytes with their new write anchor so every
+        # linked surface samples the same running phase.
         self.last_program = to_write
         self.last_nominal_program = running_nominal
         self.last_program_identity = identity
