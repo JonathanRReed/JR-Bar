@@ -371,8 +371,8 @@ struct ConfettiPreviewTile: View {
                 ConfettiPreviewDesk(part: .notch)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .clipShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .onHover { inside in if inside { play() } }
         .onChange(of: settings) { play() }

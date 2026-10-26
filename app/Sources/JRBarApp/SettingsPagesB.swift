@@ -1311,6 +1311,7 @@ struct FocusRuleRow: View {
                     set: { on in write(on ? 0.3 : nil) }
                 ))
                 .toggleStyle(.checkbox)
+                .fixedSize()
                 Slider(value: Binding(get: { rule ?? 0.3 }, set: { write($0, throttled: true) }), in: 0...1)
                     .frame(width: 130)
                     .disabled(rule == nil)

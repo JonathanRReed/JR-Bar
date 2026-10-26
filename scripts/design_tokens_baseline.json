@@ -597,8 +597,7 @@
   },
   "app/Sources/JRBarApp/Toys/ConfettiCard.swift": {
     "colour: Color(red: 0.10": 1,
-    "colour: Color(red: 0.24": 1,
-    "radius: cornerRadius: 12": 2
+    "colour: Color(red: 0.24": 1
   },
   "app/Sources/JRBarApp/Toys/ConfettiPalette.swift": {
     "colour: Color(red: 0.93": 1,

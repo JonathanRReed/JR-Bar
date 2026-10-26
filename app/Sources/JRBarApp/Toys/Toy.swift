@@ -201,7 +201,7 @@ struct ToyCard: View {
                 ToyCostLine(toy: toy)
                 toy.controls
             }
-            .cardBodyStyle()
+            .cardBodyStyle(flattenDisclosures: toy.id != "notch")
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, SettingsMetrics.xs)
         }
