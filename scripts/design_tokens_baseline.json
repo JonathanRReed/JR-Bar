@@ -672,9 +672,6 @@
     "animation: duration: 0.35": 1,
     "radius: cornerRadius: 10": 1
   },
-  "app/Sources/JRBarApp/UsageResetBudget.swift": {
-    "radius: cornerRadius: 8": 1
-  },
   "app/Sources/JRBarApp/Utilities/Dock/DockChrome.swift": {
     "animation: duration: 0.12": 1,
     "colour: Color(red: 0.16": 1,

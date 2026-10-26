@@ -4,14 +4,34 @@ import SwiftUI
 
 /// A window's display at the caller's clock. Expired numbers never become current.
 public struct UsageGaugeReading: Equatable, Sendable {
+    public let id: String
     public let title: String
     public let percentUsed: Double?
     public let stale: Bool
     public let elapsed: Bool
     public let footnote: String
+    public let resetFootnote: String
+    public let forecast: UsageForecast?
+    public enum CaptionTone: Equatable, Sendable { case secondary, attention, failure }
+    public var captionTone: CaptionTone {
+        guard let forecast else { return .secondary }
+        switch forecast.verdict {
+        case .runsOut: return .attention
+        case .exhausted: return .failure
+        default: return .secondary
+        }
+    }
+    public var forecastHelp: String {
+        [forecast?.headline(now: Date(timeIntervalSince1970: timestamp)),
+         forecast.flatMap { SessionAwarePace.roomText($0, now: timestamp) },
+         resetFootnote.isEmpty ? nil : "Resets \(resetFootnote)"].compactMap { $0 }.joined(separator: ". ")
+    }
+    private let timestamp: Double
 
     public init(window: CoreUsageWindow, provider: CoreProviderUsage, now: Double, connected: Bool = true,
-                locale: Locale = .current, timeZone: TimeZone = .current) {
+                locale: Locale = .current, timeZone: TimeZone = .current, forecast: UsageForecast? = nil) {
+        timestamp = now
+        id = window.id
         title = window.name
         elapsed = window.elapsed || (window.resetsAt.map { $0 <= now } ?? false)
         stale = !connected || provider.isStale || ["missing_recent", "source_idle", "failing"].contains(provider.availability)
@@ -19,9 +39,27 @@ public struct UsageGaugeReading: Equatable, Sendable {
         let measured = window.usedPct.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil }
         percentUsed = elapsed || suppressed ? nil : measured
         if elapsed {
-            footnote = window.resetsAt.map { "\(Self.interval(now - $0)) ago" } ?? "Awaiting reading"
+            resetFootnote = window.resetsAt.map { "\(Self.interval(now - $0)) ago" } ?? "Awaiting reading"
         } else {
-            footnote = window.resetsAt.map { Self.resetTime($0, now: now, locale: locale, timeZone: timeZone) } ?? ""
+            resetFootnote = window.resetsAt.map { Self.resetTime($0, now: now, locale: locale, timeZone: timeZone) } ?? ""
+        }
+        let unavailable = stale || elapsed || suppressed || provider.isSignedOut
+            || ["disabled", "off", "needs_consent", "error", "unavailable", "source_not_found"].contains(provider.state ?? "")
+        self.forecast = unavailable || percentUsed == nil ? nil : forecast
+        switch self.forecast?.verdict {
+        case .exhausted?: footnote = "Used up"
+        case .runsOut(let at)?:
+            if at - now < 3600 {
+                let minutes = max(1, Int(ceil(max(0, at - now) / 60)))
+                footnote = "Runs out in \(minutes) min"
+            } else {
+                let formatter = DateFormatter()
+                formatter.locale = locale
+                formatter.timeZone = timeZone
+                formatter.setLocalizedDateFormatFromTemplate("jm")
+                footnote = "Runs out \(formatter.string(from: Date(timeIntervalSince1970: at)))"
+            }
+        default: footnote = resetFootnote
         }
     }
 
@@ -86,7 +124,7 @@ public struct UsageGaugeRow: View {
     public enum Style: Sendable { case compact, detail }
     public static let columnWidth: CGFloat = 64
     fileprivate static let compactIdentityWidth: CGFloat = 100
-    fileprivate static let compactPercentWidth: CGFloat = 36
+    fileprivate static let compactPercentWidth: CGFloat = 40
     public let provider: CoreProviderUsage
     public let name: String
     public let now: Double
@@ -103,6 +141,9 @@ public struct UsageGaugeRow: View {
     public let fix: String?
     public let onAction: (() -> Void)?
     public let onRetry: (() -> Void)?
+    public let forecasts: [String: UsageForecast]
+    public let onInspect: ((CoreUsageWindow) -> Void)?
+    public let onOpen: (() -> Void)?
     public let pace: [String: Double]
     @UIState private var fallbackSnapshotAt: Double
     @UIState private var hovering = false
@@ -110,7 +151,8 @@ public struct UsageGaugeRow: View {
     public init(provider: CoreProviderUsage, name: String, now: Double, connected: Bool = true,
                 accent: Color? = nil, style: Style = .detail, windowNames: [String]? = nil,
                 snapshotReceivedAt: Double? = nil, suppressDisconnectedStatus: Bool = false, locale: Locale = .current, timeZone: TimeZone = .current,
-                pace: [String: Double] = [:], fix: String? = nil,
+                pace: [String: Double] = [:], forecasts: [String: UsageForecast] = [:],
+                onInspect: ((CoreUsageWindow) -> Void)? = nil, onOpen: (() -> Void)? = nil, fix: String? = nil,
                 onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil,
                 compactColumnWidth: CGFloat = UsageGaugeRow.columnWidth) {
         self.compactColumnWidth = compactColumnWidth
@@ -126,6 +168,9 @@ public struct UsageGaugeRow: View {
         self.suppressDisconnectedStatus = suppressDisconnectedStatus
         self.locale = locale
         self.timeZone = timeZone
+        self.forecasts = forecasts
+        self.onInspect = onInspect
+        self.onOpen = onOpen
         self.pace = pace
         self.fix = fix
         self.onAction = onAction
@@ -149,7 +194,7 @@ public struct UsageGaugeRow: View {
         if !connected && !suppressDisconnectedStatus { return "Disconnected" }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
-        if !provider.quotaSource { return "Sessions only" }
+        if !provider.quotaSource { return "No quota source" }
         let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
         return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : "No quota reading")
     }
@@ -178,6 +223,11 @@ public struct UsageGaugeRow: View {
                 .font(JRBarTokens.TypeStyle.caption.font).lineLimit(1).truncationMode(.tail)
                 .help(status)
             }
+            if let incident = provider.incident, !incident.isEmpty {
+                Label("Incident", systemImage: "exclamationmark.triangle")
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.attention)
+                    .help(incident)
+            }
             if isStale && showsWindows {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
@@ -204,30 +254,12 @@ public struct UsageGaugeRow: View {
                     }
                 }
             } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                        compactIdentity.frame(width: Self.compactIdentityWidth - 30)
-                        if !windowNames.isEmpty {
-                            ForEach(windowNames, id: \.self) { column($0, compact: true) }
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 10) {
-                            ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                            compactIdentity
-                        }
-                        if showsWindows {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: compactColumnWidth, maximum: compactColumnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
-                                ForEach(windowNames, id: \.self) { name in
-                                    VStack(alignment: .trailing, spacing: 4) {
-                                        Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
-                                        column(name, compact: true)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if let onOpen {
+                    Button(action: onOpen) { compactWindows }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Show provider usage")
+                } else {
+                    compactWindows
                 }
                 if isStale && showsWindows { compactReadingStatus.padding(.leading, 30) }
                 actions.padding(.leading, 30)
@@ -237,6 +269,34 @@ public struct UsageGaugeRow: View {
         .frame(minHeight: 44)
         .background(hovering ? neutralInk.hover : .clear, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
         .onHover { hovering = $0 }
+    }
+
+    private var compactWindows: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                compactIdentity.frame(width: Self.compactIdentityWidth - 30)
+                if !windowNames.isEmpty {
+                    ForEach(windowNames, id: \.self) { column($0, compact: true) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                    compactIdentity
+                }
+                if showsWindows {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: compactColumnWidth, maximum: compactColumnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
+                        ForEach(windowNames, id: \.self) { name in
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
+                                column(name, compact: true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder private var compactIdentity: some View {
@@ -295,15 +355,27 @@ public struct UsageGaugeRow: View {
         }
     }
 
+    public func reading(for window: CoreUsageWindow) -> UsageGaugeReading {
+        UsageGaugeReading(window: window, provider: provider, now: now, connected: connected,
+                          locale: locale, timeZone: timeZone, forecast: forecasts[window.id])
+    }
+
     @ViewBuilder private func column(_ name: String, compact: Bool) -> some View {
         if let window = provider.windows.first(where: { $0.name == name }), !compact || showsWindows {
-            let reading = UsageGaugeReading(window: window, provider: provider, now: now, connected: connected,
-                                            locale: locale, timeZone: timeZone)
+            let reading = reading(for: window)
             Group {
                 if compact {
                     CompactUsageGaugeColumn(reading: reading, accent: accent)
                 } else {
-                    UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
+                    if let onInspect {
+                        Button { onInspect(window) } label: {
+                            UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
+                        }
+                        .buttonStyle(.plain)
+                        .help("Inspect \(window.longName) window")
+                    } else {
+                        UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
+                    }
                 }
             }
             .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity)
@@ -338,11 +410,23 @@ private struct CompactUsageGaugeColumn: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Text(reading.footnote).font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(neutralInk.secondary).lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .preference(key: UsageGaugeEvidence.self, value: [reading.id: reading])
+                .foregroundStyle(captionColor).lineLimit(1)
+                .help(reading.forecastHelp)
         }
         .frame(maxWidth: .infinity)
+        .help(reading.forecastHelp)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.footnote)")
+        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.footnote). \(reading.forecastHelp)")
+    }
+
+    private var captionColor: Color {
+        switch reading.captionTone {
+        case .secondary: neutralInk.secondary
+        case .attention: JRBarTokens.Ink.attention
+        case .failure: JRBarTokens.Ink.failure
+        }
     }
 }
 
@@ -369,11 +453,11 @@ private struct UsageGaugeColumn: View {
                     .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .caption).font).lineLimit(1)
                     .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
             }
-            Text(reading.footnote).font(JRBarTokens.TypeStyle.caption.font)
+            Text(reading.resetFootnote).font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(neutralInk.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: compact ? .trailing : .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.footnote)")
+        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.resetFootnote)")
     }
 }

@@ -15,6 +15,8 @@ struct UsageOverviewTable: View {
         let quotaWidth = max(360, 200 + CGFloat(windows.count) * (columnWidth + 10))
         return VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
             Text("Overview").font(JRBarTokens.TypeStyle.title1.font)
+            if let tightest = tightestLine { Text(tightest).font(JRBarTokens.TypeStyle.callout.font) }
+            if let totals = quotaTotalsLine { Text(totals).font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(JRBarTokens.Ink.secondary) }
             ScrollView(.horizontal) {
                 Grid(alignment: .leading, horizontalSpacing: JRBarTokens.Space.lg, verticalSpacing: JRBarTokens.Space.lg) {
                     GridRow {
@@ -59,6 +61,25 @@ struct UsageOverviewTable: View {
                 Text("Reading local token history…").foregroundStyle(JRBarTokens.Ink.secondary)
             }
         }
+    }
+
+    var tightestLine: String? {
+        let candidates = store.providers.filter { $0.quotaSource && !$0.usageIsOff && !$0.isSignedOut }.flatMap { provider in
+            provider.windows.filter { $0.bindable && !$0.detail && $0.usedPct != nil && !$0.elapsed && ($0.resetsAt ?? .infinity) > store.now.timeIntervalSince1970 }
+                .map { (provider, $0) }
+        }
+        guard let (provider, window) = candidates.max(by: { ($0.1.usedPct ?? 0) < ($1.1.usedPct ?? 0) }) else { return nil }
+        let stale = !store.isLive || provider.isStale ? " · last reading" : ""
+        return "Tightest: \(store.providerTitle(provider)) \(window.longName) \(window.percentText) used\(stale)"
+    }
+
+    var quotaTotalsLine: String? {
+        let tokens = store.providers.reduce(0) { $0 + ($1.tokens?.total ?? 0) }
+        let cost = store.providers.reduce(0.0) { $0 + ($1.estimatedCostUSD ?? 0) }
+        var parts: [String] = []
+        if tokens > 0 { parts.append("\(UsageFormat.tokens(tokens)) tokens") }
+        if showCost, cost > 0 { parts.append("≈ \(UsageFormat.cost(cost)) estimated") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ") + " across providers at last readings"
     }
 
     static func costLabel(_ day: UsageHistoryDay) -> String {

@@ -1,5 +1,6 @@
 import Foundation
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// Compare the recent burn rate with the remaining quota spread to reset.
@@ -58,23 +59,23 @@ struct UsageResetBudgetView: View {
     let budget: UsageResetBudget
 
     var body: some View {
-        HStack(alignment: .top, spacing: 18) {
+        HStack(alignment: .top, spacing: JRBarTokens.Space.lg) {
             column("Recent pace", value: budget.recentText,
-                   color: budget.exceedsBudget ? .orange : .secondary)
+                   color: budget.exceedsBudget ? JRBarTokens.Ink.attention : JRBarTokens.Ink.secondary)
             column("To last until reset", value: budget.budgetText, color: .secondary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, JRBarTokens.Space.md)
+        .padding(.vertical, JRBarTokens.Space.sm)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
         .help("The rate to reset divides the remaining quota by the hours until its reported reset. Recent pace estimates how fast quota was spent. Usage elsewhere can change that pace.")
         .accessibilityElement(children: .combine)
     }
 
     private func column(_ title: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+            Text(title).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
             Text(value)
-                .font(.callout.weight(.medium))
+                .font(JRBarTokens.TypeStyle.callout.font)
                 .monospacedDigit()
                 .foregroundStyle(color)
         }

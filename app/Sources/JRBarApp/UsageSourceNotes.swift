@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// What a usage card says about where its numbers come from, and about
@@ -113,12 +114,12 @@ struct UsageDetailWindowsLine: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: JRBarTokens.Space.sm) {
             Text("Also reported")
-                .font(.caption2.weight(.semibold))
+                .font(JRBarTokens.TypeStyle.section.font)
                 .foregroundStyle(.secondary)
             Text(text)
-                .font(.caption2)
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)

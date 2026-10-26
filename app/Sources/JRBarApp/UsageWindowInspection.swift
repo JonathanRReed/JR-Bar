@@ -1,5 +1,6 @@
 import Foundation
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 @MainActor
@@ -37,7 +38,12 @@ struct UsageWindowInspection {
 
     var readingNotice: String? {
         if !isLive { return "Monitor disconnected. This is the last reading." }
-        if provider.isStale { return "This reading is stale." }
+        if provider.isStale || ["failing", "source_idle", "missing_recent"].contains(provider.availability) {
+            return "This reading is stale."
+        }
+        if ["not_found", "absent"].contains(provider.availability) {
+            return "Usage source unavailable. This is the last reading."
+        }
         if provider.isSignedOut { return "Not signed in. This is the last reading." }
         if provider.usageIsOff { return "Usage is off. This is the last reading." }
         switch provider.state?.lowercased() {
@@ -59,6 +65,19 @@ struct UsageWindowInspection {
         if !isLive { return "Forecasts resume when the monitor reconnects." }
         if readingNotice != nil { return "Forecasts resume with a fresh quota reading." }
         return displayForecast.headline(now: now)
+    }
+
+    var projectedText: String? {
+        guard readingNotice == nil, hasAmount, !forecast.heldIdle,
+              let projected = displayForecast.projectedAtReset(now: now.timeIntervalSince1970),
+              projected.isFinite else { return nil }
+        return "At this pace \(String(format: "%.0f", projected.rounded()))% by the reset"
+    }
+
+    var budget: UsageResetBudget? {
+        guard readingNotice == nil else { return nil }
+        return UsageResetBudget.make(provider: provider, window: window, forecast: displayForecast,
+                                     isLive: isLive, now: now.timeIntervalSince1970)
     }
 
     var forecastEvidence: String? {
@@ -112,49 +131,49 @@ struct UsageWindowInspectionView: View {
     let inspection: UsageWindowInspection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("\(inspection.window.longName) window").font(.headline)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.md) {
+            Text("\(inspection.window.longName) window").font(JRBarTokens.TypeStyle.headline.font)
             if let notice = inspection.readingNotice {
                 Label(notice, systemImage: "clock.badge.exclamationmark")
-                    .font(.callout)
+                    .font(JRBarTokens.TypeStyle.callout.font)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(inspection.amountText)
-                .font(.title2.weight(.semibold))
+                .font(JRBarTokens.TypeStyle.title1.font)
                 .monospacedDigit()
             Text(inspection.resetText)
-                .font(.callout)
+                .font(JRBarTokens.TypeStyle.callout.font)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Divider()
             Text(inspection.verdictText)
-                .font(.caption.weight(.semibold))
+                .font(JRBarTokens.TypeStyle.section.font)
                 .foregroundStyle(inspection.verdictColor)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(inspection.verdictColor.opacity(0.12), in: Capsule())
             Text(inspection.explanation)
-                .font(.callout)
+                .font(JRBarTokens.TypeStyle.callout.font)
                 .fixedSize(horizontal: false, vertical: true)
             if let evidence = inspection.forecastEvidence {
-                Text(evidence).font(.caption).foregroundStyle(.secondary)
+                Text(evidence).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                 Text(inspection.readingAge)
                 if let date = inspection.readingDate {
                     Text(date.formatted(date: .abbreviated, time: .shortened))
                 }
             }
-            .font(.caption)
+            .font(JRBarTokens.TypeStyle.caption.font)
             .foregroundStyle(.secondary)
             .monospacedDigit()
             if let scope = inspection.scopeText {
-                Text(scope).font(.caption).foregroundStyle(.secondary)
+                Text(scope).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16)
+        .padding(JRBarTokens.Space.lg)
         .frame(width: 312, alignment: .leading)
         .accessibilityElement(children: .contain)
     }

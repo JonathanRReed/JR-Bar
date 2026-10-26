@@ -239,9 +239,9 @@ enum UsageCardCopy {
     }
     static func verdictTint(_ forecast: UsageForecast) -> Color {
         switch forecast.verdict {
-        case .exhausted: return .red
-        case .runsOut: return .orange
-        case .comfortable: return forecast.heldIdle ? .secondary : .green
+        case .exhausted: return JRBarTokens.Ink.failure
+        case .runsOut: return JRBarTokens.Ink.attention
+        case .comfortable: return forecast.heldIdle ? .secondary : JRBarTokens.Ink.done
         case .unknown, .guarded, .unmeasured: return .secondary
         }
     }
@@ -513,18 +513,6 @@ struct AddAccountButton: View {
     }
 }
 
-
-enum UsageColors {
-    /// The level colour, or the secondary ink for a window with no
-    /// reading — an unmeasured window is not a calm one, and painting it
-    /// the accent would say it is fine.
-    static func level(_ pct: Double?, accent: Color) -> Color {
-        guard let pct else { return .secondary }
-        if pct >= 95 { return .red }
-        if pct >= 80 { return .orange }
-        return accent
-    }
-}
 
 
 extension UsageFormat {

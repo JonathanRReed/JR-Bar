@@ -277,7 +277,7 @@ struct PanelProviderSection: View {
         }
     }
 
-    private func gauge(_ usage: CoreProviderUsage) -> some View {
+    func gauge(_ usage: CoreProviderUsage) -> UsageGaugeRow {
         let style = ProviderStyle.style(for: usage.id, document: store.settingsDocument)
         let retry: (() -> Void)? = usage.availability == "failing" && !(["Retry", "Retry later"].contains(usage.action ?? ""))
             ? { store.retryPanelUsage(usage) } : nil
@@ -285,6 +285,10 @@ struct PanelProviderSection: View {
         return UsageGaugeRow(provider: usage, name: name, now: store.now.timeIntervalSince1970,
                              connected: store.isLive, accent: style.accent, style: .compact,
                              windowNames: store.panelWindowNames, snapshotReceivedAt: store.usageSnapshotReceivedAt, suppressDisconnectedStatus: true,
+                             forecasts: Dictionary(usage.windows.map { window in
+                                 (window.id, UsageCenterStore.forecast(for: usage, window: window, core: store.core, now: store.now))
+                             }, uniquingKeysWith: { first, _ in first }),
+                             onOpen: { store.openUsageCenter(provider: usage.identity) },
                              onAction: { store.panelUsageAction(usage) }, onRetry: retry)
     }
 

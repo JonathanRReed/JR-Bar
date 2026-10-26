@@ -404,8 +404,10 @@ import JRBarUI
         let leading = UsageCenterStore.primaryWindow(of: provider)
         #expect(leading?.id == "seven_day")
         #expect(leading?.usedPct == 100)
-        // The colour model's own word for it: ≥95 is red.
-        #expect(UsageColors.level(leading?.usedPct, accent: .blue) == .red)
+        let window = provider.windows[1]
+        let forecast = UsageForecaster.forecast(window: window, daemon: nil, samples: [], now: 1_800_000_000)
+        let reading = UsageGaugeReading(window: window, provider: provider, now: 1_800_000_000, forecast: forecast)
+        #expect(reading.captionTone == .failure)
         // The convention still answers 5h — that is what the card's
         // "Watching it" note compares the pick against.
         #expect(UsageCenterStore.conventionalWindow(of: provider)?.id == "five_hour")

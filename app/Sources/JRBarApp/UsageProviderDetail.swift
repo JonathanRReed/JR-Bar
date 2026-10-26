@@ -6,6 +6,7 @@ struct UsageProviderDetail: View {
     let provider: CoreProviderUsage
     @Bindable var store: UsageCenterStore
     let showCost: Bool
+    @ViewState private var inspectedWindow: CoreUsageWindow?
 
     private var history: UsageHistory? {
         guard var history = store.history(for: provider) else { return nil }
@@ -22,11 +23,19 @@ struct UsageProviderDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xxl) {
-            UsageGaugeRow(provider: provider, name: store.providerTitle(provider),
-                          now: store.now.timeIntervalSince1970, connected: store.isLive,
-                          accent: accent, style: .detail, pace: pace,
-                          onAction: { store.runProviderAction(provider) },
-                          onRetry: quotaRetry)
+            quotaRow
+            UsageProviderFactsView(facts: facts, showCost: showCost)
+            let referenceWindows = UsageSourceNotes.detailWindows(provider.windows)
+            if !referenceWindows.isEmpty {
+                UsageDetailWindowsLine(windows: referenceWindows, now: store.now, fix: provider.staleFix)
+            }
+            ForEach(inspections, id: \.window.id) { inspection in
+                UsageForecastSummary(inspection: inspection)
+            }
+            let burners = store.burners(for: provider)
+            if !burners.isEmpty, let window = UsageCenterStore.featuredWindow(of: provider) {
+                UsageBurnersView(window: window, burners: burners)
+            }
             if let row = store.row(for: provider.identity) {
                 DisclosureGroup("Connection") {
                     UsageProviderConnection(provider: provider, store: store, row: row)
@@ -34,12 +43,16 @@ struct UsageProviderDetail: View {
             }
             if let note = store.signInNotes[provider.identity] { SignInNoteLine(note: note) }
             Divider()
+            if store.supportsLocalHistory(provider) {
+                Text("Local history combines this Mac's configured homes. It is shown once per provider and is not attributed to an account.")
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            }
             HStack {
                 Text(store.metric == .cost && showCost ? "Estimated cost" : "Tokens").font(JRBarTokens.TypeStyle.heading.font)
                 Spacer()
                 Text(store.range.label).foregroundStyle(JRBarTokens.Ink.secondary)
             }
-            if let state = UsageHistoryPresentation.state(provider: provider, history: history,
+            if store.ownsLocalHistory(provider), let state = UsageHistoryPresentation.state(provider: provider, history: history,
                 disabled: store.tokenHistoryOff, loading: store.isLoading(provider) || store.refreshing,
                 scanning: store.isScanning(provider), error: store.error(for: provider)) {
                 StatusBanner(state.title, kind: state.failure ? .failure : .information, detail: state.detail) {
@@ -50,7 +63,7 @@ struct UsageProviderDetail: View {
                     }
                 }
             }
-            if !store.tokenHistoryOff, let history, history.records != 0, !history.days.isEmpty || !history.hours.isEmpty {
+            if !store.tokenHistoryOff, store.ownsLocalHistory(provider), let history, history.records != 0, !history.days.isEmpty || !history.hours.isEmpty {
                 if showCost, store.metric == .cost, history.costIsUnpriced {
                     Text("No price for this usage").foregroundStyle(JRBarTokens.Ink.secondary)
                 } else {
@@ -62,10 +75,19 @@ struct UsageProviderDetail: View {
                         Text("Estimated cost").font(JRBarTokens.TypeStyle.heading.font)
                         Text(history.costIsUnpriced ? "No price for this usage" : UsageFormat.cost(history.totalCost, currency: history.pricing?.currency ?? "USD"))
                             .font(JRBarTokens.TypeStyle.title1.font).monospacedDigit()
-                        Text("List prices, not your invoice").font(JRBarTokens.TypeStyle.caption.font)
-                            .foregroundStyle(JRBarTokens.Ink.secondary)
+                    }
+                    Text(UsageCardCopy.pricingDisclosure(history))
+                        .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+                    if let share = history.cacheShare {
+                        Text("\(Int((share * 100).rounded()))% of input from cache")
+                            .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+                    }
+                    if let savings = history.cacheSavings, savings > 0 {
+                        Text("Cache saved \(history.costsApproximate ? "≈ " : "")\(UsageFormat.cost(savings, currency: history.pricing?.currency ?? "USD"))")
+                            .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
                     }
                 }
+                UsageHistoryDetails(history: history, showCost: showCost)
             }
             Divider()
             Text("Context · open sessions").font(JRBarTokens.TypeStyle.heading.font)
@@ -77,6 +99,40 @@ struct UsageProviderDetail: View {
                                     gap: store.tokenHistoryOff ? "Token history is off" : store.sessionUsage.gap(for: session.id), accent: accent)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if store.isCelebrating(provider.identity) {
+                Label("Window reset", systemImage: "arrow.counterclockwise.circle.fill")
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.reset)
+            }
+        }
+        .popover(item: WindowPresenter.presentation($inspectedWindow)) { window in
+            UsageWindowInspectionView(inspection: inspection(for: window))
+        }
+    }
+
+    var inspections: [UsageWindowInspection] {
+        guard provider.quotaSource, !provider.usageIsOff else { return [] }
+        return UsageSourceNotes.ringWindows(provider.windows).map { inspection(for: $0) }
+    }
+
+    func inspection(for window: CoreUsageWindow) -> UsageWindowInspection {
+        UsageWindowInspection(provider: provider, window: window,
+                              forecast: store.forecast(for: provider, window: window), isLive: store.isLive, now: store.now)
+    }
+
+    var facts: UsageProviderFacts {
+        UsageProviderFacts(provider: provider, history: history, providers: store.providers, isLive: store.isLive, now: store.now)
+    }
+
+    var quotaRow: UsageGaugeRow {
+        var shown = provider
+        shown.windows = UsageSourceNotes.ringWindows(provider.windows)
+        return UsageGaugeRow(provider: shown, name: store.providerTitle(provider),
+                      now: store.now.timeIntervalSince1970, connected: store.isLive,
+                      accent: accent, style: .detail, pace: pace,
+                      forecasts: Dictionary(inspections.map { ($0.window.id, $0.displayForecast) }, uniquingKeysWith: { first, _ in first }),
+                      onInspect: { inspectedWindow = $0 },
+                      onAction: { store.runProviderAction(provider) }, onRetry: quotaRetry)
     }
 
     private var pace: [String: Double] { store.quotaPace(for: provider) }
@@ -140,5 +196,38 @@ struct UsageSessionContext: View {
                 JRBarGauge(value: Double(tokens) / Double(window) * 100, tint: accent, height: 6)
             }
         }
+    }
+}
+
+struct UsageForecastSummary: View {
+    let inspection: UsageWindowInspection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+            HStack(spacing: JRBarTokens.Space.sm) {
+                Text(inspection.window.longName).font(JRBarTokens.TypeStyle.headline.font)
+                Text(inspection.verdictText)
+                    .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".verdict": inspection.displayForecast])
+                    .font(JRBarTokens.TypeStyle.section.font)
+                    .foregroundStyle(inspection.verdictColor)
+                    .padding(.horizontal, JRBarTokens.Space.sm).padding(.vertical, JRBarTokens.Space.xs)
+                    .background(inspection.verdictColor.opacity(0.12), in: Capsule())
+            }
+            Text(inspection.explanation).font(JRBarTokens.TypeStyle.callout.font)
+                .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".headline": inspection.displayForecast])
+                .fixedSize(horizontal: false, vertical: true)
+            if let projected = inspection.projectedText {
+                Text(projected).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            }
+            if let evidence = inspection.forecastEvidence {
+                Text(evidence).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            }
+            if inspection.readingNotice == nil,
+               let room = SessionAwarePace.roomText(inspection.displayForecast, now: inspection.now.timeIntervalSince1970) {
+                Text(room).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            }
+            if let budget = inspection.budget { UsageResetBudgetView(budget: budget) }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
