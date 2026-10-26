@@ -336,6 +336,13 @@ final class PanelStore {
     @ObservationIgnored private var panelGeneration = 0
     @ObservationIgnored private var openRequestGeneration = 0
     @ObservationIgnored var opener: @MainActor (String) async -> String? = { await SessionOpener.open($0) }
+    @ObservationIgnored var requestUsageRefresh: @MainActor ([String]) async throws -> CoreReply
+    @ObservationIgnored var panelAgentsMemo: PanelAgentsMemo?
+    var editingProviders = false
+    var earlierExpanded = false
+    var expandedAgentGroups: Set<String> = []
+    private(set) var cachedPanelUsage: [CoreProviderUsage] = []
+    private(set) var usageSnapshotReceivedAt: Double = Date().timeIntervalSince1970
     var selectedID: String?
     /// The selection came from ↑/↓/Tab, not the pointer: the selected row
     /// gets an extra accent stroke so a keyboard pick reads as a pick.
@@ -403,6 +410,10 @@ final class PanelStore {
         self.providerList = providerList ?? ProviderListStore(core: core)
         self.sessionUsage = SessionUsageStore(core: core)
         self.askDesk = AskAnswerDesk(core: core)
+        self.requestUsageRefresh = { [weak core] providers in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.refreshUsage(providers: providers)
+        }
         self.fetchUsageHistory = { [weak core] provider, range in
             guard let core else { throw CoreClientError.notConnected }
             return try await core.usageHistory(provider: provider, range: range)
@@ -428,6 +439,22 @@ final class PanelStore {
         }
         syncMediaReader()
         observeEvents()
+        cachedPanelUsage = core.usage
+        usageSnapshotReceivedAt = core.lastStateAt?.timeIntervalSince1970 ?? Date().timeIntervalSince1970
+        observePanelUsage()
+    }
+
+    private func observePanelUsage() {
+        withObservationTracking { _ = core.usage } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if !self.core.usage.isEmpty {
+                    self.cachedPanelUsage = self.core.usage
+                    self.usageSnapshotReceivedAt = Date().timeIntervalSince1970
+                }
+                self.observePanelUsage()
+            }
+        }
     }
 
     // MARK: The light log
@@ -517,6 +544,7 @@ final class PanelStore {
         clock = timer
         scheduleSparklines()
         refreshSessionUsage()
+        Task { [weak self] in await self?.providerList.refresh() }
     }
 
     /// Reads model/tokens/cost/context for the local rows on screen.
@@ -540,12 +568,14 @@ final class PanelStore {
 
     // MARK: Derived: layout
 
-    /// What the panel shows, counted for `PanelLayout`. The quiet
-    /// providers share one trailing row, so they count as one.
+    /// Count the panel's groups and expanded members, rather than worker sessions twice.
     var layoutContent: PanelLayout.Content {
-        PanelLayout.Content(asks: askCardCount, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
-                            usageProviders: usage.count + (quietUsage.isEmpty ? 0 : 1), hasHiddenFooter: hiddenCount > 0,
-                            expandedAsks: expandedAskCount)
+        let agents = currentPanelAgents + (earlierExpanded ? earlierPanelAgents : [])
+        let members = agents.filter { expandedAgentGroups.contains($0.id) }.reduce(0) { $0 + $1.members.count }
+        let providers = editingProviders ? panelEditProviders.count : panelUsage.count
+        return PanelLayout.Content(asks: askCardCount, sessions: agents.count + members, hasWhyRow: false,
+                                   usageProviders: providers, hasHiddenFooter: hiddenCount > 0 || !earlierPanelAgents.isEmpty,
+                                   expandedAsks: expandedAskCount)
     }
 
     /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
@@ -560,7 +590,11 @@ final class PanelStore {
     /// The panel's geometry for the current content and screen, computed
     /// (never measured) so the window can be sized before it is shown.
     var layout: PanelLayout {
-        PanelLayout.compute(content: layoutContent, screenHeight: screenHeight)
+        let composition = PanelComposition(store: self)
+        var value = PanelLayout.compute(content: layoutContent, screenHeight: screenHeight)
+        value.sessionsHeight = Double(composition.agentsHeight)
+        value.totalHeight = Double(composition.totalHeight)
+        return value
     }
 
     func layoutDidChange(_ layout: PanelLayout) {
@@ -1188,7 +1222,7 @@ final class PanelStore {
     func find(_ query: String) {
         findQuery = String(query.prefix(64))
         selectionByKeyboard = true
-        selectedID = visibleRows.first?.id
+        selectedID = panelSelectableRows.first?.id
     }
 
     func appendFind(_ text: String) { find(findQuery + text) }
@@ -2463,7 +2497,7 @@ final class PanelStore {
     // MARK: Keyboard
 
     func moveSelection(by delta: Int) {
-        let rows = visibleRows
+        let rows = panelSelectableRows
         guard !rows.isEmpty else { return }
         selectionByKeyboard = true
         let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
@@ -2472,7 +2506,7 @@ final class PanelStore {
     }
 
     func activateSelection() {
-        guard let row = visibleRows.first(where: { $0.id == selectedID }) else { return }
+        guard let row = panelSelectableRows.first(where: { $0.id == selectedID }) else { return }
         open(row)
     }
 

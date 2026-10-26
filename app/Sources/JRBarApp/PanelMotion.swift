@@ -1,4 +1,5 @@
 import SwiftUI
+import JRBarUI
 
 /// `@State` is a macro on the macOS 26 SDK and the Command Line Tools ship
 /// no `SwiftUIMacros` plugin, so the views reach the `State` property
@@ -9,7 +10,7 @@ typealias ViewState<Value> = SwiftUICore.State<Value>
 /// feels like the same object moving.
 ///
 /// * `unfoldDuration` -- the panel itself arriving (the controller's
-///   window fade + 6 pt rise);
+///   window fade and 4 pt rise);
 /// * `contents`  -- rows entering, leaving and reordering;
 /// * `crossfade` -- a word or number changing in place.
 ///
@@ -17,24 +18,21 @@ typealias ViewState<Value> = SwiftUICore.State<Value>
 /// Until the panel has finished arriving (`armed`), nothing inside it
 /// animates at all: the first frame is the final frame.
 enum PanelMotion {
-    static let unfoldDuration: TimeInterval = 0.26
-    static let reducedDuration: TimeInterval = 0.12
+    static let unfoldDuration: TimeInterval = JRBarTokens.Motion.panelEntrance.duration
+    static let reducedDuration: TimeInterval = JRBarTokens.Motion.reduced.duration
 
     static func contents(reduced: Bool, armed: Bool = true) -> Animation? {
         guard armed else { return nil }
-        return reduced ? .easeOut(duration: reducedDuration) : .spring(response: 0.32, dampingFraction: 0.82)
+        return reduced ? nil : JRBarTokens.Motion.rowChange.animation
     }
 
     static func crossfade(reduced: Bool, armed: Bool = true) -> Animation? {
         guard armed else { return nil }
-        return .easeInOut(duration: reduced ? reducedDuration : 0.16)
+        return JRBarTokens.Motion.rowChange.animation(reduceMotion: reduced)
     }
 
-    /// Rows slide in from a few points below and fade; with Reduce Motion they only fade.
+    /// Inserted rows fade and settle without a bounce. Reduce Motion only fades.
     static func rowTransition(reduced: Bool) -> AnyTransition {
-        reduced ? .opacity : .asymmetric(
-            insertion: .opacity.combined(with: .offset(y: 6)).combined(with: .scale(scale: 0.98, anchor: .top)),
-            removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
-        )
+        JRBarTokens.Motion.transition(reduceMotion: reduced)
     }
 }
