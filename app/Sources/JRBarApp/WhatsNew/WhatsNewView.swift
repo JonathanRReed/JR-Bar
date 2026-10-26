@@ -26,11 +26,12 @@ struct WhatsNewView: View {
             }
             if let lead = entries.first {
                 VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
-                    HStack(spacing: JRBarTokens.Space.xs) {
-                        ForEach(["claude", "codex", "gemini"], id: \.self) { provider in
-                            Capsule().fill(ProviderPalette.color(for: provider)).frame(height: 32)
-                        }
-                    }.accessibilityLabel("Three provider colours sharing the light")
+                    VStack(spacing: JRBarTokens.Space.md) {
+                        LEDStripPreview(program: Self.mixProgram, ledCount: 8, style: .dots,
+                                        dotSize: 24, spacing: 16)
+                        LEDStripPreview(program: Self.mixProgram, ledCount: 8, style: .band, dotSize: 6)
+                    }
+                    .accessibilityLabel("Claude and Codex sharing the strip and Screen Bar")
                     entryCard(lead, lead: true)
                 }
                 .padding(JRBarTokens.Space.lg)
@@ -39,7 +40,10 @@ struct WhatsNewView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading,
                       spacing: JRBarTokens.Space.lg) {
                 ForEach(Array(entries.dropFirst().prefix(4))) { entry in
-                    entryCard(entry).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    entryCard(entry)
+                        .padding(JRBarTokens.Space.md)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(JRBarTokens.Ink.content, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
                 }
             }
             HStack {
@@ -52,6 +56,12 @@ struct WhatsNewView: View {
         .frame(width: Self.width)
         .fixedSize(horizontal: false, vertical: true)
     }
+
+    // Synthetic Split: each provider breathes on its own half of the strip.
+    static let mixProgram = """
+        #D97757 #D97757 #D97757 #D97757 #2B8FFF #2B8FFF #2B8FFF #2B8FFF 2s pulse
+        repeat
+        """
 
     func proofRefusal(_ text: String, entry: String) -> Self {
         var copy = self

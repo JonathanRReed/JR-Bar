@@ -602,7 +602,7 @@ final class SetupStore {
         let hooked = agents.filter { $0.hookStatus == "ok" }
         if skippedSteps.contains(.agents) {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "Skipped — Settings › Agents & Usage installs hooks any time.", ok: false))
+                                   detail: "Skipped. Settings › \(SettingsStore.Page.agents.title) installs hooks any time.", ok: false))
         } else if !monitorLive {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
                                    detail: "Monitor offline. Reconnect to check the installed hooks.", ok: false))
@@ -611,17 +611,17 @@ final class SetupStore {
                                    detail: "\(hooked.count) provider\(hooked.count == 1 ? "" : "s") reporting.", ok: true))
         } else if agents.contains(where: { $0.detected == true }) {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "Detected, hooks not installed yet — Settings › Agents & Usage.", ok: false))
+                                   detail: "Detected, hooks not installed yet. Settings › \(SettingsStore.Page.agents.title).", ok: false))
         } else {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "No agent CLIs found yet — install one and it appears in Settings › Agents & Usage.", ok: false))
+                                   detail: "No agent CLIs found yet. Install one and it appears in Settings › \(SettingsStore.Page.agents.title).", ok: false))
         }
 
         if !usageOffers.isEmpty {
             let on = usageOffers.filter(\.isOn).map(\.name)
             if on.isEmpty {
                 rows.append(SummaryRow(symbol: "gauge.with.dots.needle.bottom.0percent", text: "Usage",
-                                       detail: "Off for every provider — Settings › Agents & Usage turns each one on.", ok: false))
+                                       detail: "Off for every provider. Settings › \(SettingsStore.Page.agents.title) turns each one on.", ok: false))
             } else {
                 rows.append(SummaryRow(symbol: "gauge.with.dots.needle.bottom.50percent", text: "Usage",
                                        detail: "On for " + on.joined(separator: ", ") + ". Everything else stays off until you turn it on.",
