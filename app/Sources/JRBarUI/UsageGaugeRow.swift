@@ -95,6 +95,7 @@ public struct UsageGaugeRow: View {
     private let tileAccent: Color?
     public let style: Style
     public let windowNames: [String]
+    public let compactColumnWidth: CGFloat
     public let suppressDisconnectedStatus: Bool
     public let snapshotReceivedAt: Double?
     public let locale: Locale
@@ -110,7 +111,9 @@ public struct UsageGaugeRow: View {
                 accent: Color? = nil, style: Style = .detail, windowNames: [String]? = nil,
                 snapshotReceivedAt: Double? = nil, suppressDisconnectedStatus: Bool = false, locale: Locale = .current, timeZone: TimeZone = .current,
                 pace: [String: Double] = [:], fix: String? = nil,
-                onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil) {
+                onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil,
+                compactColumnWidth: CGFloat = UsageGaugeRow.columnWidth) {
+        self.compactColumnWidth = compactColumnWidth
         self.provider = provider
         self.name = name
         self.now = now
@@ -214,8 +217,8 @@ public struct UsageGaugeRow: View {
                             ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
                             compactIdentity
                         }
-                        if !windowNames.isEmpty {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.columnWidth, maximum: Self.columnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
+                        if showsWindows {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: compactColumnWidth, maximum: compactColumnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
                                 ForEach(windowNames, id: \.self) { name in
                                     VStack(alignment: .trailing, spacing: 4) {
                                         Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
@@ -303,11 +306,11 @@ public struct UsageGaugeRow: View {
                     UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
                 }
             }
-            .frame(minWidth: compact ? Self.columnWidth : nil, maxWidth: .infinity)
+            .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity)
         } else {
             Text("–").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
                 .frame(width: compact ? Self.compactPercentWidth : nil, alignment: .trailing)
-                .frame(minWidth: compact ? Self.columnWidth : nil, maxWidth: .infinity, alignment: compact ? .leading : .center)
+                .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity, alignment: compact ? .leading : .center)
                 .accessibilityLabel("\(name): no window")
         }
     }

@@ -103,7 +103,7 @@ struct SetupView: View {
                 Button("Skip") { store.skip() }
             }
             if store.step == .done {
-                Button("Open Toys") { store.finishToToys() }
+                Button("Open toys") { store.finishToToys() }
             }
             Button(store.nextTitle) { store.goNext() }
                 .keyboardShortcut(.defaultAction)

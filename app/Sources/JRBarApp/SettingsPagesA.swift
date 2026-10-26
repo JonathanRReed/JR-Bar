@@ -60,7 +60,7 @@ struct GeneralAdvanced: View {
     var body: some View {
         SettingGroup("Setup") {
             SettingRow("Setup", subtitle: "The first-run walkthrough: agents, permissions, menu bar.") {
-                Button("Run Setup Again…") { SetupWindowController.show() }
+                Button("Run setup again…") { SetupWindowController.show() }
             }
         }
         SettingGroup("Release channel") {
@@ -1094,21 +1094,23 @@ struct ScreenBarCard: View {
         }
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         Provided(store, "screen_bar_show_in_full_screen") {
-            Picker(selection: Binding(
-                get: { ScreenBarFullScreen(shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
-                                           hideOverVideo: hideOverVideo) },
-                set: { mode in
-                    store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
-                    if mode != .hidden { hideOverVideo = mode == .notOverVideo }
+            SettingsRow("In full screen", subtitle: ScreenBarFullScreen(
+                shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
+                hideOverVideo: hideOverVideo).detail) {
+                Picker("In full screen", selection: Binding(
+                    get: { ScreenBarFullScreen(shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
+                                               hideOverVideo: hideOverVideo) },
+                    set: { mode in
+                        store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
+                        if mode != .hidden { hideOverVideo = mode == .notOverVideo }
+                    }
+                )) {
+                    ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-            )) {
-                ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
-            } label: {
-                SettingLabel(title: "In full screen", subtitle: ScreenBarFullScreen(
-                    shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
-                    hideOverVideo: hideOverVideo).detail)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
             }
-            .pickerStyle(.menu)
         }
         ScreenBarHiddenAppsRow(store: store)
         SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
@@ -1201,8 +1203,8 @@ enum ScreenBarFullScreen: CaseIterable, Hashable {
     var title: String {
         switch self {
         case .hidden: return "Hidden"
-        case .notOverVideo: return "Shown, not over video"
-        case .always: return "Always shown"
+        case .notOverVideo: return "Except video"
+        case .always: return "Always"
         }
     }
 

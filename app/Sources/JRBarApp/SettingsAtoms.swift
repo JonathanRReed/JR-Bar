@@ -251,8 +251,19 @@ struct CardLabeledContentStyle: LabeledContentStyle {
 /// chevron turns in the trailing control column so titles stay on one
 /// edge, and what it opens sits on an inset panel below.
 struct SettingsDisclosureStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        SettingsDisclosure(configuration: configuration)
+    var flattened = false
+
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if flattened {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                configuration.label
+                    .accessibilityAddTraits(.isHeader)
+                configuration.content
+            }
+            .padding(.vertical, JRBarTokens.Space.sm)
+        } else {
+            SettingsDisclosure(configuration: configuration)
+        }
     }
 }
 
@@ -444,11 +455,11 @@ extension View {
 
     /// The styles a card body's rows share (`CardToggleStyle`,
     /// `CardLabeledContentStyle`, `SettingsDisclosureStyle`).
-    func cardBodyStyle() -> some View {
+    func cardBodyStyle(flattenDisclosures: Bool = false) -> some View {
         self
             .toggleStyle(CardToggleStyle())
             .labeledContentStyle(CardLabeledContentStyle())
-            .disclosureGroupStyle(SettingsDisclosureStyle())
+            .disclosureGroupStyle(SettingsDisclosureStyle(flattened: flattenDisclosures))
     }
 }
 

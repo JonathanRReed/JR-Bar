@@ -47,7 +47,7 @@ struct SettingsUsageOptions: View {
         SettingGroup("Asks") {
             SettingToggle(store, "Sub-agent asks", subtitle: SubagentAsksCopy.subtitle, path: "subagent_asks_alert")
             SettingsRow("Try an ask") {
-                Button("Show a Demo Ask") { DemoAskStore.shared.tryIt() }
+                Button("Show a demo ask") { DemoAskStore.shared.tryIt() }
             }
         }
         SettingGroup("Quota alerts") {
@@ -126,7 +126,7 @@ struct SettingsFeatureDetail: View {
         }
         .id(SettingsStore.cardAnchor(toy.id))
         toy.controls
-            .cardBodyStyle()
+            .cardBodyStyle(flattenDisclosures: toy.id != "notch")
             .padding(JRBarTokens.Space.md)
     }
 }

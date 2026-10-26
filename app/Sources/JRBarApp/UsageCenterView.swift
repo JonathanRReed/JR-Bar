@@ -55,6 +55,7 @@ struct UsageCenterView: View {
                 }
                 .padding(JRBarTokens.Space.xxl)
             }
+            .id(visibleSelection)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .font(JRBarTokens.TypeStyle.body.font)
@@ -117,7 +118,7 @@ struct UsageCenterNoticeView: View {
     let dismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: JRBarTokens.Space.md) {
             Image(systemName: notice.isFailure ? "exclamationmark.triangle" : "checkmark.circle")
                 .foregroundStyle(notice.isFailure ? Color.orange : Color.secondary)
             Text(notice.text)
@@ -128,8 +129,8 @@ struct UsageCenterNoticeView: View {
             Button("Dismiss", action: dismiss)
                 .help("Dismiss this message")
         }
-        .font(.callout)
-        .windowCard(padding: 12)
+        .font(JRBarTokens.TypeStyle.callout.font)
+        .windowCard(padding: JRBarTokens.Space.md)
     }
 }
 

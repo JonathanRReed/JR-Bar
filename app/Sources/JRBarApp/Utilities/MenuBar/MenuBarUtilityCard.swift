@@ -525,7 +525,7 @@ struct MenuBarUtilityControls: View {
     private var appearanceControls: some View {
         LabeledContent {
             Picker(selection: utility.bind(\.coverMaterial)) {
-                Text("Blend In").tag(MenuBarSettings.CoverMaterial.blend)
+                Text("Blend in").tag(MenuBarSettings.CoverMaterial.blend)
                 Text("Menu").tag(MenuBarSettings.CoverMaterial.menu)
                 Text("HUD").tag(MenuBarSettings.CoverMaterial.hud)
                 Text("Popover").tag(MenuBarSettings.CoverMaterial.popover)
