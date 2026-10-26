@@ -14,6 +14,16 @@ final class EffectStudioStore {
     static let consentKey = "effectHardwarePreviewConsent"
 
     let core: CoreModel
+    let lightsStudio: EffectStudioLights
+    @ObservationIgnored private var preparedForOpening = false
+    @ObservationIgnored private var warmTask: Task<Void, Never>?
+    private(set) var providerSaving: Set<String> = []
+    private struct ProviderDraft {
+        let id = UUID()
+        let effect: EffectDefinition?
+        let parameters: [String: JSONValue]
+    }
+    private var providerDrafts: [String: ProviderDraft] = [:]
     @ObservationIgnored private let defaults: UserDefaults
     private(set) var catalog: EffectCatalog?
     private(set) var assignments: EffectAssignmentDocument?
@@ -21,7 +31,11 @@ final class EffectStudioStore {
     private(set) var loadError: String?
     var lastError: String?
     var status: String?
+    var spotlightExplained: Bool {
+        didSet { defaults.set(spotlightExplained, forKey: "studioSpotlightExplained") }
+    }
     var search = ""
+    @ObservationIgnored var finishLookLoader: (@MainActor () async -> FinishLookList?)?
     var selectedID: String? {
         didSet { defaults.set(selectedID, forKey: "effectStudioSelection") }
     }
@@ -138,15 +152,35 @@ final class EffectStudioStore {
     var sceneChanging: Bool { sceneRequests[.scene] != nil }
     var scenePackChanging: Bool { sceneRequests[.pack] != nil }
 
-    init(core: CoreModel, defaults: UserDefaults = .standard) {
+    init(core: CoreModel, defaults: UserDefaults = .standard, settings: SettingsStore? = nil) {
         self.core = core
+        lightsStudio = EffectStudioLights(core: core, settings: settings)
         self.defaults = defaults
+        spotlightExplained = defaults.bool(forKey: "studioSpotlightExplained")
         selectedID = defaults.string(forKey: "effectStudioSelection")
         hardwareConsent = defaults.bool(forKey: Self.consentKey)
-        mode = Mode(rawValue: defaults.string(forKey: "effectStudioMode") ?? "") ?? .effects
+        mode = Mode(rawValue: defaults.string(forKey: "effectStudioMode") ?? "") ?? .mix
     }
 
     // MARK: Lifecycle
+
+    func prepareForOpening() {
+        preparedForOpening = true
+        observeCore()
+        reload()
+        warmLights()
+    }
+
+    private func warmLights() {
+        guard core.isLive, preparedForOpening, warmTask == nil else { return }
+        warmTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.warmTask = nil }
+            await self.lightsStudio.refreshPlan()
+            await self.lightsStudio.refreshPreviews()
+            await self.lightsStudio.refreshSupportingPreviews()
+        }
+    }
 
     func windowDidOpen() {
         if !isOpen { windowSession = UUID() }
@@ -161,6 +195,10 @@ final class EffectStudioStore {
         pendingRemovals.removeAll()
         sceneRequests.removeAll()
         isOpen = false
+        preparedForOpening = false
+        warmTask?.cancel()
+        warmTask = nil
+        lightsStudio.windowDidClose()
         libraryRevision += 1
         libraryTask?.cancel()
         libraryTask = nil
@@ -232,14 +270,14 @@ final class EffectStudioStore {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let generation = self.core.catalogGeneration
-                // Closed windows don't fetch: `windowDidOpen` reloads on
-                // the next show, so a bumped generation while closed only
-                // updates the seen marker.
-                if self.core.isLive, !self.wasLive, self.isOpen { self.reload() }
+                // Warm a cold catalog before the first open. Later changes
+                // wait for the window to open again.
+                if self.core.isLive, !self.wasLive, (self.isOpen || (self.preparedForOpening && self.catalog == nil)) { self.reload() }
                 if generation != self.seenCatalogGeneration {
                     self.seenCatalogGeneration = generation
-                    if self.core.isLive, self.isOpen { self.reload() }
+                    if self.core.isLive, (self.isOpen || (self.preparedForOpening && self.catalog == nil)) { self.reload() }
                 }
+                if self.lightsStudio.plan == nil { self.warmLights() }
                 self.wasLive = self.core.isLive
                 self.track()
             }
@@ -305,7 +343,7 @@ final class EffectStudioStore {
         renders.removeAll()
         renderOrder.removeAll()
         if selectedID == nil || catalog?.effect(selectedID ?? "") == nil {
-            selectedID = catalog?.effects.first?.id
+            selectedID = catalog?.effects.first { $0.catalog != "provider_animation" }?.id ?? catalog?.effects.first?.id
         }
         pruneForRemovedEffects()
         if assigning, assignmentEffectAvailable, let effect = assignmentEffect {
@@ -401,6 +439,13 @@ final class EffectStudioStore {
         var current = edits[effect.id] ?? [:]
         current[parameter.name] = parameter.normalize(value)
         edits[effect.id] = current
+        scheduleRender(effect)
+    }
+
+    func editProviderEffect(_ effect: EffectDefinition, parameters: [String: JSONValue]) {
+        edits[effect.id] = effect.normalizedParameters(parameters)
+        selectedID = effect.id
+        mode = .effects
         scheduleRender(effect)
     }
 
@@ -628,20 +673,33 @@ final class EffectStudioStore {
 
     // MARK: Studio modes
 
-    /// The window's three rooms: the effect library, the hand-written
-    /// LEDS program, and the ambient moments the lights can play.
+    /// The light pages and the existing effect and program editors.
     enum Mode: String, CaseIterable, Identifiable {
-        case effects, program, moments
+        case providers, mix, moments, colours, profiles, scenes, devices, effects, assignments, program
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .effects: return "Effects"
+            case .providers: return "Providers"
+            case .mix: return "Mix"
+            case .colours: return "State colours"
+            case .profiles: return "Profiles"
+            case .assignments: return "Assignments"
+            case .scenes: return "Scenes"
+            case .devices: return "Devices"
+            case .effects: return "Library"
             case .program: return "Program"
-            case .moments: return "Moments"
+            case .moments: return "Cues"
             }
         }
         var symbol: String {
             switch self {
+            case .providers: return "person.2"
+            case .mix: return "slider.horizontal.3"
+            case .colours: return "paintpalette"
+            case .profiles: return "slider.horizontal.3"
+            case .assignments: return "arrow.triangle.branch"
+            case .scenes: return "moon"
+            case .devices: return "light.beacon.max"
             case .effects: return "sparkles.rectangle.stack"
             case .program: return "chevron.left.forwardslash.chevron.right"
             case .moments: return "sparkle"
@@ -650,8 +708,13 @@ final class EffectStudioStore {
     }
 
     /// The room on screen — remembered per Mac, a viewer convenience.
-    var mode: Mode = .effects {
-        didSet { defaults.set(mode.rawValue, forKey: "effectStudioMode") }
+    var searchPath: String?
+    var searchRequest = 0
+    var mode: Mode = .mix {
+        didSet {
+            if mode != oldValue { searchPath = nil }
+            defaults.set(mode.rawValue, forKey: "effectStudioMode")
+        }
     }
 
     /// The hand-written program's editor state.
@@ -937,6 +1000,52 @@ final class EffectStudioStore {
         }
     }
 
+    static func providerParameters(_ effect: EffectDefinition, assignment: [String: JSONValue],
+                                   playback: [String: JSONValue]?) -> [String: JSONValue] {
+        effect.normalizedParameters(playback ?? assignment)
+    }
+
+    func pendingProviderMotion(_ provider: String) -> String? {
+        providerDrafts[provider].map { $0.effect?.id ?? "auto" }
+    }
+
+    func pendingProviderParameters(_ provider: String) -> [String: JSONValue]? {
+        providerDrafts[provider]?.parameters
+    }
+
+    @discardableResult
+    func saveProvider(_ provider: String, effect: EffectDefinition?, parameters: [String: JSONValue] = [:]) -> Task<Void, Never>? {
+        if let existing = providerDrafts[provider], existing.effect == effect, existing.parameters == parameters { return nil }
+        providerDrafts[provider] = ProviderDraft(effect: effect, parameters: parameters)
+        guard !providerSaving.contains(provider) else { return nil }
+        providerSaving.insert(provider)
+        return Task { [weak self] in
+            guard let self else { return }
+            defer { self.providerSaving.remove(provider) }
+            while let draft = self.providerDrafts[provider] {
+                let snapshot = self.nextAssignmentSnapshot()
+                do {
+                    let document: EffectAssignmentDocument
+                    if let effect = draft.effect {
+                        let assignment = EffectAssignment(effectID: effect.id, scope: .provider,
+                                                          targetID: provider, parameters: draft.parameters)
+                        document = try await self.core.setAssignment(assignment)
+                    } else {
+                        document = try await self.core.clearAssignment(scope: .provider, targetID: provider)
+                    }
+                    self.acceptAssignments(document, snapshot: snapshot)
+                    if self.providerDrafts[provider]?.id == draft.id,
+                       let warning = document.motionWarning, !warning.isEmpty { self.fail(warning) }
+                } catch {
+                    if self.providerDrafts[provider]?.id == draft.id {
+                        self.fail("Provider animation not changed: \(Self.describe(error))")
+                    }
+                }
+                if self.providerDrafts[provider]?.id == draft.id { self.providerDrafts[provider] = nil }
+            }
+        }
+    }
+
     /// Providers that have actually been seen on this Mac: reporting a
     /// session or a usage window, or detected by the daemon's health
     /// probe. These lead the picker; every known provider follows.
@@ -1164,7 +1273,8 @@ final class EffectStudioStore {
 
     /// Removes an installed effect pack via `remove_effect_pack`; the
     /// reply carries the fresh catalog like the import does.
-    func removePack(_ pack: EffectPack) {
+    @discardableResult
+    func removePack(_ pack: EffectPack) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1259,13 +1369,14 @@ final class EffectStudioStore {
     /// is copied under the new name with these values, and the pack goes
     /// back in (`update` when Yours already exists). Two exports, not one,
     /// so a source whose row id Yours already uses cannot collide.
-    func saveAsEffect(_ effect: EffectDefinition, name: String) {
+    @discardableResult
+    func saveAsEffect(_ effect: EffectDefinition, name: String) -> Task<Void, Never>? {
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty, !yoursBusy else { return }
+        guard !label.isEmpty, !yoursBusy else { return nil }
         let values = values(for: effect)
         let yours = catalog?.pack(EffectStudioYours.packID)
         yoursBusy = true
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.yoursBusy = false }
             let scratch = FileManager.default.temporaryDirectory

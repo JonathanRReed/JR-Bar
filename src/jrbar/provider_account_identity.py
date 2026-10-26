@@ -64,17 +64,15 @@ def _identity_salt(home: Path) -> bytes | None:
         salt = secrets.token_bytes(_SALT_BYTES)
         try:
             atomic_private_write(path, salt.hex(), overwrite=False)
-        except FileExistsError:
-            # A peer won the race. Until it drops its scratch link the key's
-            # link count is 2 and the private read refuses it, so a refusal
-            # here is read again before it is believed.
+        except OSError:
+            # A peer can win before the writer's leaf check or at publication.
+            # Its scratch link makes the first case an OSError, not EEXIST.
+            # Re-read through the private reader; never replace the winner.
             for _ in range(_PEER_PUBLISH_READS - 1):
                 peer = _read_identity_salt(path)
                 if peer is not None:
                     return peer
                 time.sleep(_PEER_PUBLISH_PAUSE_SECONDS)
-        except OSError:
-            return None
         return _read_identity_salt(path)
     except OSError:
         return None

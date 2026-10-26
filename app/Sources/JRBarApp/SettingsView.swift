@@ -276,9 +276,6 @@ struct SettingsPageContainer: View {
             SettingsPageNotice(store: store, page: page)
             if let provider = store.selectedProvider {
                 SettingsProviderDetail(store: store, provider: provider)
-            } else if store.subpage == "calibration" {
-                SettingsBackRow(store: store)
-                CalibrationProfilesSection(store: store)
             } else if let subpage = store.subpage, subpage != "advanced", let toy = store.cardToy(subpage) {
                 SettingsBackRow(store: store)
                 SettingsFeatureDetail(toy: toy)
@@ -716,7 +713,9 @@ struct SettingsPageBody: View {
         case .devices:
             DevicesPage(store: store)
             SettingsGroup {
-                SettingsNavigationRow("Calibration profiles") { store.subpage = "calibration" }
+                SettingsNavigationRow("Calibration profiles") {
+                    store.reveal(SettingsSearchEntry(.lighting, "Calibration profiles", "Calibration profiles"))
+                }
             }
             SettingsStudioLink(store: store)
         case .notch:

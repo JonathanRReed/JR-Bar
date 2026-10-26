@@ -1,5 +1,6 @@
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import SwiftUI
 
 /// One ambient moment the lights can play: the daemon's finite cues
@@ -108,8 +109,8 @@ struct LightMoment: Identifiable, Equatable {
             sketch: "0:\(Palette.environment) 500ms none\n0:#000000 500ms none\noff 1000ms none\nrepeat"),
         LightMoment(
             id: "turn_length_ember", name: "Turn-length ember", symbol: "flame",
-            meaning: "A long turn glows a little warmer as it ages, in four broad bands — its age, never its progress.",
-            plays: "While a turn runs long.",
+            meaning: "A short warmth layer for providers on Automatic. Chosen animations keep playing unchanged.",
+            plays: "During a long turn, for at most 2 seconds.",
             surfaces: ["screen_bar", "sidepulse_pro"], priority: 320, setting: nil,
             sketch: "#00282C 1500ms cosine\n#00737F 1500ms cosine\nrepeat"),
         LightMoment(
@@ -204,22 +205,27 @@ struct LightMomentsView: View {
         SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Moments").font(.title2.weight(.semibold))
-                    Text("Short, content-free cues the lights layer over the agent state. Higher in the list wins when two want the light at once; all of them are clamped to 2 Hz and stand down for Quiet and low power. The sketches show each cue's shape — the monitor fits the exact frames to the event.")
+                    Text("Cue layers").jrbarType(.heading)
+                    Text("Asks stay on top. Short cues layer over the running animation and yield to Quiet and low power.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let failure = store.lightsStudio.supportingFailure { StatusBanner(failure, kind: .attention) }
+                StudioCueControls(settings: store.lightsStudio.settings)
                 VStack(spacing: 0) {
-                    ForEach(LightMoment.all) { moment in
-                        MomentRow(store: store, moment: moment, control: MomentSwitch.of(moment, cues: cues)) { enabled in
+                    ForEach(LightMoment.all.filter { $0.id != "dot_binary_heartbeat" }) { moment in
+                        MomentRow(store: store, moment: moment, control: MomentSwitch.of(moment, cues: cues ?? store.lightsStudio.cues)) { enabled in
                             setCue(moment.id, enabled: enabled)
                         }
                         if moment.id != LightMoment.all.last?.id { Divider().padding(.leading, 56) }
                     }
                 }
                 .windowCard(padding: 0)
+                Label("Running animation", systemImage: "waveform.path")
+                    .jrbarType(.headline)
+                    .padding(JRBarTokens.Space.md)
                 LidMomentsSection(store: store)
-                FinishMomentsSection(store: store)
+                FinishMomentsSection(store: store, loader: store.finishLookLoader)
             }
             .padding(WindowMetrics.margin)
             .frame(maxWidth: 820, alignment: .leading)
@@ -227,7 +233,7 @@ struct LightMomentsView: View {
         }
         // The settings generation moves when a cue is switched from
         // anywhere; the list follows it.
-        .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await loadCues() }
+        .task(id: "\(store.isLive)-\(store.lightsStudio.settings.settingsRevision)") { await loadCues() }
     }
 
     private func loadCues() async {
@@ -273,10 +279,10 @@ private struct MomentRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: moment.symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(JRBarTokens.TypeStyle.headline.font)
                 .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
                 .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
                     .fill((isOn ? Color.accentColor : Color.secondary).opacity(0.12)))
             VStack(alignment: .leading, spacing: 3) {
                 Text(moment.name).font(.body.weight(.medium))
@@ -297,7 +303,9 @@ private struct MomentRow: View {
                     .opacity(isOn ? 1 : 0.4)
                     .accessibilityLabel("\(moment.name) sketch")
                 HStack(spacing: 8) {
-                    if control == .always {
+                    if moment.id == "ask_heartbeat" {
+                        Label("Ask priority", systemImage: "lock.fill").jrbarType(.caption).foregroundStyle(.secondary)
+                    } else if control == .always {
                         Text("Always on").font(.caption).foregroundStyle(.tertiary)
                     } else {
                         Toggle("On", isOn: Binding(get: { isOn }, set: { on in apply(on) }))
@@ -322,6 +330,7 @@ private struct MomentRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        .settingControl(control == .always ? [] : moment.setting.map { [$0] } ?? [])
     }
 
     /// The switch moved: through the monitor's cue switch when it has
@@ -427,7 +436,7 @@ struct LidMomentsSection: View {
                 .windowCard(padding: 0)
             }
         }
-        .task(id: "\(store.isLive)-\(store.core.settings?.generation ?? 0)") { await load() }
+        .task(id: "\(store.isLive)-\(store.lightsStudio.settings.settingsRevision)") { await load() }
     }
 
     private func load() async {
@@ -548,7 +557,7 @@ private struct LidLookThumbnail: View {
                 Text(look.name).font(.caption).foregroundStyle(selected ? .primary : .secondary)
             }
             .padding(6)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous)
                 .strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 2))
             .contentShape(Rectangle())
         }
@@ -603,7 +612,7 @@ struct FinishMomentsSection: View {
 
     /// Changes when the monitor connects and whenever settings change, so
     /// the section loads once live and follows a pick made anywhere.
-    private var loadKey: String { "\(store.isLive)-\(store.core.settings?.generation ?? 0)" }
+    private var loadKey: String { "\(store.isLive)-\(store.lightsStudio.settings.settingsRevision)" }
 
     var body: some View {
         // The load hangs off a stack that is always there. On the empty
@@ -620,6 +629,7 @@ struct FinishMomentsSection: View {
                 }
                 .windowCard(padding: 0)
                 .opacity(list.enabled ? 1 : 0.55)
+                .settingControl(list.looks.isEmpty ? [] : ["colors.done_celebration_style"])
             }
         }
         .task(id: loadKey) { await load() }
@@ -627,8 +637,8 @@ struct FinishMomentsSection: View {
 
     static func detail(enabled: Bool) -> String {
         enabled
-            ? "How the lights celebrate a session that finishes. It plays once and goes dark."
-            : "How the lights celebrate a finish, once Settings › Devices & Lighting › Celebrate completions is on."
+            ? "A short layer over the running animation when a session finishes."
+            : "Turn on Celebrate completions in Cues to play a finish."
     }
 
     private func finishRow(_ look: FinishLookList.Look, picked: Bool) -> some View {

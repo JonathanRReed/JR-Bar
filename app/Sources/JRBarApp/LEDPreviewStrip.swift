@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import QuartzCore
 import SwiftUI
 
@@ -11,6 +12,19 @@ enum LEDPreviewSamplers {
     private static var cache: [String: LEDSSampler] = [:]
     private static var order: [String] = []
     private static let limit = 96
+    private static var plans: [String: Task<LEDSKeyframePlan?, Never>] = [:]
+    private static var planOrder: [String] = []
+
+    static func plan(for program: String, ledCount: Int) async -> LEDSKeyframePlan? {
+        let key = "\(ledCount)|\(program)"
+        if let task = plans[key] { return await task.value }
+        guard let sampler = sampler(for: program, ledCount: ledCount), sampler.cycleDuration != nil else { return nil }
+        let task = Task.detached(priority: .utility) { LEDSKeyframePlan.render(sampler: sampler) }
+        plans[key] = task
+        planOrder.append(key)
+        if planOrder.count > limit { plans[planOrder.removeFirst()] = nil }
+        return await task.value
+    }
 
     static func sampler(for program: String, ledCount: Int) -> LEDSSampler? {
         let key = "\(ledCount)|\(program)"
@@ -73,7 +87,9 @@ struct LEDStripPreview: View {
     var phase: TimeInterval = 0
     var displayLEDCount: Int? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.jrbarReduceMotion) private var motionOverride
+    private var reduceMotion: Bool { motionOverride ?? systemReduceMotion }
     @Environment(\.ledPreviewsHeld) private var held
     @Environment(\.renderSnapshot) private var snapshot
 
@@ -304,14 +320,21 @@ final class LEDStripLayerView: NSView {
 
     /// Whether the link should run. Pure, for the tests.
     static func animates(inWindow: Bool, onScreen: Bool, windowVisible: Bool, held: Bool,
-                         reduceMotion: Bool, paused: Bool, moving: Bool) -> Bool {
-        inWindow && onScreen && windowVisible && !held && !reduceMotion && !paused && moving
+                         reduceMotion: Bool, paused: Bool, moving: Bool, visibleInViewport: Bool = true) -> Bool {
+        visibleInViewport && inWindow && onScreen && windowVisible && !held && !reduceMotion && !paused && moving
     }
 
     private(set) var config: Config
     private(set) var held: Bool
     private(set) var reduceMotion: Bool
     private var sampler: LEDSSampler?
+    private var plan: LEDSKeyframePlan?
+    private var planTask: Task<Void, Never>?
+    private(set) var playingKeyframes = false
+    /// The cost proof compares the shipped frame sampler with the cached tracks.
+    var usesKeyframes = true {
+        didSet { stopKeyframes(); refreshAnimating() }
+    }
     /// When the program started, in `CACurrentMediaTime` seconds; a new
     /// program starts from its beginning.
     private var origin: TimeInterval
@@ -327,7 +350,7 @@ final class LEDStripLayerView: NSView {
     private(set) var framesDrawn = 0
 
     /// True while the display link is running.
-    var isAnimating: Bool { link != nil }
+    var isAnimating: Bool { link != nil || playingKeyframes }
 
     /// How many LEDs the strip draws: the sampler's count — a count the
     /// firmware has no layout for plays as eight — or one dull red dot
@@ -347,6 +370,7 @@ final class LEDStripLayerView: NSView {
         sampler = LEDPreviewSamplers.sampler(for: config.program, ledCount: config.ledCount)
         buildLayers()
         renderFrame(at: now)
+        prepareKeyframes()
     }
 
     @available(*, unavailable)
@@ -371,10 +395,14 @@ final class LEDStripLayerView: NSView {
         if old.program != newConfig.program || old.ledCount != newConfig.ledCount {
             sampler = LEDPreviewSamplers.sampler(for: newConfig.program, ledCount: newConfig.ledCount)
             origin = now
+            stopKeyframes()
+            plan = nil
+            prepareKeyframes()
         }
-        if old.phase != newConfig.phase { origin = now }
+        if old.phase != newConfig.phase { stopKeyframes(); origin = now }
         if old.style != newConfig.style || old.displayLEDCount != newConfig.displayLEDCount || old.ledCount != newConfig.ledCount
             || old.dotSize != newConfig.dotSize || old.spacing != newConfig.spacing {
+            stopKeyframes()
             buildLayers()
             needsLayout = true
         }
@@ -388,6 +416,10 @@ final class LEDStripLayerView: NSView {
 
     /// Recolours the layers for host time `time` (`CACurrentMediaTime`
     /// seconds): the program `time - origin + phase` seconds in.
+    func advanceFrame(at time: TimeInterval) {
+        if !playingKeyframes { renderFrame(at: time) }
+    }
+
     func renderFrame(at time: TimeInterval) {
         let colors = LEDStripFrames.colors(sampler: sampler, ledCount: config.ledCount,
                                            elapsed: time - origin + config.phase,
@@ -516,6 +548,7 @@ final class LEDStripLayerView: NSView {
             bandLayer.contentsScale = scale
         }
         CATransaction.commit()
+        refreshAnimating()
     }
 
     // MARK: The link
@@ -531,10 +564,19 @@ final class LEDStripLayerView: NSView {
                     MainActor.assumeIsolated { self?.refreshAnimating() }
                 })
             }
+            if let clip = enclosingScrollView?.contentView {
+                windowObservers.append(center.addObserver(forName: NSView.boundsDidChangeNotification,
+                                                          object: clip, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshAnimating() }
+                })
+            }
         }
         needsLayout = true
         refreshAnimating()
     }
+
+    override func viewDidHide() { super.viewDidHide(); refreshAnimating() }
+    override func viewDidUnhide() { super.viewDidUnhide(); refreshAnimating() }
 
     /// Starts or stops the link to match `animates`. In a window with no
     /// screen — a still taken off screen — the strip shows its brightest
@@ -550,7 +592,15 @@ final class LEDStripLayerView: NSView {
         let wanted = Self.animates(inWindow: window != nil, onScreen: window?.screen != nil,
                                    windowVisible: window?.occlusionState.contains(.visible) ?? false,
                                    held: held, reduceMotion: reduceMotion, paused: config.paused,
-                                   moving: !(sampler?.isStatic ?? true))
+                                   moving: !(sampler?.isStatic ?? true),
+                                   visibleInViewport: !visibleRect.isEmpty && !isHiddenOrHasHiddenAncestor)
+        if wanted, usesKeyframes, let plan, config.displayLEDCount == nil {
+            link?.invalidate()
+            link = nil
+            if !playingKeyframes { installKeyframes(plan) }
+            return
+        }
+        if !wanted { stopKeyframes() }
         if wanted, link == nil {
             let link = displayLink(target: linkTarget, selector: #selector(LEDStripLinkTarget.tick(_:)))
             let fps = Self.framesPerSecond
@@ -565,9 +615,79 @@ final class LEDStripLayerView: NSView {
 
     /// Stops the link for good: the view is leaving the tree.
     func stopAnimating() {
+        planTask?.cancel()
+        planTask = nil
+        stopKeyframes()
         link?.invalidate()
         link = nil
         removeWindowObservers()
+    }
+
+    /// Compile once off the main thread; views of the same program share the work.
+    private func prepareKeyframes() {
+        planTask?.cancel()
+        let program = config.program
+        let count = config.ledCount
+        planTask = Task { [weak self] in
+            let plan = await LEDPreviewSamplers.plan(for: program, ledCount: count)
+            guard !Task.isCancelled, let self, self.config.program == program, self.config.ledCount == count else { return }
+            self.plan = plan
+            self.refreshAnimating()
+        }
+    }
+
+    /// Internal for the cost harness: wait for the same cached compilation the view uses.
+    func preparedKeyframes() async -> LEDSKeyframePlan? {
+        await planTask?.value
+        return plan
+    }
+
+    func installKeyframes(_ plan: LEDSKeyframePlan) {
+        guard !playingKeyframes, config.displayLEDCount == nil else { return }
+        playingKeyframes = true
+        let anchor = origin - config.phase
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (track, start, repeating) in [(plan.lead, 0, false), (plan.loop, plan.loopStartMs, true)] {
+            guard let track else { continue }
+            let begin = anchor + Double(start) / 1000
+            if !repeating, begin + Double(track.durationMs) / 1000 < CACurrentMediaTime() { continue }
+            let frames = track.frames.map { $0.map { RGB(r: Double($0.r) / 255, g: Double($0.g) / 255, b: Double($0.b) / 255) } }
+            func animate(_ layer: CALayer, _ path: String, _ values: [Any]) {
+                let animation = CAKeyframeAnimation(keyPath: path)
+                animation.values = values
+                animation.keyTimes = track.keyTimes.map(NSNumber.init(value:))
+                animation.duration = Double(track.durationMs) / 1000
+                animation.beginTime = begin
+                animation.repeatCount = repeating ? .infinity : 1
+                animation.calculationMode = .linear
+                animation.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+                layer.add(animation, forKey: "preview-\(repeating ? "loop" : "lead")-\(path)")
+            }
+            switch config.style {
+            case .dots:
+                for (index, dot) in dotLayers.enumerated() {
+                    animate(dot, "backgroundColor", frames.map { Self.cgColor($0[index]) })
+                    animate(dot, "shadowColor", frames.map { Self.cgColor($0[index], alpha: 0.75 * Self.clamped($0[index].maxChannel)) })
+                }
+            case .band:
+                let stops = frames.map { $0.count == 1 ? [$0[0], $0[0]] : $0 }
+                bandLayer.locations = (0..<(stops.first?.count ?? 0)).map { NSNumber(value: Double($0) / Double(max(1, (stops.first?.count ?? 0) - 1))) }
+                animate(bandLayer, "colors", stops.map { $0.map { Self.cgColor($0) } })
+                let middle = frames.map { $0[$0.count / 2] }
+                animate(bandGlow, "backgroundColor", middle.map { Self.cgColor($0) })
+                animate(bandGlow, "shadowColor", middle.map { Self.cgColor($0) })
+                animate(bandGlow, "shadowOpacity", frames.map { NSNumber(value: 0.6 * ($0.map(\.maxChannel).max() ?? 0)) })
+            }
+        }
+        CATransaction.commit()
+    }
+
+    private func stopKeyframes() {
+        guard playingKeyframes else { return }
+        playingKeyframes = false
+        for layer in dotLayers + [bandLayer, bandGlow] { layer.removeAllAnimations() }
+        renderFrame(at: CACurrentMediaTime())
     }
 
     private func removeWindowObservers() {
@@ -578,7 +698,7 @@ final class LEDStripLayerView: NSView {
     fileprivate func linkFired(_ link: CADisplayLink) {
         // Scrolled out of its window's view: nothing to recolour.
         guard !visibleRect.isEmpty else { return }
-        renderFrame(at: CACurrentMediaTime())
+        advanceFrame(at: CACurrentMediaTime())
     }
 }
 
@@ -632,7 +752,7 @@ struct ProviderMotionPreview: View {
         Group {
             if let live {
                 LEDStripPreview(program: live, style: .band, dotSize: 6, showsBackground: true,
-                                cornerRadius: 6, phase: phase)
+                                cornerRadius: JRBarTokens.Radius.tile, phase: phase)
             } else {
                 Text("Preview unavailable")
                     .font(.caption)

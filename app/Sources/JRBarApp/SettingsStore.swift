@@ -275,6 +275,7 @@ final class SettingsStore {
     /// delegate owns it.
     weak var utilities: UtilitiesStore?
     /// Lighting › Effects… opens the Effect Studio window.
+    var onOpenStudioSearch: (@MainActor (SettingsSearchEntry) -> Void)?
     var onOpenStudioDevices: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     /// Devices opens the Creator Micro window.
@@ -711,7 +712,8 @@ final class SettingsStore {
     func reveal(_ entry: SettingsSearchEntry) {
         if entry.chapter == .lighting || entry.title == "Open Studio" {
             openFolds.formUnion(folds(holding: entry))
-            if ["Role", "Also glow for finished runs"].contains(entry.title) { onOpenStudioDevices?() }
+            if entry.chapter == .lighting, let onOpenStudioSearch { onOpenStudioSearch(entry) }
+            else if ["Role", "Also glow for finished runs"].contains(entry.title) { onOpenStudioDevices?() }
             else { onOpenEffects?() }
             return
         }

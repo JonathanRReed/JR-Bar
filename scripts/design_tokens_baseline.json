@@ -55,23 +55,8 @@
   "app/Sources/JRBarApp/DotRoleControls.swift": {
     "radius: cornerRadius: 7": 2
   },
-  "app/Sources/JRBarApp/EffectStudioMoments.swift": {
-    "font: .system(size: 13": 1,
-    "radius: cornerRadius: 10": 1,
-    "radius: cornerRadius: 8": 1
-  },
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
-    "font: .system(size: 13": 3,
-    "radius: cornerRadius: 8": 2
-  },
-  "app/Sources/JRBarApp/EffectStudioView.swift": {
-    "animation: duration: 0.15": 1,
-    "font: .system(size: 11": 2,
-    "font: .system(size: 13": 1,
-    "font: .system(size: 8": 1,
-    "font: .system(size: 9": 2,
-    "radius: cornerRadius: 6": 1,
-    "radius: cornerRadius: 7": 1
+    "font: .system(size: 13": 3
   },
   "app/Sources/JRBarApp/FirmwareCard.swift": {
     "font: .system(size: 4": 1
@@ -91,9 +76,6 @@
   },
   "app/Sources/JRBarApp/KeepAwakeFooter.swift": {
     "font: .system(size: 11": 1
-  },
-  "app/Sources/JRBarApp/LEDPreviewStrip.swift": {
-    "radius: cornerRadius: 6": 1
   },
   "app/Sources/JRBarApp/NotchHUD.swift": {
     "font: .system(size: 12": 2,

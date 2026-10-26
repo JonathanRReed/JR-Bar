@@ -15,5 +15,18 @@ extension View {
     func settingControl(_ paths: [String]) -> some View {
         transformPreference(SettingsControlPaths.self) { $0.formUnion(paths) }
             .accessibilityIdentifier("settings:" + paths.joined(separator: ","))
+            .modifier(SettingsControlAnchor(paths: paths))
+    }
+}
+
+private struct SettingsControlAnchor: ViewModifier {
+    let paths: [String]
+    @Environment(\.studioSearchPath) private var target
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let first = paths.first {
+            content.id(first)
+                .background(target.map(paths.contains) == true ? Color.accentColor.opacity(0.12) : .clear)
+        } else { content }
     }
 }
