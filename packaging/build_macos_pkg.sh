@@ -493,6 +493,10 @@ export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT_DIR" show -s --fo
 # reviewed runtime constraint still applies through PIP_CONSTRAINT, and every
 # build requirement is already installed from the hash-bound binary lock.
 env -u PIP_BUILD_CONSTRAINT "$VENV_DIR/bin/python" -m pip install "$ROOT_DIR" --no-deps --no-build-isolation
+# The upstream wheel links AppKit for a single OS-version constant. Rebuild
+# the same hash-locked source with the compiler's availability check instead.
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/build_headless_hidapi.py" --output "$BUILD_DIR/headless-hidapi"
+"$VENV_DIR/bin/python" -m pip install --no-deps --force-reinstall "$BUILD_DIR"/headless-hidapi/hidapi-*.whl
 "$VENV_DIR/bin/python" -m pip check
 LC_ALL=C "$VENV_DIR/bin/python" -m pip list --format=freeze \
     | /usr/bin/sort > "$ENVIRONMENT_SNAPSHOT"
