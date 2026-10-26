@@ -1,4 +1,6 @@
 import AppKit
+import JRBarCore
+import SwiftUI
 
 /// One external counterpart's install-and-run probe — the notch's
 /// `boringNotchProbe` generalized for the utility pickers. Bundle ids
@@ -18,13 +20,16 @@ struct ExternalAppProbe {
     @MainActor var url: URL? {
         _ = ExternalFileMetadata.shared.version
         for id in bundleIDs {
-            if let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            if let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id),
+               FileManager.default.fileExists(atPath: found.path) {
                 return found
             }
         }
         let apps = ApplicationsFolderIndex.shared.entries()
         for name in appNames {
-            if let found = apps.first(where: { $0.lastPathComponent == name }) {
+            if let found = apps.first(where: {
+                $0.lastPathComponent == name && FileManager.default.fileExists(atPath: $0.path)
+            }) {
                 return found
             }
         }
@@ -70,9 +75,11 @@ final class ApplicationsFolderIndex: @unchecked Sendable {
     private var generation = 0
 
     init(list: @escaping @Sendable () -> [URL] = {
-            let url = URL(fileURLWithPath: "/Applications")
-            guard ExternalFilePolicy(home: NSHomeDirectory()).available(url) else { return [] }
-            return (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+            ["/Applications", NSHomeDirectory() + "/Applications"].flatMap { folder -> [URL] in
+                let url = URL(fileURLWithPath: folder)
+                guard ExternalFilePolicy(home: NSHomeDirectory()).available(url) else { return [] }
+                return (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+            }
         }, now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         cache = BackgroundLookupCache(lifetime: Self.lifetime, now: now,
             changed: { Task { @MainActor in ExternalFileMetadata.shared.invalidateViews() } }, load: { _ in list() })
@@ -109,6 +116,13 @@ final class ApplicationsFolderIndex: @unchecked Sendable {
 /// the table the rival check reads, so Hand over finds every release
 /// the rival check knows.
 enum ExternalProviders {
+    static let t3Code = ExternalAppProbe(bundleIDs: ["com.t3tools.t3code", "com.t3tools.t3code.nightly"],
+        appNames: ["T3 Code.app", "T3 Code Nightly.app", "T3 Code (Nightly).app"])
+    static let alcove = ExternalAppProbe(bundleIDs: [AlcoveGeometry.bundleIdentifier], appNames: ["Alcove.app"])
+    static let boringNotch = ExternalAppProbe(bundleIDs: ["theboringteam.boringnotch"],
+        appNames: ["boring.notch.app", "Boring Notch.app", "boringNotch.app"])
+    static let bendy = ExternalAppProbe(bundleIDs: [], appNames: ["Bendy.app"])
+    static let lidPlane = ExternalAppProbe(bundleIDs: ["dev.jhey.lidplane"], appNames: ["Lid Plane.app"])
     /// Paid: Bartender, every release from 4 to 7.
     static let bartender = ExternalAppProbe(
         bundleIDs: MenuBarRivals.bundleIDs(of: "Bartender"),
@@ -130,4 +144,17 @@ enum ExternalProviders {
     static let activeDock = ExternalAppProbe(
         bundleIDs: ["com.apimac.ActiveDock", "com.apimac.ActiveDock2"],
         appNames: ["ActiveDock.app", "ActiveDock 2.app"])
+}
+
+/// Missing apps remain labelled so a saved choice can be understood and changed.
+struct ExternalProviderOption<Value: Hashable>: View {
+    let name: String
+    let value: Value
+    let installed: Bool
+
+    var body: some View {
+        Text(installed ? name : "\(name) (Not installed)")
+            .tag(value)
+            .disabled(!installed)
+    }
 }

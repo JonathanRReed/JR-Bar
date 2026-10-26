@@ -1815,21 +1815,18 @@ final class FoldToy: Toy {
     /// own Info.plist when the app is in /Applications — honest, and a
     /// renamed install still resolves.
     var bendyURL: URL? {
-        _ = workspaceVersion
-        let path = URL(fileURLWithPath: "/Applications/Bendy.app")
-        guard let id = ExternalFileMetadata.shared.bundleID(path) else { return nil }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) ?? path
+        ExternalProviders.bendy.url
     }
 
     /// Lid Plane's bundle id, from its repo's Info.plist.
     var lidPlaneURL: URL? {
-        _ = workspaceVersion
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.jhey.lidplane")
+        ExternalProviders.lidPlane.url
     }
 
     /// The picker's write path: choosing an external renderer parks ours
     /// and opens that app; JR-Bar just hands the fold back to `reconcile`.
     func setProvider(_ provider: FoldProvider) {
+        guard provider == .jrbar || (provider == .bendy ? bendyURL : lidPlaneURL) != nil else { return }
         store?.state.fold.provider = provider
         store?.save()
         guard provider != .jrbar else {
@@ -2057,99 +2054,103 @@ private struct FoldControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            hero
-            Divider().padding(.vertical, 6)
+            Group {
+                hero
+                Divider().padding(.vertical, 6)
 
-            Picker(selection: toy.bind(\.look)) {
-                Text("Duo").tag(FoldLook.duo)
-                Text("Room").tag(FoldLook.room)
-            } label: {
-                SettingLabel(title: "Look", subtitle: lookSubtitle)
-            }
-            .pickerStyle(.menu)
-
-            Picker(selection: toy.bind(\.anchor)) {
-                Text("Set angle").tag(FoldAnchor.angle)
-                Text("Wherever the lid rests").tag(FoldAnchor.movement)
-            } label: {
-                SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
-            }
-            .pickerStyle(.menu)
-
-            sliderRow(SettingLabel(title: "Starts folding at",
-                                   subtitle: startSubtitle),
-                      value: toy.bind(\.activationAngle), range: FoldSettings.activationAngleRange,
-                      readout: "\(Int(toy.settings.activationAngle.rounded()))°")
-                .disabled(toy.settings.anchor == .movement)
-
-            sliderRow(SettingLabel(title: "Release when parked",
-                                   subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
-                      value: toy.bind(\.dwellTimeout), range: FoldSettings.dwellTimeoutRange, step: 1,
-                      readout: toy.settings.dwellTimeout == 0
-                          ? (toy.settings.anchor == .movement ? "Auto" : "Off")
-                          : "\(Int(toy.settings.dwellTimeout))s")
-
-            sliderRow(SettingLabel(title: "Jitter",
-                                   subtitle: "Ignore angle wobbles smaller than this."),
-                      value: toy.bind(\.jitterTolerance), range: FoldSettings.jitterToleranceRange, step: 0.5,
-                      readout: degrees(toy.settings.jitterTolerance))
-
-            Divider().padding(.vertical, 6)
-
-            sliderRow(SettingLabel(title: "Perspective", subtitle: perspectiveSubtitle),
-                      value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
-            sliderRow(SettingLabel(title: "Shade", subtitle: shadeSubtitle),
-                      value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
-            sliderRow(SettingLabel(title: "Blur", subtitle: blurSubtitle),
-                      value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
-            if duo {
-                fadeLengthRow(owned: true)
-                if searchedRow == "Frost" { frostRow(owned: false) }
-            } else {
-                frostRow(owned: true)
-                if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
-            }
-
-            sliderRow(SettingLabel(title: "Hold picture in place",
-                                   subtitle: "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
-                      value: toy.bind(\.holdStrength), range: 0...1,
-                      readout: percent(toy.settings.holdStrength))
-
-            Divider().padding(.vertical, 6)
-
-            Toggle(isOn: toy.bind(\.restoreSound)) {
-                SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
-            }
-
-            Picker(selection: toy.bind(\.hingeVoice)) {
-                Text("Off").tag(HingeVoice.off)
-                Text("Creak").tag(HingeVoice.creak)
-                Text("Paper rustle").tag(HingeVoice.rustle)
-            } label: {
-                SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
-            }
-            .pickerStyle(.menu)
-
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: toy.simulateBinding, in: 0...160) { editing in
-                        if editing { toy.beginSimulate() } else { toy.endSimulate() }
-                    }
-                    .frame(width: 180)
-                    // Read only while a simulation plays: the lid's own
-                    // readings never redraw the card.
-                    ValueText(text: toy.simulating ? degrees(toy.cardAngle ?? 0) : "—")
+                Picker(selection: toy.bind(\.look)) {
+                    Text("Duo").tag(FoldLook.duo)
+                    Text("Room").tag(FoldLook.room)
+                } label: {
+                    SettingLabel(title: "Look", subtitle: lookSubtitle)
                 }
-            } label: {
-                SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
-            }
+                .pickerStyle(.menu)
 
-            Divider().padding(.vertical, 6)
+                Picker(selection: toy.bind(\.anchor)) {
+                    Text("Set angle").tag(FoldAnchor.angle)
+                    Text("Wherever the lid rests").tag(FoldAnchor.movement)
+                } label: {
+                    SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
+                }
+                .pickerStyle(.menu)
+
+                sliderRow(SettingLabel(title: "Starts folding at",
+                                       subtitle: startSubtitle),
+                          value: toy.bind(\.activationAngle), range: FoldSettings.activationAngleRange,
+                          readout: "\(Int(toy.settings.activationAngle.rounded()))°")
+                    .disabled(toy.settings.anchor == .movement)
+
+                sliderRow(SettingLabel(title: "Release when parked",
+                                       subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
+                          value: toy.bind(\.dwellTimeout), range: FoldSettings.dwellTimeoutRange, step: 1,
+                          readout: toy.settings.dwellTimeout == 0
+                              ? (toy.settings.anchor == .movement ? "Auto" : "Off")
+                              : "\(Int(toy.settings.dwellTimeout))s")
+
+                sliderRow(SettingLabel(title: "Jitter",
+                                       subtitle: "Ignore angle wobbles smaller than this."),
+                          value: toy.bind(\.jitterTolerance), range: FoldSettings.jitterToleranceRange, step: 0.5,
+                          readout: degrees(toy.settings.jitterTolerance))
+
+                Divider().padding(.vertical, 6)
+
+                sliderRow(SettingLabel(title: "Perspective", subtitle: perspectiveSubtitle),
+                          value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
+                sliderRow(SettingLabel(title: "Shade", subtitle: shadeSubtitle),
+                          value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
+                sliderRow(SettingLabel(title: "Blur", subtitle: blurSubtitle),
+                          value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
+                if duo {
+                    fadeLengthRow(owned: true)
+                    if searchedRow == "Frost" { frostRow(owned: false) }
+                } else {
+                    frostRow(owned: true)
+                    if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
+                }
+
+                sliderRow(SettingLabel(title: "Hold picture in place",
+                                       subtitle: "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
+                          value: toy.bind(\.holdStrength), range: 0...1,
+                          readout: percent(toy.settings.holdStrength))
+
+                Divider().padding(.vertical, 6)
+
+                Toggle(isOn: toy.bind(\.restoreSound)) {
+                    SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
+                }
+
+                Picker(selection: toy.bind(\.hingeVoice)) {
+                    Text("Off").tag(HingeVoice.off)
+                    Text("Creak").tag(HingeVoice.creak)
+                    Text("Paper rustle").tag(HingeVoice.rustle)
+                } label: {
+                    SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
+                }
+                .pickerStyle(.menu)
+
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        Slider(value: toy.simulateBinding, in: 0...160) { editing in
+                            if editing { toy.beginSimulate() } else { toy.endSimulate() }
+                        }
+                        .frame(width: 180)
+                        // Read only while a simulation plays: the lid's own
+                        // readings never redraw the card.
+                        ValueText(text: toy.simulating ? degrees(toy.cardAngle ?? 0) : "—")
+                    }
+                } label: {
+                    SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
+                }
+
+                Divider().padding(.vertical, 6)
+
+            }
+            .disabled(toy.settings.provider != .jrbar)
 
             Picker(selection: toy.providerBinding) {
                 Text("JR-Bar").tag(FoldProvider.jrbar)
-                Text("Bendy").tag(FoldProvider.bendy)
-                Text("Lid Plane").tag(FoldProvider.lidPlane)
+                ExternalProviderOption(name: "Bendy", value: FoldProvider.bendy, installed: toy.bendyURL != nil)
+                ExternalProviderOption(name: "Lid Plane", value: FoldProvider.lidPlane, installed: toy.lidPlaneURL != nil)
             } label: {
                 SettingLabel(title: "Render with", subtitle: "Let Bendy or Lid Plane draw the fold instead.")
             }
@@ -2161,6 +2162,7 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Wallpaper without Screen Recording",
                              subtitle: "With no permission, the wallpaper alone folds — same motion, just no windows.")
             }
+            .disabled(toy.settings.provider != .jrbar)
 
             if toy.isOn && !FoldCapturePermission.granted {
                 HStack(spacing: 8) {

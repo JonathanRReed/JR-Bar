@@ -279,12 +279,12 @@ struct MenuBarUtilityControls: View {
         }
         Picker(selection: utility.providerBinding) {
             Text("JR-Bar").tag(MenuBarProvider.jrbar)
-            Text("Bartender").tag(MenuBarProvider.bartender)
-            Text("Ice").tag(MenuBarProvider.ice)
-            Text("Hidden Bar").tag(MenuBarProvider.hiddenBar)
+            ExternalProviderOption(name: "Bartender", value: MenuBarProvider.bartender, installed: ExternalProviders.bartender.installed)
+            ExternalProviderOption(name: "Ice", value: MenuBarProvider.ice, installed: ExternalProviders.ice.installed)
+            ExternalProviderOption(name: "Hidden Bar", value: MenuBarProvider.hiddenBar, installed: ExternalProviders.hiddenBar.installed)
         } label: {
             SettingLabel(title: "Render with",
-                         subtitle: "Hand the hiding to Bartender (paid), Ice or Hidden Bar (free). Ours parks while the pick stands.")
+                         subtitle: "Choosing another app opens it and parks JR-Bar's hiding.")
         }
         .pickerStyle(.menu)
         .padding(.vertical, SettingsMetrics.rowPadding)

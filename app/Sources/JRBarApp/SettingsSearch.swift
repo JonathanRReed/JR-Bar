@@ -98,7 +98,7 @@ enum SettingsSearch {
         if ["Watch transcripts", "Mic and camera presence", "Keep history", "Keep for", "Provider status pages", "Check for agent updates"].contains(entry.title) { chapter = .privacy }
         if entry.chapter == .general && ["Setup", "Release channel"].contains(entry.group) { chapter = .advanced }
         if entry.group == "Power" { chapter = .utilities; group = "Keep Awake" }
-        if entry.title == "T3 Code" { chapter = .integrations }
+        if entry.title == "T3 Code" { chapter = .integrations; group = "Connections" }
         if ["Provider status pages", "Check for agent updates"].contains(entry.title) { group = "Network requests" }
         if entry.title == "Usage Center" { group = "Usage" }
         if entry.title == "Lead with" || entry.title == "Graph range" { group = "Usage" }
@@ -122,6 +122,19 @@ enum SettingsSearch {
     }
 
     private nonisolated static let listed: [SettingsSearchEntry] = [
+        .init(.integrations, "Connections", "SidePulse Pro", keywords: ["connected", "firmware"]),
+        .init(.integrations, "Connections", "PulseDot", keywords: ["connected", "firmware"]),
+        .init(.integrations, "Connections", "Stream Deck", keywords: ["serving", "endpoint"]),
+        .init(.integrations, "Connections", "Creator Micro 2", keywords: ["connected"]),
+        .init(.integrations, "Connections", "Provider hooks"),
+        .init(.integrations, "Compatible apps", "Alcove", keywords: ["installed", "notch"]),
+        .init(.integrations, "Compatible apps", "Boring Notch", keywords: ["installed", "notch"]),
+        .init(.integrations, "Compatible apps", "Bartender", keywords: ["installed", "menu bar"]),
+        .init(.integrations, "Compatible apps", "Ice", keywords: ["installed", "menu bar"]),
+        .init(.integrations, "Compatible apps", "Hidden Bar", keywords: ["installed", "menu bar"]),
+        .init(.integrations, "System access", "Focus Status", keywords: ["permission"]),
+        .init(.integrations, "System access", "Calendar", keywords: ["permission"]),
+        .init(.integrations, "System access", "Reminders", keywords: ["permission"]),
         .init(.general, "Startup", "Launch at login"),
         .init(.agents, "Providers", "Track"),
         .init(.agents, "Providers", "Menu bar", keywords: ["menu bar meters", "meter", "icon"]),

@@ -103,7 +103,17 @@ final class DockUtility {
     /// The card's write path for the picker.
     var providerBinding: Binding<DockProvider> {
         Binding(get: { self.settings().provider },
-                set: { p in self.update { $0.provider = p } })
+                set: { provider in
+                    let probe: ExternalAppProbe?
+                    switch provider {
+                    case .jrbar: probe = nil
+                    case .dockDoor: probe = ExternalProviders.dockDoor
+                    case .activeDock: probe = ExternalProviders.activeDock
+                    }
+                    guard probe?.installed != false else { return }
+                    self.update { $0.provider = provider }
+                    probe?.open()
+                })
     }
 
     /// The counterpart's app URL — the card's "Open" button.
@@ -141,7 +151,12 @@ final class DockUtility {
     /// The switcher picker's write path.
     var switcherProviderBinding: Binding<DockSwitcherProvider> {
         Binding(get: { self.settings().switcherProvider },
-                set: { p in self.update { $0.switcherProvider = p } })
+                set: { provider in
+                    let probe = Self.probe(for: provider)
+                    guard probe?.installed != false else { return }
+                    self.update { $0.switcherProvider = provider }
+                    probe?.open()
+                })
     }
 
     /// The picked switcher counterpart's probe — nil while JR-Bar owns

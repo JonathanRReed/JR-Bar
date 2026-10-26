@@ -43,7 +43,7 @@ struct T3CodeStatus: Equatable {
                             running: running, installed: installed)
     }
 
-    var line: String { running ? "Detected" : "Not running" }
+    var line: String { running ? "Detected" : installed ? "Not running" : "Not installed" }
 
     var isSettling: Bool {
         guard running else { return false }
@@ -113,14 +113,20 @@ final class T3CodeModel {
 /// Automatic T3 Code detection in Settings.
 struct T3CodeRow: View {
     let status: T3CodeStatus?
+    var running: Bool? = nil
+
+    private var isRunning: Bool { running ?? status?.running ?? false }
+    private var line: String {
+        if isRunning { return "Detected" }
+        guard let status else { return "Status not reported" }
+        return status.installed ? "Not running" : "Not installed"
+    }
 
     var body: some View {
-        if let status, status.installed {
-            SettingsRow("T3 Code") {
-                ProviderLogoTile(provider: "t3code")
-                StateDot(status.running ? .live : .stale)
-                Text(status.line).foregroundStyle(.secondary)
-            }
+        SettingsRow("T3 Code") {
+            ProviderLogoTile(provider: "t3code")
+            StateDot(isRunning ? .live : .stale)
+            Text(line).foregroundStyle(.secondary)
         }
     }
 }

@@ -184,7 +184,18 @@ final class MenuBarUtility: Toy {
     /// The card's write path for the picker — same shape as `bind`.
     var providerBinding: Binding<MenuBarProvider> {
         Binding(get: { self.settings().provider },
-                set: { p in self.update { $0.provider = p } })
+                set: { provider in
+                    let probe: ExternalAppProbe?
+                    switch provider {
+                    case .jrbar: probe = nil
+                    case .bartender: probe = ExternalProviders.bartender
+                    case .ice: probe = ExternalProviders.ice
+                    case .hiddenBar: probe = ExternalProviders.hiddenBar
+                    }
+                    guard probe?.installed != false else { return }
+                    self.update { $0.provider = provider }
+                    probe?.open()
+                })
     }
 
     /// The counterpart's app URL — the card's "Open" button.

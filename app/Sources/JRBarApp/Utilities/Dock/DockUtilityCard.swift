@@ -50,8 +50,8 @@ struct DockUtilityControls: View {
             LabeledContent {
                 Picker(selection: utility.providerBinding) {
                     Text("JR-Bar").tag(DockProvider.jrbar)
-                    Text("DockDoor").tag(DockProvider.dockDoor)
-                    Text("ActiveDock").tag(DockProvider.activeDock)
+                    ExternalProviderOption(name: "DockDoor", value: DockProvider.dockDoor, installed: ExternalProviders.dockDoor.installed)
+                    ExternalProviderOption(name: "ActiveDock", value: DockProvider.activeDock, installed: ExternalProviders.activeDock.installed)
                 } label: { EmptyView() }
                     .labelsHidden()
                     .pickerStyle(.menu)
@@ -125,7 +125,8 @@ struct DockUtilityControls: View {
             LabeledContent {
                 Picker(selection: utility.switcherProviderBinding) {
                     ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
-                        Text(DockUtility.displayName(provider)).tag(provider)
+                        ExternalProviderOption(name: DockUtility.displayName(provider), value: provider,
+                            installed: DockUtility.probe(for: provider)?.installed ?? true)
                     }
                 } label: { EmptyView() }
                     .labelsHidden()

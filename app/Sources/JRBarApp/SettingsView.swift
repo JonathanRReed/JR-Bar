@@ -103,9 +103,7 @@ struct SettingsSidebarList: View {
                             .accessibilityAddTraits(.isHeader)
                             .padding(.top, JRBarTokens.Space.sm)
                     }
-                    ForEach(SettingsStore.Page.sidebarGroups[index].filter {
-                        $0 != .integrations || store.t3Integration.status?.installed == true
-                    }) { page in
+                    ForEach(SettingsStore.Page.sidebarGroups[index]) { page in
                         sidebarRow(page)
                     }
                 }
@@ -726,7 +724,7 @@ struct SettingsPageBody: View {
         case .remote: RemotePage(store: store)
         case .privacy: SettingsPrivacyPage(store: store)
         case .integrations:
-            SettingGroup("T3 Code") { T3CodeRow(status: store.t3Integration.status) }
+            IntegrationsPage(store: store)
         case .advanced: GeneralAdvanced(store: store)
         }
     }
