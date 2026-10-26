@@ -61,6 +61,12 @@ struct StudioFleetPreview: Decodable, Hashable {
         case ledCount = "led_count"
     }
 
+    static func playbackCycle(program: String, ledCount: Int) -> String? {
+        guard let parsed = try? LEDSProgram.parse(program, ledCount: ledCount),
+              let duration = LEDSSampler(program: parsed, ledCount: ledCount).cycleDuration else { return nil }
+        return String(format: "%.3f s / loop", duration)
+    }
+
     static func playbackWarnings(_ warnings: [String], program: String, ledCount: Int) -> [String] {
         var result = warnings.map(StudioWarning.plain)
         if warnings.contains(where: { $0.contains("cadence_clamped") }),
@@ -163,6 +169,12 @@ final class EffectStudioLights {
         scenario == .live ? plan?.devices.first { $0.device == "virtual:status-bar" }?.program : selectedPreview?.program
     }
     var program: String? { scenario == .live ? liveStrip?.program : selectedPreview?.program }
+    var playbackCycle: String? {
+        guard let program else { return nil }
+        let count = scenario == .live ? liveStrip?.ledCount : selectedPreview?.ledCount
+        return StudioFleetPreview.playbackCycle(program: program, ledCount: count ?? 8)
+    }
+
 
     func deviceName(_ id: String) -> String {
         if id == "virtual:status-bar" { return "Screen Bar" }
