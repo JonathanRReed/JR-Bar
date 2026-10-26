@@ -149,6 +149,8 @@ class ProcessEntry:
     # none. Read in the same ``ps`` as the rest of the row, so a session's
     # tab can be found without a second fork per pid.
     tty: str | None = None
+    # Resolved executable identity, separate from the exec-time launch path.
+    executable: str | None = None
 
     @property
     def basename(self) -> str:
