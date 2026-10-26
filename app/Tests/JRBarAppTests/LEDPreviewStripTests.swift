@@ -23,6 +23,21 @@ struct LEDPreviewStripTests {
                                  loops: true, paused: paused, phase: 0)
     }
 
+    @Test func aPanelMirrorSamplesTheWholeStripIntoEightLights() throws {
+        let program = LEDDirectionRow.sweep(reversed: false, ledCount: 108)
+        var config = Self.config(program)
+        config.ledCount = 108
+        config.displayLEDCount = 8
+        let preview = LEDStripLayerView(config: config, held: true, reduceMotion: false, now: 0)
+        preview.renderFrame(at: 0.5)
+        let sampler = try #require(LEDPreviewSamplers.sampler(for: program, ledCount: 108))
+        let full = LEDStripFrames.colors(sampler: sampler, ledCount: 108, elapsed: 0.5, still: false, loops: true)
+        #expect(preview.drawnCount == 8)
+        #expect(preview.shownColors == LEDStripFrames.resampled(full, count: 8))
+        #expect(preview.shownColors.count == 8)
+        #expect(!preview.isAnimating)
+    }
+
     // MARK: When the link runs
 
     @Test("the link runs only in a visible window on a screen, moving, and not held")
