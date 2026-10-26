@@ -24,7 +24,7 @@ struct UsageWindowInspectionRenderProofTests {
         store.now = Date(timeIntervalSince1970: stamp)
         try WindowsRenderProofTests.write("usage-window-inspection-live", size: CGSize(width: 800, height: 840)) {
             VStack(alignment: .leading, spacing: 24) {
-                ProviderUsageCard(provider: provider, store: store)
+                UsageProviderDetail(provider: provider, store: store, showCost: true)
                 HStack(alignment: .top, spacing: 16) {
                     inspector(provider, window: fiveHour, store: store)
                     inspector(provider, window: weekly, store: store)
@@ -49,7 +49,7 @@ struct UsageWindowInspectionRenderProofTests {
         #expect(store.providers.count == 1)
         try WindowsRenderProofTests.write("usage-window-inspection-offline", size: CGSize(width: 800, height: 840)) {
             VStack(alignment: .leading, spacing: 24) {
-                ProviderUsageCard(provider: provider, store: store)
+                UsageProviderDetail(provider: provider, store: store, showCost: true)
                 HStack(alignment: .top, spacing: 16) {
                     inspector(provider, window: window, store: store)
                     inspector(provider, window: unknown, store: store)
@@ -78,7 +78,7 @@ struct UsageWindowInspectionRenderProofTests {
         store.now = Date(timeIntervalSince1970: stamp)
         for width in [800, 1100] {
             try WindowsRenderProofTests.write("usage-five-pools-\(width)", size: CGSize(width: width, height: 620)) {
-                ProviderUsageCard(provider: provider, store: store).padding(24)
+                UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
             }
         }
     }
@@ -95,7 +95,7 @@ struct UsageWindowInspectionRenderProofTests {
         #expect(provider.windows.count == 6)
         for width in [800, 1100] {
             try WindowsRenderProofTests.write("usage-factory-six-windows-\(width)", size: CGSize(width: width, height: 650)) {
-                ProviderUsageCard(provider: provider, store: store).padding(24)
+                UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
             }
         }
     }

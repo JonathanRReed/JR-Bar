@@ -10,7 +10,7 @@ import SwiftUI
 final class SetupWindowController: NSObject, NSWindowDelegate {
     /// The one instance; `SetupWindowController.show()` presents it.
     static let shared = SetupWindowController()
-    static let contentSize = NSSize(width: 560, height: 520)
+    static let contentSize = NSSize(width: 760, height: 560)
 
     let store: SetupStore
     private var window: NSWindow?
@@ -22,6 +22,12 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         super.init()
         // Finish / Open Toys close the window through the store.
         store.onFinished = { [weak self] in self?.close() }
+        store.onNewProvider = { agent in
+            LaunchNotices.shared.say(.init(key: "new-provider-" + agent.id,
+                text: "New provider found: \(agent.name)", actionTitle: "Open Providers") {
+                _ = Task { await AppCommandRouter.shared.perform(.settings(page: "usage")) }
+            })
+        }
     }
 
     /// `SetupWindowController.show()` — the call site the Settings row

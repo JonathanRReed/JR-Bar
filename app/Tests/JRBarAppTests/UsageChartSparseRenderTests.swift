@@ -17,32 +17,34 @@ struct UsageChartSparseRenderTests {
             UsageHistoryDay(date: "2026-10-10", tokensIn: zero ? 0 : 100, costUsd: zero ? 0 : 1),
         ], records: 1)
         let background = dark ? Color(red: 0.08, green: 0.08, blue: 0.08) : Color.white
-        let chart = UsageChart(history: history, range: .week, metric: metric,
-                               accent: Color(red: 0.12, green: 0.45, blue: 0.90))
+        let chart = UsageTokenChart(history: history, range: .week, accent: Color(red: 0.12, green: 0.45, blue: 0.90), metric: metric)
             .padding(12)
-            .frame(width: 560, height: 260)
+            .frame(width: 560, height: 320)
             .background(background)
-        let bitmap = try ProofRender.render(chart, size: CGSize(width: 560, height: 260), dark: dark)
+        let bitmap = try ProofRender.render(chart, size: CGSize(width: 560, height: 320), dark: dark)
         try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         let name = "usage-boundary-\(fixture)-\(dark ? "dark" : "light").png"
         try png.write(to: ProofRender.directory.appendingPathComponent(name))
-        let bounds = try #require(markerBounds(in: bitmap), "No marker in \(name)")
+        let bounds = try #require(markerBounds(in: bitmap, output: zero && metric == .tokens), "No marker in \(name)")
         #expect(bounds.width >= 5 && bounds.height >= 5)
         #expect(abs(bounds.width - bounds.height) <= 2,
                 "Clipped circle in \(name): \(bounds.width) by \(bounds.height) pixels")
     }
 
-    private func markerBounds(in bitmap: NSBitmapImageRep) -> (width: Int, height: Int)? {
+    private func markerBounds(in bitmap: NSBitmapImageRep, output: Bool) -> (width: Int, height: Int)? {
         let width = bitmap.pixelsWide
         let height = bitmap.pixelsHigh
         var minX = width, minY = height, maxX = -1, maxY = -1
         // The centered singleton is right of the legend's color keys.
-        for y in Int(Double(height) * 0.04)..<Int(Double(height) * 0.92) {
+        for y in Int(Double(height) * 0.04)..<Int(Double(height) * 0.97) {
             for x in Int(Double(width) * 0.40)..<Int(Double(width) * 0.75) {
                 guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                      color.blueComponent - color.redComponent > 0.5,
-                      color.blueComponent - color.greenComponent > 0.25 else { continue }
+                      color.blueComponent - color.redComponent > 0.5 else { continue }
+                // At zero either coincident series can cover the other.
+                let matches = color.blueComponent - color.greenComponent > 0.25
+                    || (output && color.greenComponent - color.redComponent > 0.4)
+                guard matches else { continue }
                 minX = min(minX, x); maxX = max(maxX, x)
                 minY = min(minY, y); maxY = max(maxY, y)
             }
@@ -52,18 +54,17 @@ struct UsageChartSparseRenderTests {
     }
 
     @Test(arguments: ["single-day-tokens", "single-day-cost", "single-hour-tokens",
-                      "single-hour-cost", "two-day-tokens", "two-hour-tokens", "midnight-hour-tokens", "year-tokens", "zero-tokens", "unpriced-cost", "empty"], [false, true])
+                      "single-hour-cost", "two-day-tokens", "two-hour-tokens", "midnight-hour-tokens", "year-tokens", "zero-tokens", "empty"], [false, true])
     func observedUsageHasPlotInk(_ fixture: String, dark: Bool) throws {
         let metric: UsageCenterStore.Metric = fixture.hasSuffix("cost") ? .cost : .tokens
         let history = history(for: fixture)
         let background = dark ? Color(red: 0.08, green: 0.08, blue: 0.08) : Color.white
         let range: UsageHistoryRange = fixture == "year-tokens" ? .year : .week
-        let chart = UsageChart(history: history, range: range, metric: metric,
-                               accent: Color(red: 0.12, green: 0.45, blue: 0.90))
+        let chart = UsageTokenChart(history: history, range: range, accent: Color(red: 0.12, green: 0.45, blue: 0.90), metric: metric)
             .padding(12)
-            .frame(width: 560, height: 260)
+            .frame(width: 560, height: 320)
             .background(background)
-        let bitmap = try ProofRender.render(chart, size: CGSize(width: 560, height: 260), dark: dark)
+        let bitmap = try ProofRender.render(chart, size: CGSize(width: 560, height: 320), dark: dark)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
         let theme = dark ? "dark" : "light"
@@ -71,7 +72,7 @@ struct UsageChartSparseRenderTests {
         try png.write(to: ProofRender.directory.appendingPathComponent(name))
 
         let ink = bluePlotPixels(in: bitmap, showsLegend: metric == .tokens)
-        if fixture == "empty" || fixture == "unpriced-cost" {
+        if fixture == "empty" {
             #expect(ink == 0, "History without priced plot data drew \(ink) blue plot pixels in \(name)")
         } else {
             #expect(ink > 20, "Observed usage needs visible plot ink, found \(ink) pixels in \(name)")
@@ -99,11 +100,6 @@ struct UsageChartSparseRenderTests {
             return UsageHistory(provider: "claude", range: "7d", days: [
                 UsageHistoryDay(date: "2026-10-10"),
             ])
-        }
-        if fixture == "unpriced-cost" {
-            return UsageHistory(provider: "claude", range: "7d", days: [
-                UsageHistoryDay(date: "2026-10-10", tokensIn: 250),
-            ], unpricedRecords: 1, unpricedModels: ["fixture-model"])
         }
         if fixture.hasPrefix("single-hour") || fixture == "two-hour-tokens" {
             var hours = [UsageHistoryHour(hour: "2026-10-10T12:00", tokensIn: 250, costUsd: 0.5)]

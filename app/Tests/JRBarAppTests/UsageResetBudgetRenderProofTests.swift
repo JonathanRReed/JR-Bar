@@ -30,7 +30,7 @@ struct UsageResetBudgetRenderProofTests {
         }
         try WindowsRenderProofTests.write("usage-reset-budget", size: CGSize(width: 800, height: 820)) {
             VStack(spacing: 16) {
-                ForEach(rows, id: \.id) { ProviderUsageCard(provider: $0, store: store) }
+                ForEach(rows, id: \.id) { UsageProviderDetail(provider: $0, store: store, showCost: true) }
             }.padding(24)
         }
     }
@@ -49,7 +49,7 @@ struct UsageResetBudgetRenderProofTests {
         #expect(UsageResetBudget.make(provider: provider, window: window, forecast: store.forecast(for: provider, window: window),
                                      isLive: store.isLive, now: now) == nil)
         try WindowsRenderProofTests.write("usage-reset-budget-paused", size: CGSize(width: 800, height: 440)) {
-            ProviderUsageCard(provider: provider, store: store).padding(24)
+            UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
         }
     }
 }

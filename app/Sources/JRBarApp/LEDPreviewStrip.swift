@@ -72,6 +72,7 @@ struct LEDStripPreview: View {
     /// Seconds into the program at which this preview starts, so a grid of
     /// previews does not breathe in lockstep.
     var phase: TimeInterval = 0
+    var displayLEDCount: Int? = nil
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.jrbarReduceMotion) private var motionOverride
@@ -99,7 +100,7 @@ struct LEDStripPreview: View {
     /// What the layers draw, and what a change to redraws.
     private var layerConfig: LEDStripLayerView.Config {
         LEDStripLayerView.Config(program: program, ledCount: ledCount, style: style, dotSize: dotSize,
-                                 spacing: spacing, loops: loops, paused: paused, phase: phase)
+                                 spacing: spacing, loops: loops, paused: paused, phase: phase, displayLEDCount: displayLEDCount)
     }
 
     var body: some View {
@@ -139,13 +140,13 @@ struct LEDStripPreview: View {
             // program's first frame (or its brightest, when still), in
             // SwiftUI.
             let colors = LEDStripFrames.colors(sampler: sampler, ledCount: ledCount, elapsed: phase,
-                                               still: paused || reduceMotion, loops: loops)
+                                               still: paused || reduceMotion, loops: loops, displayLEDCount: displayLEDCount)
             LEDStripStill(colors: colors, style: style, dotSize: dotSize, spacing: spacing)
         } else {
             // The layers ride over a clear stand-in of the shapes' size:
             // an AppKit view brings text baselines of its own, and a row
             // aligned on baselines would line the strip up by them.
-            let count = sampler?.ledCount ?? max(0, ledCount)
+            let count = displayLEDCount ?? sampler?.ledCount ?? max(0, ledCount)
             let row = LEDStripLayerView.Config.dotsSize(count: count, dotSize: dotSize, spacing: spacing)
             Color.clear
                 .frame(width: style == .dots ? row.width : nil, height: style == .dots ? row.height : nil)
@@ -164,19 +165,32 @@ enum LEDStripFrames {
     /// first cycle, so a breathe is not shown at its floor; a finite
     /// program that `loops` starts over after it ends, plus a short
     /// rest. A refused program is a row of dull red.
-    static func colors(sampler: LEDSSampler?, ledCount: Int, elapsed: TimeInterval, still: Bool, loops: Bool) -> [RGB] {
-        guard let sampler else { return Array(repeating: RGB(r: 0.35, g: 0.05, b: 0.05), count: max(0, ledCount)) }
+    static func colors(sampler: LEDSSampler?, ledCount: Int, elapsed: TimeInterval, still: Bool, loops: Bool, displayLEDCount: Int? = nil) -> [RGB] {
+        guard let sampler else { return Array(repeating: RGB(r: 0.35, g: 0.05, b: 0.05), count: max(0, displayLEDCount ?? ledCount)) }
         var t = elapsed
         if still {
             t = brightestInstant(sampler)
         } else if loops, sampler.cycleDuration == nil, let ends = sampler.motionEndsAt, ends > 0 {
             t = t.truncatingRemainder(dividingBy: ends + 0.8)
         }
-        return sampler.colors(at: t)
+        return resampled(sampler.colors(at: t), count: displayLEDCount)
     }
 
-    /// The brightest of twelve instants across the first cycle, or the
-    /// start for a program with no motion.
+    /// Each mirror light averages one portion of the full strip.
+    static func resampled(_ colors: [RGB], count: Int?) -> [RGB] {
+        guard let count, count > 0, !colors.isEmpty, count != colors.count else { return colors }
+        return (0..<count).map { index in
+            let start = index * colors.count / count
+            let end = max(start + 1, (index + 1) * colors.count / count)
+            let bin = colors[start..<min(end, colors.count)]
+            let divisor = Double(bin.count)
+            return RGB(r: bin.reduce(0) { $0 + $1.r } / divisor,
+                       g: bin.reduce(0) { $0 + $1.g } / divisor,
+                       b: bin.reduce(0) { $0 + $1.b } / divisor)
+        }
+    }
+
+    /// The brightest of twelve instants across the first cycle.
     static func brightestInstant(_ sampler: LEDSSampler) -> TimeInterval {
         let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0
         guard span > 0 else { return 0 }
@@ -278,6 +292,7 @@ final class LEDStripLayerView: NSView {
         var loops: Bool
         var paused: Bool
         var phase: TimeInterval
+        var displayLEDCount: Int? = nil
 
         /// The dots' row: `count` LEDs at `dotSize`, `spacing` apart.
         static func dotsSize(count: Int, dotSize: CGFloat, spacing: CGFloat) -> CGSize {
@@ -320,7 +335,7 @@ final class LEDStripLayerView: NSView {
     /// How many LEDs the strip draws: the sampler's count — a count the
     /// firmware has no layout for plays as eight — or one dull red dot
     /// per LED for a refused program.
-    var drawnCount: Int { sampler?.ledCount ?? max(0, config.ledCount) }
+    var drawnCount: Int { config.displayLEDCount ?? sampler?.ledCount ?? max(0, config.ledCount) }
 
     init(config: Config, held: Bool, reduceMotion: Bool, now: TimeInterval = CACurrentMediaTime()) {
         self.config = config
@@ -360,7 +375,8 @@ final class LEDStripLayerView: NSView {
             sampler = LEDPreviewSamplers.sampler(for: newConfig.program, ledCount: newConfig.ledCount)
             origin = now
         }
-        if old.style != newConfig.style || old.ledCount != newConfig.ledCount
+        if old.phase != newConfig.phase { origin = now }
+        if old.style != newConfig.style || old.displayLEDCount != newConfig.displayLEDCount || old.ledCount != newConfig.ledCount
             || old.dotSize != newConfig.dotSize || old.spacing != newConfig.spacing {
             buildLayers()
             needsLayout = true
@@ -378,7 +394,7 @@ final class LEDStripLayerView: NSView {
     func renderFrame(at time: TimeInterval) {
         let colors = LEDStripFrames.colors(sampler: sampler, ledCount: config.ledCount,
                                            elapsed: time - origin + config.phase,
-                                           still: config.paused || reduceMotion, loops: config.loops)
+                                           still: config.paused || reduceMotion, loops: config.loops, displayLEDCount: config.displayLEDCount)
         apply(colors)
     }
 

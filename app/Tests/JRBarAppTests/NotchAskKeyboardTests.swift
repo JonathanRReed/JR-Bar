@@ -90,9 +90,10 @@ struct NotchAskKeyboardTests {
         #expect(NotchAskFocus.key(forKeyCode: 124, shift: false) == .right)
         #expect(NotchAskFocus.key(forKeyCode: 125, shift: false) == .down)
         #expect(NotchAskFocus.key(forKeyCode: 126, shift: false) == .up)
-        for code: UInt16 in [36, 76, 49] {
+        for code: UInt16 in [36, 76] {
             #expect(NotchAskFocus.key(forKeyCode: code, shift: false) == .activate)
         }
+        #expect(NotchAskFocus.key(forKeyCode: 49, shift: false) == .space)
         #expect(NotchAskFocus.key(forKeyCode: 53, shift: false) == .escape)
         #expect(NotchAskFocus.key(forKeyCode: 0, shift: false) == .other)
     }
@@ -193,18 +194,39 @@ struct NotchAskKeyboardTests {
                      ask: CoreAsk(session: Self.session, summary: "Run tests", request: "r1"))
     }
 
-    @Test("engaging takes the keyboard and focuses nothing")
-    func engageFocusesNothing() {
+    @Test("Return approves the ask the person put on screen")
+    func returnAnswersShownAsk() async {
         let (toy, store, sent, _) = makeToy(state: state())
         defer { withExtendedLifetime(store) {} }
         toy.offer(notice())
         #expect(toy.engageAskKeyboard())
-        #expect(toy.askKeyboardEngaged)
         #expect(toy.askFocus.focused == nil)
-        toy.askKey(.activate)
-        toy.askKey(.activate)
-        #expect(sent.answers.isEmpty, "Return with the ring nowhere answers nothing")
-        #expect(toy.activeCapsule?.id == "a")
+        await toy.askKey(.activate)?.value
+        #expect(sent.answers.count == 1)
+        #expect(sent.answers.first?.1 == .approve)
+        #expect(sent.answers.first?.2 == "r1")
+    }
+
+    @Test("Space never approves without focus, and destructive asks need focus for Return too")
+    func unfocusedApprovalRules() async {
+        for destructive in [false, true] {
+            var fixture = state()
+            fixture.asks[0].risk = destructive ? "destructive" : nil
+            let (toy, store, sent, _) = makeToy(state: fixture)
+            defer { withExtendedLifetime(store) {} }
+            toy.offer(notice())
+            #expect(toy.engageAskKeyboard())
+            await toy.askKey(.space)?.value
+            #expect(sent.answers.isEmpty)
+            if destructive {
+                await toy.askKey(.activate)?.value
+                #expect(sent.answers.isEmpty)
+                toy.askKey(.right)
+                toy.askKey(.right)
+                await toy.askKey(.space)?.value
+                #expect(sent.answers.first?.1 == .approve)
+            }
+        }
     }
 
     @Test("there is nothing to engage without an ask on the face")
@@ -218,13 +240,13 @@ struct NotchAskKeyboardTests {
         #expect(!toy.askKeyboardEngaged)
     }
 
-    @Test("Tab then Return presses the focused verb through the desk with the request pin")
+    @Test("arrows then Return press a chosen verb with its request pin")
     func keyboardAnswersOnPurpose() async {
         let (toy, store, sent, _) = makeToy(state: state())
         defer { withExtendedLifetime(store) {} }
         toy.offer(notice())
         toy.engageAskKeyboard()
-        toy.askKey(.tab)
+        toy.askKey(.right)
         #expect(toy.askFocus.focused == .deny)
         toy.askKey(.right)
         #expect(toy.askFocus.focused == .approve)

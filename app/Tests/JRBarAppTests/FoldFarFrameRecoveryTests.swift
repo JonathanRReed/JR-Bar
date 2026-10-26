@@ -8,6 +8,12 @@ import Testing
 @MainActor
 @Suite("Fold far-frame recovery")
 struct FoldFarFrameRecoveryTests {
+    init() async {
+        await withCheckedContinuation { continuation in
+            FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+    }
+
     private func picture(blue: UInt8, red: UInt8) throws -> CVPixelBuffer {
         var created: CVPixelBuffer?
         let attributes: [String: Any] = [

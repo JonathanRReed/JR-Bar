@@ -27,10 +27,10 @@ struct UsageStaleRenderProofTests {
         let read = try #require(claude.readAt)
         let observed = try #require(claude.observedAt)
         #expect(observed - read > 5 * 3600, "the numbers are hours older than the last attempt")
-        let stale = ProviderUsageCard.readingAgeText(claude, now: store.now)
+        let stale = UsageCardCopy.readingAgeText(claude, now: store.now)
         #expect(stale?.hasPrefix("read 5h") == true, "\(stale ?? "nil")")
         let codex = try #require(store.providers.first { $0.id == "codex" })
-        #expect(ProviderUsageCard.readingAgeText(codex, now: store.now) == "read 1m ago")
+        #expect(UsageCardCopy.readingAgeText(codex, now: store.now) == "read 1m ago")
         try WindowsRenderProofTests.write("usage-center-stale", size: CGSize(width: 780, height: 1340)) {
             UsageCenterView(store: store)
         }

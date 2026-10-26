@@ -247,7 +247,7 @@ struct QuietAcknowledgementTests {
             let entry = WhatsNewEntry(id: "synthetic", symbol: "moon", title: "Synthetic command",
                                       detail: "Open a utility.", tryIt: .window(.usage), opens: "Opens Usage")
             try WindowsRenderProofTests.write("whats-new-pending-row", size: CGSize(width: 440, height: 100), plate: .glass) {
-                WhatsNewRow(entry: entry, refusal: nil, isRunning: true, tryIt: { _ in }).padding(16)
+                WhatsNewView(entries: [entry], tryIt: { _ in nil }, onDone: {}).padding(16)
             }
         }
     }

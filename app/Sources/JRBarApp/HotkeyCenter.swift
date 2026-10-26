@@ -117,7 +117,7 @@ struct HotkeyChord: Codable, Hashable, Sendable {
 }
 
 /// Every global shortcut JR-Bar holds, in one registry: the panel's
-/// ⌃⌥J, the shelf's ⌃⌥D, the Menu Bar utility's ⌘⇧K family and the
+/// ⌥⌘J, the shelf's ⌃⌥D, the Menu Bar utility's ⌘⇧K family and the
 /// app actions bound on Settings › Shortcuts. One Carbon handler, one
 /// signature, one table from hot-key id to action — so a chord can be
 /// checked against everything JR-Bar has already taken before it is

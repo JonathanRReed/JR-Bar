@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import OSLog
 import QuartzCore
 import SwiftUI
@@ -13,7 +14,7 @@ import SwiftUI
 @MainActor
 final class PanelController {
     private static let log = Logger(subsystem: "devin.jrbar", category: "panel")
-    static let cornerRadius: CGFloat = 14
+    static let cornerRadius = JRBarTokens.Radius.panel
     static let gapBelowStatusItem: CGFloat = 5
 
     private let store: PanelStore
@@ -139,31 +140,26 @@ final class PanelController {
         let frame = frameFor(height: CGFloat(layout.totalHeight), screen: screen)
         panel.setFrame(frame, display: false)
         hosting.layoutSubtreeIfNeeded()
-        panel.alphaValue = 0
+        panel.alphaValue = store.reduceMotion ? 0 : 0.5
         WindowPresenter.automatic.order(panel, as: .key)
         installMonitors()
         openedAt = Date()
         logFrame("t=0 (target)", frame)
 
         let reduced = store.reduceMotion
-        let rise: CGFloat = reduced ? 0 : 6
-        if rise > 0 {
-            panel.setFrameOrigin(NSPoint(x: frame.origin.x, y: frame.origin.y + rise))
-        }
         let duration = reduced ? PanelMotion.reducedDuration : PanelMotion.unfoldDuration
         // This arrival's stamp — a reopen inside the animation leaves a
         // completion that must not arm marks mid-arrival.
         let opened = openedAt
+        animateScale(from: reduced ? 1 : 0.98, to: 1, duration: duration)
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
             panel.animator().alphaValue = 1
-            // NSWindow's animator animates `setFrame(_:display:)`, not `setFrameOrigin`.
-            if rise > 0 { panel.animator().setFrame(frame, display: true) }
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isOpen, self.openedAt == opened else { return }
-                // The rise ends exactly on the computed frame, whatever the animator did.
+                // Keep the final frame exact across a close and reopen.
                 if self.panel.frame != frame { self.panel.setFrame(frame, display: true) }
                 // From here on, data changes may animate.
                 self.store.animationsArmed = true
@@ -185,6 +181,23 @@ final class PanelController {
         print("panel frame \(label): \(f) rows=\(store.rows.count) usage=\(store.usage.count) window=\(panel.windowNumber)")
     }
 
+    private func animateScale(from: CGFloat, to: CGFloat, duration: TimeInterval) {
+        guard let content = panel.contentView else { return }
+        content.wantsLayer = true
+        guard let layer = content.layer else { return }
+        layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        layer.position = CGPoint(x: content.bounds.midX, y: content.bounds.midY)
+        let animation = CABasicAnimation(keyPath: "transform.scale")
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = duration
+        animation.timingFunction = to == 1
+            ? CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+            : CAMediaTimingFunction(controlPoints: 0.4, 0, 1, 1)
+        layer.transform = CATransform3DMakeScale(to, to, 1)
+        layer.add(animation, forKey: "panelScale")
+    }
+
     func close() {
         guard isOpen else { return }
         isOpen = false
@@ -195,9 +208,10 @@ final class PanelController {
         }
         store.panelDidClose()
         let reduced = store.reduceMotion
+        if !reduced { animateScale(from: 1, to: 0.98, duration: JRBarTokens.Motion.quick.duration) }
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduced ? 0.08 : 0.14
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = reduced ? JRBarTokens.Motion.reduced.duration : JRBarTokens.Motion.quick.duration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 1, 1)
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
@@ -238,8 +252,8 @@ final class PanelController {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+            context.duration = JRBarTokens.Motion.panelEntrance.duration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
             panel.animator().setFrame(frame, display: true)
         }
     }
@@ -329,6 +343,7 @@ final class PanelController {
                 // Plain ⌫ edits the find query.
                 if flags.isEmpty, !typingInField, store.deleteFindCharacter() { return nil }
                 return event
+            case 123, 124: return store.handleDisclosureKey(event.keyCode) ? nil : event
             case 125: store.moveSelection(by: 1); return nil       // Down
             case 126: store.moveSelection(by: -1); return nil      // Up
             case 36, 76:                                            // Return / keypad Enter
@@ -434,7 +449,7 @@ final class WhyDetailPanel: NSPanel {
             backdrop = effect
         }
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 120), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: 10)
+        contentView = GlassBackdrop.rounded(backdrop, cornerRadius: JRBarTokens.Radius.group)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -472,8 +487,8 @@ final class WhyDetailPanel: NSPanel {
         WindowPresenter.automatic.order(self, as: .front)
         if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 4)) }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.08 : 0.16
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+            context.duration = reduced ? JRBarTokens.Motion.reduced.duration : JRBarTokens.Motion.rowChange.duration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
             animator().alphaValue = 1
             if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
         }
@@ -481,8 +496,8 @@ final class WhyDetailPanel: NSPanel {
 
     func dismiss(completion: @escaping @MainActor () -> Void) {
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = JRBarTokens.Motion.quick.duration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 1, 1)
             animator().alphaValue = 0
         }, completionHandler: {
             Task { @MainActor in completion() }
@@ -505,19 +520,19 @@ struct WhyDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let explanation = model.explanation {
                 HStack(spacing: 6) {
-                    Image(systemName: "light.max").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    Text(explanation.motion).font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "light.max").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
+                    Text(explanation.motion).font(JRBarTokens.TypeStyle.callout.font)
                     Text("· \(explanation.why.replacingOccurrences(of: "_", with: " "))")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                 }
-                Text(explanation.reason).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(explanation.reason).font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if !explanation.details.isEmpty {
                     Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
                     Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
                         ForEach(explanation.details) { detail in
                             GridRow {
-                                Text(detail.label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-                                Text(detail.value).font(.system(size: 11)).foregroundStyle(.primary.opacity(0.85)).lineLimit(2)
+                                Text(detail.label).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                                Text(detail.value).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.primary.opacity(0.85)).lineLimit(2)
                             }
                         }
                     }
@@ -527,14 +542,14 @@ struct WhyDetailView: View {
                     // the events that moved it, not the whole journal
                     // (History's Events tab has that).
                     Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
-                    Text("Lately").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    Text("Lately").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                     ForEach(model.log) { entry in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(Self.age(entry.at))
-                                .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary)
+                                .font(JRBarTokens.TypeStyle.caption.font).monospacedDigit().foregroundStyle(.tertiary)
                                 .frame(width: 34, alignment: .trailing)
                             Circle().fill(EventLogStyle.color(entry.category).opacity(0.8)).frame(width: 5, height: 5)
-                            Text(entry.text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                            Text(entry.text).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
