@@ -4,6 +4,8 @@ import json
 import threading
 from pathlib import Path
 
+import pytest
+
 from jrbar.provider_account_identity import (
     _identity_salt,
     _salt_path,
@@ -91,9 +93,13 @@ def test_privacy_mode_strings_do_not_depend_on_private_account_label() -> None:
     assert first.full_label == "Grok"
 
 
-def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("during_publication", [False, True])
+def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypatch, during_publication) -> None:
+    from jrbar import private_io
     from jrbar import provider_account_identity as identity
 
+    linked = threading.Event()
+    refused = threading.Event()
     barrier = threading.Barrier(2)
     published = threading.Barrier(2)
     outcomes = []
@@ -111,18 +117,32 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
         barrier.wait(timeout=30.0)
         return bytes([value]) * 32
 
+    real_link = private_io.os.link
+
+    def hold_publication(*args, **kwargs):
+        real_link(*args, **kwargs)
+        linked.set()
+        if during_publication:
+            assert refused.wait(timeout=30.0)
+
     def publish_before_read(*args, **kwargs):
+        candidate = args[1]
+        if candidate == (bytes([2]) * 32).hex():
+            assert linked.wait(timeout=30.0)
         try:
             result = publish(*args, **kwargs)
             outcomes.append("created")
             return result
-        except FileExistsError:
-            outcomes.append("exists")
+        except OSError as error:
+            outcomes.append("exists" if isinstance(error, FileExistsError) else "linked")
             raise
         finally:
+            if candidate == (bytes([2]) * 32).hex():
+                refused.set()
             # Reads start after publication; peer-read refusals have their own test.
             published.wait(timeout=30.0)
 
+    monkeypatch.setattr(private_io.os, "link", hold_publication)
     monkeypatch.setattr(identity, "atomic_private_write", publish_before_read)
     monkeypatch.setattr("jrbar.provider_account_identity.secrets.token_bytes", token_bytes)
     results = []
@@ -132,7 +152,8 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
     for thread in threads:
         thread.join(timeout=30.0)
 
-    assert sorted(outcomes) == ["created", "exists"]
+    assert not any(thread.is_alive() for thread in threads)
+    assert sorted(outcomes) == ["created", "linked" if during_publication else "exists"]
     assert len(results) == 2
     assert results[0] == results[1]
     assert results[0] in {bytes([1]) * 32, bytes([2]) * 32}
