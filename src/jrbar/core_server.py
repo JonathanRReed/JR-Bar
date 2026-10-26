@@ -352,7 +352,7 @@ class _Client:
                 previous = self._state_slices.previous
                 generation = document.get("generation")
                 prior = previous.get("generation") if previous is not None else None
-                if type(generation) is int and type(prior) is int and generation > 0 and generation < prior:
+                if type(generation) is int and type(prior) is int and generation > 0 and generation <= prior:
                     return True  # a held pre-greeting frame cannot regress it
                 delta = self._state_slices.delta(document)
                 if self.state_slices and previous is not None:

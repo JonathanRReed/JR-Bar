@@ -30,7 +30,13 @@ public struct CoreStateDelta: Codable, Hashable, Sendable {
         }
     }
 
+    enum CodingKeys: String, CodingKey {
+        case generation, now, slices
+        case baseGeneration = "base_generation"
+    }
+
     public var generation: Int
+    public var baseGeneration: Int?
     public var now: Double?
     public var slices: [String: Slice]
 }

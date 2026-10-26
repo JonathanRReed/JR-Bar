@@ -11,10 +11,13 @@ def test_slices_compare_the_last_sent_state_and_keep_independent_generations():
     slices = StateSlices()
     base = {"generation": 1, "now": 100, "sessions": [], "asks": [], "usage": {"providers": []}}
     first = slices.delta(base)
+    assert first["base_generation"] == 0
     assert first["slices"]["sessions"] == {"generation": 1, "value": []}
     changed = slices.delta({**base, "generation": 4, "now": 104, "asks": [{"id": "ask"}]})
+    assert changed["base_generation"] == 1
     assert changed["slices"] == {"asks": {"generation": 2, "value": [{"id": "ask"}]}}
     cleared = slices.delta({**base, "generation": 6})
+    assert cleared["base_generation"] == 4
     assert cleared["slices"] == {"asks": {"generation": 3, "value": []}}
     assert slices.generations["sessions"] == 1
 
@@ -55,6 +58,7 @@ def test_delayed_greeting_and_other_clients_never_supply_a_delta_baseline():
     client.send(encode_frame({"t": "state", "generation": 4, "asks": []}))
     assert len(frames) == 2
     assert frames[0]["t"] == "state"
+    assert frames[1]["base_generation"] == 3
     assert frames[1]["slices"]["asks"]["value"] == []
 
 
@@ -66,3 +70,22 @@ def test_roster_changes_send_only_changed_fields_and_explicit_order():
     update = slices.delta({"sessions": [{**rows[1], "mode": "idle"}, rows[0]]})
     assert update["slices"]["sessions"] == {
         "generation": 2, "changes": {"b": {"mode": "idle"}}, "removed": [], "order": ["b", "a"]}
+
+
+def test_reordered_and_skipped_states_keep_the_last_transmitted_baseline():
+    frames = []
+    client = _Client(SimpleNamespace(sendall=lambda value: frames.append(json.loads(value))), 1)
+    client.state_slices = True
+    for generation in (1, 2, 4, 3, 7):
+        client.send(encode_frame({"t": "state", "generation": generation,
+                                 "health": {"left": generation, "right": generation}}))
+    assert [frame["generation"] for frame in frames] == [1, 2, 4, 7]
+    assert [frame["base_generation"] for frame in frames[1:]] == [1, 2, 4]
+    # A receiver which missed gen 4 detects the gap in gen 7, even though
+    # its per-slice generation is greater. A fresh connection gets a full state.
+    assert frames[-1]["base_generation"] != frames[1]["generation"]
+    fresh_frames = []
+    fresh = _Client(SimpleNamespace(sendall=lambda value: fresh_frames.append(json.loads(value))), 2)
+    fresh.state_slices = True
+    fresh.send(encode_frame({"t": "state", "generation": 7, "health": {"left": 7, "right": 7}}))
+    assert fresh_frames[0]["t"] == "state"

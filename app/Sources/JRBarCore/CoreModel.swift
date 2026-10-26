@@ -1306,9 +1306,12 @@ public final class CoreModel {
     }
 
     private func applyDelta(_ delta: CoreStateDelta) {
-        guard stateRejected == nil, let current = _state,
-              delta.generation > current.generation else { return }
+        guard stateRejected == nil else { return }
+        if let current = _state, delta.generation <= current.generation { return }
         do {
+            guard let current = _state, delta.baseGeneration == current.generation else {
+                throw CoreCodecError.malformed("state delta baseline does not match current state")
+            }
             // Decode the complete batch before changing any observed field.
             let decoded = try delta.slices.compactMap { key, slice -> (String, Int, CoreState)? in
                 guard slice.generation > 0 else { throw CoreCodecError.malformed("invalid slice generation") }

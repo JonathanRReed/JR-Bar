@@ -88,4 +88,5 @@ class StateSlices:
             slices[key] = {"generation": generation, **payload}
         self.previous = current
         return {"t": "state_delta", "v": 1, "generation": state.get("generation", 0),
+                "base_generation": previous.get("generation", 0),
                 "now": state.get("now"), "slices": slices}

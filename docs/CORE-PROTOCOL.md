@@ -2245,7 +2245,7 @@ changes arrive as `state_delta` instead. Clients that do not subscribe keep
 receiving full states. An app connected to an older daemon uses full states.
 
 ```json
-{"t":"state_delta","v":1,"generation":42,"now":1792968000,"slices":{"sessions":{"generation":8,"value":[]},"asks":{"generation":3,"value":[]}}}
+{"t":"state_delta","v":1,"generation":42,"base_generation":40,"now":1792968000,"slices":{"sessions":{"generation":8,"value":[]},"asks":{"generation":3,"value":[]}}}
 ```
 
 Each top-level state field except `t`, `v`, `generation` and `now` is a
@@ -2267,6 +2267,13 @@ with a `path` of object keys and either `value` or `remove: true`. Arrays
 are replaced as values. Null is a value; only `remove` deletes a key.
 Edits apply in order to that slice's previous value. A client rejects a
 patch whose path does not exist, and reconnects for a full snapshot.
+
+Every delta carries `base_generation`, the generation of the previous
+state transmitted to that connection, after coalescing. Generations need
+not be consecutive. Before applying any slices, a client requires this
+baseline to equal its current state generation. A missing or mismatched
+baseline rejects the whole delta and reconnects for a full snapshot.
+This catches skipped and reordered object patches and roster edits.
 
 A client needs a full state before applying deltas. It ignores deltas
 older than that state and repeated slice generations. A reconnect resets
