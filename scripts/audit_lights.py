@@ -40,17 +40,21 @@ BASELINE = REPO / "tests/fixtures/light-audit-baseline.json"
 SOURCES = (
     "src/jrbar/colors.py", "src/jrbar/light_mix.py", "src/jrbar/motion_shapes.py",
     "src/jrbar/led_status.py", "src/jrbar/core_runtime.py", "src/jrbar/effect_registry.py",
+    "src/jrbar/dot_role.py", "src/jrbar/linked_sync.py", "src/jrbar/core_projection.py",
+    "app/Sources/JRBarLEDS/LEDSSampler.swift", "app/Sources/JRBarApp/ScreenBarController.swift",
+    "app/Sources/JRBarCore/CoreMessages.swift", "app/Sources/JRBarApp/AppDelegate.swift",
+    "app/Sources/JRBarApp/LEDFeed.swift", "app/Sources/JRBarApp/EffectStudioLights.swift",
     "src/jrbar/resources/sdled.wasm", "tests/light_audit.py", "scripts/audit_lights.py",
 )
 CAUSES = {
     "mirror_budget": ("Dot widening exceeds the Screen Bar parser budget",
-        "src/jrbar/dot_role.py", "def upsample_program(", "src/jrbar/core_runtime.py", "widened = upsample_program("),
+        "app/Sources/JRBarLEDS/LEDSSampler.swift", "public func rawCodes(", "src/jrbar/core_runtime.py", "mirror_program = dot_mirror_program or mirror.program"),
     "mirror_pixels": ("Widening changes the Dot's interpolated travel profile",
-        "src/jrbar/dot_role.py", "def upsample_program(", "src/jrbar/core_runtime.py", "widened = upsample_program("),
+        "app/Sources/JRBarLEDS/LEDSSampler.swift", "public func rawCodes(", "src/jrbar/core_runtime.py", "mirror_program = dot_mirror_program or mirror.program"),
     "provider_equivalence": ("Sessions change provider colours and share geometry",
         "src/jrbar/colors.py", "def _active_agents(", "src/jrbar/light_mix.py", "if len(selected) > 1 and len({agent.provider"),
     "reassert_phase": ("Reassert reparses the program without a phase rotation",
-        "src/jrbar/led_status.py", "trim = reassert and trim_on_reassert", "src/jrbar/led_wasm.py", "def parse(self,"),
+        "src/jrbar/led_status.py", "if reassert and self.last_applied_monotonic", "src/jrbar/led_wasm.py", "def parse(self,"),
     "sweep_path": ("The native or compact sweep loses its local head path",
         "src/jrbar/motion_shapes.py", "def _motion_lines(", "src/jrbar/light_mix.py", "def _body("),
     "share_fidelity": ("Share composition changes the native local timeline",
@@ -188,6 +192,7 @@ def write_report(out, results, firmware, receipt, legacy_count, integration):
     document = {"schema": 1, "provenance": receipt, "cases": len(results),
                 "failed_cases": sum(bool(r.failures) for r in results), "checks": dict(checks),
                 "historical_solo_cases": legacy_count, "integration": integration,
+                "reassert_actions": dict(Counter(r.reassert_action for r in results if r.reassert_action)),
                 "families": {key: dict(value) for key, value in sorted(families.items())},
                 "ranked": ranked, "failures": dict(failed),
                 "examples": {code: {"program": result.program, "played": result.played,
@@ -265,7 +270,7 @@ def main():
     batches = defaultdict(list)
     for case in matrix:
         batches[case.variant.name].append(case)
-    with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+    with ProcessPoolExecutor(max_workers=max(1, args.jobs), max_tasks_per_child=1) as pool:
         for batch_results in pool.map(inspect_batch, batches.values()):
             results.extend(batch_results)
             print(f"{len(results)}/{len(matrix)} cases", flush=True)
@@ -274,6 +279,17 @@ def main():
     bank_path = args.out.resolve() / "programs.json"
     bank_path.write_text(json.dumps([{"leds": count, "program": program, "case": key}
                                     for (count, program), key in bank.items()]))
+    # The Screen Bar receives the write gate's result, not the pre-write
+    # plans in programs.json. Keep a corpus for the Swift sampler check.
+    from jrbar.presentation_compiler import compile_presentation_program
+
+    delivered = []
+    for row in json.loads(bank_path.read_text()):
+        compiled = compile_presentation_program(row["program"], led_count=row["leds"])
+        if not compiled.accepted:
+            raise RuntimeError("The hardware write gate refused an audited program")
+        delivered.append(dict(row, program=compiled.program))
+    (args.out / "delivered-programs.json").write_text(json.dumps(delivered))
     integration = "Not run (--skip-integration)"
     if not args.skip_integration:
         process = subprocess.run([sys.executable, "-m", "pytest", "tests/test_light_audit.py",
@@ -293,6 +309,8 @@ def main():
     if args.record_baseline:
         if args.quick or args.presets:
             parser.error("Record the baseline only from the full standard matrix")
+        if new and args.baseline.exists():
+            parser.error("Refusing to record a baseline with new failures; inspect baseline-delta.json")
         args.baseline.write_text(json.dumps({"schema": 1, "head": receipt["head"],
             "cases": len(results), "failures": document["failures"]}, indent=2) + "\n")
     print(json.dumps({"cases": len(results), "failed_cases": document["failed_cases"],

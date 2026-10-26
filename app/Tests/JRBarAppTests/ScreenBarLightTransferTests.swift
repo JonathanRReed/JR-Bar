@@ -46,4 +46,48 @@ struct ScreenBarLightTransferTests {
         let tuned = ScreenBarLightTransfer.colors([code], brightness: 255, transfer: own)[0]
         #expect(tuned.r == full.r && tuned.b == full.b && tuned.g < full.g)
     }
+    @Test func dotMirrorKeepsItsSourceBudgetAndCanvas() throws {
+        let paint = "0:#1D050A 1:#02152A 500ms linear"
+        let text = Array(repeating: paint, count: 12).joined(separator: "\n") + "\nroll 2s\nrepeat"
+        #expect(text.utf8.count <= 512)
+        let decision = ScreenBarController.programDecision(text, sourceLedCount: 2, fallback: "off")
+        let program = try #require(decision.program)
+        #expect(decision.rejection == nil)
+        let source = LEDSSampler(program: program, ledCount: 2)
+        let bar = LEDSSampler(program: program, ledCount: 2, outputLedCount: 8)
+        for ms in stride(from: 0, through: 24000, by: 37) {
+            let expected = source.rawCodes(atMilliseconds: ms)
+            #expect(bar.rawCodes(atMilliseconds: ms) == (0..<8).map { expected[$0 / 4] })
+        }
+    }
+
+
+
+    @Test func auditedDotCorpusPlaysOnTheSourceCanvas() throws {
+        guard let path = ProcessInfo.processInfo.environment["JRBAR_DELIVERED_AUDIT_PROGRAMS"] else { return }
+        struct Row: Decodable { let leds: Int; let program: String }
+        let rows = try JSONDecoder().decode([Row].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        var checked = 0
+        for row in rows where row.leds == 2 {
+            let sourceProgram = try LEDSProgram.parse(row.program, ledCount: 2)
+            let source = LEDSSampler(program: sourceProgram, ledCount: 2)
+            let decision = ScreenBarController.programDecision(row.program, sourceLedCount: 2, fallback: "off")
+            let installed = try #require(decision.program)
+            let mirror = LEDSSampler(program: installed, ledCount: 2, outputLedCount: 8)
+            let span = Int(((source.cycleDuration ?? source.motionEndsAt ?? 1) * 3000).rounded())
+            for ms in stride(from: 0, through: max(1, span), by: 37) {
+                let pixels = source.codes(atMilliseconds: ms)
+                let expected = (0..<8).map { pixels[$0 / 4] }
+                let actual = mirror.codes(atMilliseconds: ms)
+                if actual != expected {
+                    Issue.record("Dot mirror changed at \(ms) ms: \(row.program) -> \(decision.programText ?? "refused")")
+                    break
+                }
+            }
+            checked += 1
+        }
+        #expect(checked > 0)
+        print("Audited \(checked) Dot programs through the Screen Bar parser and sampler")
+    }
+
 }

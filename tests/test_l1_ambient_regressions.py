@@ -62,7 +62,7 @@ def test_ember_renewal_never_replays_the_same_age_band(tmp_path, monkeypatch):
     writes, epochs = ember_writes(tmp_path, monkeypatch)
     assert epochs[:480] == [1000.0] * 480
     assert epochs[480:] == [1480.0] * 120
-    assert writes == [0, 2, 240, 480, 482]
+    assert writes == [0, 2, 480, 482]
 
 
 def test_ten_minute_ember_write_budget_tracks_base_reasserts(tmp_path, monkeypatch):
@@ -76,11 +76,30 @@ def test_ten_minute_ember_write_budget_tracks_base_reasserts(tmp_path, monkeypat
     writes, epochs = ember_writes(ambient, monkeypatch)
     band_starts = [index for index, epoch in enumerate(epochs)
                    if index == 0 or epoch != epochs[index - 1]]
-    assert base_writes == [0, 240, 480]
+    assert base_writes == [0, 480]
     band_changes = len(band_starts) - 1
     assert len(writes) <= len(base_writes) + 2 * band_changes
     assert all(any(0 <= second - start <= LAYER_SECONDS for start in band_starts)
                for second in set(writes) - set(base_writes))
+
+
+def test_a_deferred_base_reassert_keeps_the_running_bytes_and_anchor(tmp_path, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    controller = AgentLedController(device_path=tmp_path)
+    colors = ColorSettings.defaults()
+    first = controller.sync_snapshot(statuses(1), colors)
+    assert first.changed
+    running = controller.last_program
+    anchor = controller.last_applied_monotonic
+    clock[0] += 240
+    deferred = controller.sync_snapshot(statuses(1), colors)
+    assert not deferred.changed
+    assert controller.last_program == running
+    assert controller.last_applied_monotonic == anchor
+    assert first.target.read_text() == first.program
+    clock[0] += 240
+    assert controller.sync_snapshot(statuses(1), colors).changed
 
 
 def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():

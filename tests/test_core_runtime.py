@@ -2912,7 +2912,6 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     render -- the Screen Bar "in sync" did nothing without a strip."""
     import time as _time
 
-    from jrbar.dot_role import upsample_program
 
     controller = headless
     pro, dot = _pro_and_dot(controller)
@@ -2927,14 +2926,14 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
     controller.settings = controller.settings.with_dot_role("status")
 
-    widened = upsample_program(dot_controller.last_program, source_leds=2, led_count=8)
-    assert widened is not None
+    source_program = dot_controller.last_program
 
     # a. The bar mirrors the Dot: widened program, the Dot's anchor, the
     #    Dot's why -- and always at the bar's own LED count.
     lights = controller._core_build_lights()
     bar = lights["surfaces"]["screen_bar"]
-    assert bar["program"] == widened
+    assert bar["program"] == source_program
+    assert bar["source_led_count"] == 2
     assert bar["led_count"] == 8
     assert bar["anchor"] == 1000.0
     assert bar["why"] == lights["surfaces"]["dot"]["why"]
@@ -2951,7 +2950,8 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     )
     lights = controller._core_build_lights()
     bar = lights["surfaces"]["screen_bar"]
-    assert bar["program"] == widened
+    assert bar["program"] == source_program
+    assert bar["source_led_count"] == 2
     assert bar["anchor"] == pytest.approx(1000.25)
 
     # d. ``asks`` is a beacon: deliberately dark until needed, and the bar
@@ -5061,10 +5061,8 @@ def test_a_continue_dots_anchor_carries_its_origin(headless, tmp_path: Path) -> 
 
 
 def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tmp_path: Path, monkeypatch) -> None:
-    # --- scenario: the_dot_derives_from_the_trimmed_program_the_strip_runs
-    """A reassert drops the approach frame, so the strip loops a shorter
-    lap; the Dot used to be re-planned from the untrimmed text and ran the
-    longer one. Now both run the trimmed loop."""
+    # --- scenario: the_dot_derives_from_the_rotated_program_the_strip_runs
+    """The Dot follows the strip's rotated program and its unchanged lap."""
     from jrbar.animation import loop_duration_ms, read_program
     from jrbar.led_status import LedDisplayState
     from jrbar.presentation_compiler import compile_presentation_program
@@ -5080,12 +5078,12 @@ def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tm
     clock[0] += strip.reassert_after_seconds + 1
     reassert = strip.sync_program(program, LedDisplayState.WORKING)
     assert reassert.changed and reassert.program != first.program
-    assert reassert.nominal_program == "#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
+    assert reassert.timed.rotation == "exact"
     dot_result, _request = _coupled(controller, submitted, pro, dot, reassert)
     strip_lap = loop_duration_ms(
         read_program(compile_presentation_program(reassert.nominal_program, led_count=8).program)[0]
     )
-    assert dot_result.write.timed.lap_ms == strip_lap == 2000
+    assert dot_result.write.timed.lap_ms == strip_lap == 2160
     assert controller._core_linked.epoch.anchor == reassert.applied_at
 
     # --- scenario: the_screen_bar_shares_the_strips_start_and_ignores_dot_reanchors

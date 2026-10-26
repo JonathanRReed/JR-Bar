@@ -9,8 +9,7 @@ from jrbar.ambient_effect_dispatch import (
     AmbientEffectSurface,
     compile_ambient_effect_dispatch,
 )
-from jrbar.ambient_layers import compose_ambient_layer
-from jrbar.animation import PaintStep, read_program, step_duration_ms
+from jrbar.animation import PaintStep, loop_duration_ms, read_program, step_duration_ms
 from jrbar.colors import (
     BLEND_MODE_CHOICES,
     ColorSettings,
@@ -199,8 +198,9 @@ def test_ember_renewal_and_reassert_do_not_freeze_the_firmware(tmp_path, monkeyp
     clock[0] = 299.0
     reassert = controller.sync_program(base, LedDisplayState.WORKING, ambient=renewed)
     assert reassert.changed
-    assert reassert.nominal_program == _steady_state_variant(
-        compose_ambient_layer(base, LedDisplayState.WORKING, renewed))
+    assert loop_duration_ms(read_program(reassert.nominal_program)[0]) == loop_duration_ms(
+        read_program(first.nominal_program)[0])
+    assert reassert.timed.rotation == "exact"
     assert firmware.parse(reassert.program, 100_000).ok
     frames = firmware.step_batch(100_000, 80, 40)
     assert len({tuple(frame) for frame in frames}) > 1

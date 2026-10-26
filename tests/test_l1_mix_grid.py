@@ -51,11 +51,8 @@ CYCLE_TOO_LARGE = {"scanner", "pendulum", "flicker", "stack", "twinkle", "drift"
 
 
 def expected_played(mix, animation, variant, providers, count):
-    # The low Gradient preset requests 300 ms, below the standing speed
-    # safety gate. A solo uses Chase; a share/cycle explicitly falls back.
-    unsafe_gradient = animation == "gradient" and variant == "low"
     if providers == 1:
-        return "chase" if unsafe_gradient else animation
+        return animation
     if mix in {"classic", "color_blend"}:
         return mix
     if mix == "relay" and count < 4:
@@ -65,8 +62,6 @@ def expected_played(mix, animation, variant, providers, count):
     if mix in {"round_robin", "spatial_split"}:
         if providers > count or (count // providers == 1 and animation not in ONE_LED):
             return expected_played("cycle", animation, variant, providers, count)
-        if unsafe_gradient:
-            return "alternate"
         # Unequal 3/3/2 shares lose these shapes under four keyframes.
         if count == 8 and providers == 3:
             retained = {"auto", "breathe", "duotone", "heartbeat", "ember", "steady", "blink", "frontier"}
@@ -80,7 +75,7 @@ def expected_played(mix, animation, variant, providers, count):
             or (animation in {"ember", "ripple"} and providers >= 3)
             or (animation == "kitt" and variant != "high" and providers == 4)
             or (animation == "bloom" and (providers == 4 or (variant == "high" and providers == 3))))
-        if unsafe_gradient or over_budget:
+        if over_budget:
             return "alternate"
     return mix
 

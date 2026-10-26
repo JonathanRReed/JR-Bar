@@ -47,4 +47,19 @@ import Testing
                     "LED \(index) should be green-ish, got \(codes[index].hex)")
         }
     }
+    @Test func sourceCanvasIsExpandedAfterRollSampling() throws {
+        let text = "brightness 128\n#FF0000 #00FF00 500ms none\nroll 2s\nrepeat"
+        let program = try LEDSProgram.parse(text, ledCount: 2)
+        let dot = LEDSSampler(program: program, ledCount: 2)
+        let bar = LEDSSampler(program: program, ledCount: 2, outputLedCount: 8)
+        for ms in stride(from: 0, through: 7500, by: 13) {
+            let expected = dot.codes(atMilliseconds: ms)
+            let actual = bar.codes(atMilliseconds: ms)
+            #expect(actual == (0..<8).map { expected[$0 / 4] })
+        }
+        #expect(bar.cycleDuration == dot.cycleDuration)
+        let plan = try #require(LEDSKeyframePlan.render(sampler: bar))
+        #expect(plan.codes(atMilliseconds: 1000).count == 8)
+    }
+
 }

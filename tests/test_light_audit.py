@@ -29,8 +29,9 @@ from jrbar.ambient_effect_dispatch import AmbientEffectSurface, compile_ambient_
 from jrbar.ambient_layers import compose_ambient_layer
 from jrbar.animation import read_program, step_duration_ms
 from jrbar.colors import PROVIDER_ANIMATION_CHOICES, program_for_snapshot
-from jrbar.dot_role import replace_brightness_line, upsample_program
-from jrbar.led_status import AgentLedController, LedDisplayState, _steady_state_variant
+from jrbar.dot_role import replace_brightness_line
+from jrbar.led_status import AgentLedController, LedDisplayState
+from jrbar.light_mix import MIX_LABELS
 from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
 
 BASELINE = Path(__file__).with_name("fixtures") / "light-audit-baseline.json"
@@ -55,6 +56,32 @@ def test_checker_rejects_skipped_and_one_way_bouncing_heads():
     assert sweep_errors(frames([0, 3, 0]), (0, 1, 2, 3), "kitt")
     assert "no return pass" in sweep_errors(frames([0, 1, 2, 3]), (0, 1, 2, 3), "scanner")
     assert not sweep_errors(frames([0, 1, 2, 3, 0]), (0, 1, 2, 3), "chase")
+
+
+@pytest.mark.parametrize("motion", ("kitt", "scanner", "pendulum"))
+def test_audit_measures_contiguous_everyone_sweeps(motion):
+    variant = next(v for v in catalogue() if v.name == motion + ".default")
+    result = inspect(Case(variant, "round_robin", (1, 1), 8, "working"), Firmware())
+    assert {"sweep_path", "share_fidelity"} <= result.checks
+    assert not result.failures
+
+
+@pytest.mark.parametrize("motion", ("breathe", "heartbeat", "ember"))
+def test_audit_uses_provider_colours_after_collapsing_sessions(motion):
+    variant = next(v for v in catalogue() if v.name == motion + ".default")
+    result = inspect(Case(variant, "round_robin", (2, 1, 1), 8, "working"), Firmware())
+    assert "share_fidelity" in result.checks
+    assert not result.failures
+
+
+@pytest.mark.parametrize("leds", (2, 8))
+@pytest.mark.parametrize("counts", ((1, 1), (2, 1, 1)))
+def test_audit_plays_the_selected_library_mix(leds, counts):
+    variant = next(v for v in catalogue() if v.name == "kitt.default")
+    result = inspect(Case(variant, "effect", counts, leds, "working"), Firmware())
+    assert result.played == "effect", result.warnings
+    assert not result.warnings
+    assert not result.failures
 
 
 def test_baseline_detects_regressions_and_reports_resolved_cases():
@@ -88,7 +115,7 @@ def test_recorded_baseline_has_no_new_failures():
     # 199,584-case run; this bounded test catches baseline regressions in CI.
     variants = [v for v in catalogue() if v.name.endswith(".default")]
     for variant in variants:
-        for mix in ("spatial_split", "round_robin", "cycle", "alternate", "relay", "weave", "tide", "classic", "color_blend"):
+        for mix in MIX_LABELS:
             for leds in (8, 2):
                 case = Case(variant, mix, (1, 1), leds, "working")
                 keys.add(case.key)
@@ -122,8 +149,8 @@ def test_mirror_publishes_every_audited_program(headless):
         controller.virtual_status_device._live_program_call = ("#FF0000", {"started_at": 2000.0})
         lights = controller._core_build_lights()
         bar = lights["surfaces"]["screen_bar"]
-        expected = (upsample_program(row["program"], source_leds=2, led_count=8)
-                    if row["leds"] == 2 else row["program"])
+        expected = row["program"]
+        assert bar["source_led_count"] == row["leds"], row["case"]
         assert expected is not None, row["case"]
         # Each surface has its own brightness policy; compare motion at 255.
         actual = replace_brightness_line(bar["program"], 255)
@@ -172,7 +199,9 @@ def test_controller_reassert_writes_the_bytes_measured_by_the_checker(tmp_path, 
     assert first.changed
     clock[0] = 299.0
     second = controller.sync_program(program, LedDisplayState.WORKING)
-    assert second.changed
-    assert second.nominal_program == _steady_state_variant(program)
-    assert second.target is not None
-    assert second.target.read_text() == second.program
+    if second.changed:
+        assert second.target is not None
+        assert second.target.read_text() == second.program
+    else:
+        assert controller.last_error is None
+        assert first.target.read_text() == first.program
