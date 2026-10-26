@@ -298,7 +298,9 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                     for key, value in census_seconds.items()} if census else None,
                   "cpu_threads": [{"name": value["name"], "seconds": value["seconds"] - census_thread_start.get(key, {}).get("seconds", 0)}
                     for key, value in thread_cpu().items()] if census else None,
-                  "source_commit": (root / "revision.txt").read_text().strip()}
+                  "source_commit": (root / "revision.txt").read_text().strip(),
+                  "workload_valid": (max(session_counts, default=0) == sessions and bool(admissions)
+                                     and set(admissions) == {"HookIngressDisposition.ACCEPTED"} and not errors)}
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         client.close()
         os.kill(os.getpid(), signal.SIGTERM)
@@ -343,6 +345,9 @@ def main():
     if args.child:
         child(root, args.seconds, args.sessions, args.trace, args.profile, args.census)
         return
+    ingress = root / "state/jrbar/hook-ingress.sock"
+    if len(os.fsencode(ingress)) >= 104:
+        parser.error("output path is too long for Darwin Unix sockets; choose a shorter path")
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
     shutil.copytree(args.source or repo / "src", root / "src", ignore=shutil.ignore_patterns("__pycache__"))
@@ -374,7 +379,10 @@ def main():
         result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=args.seconds + 180, check=False)
     if result.returncode != 0 or not (root / "report.json").exists():
         raise SystemExit(f"probe failed ({result.returncode}); inspect {root}")
-    print((root / "report.json").read_text())
+    report = (root / "report.json").read_text()
+    if not json.loads(report)["workload_valid"]:
+        raise SystemExit(f"probe workload failed; inspect {root / 'report.json'}")
+    print(report)
 
 
 if __name__ == "__main__":
