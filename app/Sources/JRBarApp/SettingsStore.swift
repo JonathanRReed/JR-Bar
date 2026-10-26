@@ -665,7 +665,7 @@ final class SettingsStore {
                                     keywords: $0.keywords, card: toy.id)
             }
         }
-        return entries.filter { $0.page != .integrations || t3Integration.status?.installed == true }
+        return entries
     }
 
     /// `searchEntries` with their words folded, rebuilt only when the

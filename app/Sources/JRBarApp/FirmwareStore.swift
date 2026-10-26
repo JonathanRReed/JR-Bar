@@ -7,7 +7,8 @@ import Observation
 ///
 /// The rules this store keeps, because nothing leaves the Mac by itself:
 ///
-/// - `firmware_status` is asked for only when the Devices page appears,
+/// - `firmware_status` is asked for when Devices or Integrations appears,
+///   with Integrations gated on connected, enabled hardware,
 ///   when the person presses Check again, and once when the daemon reports
 ///   a finished job. There is no timer here and none is started.
 /// - `firmware_update` is sent from exactly one place, `startUpdate`, and
@@ -89,11 +90,19 @@ final class FirmwareStore {
         }
     }
 
-    /// The Devices page appeared: take the state frame's job and read the
+    /// A device status page appeared: take the state frame's job and read the
     /// firmware status once.
     func pageAppeared(stateJob: FirmwareJob?) async {
         receive(job: stateJob, fromState: true)
         await refresh()
+    }
+
+    /// Reuse the device receipt without waking hardware that is off or absent.
+    func integrationsAppeared(devices: [CoreDevice], live: Bool, stateJob: FirmwareJob?) async {
+        guard live, devices.contains(where: {
+            ($0.kind == "pro" || $0.kind == "dot") && $0.enabled != false && $0.connected == true
+        }) else { return }
+        await pageAppeared(stateJob: stateJob)
     }
 
     /// The state frame's job moved. A finished one is read back once, so the

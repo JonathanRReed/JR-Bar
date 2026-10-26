@@ -458,43 +458,10 @@ final class NotchToy: Toy {
 
     // MARK: External providers
 
-    var isAlcoveRunning: Bool {
-        RunningApps.shared.isRunning(bundleID: AlcoveGeometry.bundleIdentifier)
-    }
-
-    var alcoveURL: URL? {
-        _ = workspaceVersion
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: AlcoveGeometry.bundleIdentifier)
-    }
-
-    var isBoringNotchRunning: Bool {
-        guard let id = boringNotchBundleID else { return false }
-        return RunningApps.shared.isRunning(bundleID: id)
-    }
-
-    /// boring.notch ships no bundle id we can pin, so it is read off the
-    /// app's own Info.plist — the way `FoldToy.bendyURL` resolves Bendy.
-    /// /Applications and ~/Applications are both probed, and a renamed
-    /// install still resolves.
-    private var boringNotchProbe: (id: String, path: URL)? {
-        for folder in ["/Applications", NSHomeDirectory() + "/Applications"] {
-            for name in ["boring.notch.app", "Boring Notch.app", "boringNotch.app"] {
-                let path = URL(fileURLWithPath: "\(folder)/\(name)")
-                if let id = ExternalFileMetadata.shared.bundleID(path) {
-                    return (id, path)
-                }
-            }
-        }
-        return nil
-    }
-
-    private var boringNotchBundleID: String? { boringNotchProbe?.id }
-
-    var boringNotchURL: URL? {
-        _ = workspaceVersion
-        guard let probe = boringNotchProbe else { return nil }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: probe.id) ?? probe.path
-    }
+    var isAlcoveRunning: Bool { ExternalProviders.alcove.running }
+    var alcoveURL: URL? { ExternalProviders.alcove.url }
+    var isBoringNotchRunning: Bool { ExternalProviders.boringNotch.running }
+    var boringNotchURL: URL? { ExternalProviders.boringNotch.url }
 
     /// The URL the "Open" button launches for the chosen provider.
     var externalURL: URL? {
@@ -509,6 +476,7 @@ final class NotchToy: Toy {
     /// island and opens that app; JR-Bar just hands the notch back to
     /// `reconcile`.
     func setProvider(_ provider: NotchProvider) {
+        guard provider == .jrbar || externalURLFor(provider) != nil else { return }
         store?.state.notch.provider = provider
         store?.save()
         guard provider != .jrbar else {

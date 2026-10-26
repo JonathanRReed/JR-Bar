@@ -1836,10 +1836,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// The meter strip: one cell per provider the panel shows (Settings ›
-    /// Usage, "Show in the panel", in that order), each metered by its
-    /// primary window — the 5 h one when the provider has it, else the
-    /// first it reports. Providers that report no window at all (signed
+    /// The meter strip: one cell per tracked provider selected under
+    /// Providers > Menu bar, in the saved order, each metered by its
+    /// most constrained applicable window. Providers that report no window (signed
     /// out, disabled) are left out rather than drawn empty. Past
     /// `maxMeters` the rest become "+n". A stale figure is drawn faint,
     /// and a window whose reset has passed is drawn unread.
@@ -1954,7 +1953,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// strip is empty for every provider whose only entry is the
     /// preference's own default.
     nonisolated static func meteredProviders(preferred: [String], usage: [CoreProviderUsage]) -> [CoreProviderUsage] {
-        let metered = usage.filter { !$0.windows.isEmpty }
+        var accounts: [String: CoreProviderUsage] = [:]
+        var order: [String] = []
+        for provider in usage where !provider.windows.isEmpty {
+            if accounts[provider.id] == nil { order.append(provider.id) }
+            if accounts[provider.id] == nil || provider.identity == provider.id {
+                accounts[provider.id] = provider
+            }
+        }
+        let metered = order.compactMap { accounts[$0] }
         guard !preferred.isEmpty else { return metered }
         var seen = Set<String>()
         var result: [CoreProviderUsage] = []

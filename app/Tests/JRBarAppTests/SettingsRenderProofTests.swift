@@ -24,6 +24,43 @@ struct SettingsRenderProofTests {
 
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
+    @Test("owner feedback settings", .enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
+    func ownerFeedbackSettings() async throws {
+        let firmwareLink = FakeFirmwareLink()
+        let firmware = FirmwareStore(send: firmwareLink.send)
+        let fixture = try Self.fixture(firmware: firmware)
+        defer { fixture.toys.shutdown() }
+        let pro = try #require(fixture.settings.deviceEntries.first { $0.kind == "pro" })
+        let dot = try #require(fixture.settings.deviceEntries.first { $0.kind == "dot" })
+        firmwareLink.statusOverride = SettingsDocument(FakeFirmwareLink.json(FakeFirmwareLink.proReply))
+            .replacing("devices.0.id", with: .string(pro.id)).root
+        await firmware.refresh()
+        var deck = DeckState(device: DeckDevice(connected: false))
+        deck.settings.enabled = true
+        fixture.core.handle(.connected)
+        fixture.core.apply(.state(CoreState(devices: [
+            CoreDevice(id: pro.id, kind: "pro", name: "SidePulse Pro", connected: true, enabled: true),
+            CoreDevice(id: dot.id, kind: "dot", name: "PulseDot", connected: false, enabled: true),
+        ], health: .object(["hooks": .object(["claude": .string("installed"), "codex": .string("installed")])]), deck: deck)))
+        fixture.settings.t3Integration.receive(T3CodeStatus(present: true, enabled: true, readOnly: true,
+                                                          running: true, installed: true))
+        fixture.toys.state.confetti.enabled = true
+        for dark in [false, true] {
+            try await U5Proof.render(VStack(alignment: .leading, spacing: 16) {
+                IntegrationsPage(store: fixture.settings)
+            }.padding(24), name: "owner-integrations", width: 620, dark: dark)
+            try await U5Proof.render(VStack {
+                ToysPage(store: fixture.settings)
+            }.padding(24), name: "owner-toy-rows", width: 620, dark: dark)
+            try await U5Proof.render(SettingsGroup {
+                NotchRendererPicker(selection: .constant(.jrbar), alcoveInstalled: true, boringNotchInstalled: false)
+            }.padding(24), name: "owner-render-with", width: 620, dark: dark)
+            try await U5Proof.render(SettingsGroup {
+                NotchRendererPicker(selection: .constant(.boringNotch), alcoveInstalled: false, boringNotchInstalled: false)
+            }.padding(24), name: "owner-render-with-missing", width: 620, dark: dark)
+        }
+    }
+
     @Test("the mock's notification setting survives decoding and binding")
     func notificationBinding() throws {
         let fixture = try Self.fixture()

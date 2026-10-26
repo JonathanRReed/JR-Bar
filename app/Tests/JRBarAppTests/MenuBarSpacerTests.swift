@@ -799,9 +799,9 @@ struct MenuBarSpacerTests {
                         ? StatusItemController.folded(source, spacer: spacer, chevron: true, hintTint: .white)
                         : source
                     let title = StatusItemController.labelTitle(label)
-                    let stripWidth = glyphWidth > 18 ? glyphWidth : 0
-                    let length = StatusItemController.itemLength(hasLabel: !label.isEmpty, spacer: spacer,
-                                                                stripWidth: stripWidth, glyphWidth: glyphWidth)
+                    let contentWidth = StatusItemController.paintedLength(imageWidth: glyphWidth,
+                                                                          label: label.isEmpty ? nil : label)
+                    let length = StatusItemController.itemLength(spacer: spacer, contentWidth: contentWidth)
                     let width: CGFloat
                     if length == NSStatusItem.variableLength {
                         width = image.size.width + title.size().width + 8

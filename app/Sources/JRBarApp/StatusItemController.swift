@@ -77,6 +77,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The Menu Bar utility's hooks: a click on the blank part of the
     /// item, and the "Hidden Items" submenu it builds for the menu.
     var onBoundaryClick: (@MainActor () -> Void)?
+    var onBoundaryWidthChange: (@MainActor () -> Void)?
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
     /// The hidden run's state for the tooltip and the chevron: how many
     /// items are tucked away and whether they are out right now.
@@ -552,7 +553,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
 
     /// The icon's own width — the part of the item that is not spacer.
     var boundaryGlyphLength: CGFloat {
-        naturalWidth > 0 ? naturalWidth : NSStatusBar.system.thickness
+        let imageWidth = naturalWidth > 0 ? naturalWidth : NSStatusBar.system.thickness
+        return Self.paintedLength(imageWidth: imageWidth, label: currentLabel)
+    }
+
+    static func paintedLength(imageWidth: CGFloat, label: String?) -> CGFloat {
+        imageWidth + (label.map { Self.labelTitle($0).size().width + 8 } ?? 0)
     }
 
     /// The utility's write: claim `length` points of blank bar left of
@@ -571,8 +577,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// glyph resolves to the bar's label colour, not the app's.
     var barAppearance: NSAppearance? { statusItem.button?.effectiveAppearance }
 
-    /// The one place the button's pixels are written    /// The one place the button's pixels are written — image and label
-    /// alike.
+    /// Writes the button's image and label.
     private func dressButton() {
         guard let button = statusItem.button else { return }
         if button.image !== wornImage { button.image = wornImage }
@@ -591,20 +596,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// Every slot-width write goes through here, so every path lands on
     /// the same natural width.
     private func syncLength() {
-        let length = Self.itemLength(hasLabel: currentLabel != nil,
-                                     spacer: boundarySpacer, stripWidth: currentWidth,
-                                     glyphWidth: naturalWidth)
+        let length = Self.itemLength(spacer: boundarySpacer, contentWidth: boundaryGlyphLength)
         if statusItem.length != length { statusItem.length = length }
     }
 
-    /// Labels size themselves. Other styles keep their natural image width
-    /// as the spacer folds, so native centering cannot shift the icon.
-    static func itemLength(hasLabel: Bool, spacer: CGFloat,
-                           stripWidth: CGFloat, glyphWidth: CGFloat) -> CGFloat {
-        if hasLabel { return NSStatusItem.variableLength }
-        if spacer > 0 { return (stripWidth > 0 ? stripWidth : glyphWidth) + spacer }
-        if stripWidth > 0 { return stripWidth }
-        if glyphWidth > 0 { return glyphWidth }
+    /// The image and title share one measured width with the divider.
+    static func itemLength(spacer: CGFloat, contentWidth: CGFloat) -> CGFloat {
+        if contentWidth > 0 { return contentWidth + spacer }
         return NSStatusItem.squareLength
     }
 
@@ -774,6 +772,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// renderer hands back the cached image for a repeated spec.
     private func redraw() {
         guard let button = statusItem.button else { return }
+        let previousGlyphLength = boundaryGlyphLength
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
         let plan = Self.plan(style: iconStyle, ringFraction: ringFraction, tint: tint, isPulsing: isPulsing,
                              meters: meters, meterOverflow: meterOverflow, dotState: dotState,
@@ -810,6 +809,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))
         }
         currentLabel = label
+        // Resize the reservation before AppKit sees the wider image or title.
+        // Otherwise the old spacer plus the new face can overflow our own item.
+        if boundaryGlyphLength != previousGlyphLength { onBoundaryWidthChange?() }
         // The fold wears the new image (folded or plain), then the label
         // and the length follow through the same choke points.
         refold()

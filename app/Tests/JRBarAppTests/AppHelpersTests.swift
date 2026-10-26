@@ -512,10 +512,18 @@ import JRBarUI
         #expect(shown.map(\.id) == ["claude"])
     }
 
-    @Test func twoInstancesBothSurvive() {
+    @Test func oneMeterPerProviderPrefersTheDefaultAccount() {
         let shown = AppDelegate.meteredProviders(
             preferred: ["claude"],
-            usage: [usage("claude"), usage("claude", instance: "work")])
-        #expect(shown.map(\.identity) == ["claude", "claude|work"])
+            usage: [usage("claude", instance: "work"), usage("claude")])
+        #expect(shown.map(\.identity) == ["claude"])
+    }
+
+    @Test func aNamedAccountCanSupplyTheProvidersOnlyReading() {
+        let shown = AppDelegate.meteredProviders(preferred: [], usage: [
+            usage("claude", windows: []), usage("claude", instance: "work"),
+            usage("claude", instance: "other"),
+        ])
+        #expect(shown.map(\.identity) == ["claude|work"])
     }
 }

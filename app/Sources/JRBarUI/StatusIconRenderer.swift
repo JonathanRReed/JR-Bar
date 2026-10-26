@@ -59,7 +59,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     public var subtitle: String {
         switch self {
         case .agents: return "One dot per live session, coloured by what it is doing; the mark alone when nothing runs."
-        case .meters: return "A column per provider checked under Settings › Agents & Usage, plus a state dot."
+        case .meters: return "A column per provider selected under Providers > Menu bar, plus a state dot."
         case .metersPercent: return "The same columns, with the first provider's remaining percent — or its reset countdown when that is the more urgent number."
         case .compactPercent: return "The tightest window's remaining percent beside its provider's mark, tinted by pace; shows the reset countdown when it is nearly spent or nearly due."
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
@@ -218,8 +218,8 @@ public struct StatusIconSpec: Hashable, Sendable {
     /// The aggregate tint (working cyan, ask orange, ...); nil keeps the
     /// menu bar's own colour through a template image.
     public var tintHex: String?
-    /// The meter styles: one column per provider shown in the panel, in
-    /// the panel's order, capped by `StatusIconRenderer.maxMeters`.
+    /// One column per tracked provider selected for the menu bar, in the
+    /// saved provider order, capped by `StatusIconRenderer.maxMeters`.
     public var meters: [StatusMeter]
     /// Providers past the cap: drawn as "+2".
     public var overflow: Int
@@ -298,11 +298,11 @@ public final class StatusIconRenderer: @unchecked Sendable {
     // busy menu bar, an item much past 80 pt is given no slot at all and
     // macOS hides it behind the "«" — measured on the owner's Mac, where a
     // glyph-and-bar cell per provider (115 pt for three) never appeared.
-    // So a provider costs one 3.5 pt column: five of them, the dot and the
-    // insets come to about 43 pt, narrower than the clock.
+    // So a provider costs one 3.5 pt column: six of them, the dot and the
+    // insets come to about 48 pt, narrower than the clock.
     public static let barHeight: CGFloat = 22
     /// Providers past this many become "+n".
-    public static let maxMeters = 5
+    public static let maxMeters = 6
     /// Sessions past this many become five dots and "+n".
     public static let maxSessionDots = 6
     static let edgeInset: CGFloat = 2
@@ -374,7 +374,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
             width += CGFloat(spec.meters.count) * meterBarWidth + CGFloat(spec.meters.count - 1) * meterBarGap
         }
         // The percent style spells out the leading provider — the one at
-        // the top of Settings › Agents & Usage. Every figure is in the tooltip;
+        // the saved provider order. Every figure is in the tooltip;
         // printing them all is what made the strip too wide to survive.
         if spec.style == .metersPercent, let leading = spec.meters.first {
             width += percentGap + glyphBox + glyphGap + percentWidth(leading)

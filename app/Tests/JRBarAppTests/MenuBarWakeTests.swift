@@ -358,7 +358,7 @@ struct MenuBarWakeTests {
         rig.fresh(after: 0.5)
         #expect(rig.hider.wake.verdict == .reseated(.overlapped(["Typeless"])))
         #expect(rig.host.spacers.count == before + 1)
-        #expect(rig.host.spacers.last == MenuBarUtility.boundaryAffordance, "folded to the floor")
+        #expect(rig.host.spacers.last == 0, "a glyph-only recovery must not exceed its assigned width")
         // The next pass writes the spacer again, at once.
         rig.fresh(after: 0.4)
         #expect(rig.host.spacers.last == settledSpacer)

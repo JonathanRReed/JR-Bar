@@ -91,12 +91,11 @@ struct MenuBarStylePicker: View {
     /// The configured provider colours, read as one path.
     private var colors: SettingsDocument { store.values.document(["colors.agent_colors"]) }
 
-    /// The providers the menu bar would meter now: the panel's, in its
-    /// order; empty while the core is away.
+    /// The tracked providers selected for the menu bar, in its saved order.
     private var shownProviders: [CoreProviderUsage] {
         let preferred = store.values.strings("usage_graph_providers") ?? []
         let providers = AppDelegate.meteredProviders(preferred: preferred, usage: store.isLive ? store.core.usage : [])
-        return store.menuBarProviders.arranged(providers, provider: { $0.id })
+        return store.providerList.arranged(providers, provider: { $0.id }, surface: .menuBar)
     }
 
     /// The meters as the menu bar would draw them now; a sample while the
@@ -114,8 +113,8 @@ struct MenuBarStylePicker: View {
     private func makeSessions(colors: SettingsDocument) -> [SessionDot] {
         let live = store.isLive ? store.core.sessions : []
         guard store.isLive else { return StatusItemController.sampleSessionDots }
-        let ordered = store.menuBarProviders.arranged(live.sorted { Self.rank($0) < Self.rank($1) },
-                                                      provider: { $0.provider })
+        let ordered = store.providerList.arranged(live.sorted { Self.rank($0) < Self.rank($1) },
+                                                  provider: { $0.provider }, surface: .menuBar)
         return ordered.map { session in
             let activity = SessionActivity.reduce(session)
             let state: StatusDotState = session.ask != nil || activity == .waiting ? .ask

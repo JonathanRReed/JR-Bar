@@ -34,12 +34,12 @@ extension MenuBarUtility {
     }
 
     /// The host's spacer for a hider length: the length less the icon's
-    /// own width. Hidden items retain the click affordance; a reveal
-    /// folds the blank space completely. Before the first write it keeps
-    /// the affordance floor. Pure so a test pins it.
+    /// own width. The affordance uses only room inside the assigned length.
+    /// Before the first write it keeps the affordance floor.
     nonisolated static func standingSpacer(assigned: CGFloat?, glyph: CGFloat, revealed: Bool = false) -> CGFloat {
+        guard !revealed else { return 0 }
         guard let assigned else { return boundaryAffordance }
-        return max(revealed ? 0 : boundaryAffordance, assigned - glyph)
+        return max(0, assigned - glyph).rounded(.down)
     }
 
     /// The status items earlier builds registered and this one never
@@ -552,12 +552,17 @@ protocol MenuBarBoundaryHost: AnyObject {
     /// glyph resolves to the bar's label colour, not the app's.
     var barAppearance: NSAppearance? { get }
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
+    var onBoundaryWidthChange: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }
     var hiddenRevealed: Bool { get set }
 }
 
 extension MenuBarBoundaryHost {
+    var onBoundaryWidthChange: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
     var boundaryHoverFrame: NSRect? {
         guard let frame = boundaryFrame else { return nil }
         let height = CGDisplayBounds(CGMainDisplayID()).height

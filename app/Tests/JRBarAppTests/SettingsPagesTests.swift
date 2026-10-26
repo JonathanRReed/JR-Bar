@@ -131,9 +131,10 @@ extension SettingsPagesTests {
         #expect(store.subpage == "keepAwake")
     }
 
-    @Test func t3IntegrationAppearsOnlyWhenInstalled() {
+    @Test func integrationsRemainAvailableWithoutT3Code() {
         let store = SettingsStore(core: CoreModel())
-        #expect(!store.searchEntries.contains { $0.page == .integrations })
+        #expect(store.searchEntries.contains { $0.page == .integrations && $0.title == "SidePulse Pro" })
+        #expect(store.searchEntries.contains { $0.page == .integrations && $0.title == "T3 Code" && $0.group == "Connections" })
         store.t3Integration.receive(T3CodeStatus(present: false, enabled: true, readOnly: true,
                                                 observation: nil, running: false, installed: true))
         #expect(store.searchEntries.contains { $0.page == .integrations })

@@ -112,16 +112,8 @@ struct NotchControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Picker(selection: toy.providerBinding) {
-                Text("JR-Bar").tag(NotchProvider.jrbar)
-                Text("Alcove").tag(NotchProvider.alcove)
-                Text("Boring Notch").tag(NotchProvider.boringNotch)
-            } label: {
-                SettingLabel(title: "Render with",
-                             subtitle: "Let Alcove or Boring Notch draw the island instead.")
-            }
-            .pickerStyle(.menu)
-            .padding(.vertical, SettingsMetrics.rowPadding)
+            NotchRendererPicker(selection: toy.providerBinding, alcoveInstalled: toy.alcoveURL != nil,
+                                boringNotchInstalled: toy.boringNotchURL != nil)
             // Another island running beside ours: say so, offer the pick.
             RivalGuardView(role: .notch,
                            active: toy.settings.enabled && toy.settings.provider == .jrbar,
@@ -503,6 +495,24 @@ struct NotchControlsView: View {
     private func externalNote(installed: Bool, running: Bool, name: String, link: URL) -> some View {
         NotchExternalProviderNote(installed: installed, running: running, name: name,
                                   link: link, open: { toy.openExternal() })
+    }
+}
+
+struct NotchRendererPicker: View {
+    @Binding var selection: NotchProvider
+    let alcoveInstalled: Bool
+    let boringNotchInstalled: Bool
+
+    var body: some View {
+        Picker(selection: $selection) {
+            Text("JR-Bar").tag(NotchProvider.jrbar)
+            ExternalProviderOption(name: "Alcove", value: NotchProvider.alcove, installed: alcoveInstalled)
+            ExternalProviderOption(name: "Boring Notch", value: NotchProvider.boringNotch, installed: boringNotchInstalled)
+        } label: {
+            SettingLabel(title: "Render with", subtitle: "Choosing another app opens it and parks JR-Bar's island.")
+        }
+        .pickerStyle(.menu)
+        .padding(.vertical, SettingsMetrics.rowPadding)
     }
 }
 

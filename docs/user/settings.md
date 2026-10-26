@@ -1,19 +1,40 @@
 # Finding a setting
 
-Settings has seven pages. The things most people touch are on the page. The
-rest sit behind one **Advanced** row at the bottom of the page that holds
-them. Search (⌘F in the Settings window) looks inside Advanced too, and
-opens it when you pick a result.
+Settings groups controls by what they change. Less-used controls sit behind
+Advanced on the relevant page. Search (⌘F) includes those controls and opens
+their page when you choose a result.
 
-| Page | What is on it | Behind Advanced |
-| --- | --- | --- |
-| **General** | Launch at login, the menu bar icon, power (keep the Mac awake), updates | Run Setup again, the beta channel, diagnostics and the core log, copy a report, export and import, reset a page |
-| **Agents & Usage** | Which agents report in, sub-agent asks, which providers JR-Bar may ask for usage, menu bar meters, graph range, plan limits, quota alerts | How long an ask stays open, agent update checks, which transcripts are read, provider status pages, the Claude Code status line, usage hooks, kept history |
-| **Alerts & Sounds** | The alerts profile, the finish banner, quiet hours, Focus, a sound for each moment, volume, the phone alert | Quiet-session banner, the calendar glow, escalation timing, battery lights, where sounds play, your own sounds, the webhook |
-| **Devices & Lighting** | Each SidePulse and its firmware, the Pro and Dot, Creator Micro 2, Stream Deck, the Screen Bar, provider and state colours, blend, dimming, scenes | Calibration profiles, pulse range, Auto-dim, ambient cues |
-| **Utilities & Toys** | The Menu Bar, Dock, Keep Awake, Agent Overview and Notch utilities, then the toys | None |
-| **Shortcuts** | Global keys, app actions, quick toggles | `jrbar://` links, the command-line tool |
-| **Remote** | Other Macs running JR-Bar, the local status endpoint, cloud ingest | None |
+| Page | Controls |
+| --- | --- |
+| General | Launch at login, menu bar icon, updates |
+| Providers | Tracking, usage consent, panel and menu bar visibility, provider details |
+| Alerts & Sounds | Notifications, quiet hours, Focus, sounds, phone alerts |
+| Shortcuts | Global keys, app actions, quick toggles |
+| Devices | SidePulse, PulseDot, Creator Micro 2, Screen Bar, lighting and firmware |
+| Notch & Shelf | Island, media, shelf, Calendar and Reminders |
+| Utilities & Toys | Menu Bar, Dock, Keep Awake, Agent Overview, Fold, Aquarium, Notch Buddy and Confetti |
+| Remote | Other Macs, the local status endpoint, Stream Deck access and cloud ingest |
+| Privacy | Transcripts, presence, history and optional network requests |
+| Integrations | Connection status, compatible apps and system access, with links to their controls |
+| Advanced | Setup, release channel, diagnostics, export, import and reset |
+
+The meter styles show one column for each provider with a usage window that
+is tracked and selected under Providers > Menu bar. They show at most six
+providers in the saved provider order, then an overflow count. The shared
+`StatusIconRenderer.maxMeters` constant sets this limit for the menu bar,
+Settings preview and Setup preview. A provider without a quota window has no
+column. For multiple accounts, JR-Bar uses the default account when it has
+a usage window, otherwise the first measured account.
+
+Render with hands the selected utility to another installed app. JR-Bar
+parks its own renderer and opens that app; it does not send its island,
+previews or agents to the other app. Missing apps say Not installed and
+cannot be selected. Choose JR-Bar to bring its renderer back.
+
+Integrations reads existing connection facts. A disabled device says Off;
+it does not get probed to fill this page. Firmware is read once on page open
+for connected, enabled hardware, or says Firmware not read. Stream Deck's Serving
+status confirms the loopback endpoint, not a connected physical deck.
 
 ## Utility and toy controls
 
@@ -60,25 +81,12 @@ When a waiting session is named in the Now page's header, its row stays
 below with the available answer and detail controls. Open the details to
 read the request; opening them sends no answer.
 
-## Where the old pages went
+## Older links
 
-Earlier builds had twelve pages. The names still work in links
-(`jrbar://settings/usage`), in scripts and in the command palette, and land
-on the right place.
-
-| Old page | Now |
-| --- | --- |
-| Agents | Agents & Usage |
-| Usage | Agents & Usage, below the agents |
-| Notifications & Focus | Alerts & Sounds, apart from Power |
-| Sounds | Alerts & Sounds, below the alerts |
-| Devices & Screen Bar | Devices & Lighting |
-| Lighting | Devices & Lighting, below the devices |
-| Utilities | Utilities & Toys |
-| Toys | Utilities & Toys, below the utilities |
-| Remote | Remote, apart from the phone alert and the webhook, which are on Alerts & Sounds |
-| Advanced | General, behind Advanced |
-| Power (was on Notifications & Focus) | General |
+Earlier page names still work in links such as `jrbar://settings/usage`,
+scripts and the command palette. Agents and Usage open Providers; Lighting
+opens Devices; Toys opens Utilities & Toys; Notifications opens Alerts &
+Sounds. Notch has its own Notch & Shelf page.
 
 ## Menu bar item shortcuts
 

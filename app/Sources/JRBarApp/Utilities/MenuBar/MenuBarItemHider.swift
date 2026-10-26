@@ -339,6 +339,16 @@ final class MenuBarItemHider {
     private var seenGlyph = MenuBarControlFrames.glyphLength
     private var writtenGlyph = MenuBarControlFrames.glyphLength
 
+    /// The host keeps the assigned total length while its painted part changes.
+    /// Account for that before judging a frame against the last spacer write.
+    func glyphWidthChanged(to width: CGFloat) {
+        seenGlyph = width
+        writtenGlyph = width
+        pendingLength = nil
+        shrinkWantedSince = nil
+        if effectiveRevealedSections.contains(.hidden) { assign(.hidden, length: width) }
+    }
+
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
     private let listingWait = MenuBarListingWait()
