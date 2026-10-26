@@ -2,6 +2,30 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.10.0
+
+JR-Bar 0.10.0 makes the lights do what you chose, keeps Claude usage current, groups related agents, and does the same work with far less CPU and memory. The panel, Settings and Studio were rebuilt around one design system.
+
+<!-- Measured CPU and memory numbers are added after the 24-hour run. -->
+
+- An animation you choose for a provider always plays for that provider. The turn-length ember only appears for providers left on Automatic, and cues such as celebrations now tint the running animation for a moment instead of replacing it.
+- Lights no longer freeze on one colour: a renewed effect is not skipped as a duplicate, and re-sending a breathing program keeps both halves of the breath.
+- Mix decides what plays when different providers work at once. Split, One at a Time and Everyone give each provider a share that plays its own animation; Alternate, Relay, Weave and Tide mix the provider colours. Smooth and Status Only hold still, and asks always win. When a combination cannot play exactly, Studio says what plays instead.
+- Old Spotlight settings move to One at a Time, which keeps your lights looking the same.
+- Related sessions count as one agent on the strip and in the panel: a provider's own sub-agents, and T3 Code threads that start agents from other providers. A worker whose parent can't be proven shows dimmed and takes no share of the strip, but its asks still reach you.
+- Claude usage stays current when Claude Code renews its sign-in. JR-Bar reads the sign-in through the system tool Claude Code itself uses, never in a way that can show a background dialog, and names the real cause when access is lost.
+- Each provider row is honest about its state: a quota source that isn't running, a failing source with its fix, a window that reset since the last reading, and a provider that is no longer installed. Antigravity offers Open Antigravity, and providers installed outside /Applications are found.
+- One provider list decides what JR-Bar tracks, what the menu bar icon shows and what the panel shows, in one order you set by dragging, in Settings or in place from the panel.
+- Token history keeps hour, day and model totals up to date instead of rereading every transcript. The first index after upgrading builds once in a separate low-priority process, and a switch turns token history off completely.
+- Turning a feature off now stops everything it started. The aquarium, the notch island, the Screen Bar, Fold, Buddy, sounds, cues, remote peers and each LED device release their windows, timers, sensors and background jobs when off.
+- The daemon no longer loads AppKit, sends only the parts of its state that changed, lists processes without forking `ps`, and writes far less to disk. The app stopped leaking CoreAudio listeners, the Screen Bar plays precomputed animation instead of redrawing every frame, and menu bar scanning reacts to changes instead of polling.
+- The panel shows agents first, groups that expand, 5h and 7d usage each with its own number, and an Edit mode. Option-Command-J opens the panel and Option-Command-L opens Studio; both can be turned off or changed in Settings › Shortcuts.
+- Settings has native pages for General, Providers, Devices, Alerts & Sounds, Notch & Shelf, Utilities & Toys, Shortcuts, Remote, Privacy, Integrations and Advanced. T3 Code is found automatically under Integrations. Removing an agent's hooks asks first.
+- Studio is the home of everything about light: provider animations and colours, Mix, cues, state colours, dimming, calibration profiles, scenes, assignments and per-device overrides, with a live preview from the daemon.
+- The notch keeps its look, with cleaner agent rows, groups, honest stale readings and quicker, steadier motion. Return answers the ask on screen; Space no longer approves an ask.
+- The Usage Center has a provider sidebar, an overview, and a token chart with honest scanning, stale and empty states. Cost is marked as an estimate and cache reads are labelled.
+- Answering from a Stream Deck key or `jrbar serve` requires turning on Answer from a key.
+
 ## 0.9.17.2
 
 - Knight Rider, Scanner and Pendulum clear inherited light from the previous effect and offer a Background glow control, defaulting to a dark background.
