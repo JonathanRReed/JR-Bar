@@ -119,7 +119,7 @@ def test_the_keepalive_waits_for_the_update(tmp_path: Path) -> None:
 
 
 def test_the_hardware_writer_pauses_while_anything_is_held(tmp_path: Path) -> None:
-    from jrbar.status_bar_legacy import StatusBarController
+    from jrbar.daemon_controller import StatusBarController
 
     class Inputs:
         app_terminating = False

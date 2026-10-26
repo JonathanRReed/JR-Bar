@@ -154,6 +154,7 @@ _PRIVILEGED_COMMANDS: Final = (
     # Power, presence and lifetime.
     "set_closed_lid_policy",
     "presence",
+    "environment",
     "reset_receipt",
     "reset_status",
     "audit_export",

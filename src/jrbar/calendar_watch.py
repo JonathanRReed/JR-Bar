@@ -28,7 +28,7 @@ _store = None
 
 def _eventkit():
     try:
-        import EventKit
+        from . import native_eventkit as EventKit
 
         return EventKit
     except Exception as exc:  # pragma: no cover - environment-specific
@@ -158,7 +158,7 @@ def next_event_start(within_minutes: float):
     if authorization_status() != AUTH_AUTHORIZED:
         raise CalendarUnavailableError("calendar access not granted")
     try:
-        from Foundation import NSDate
+        from .native_eventkit import Date as NSDate
 
         store = _shared_store()
         now = NSDate.date()

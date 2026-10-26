@@ -609,28 +609,30 @@ def running_app_name() -> str | None:
     On an installed deployment the daemon is the ``jrbar-core`` helper app
     inside JR-Bar.app, so its own bundle name is the row to turn on.
     """
-    try:
-        from Foundation import NSBundle
+    import plistlib
+    import sys
+    from pathlib import Path
 
-        bundle = NSBundle.mainBundle()
-        if bundle is None:
+    for parent in Path(sys.executable).parents:
+        if parent.suffix != ".app":
+            continue
+        try:
+            with (parent / "Contents" / "Info.plist").open("rb") as stream:
+                info = plistlib.load(stream)
+            for key in ("CFBundleDisplayName", "CFBundleName"):
+                value = info.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return parent.stem or None
+        except (OSError, ValueError):
             return None
-        for key in ("CFBundleDisplayName", "CFBundleName"):
-            value = bundle.objectForInfoDictionaryKey_(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        path = bundle.bundlePath()
-        if isinstance(path, str) and path.endswith(".app"):
-            return os.path.basename(path)[: -len(".app")] or None
-    except Exception:
-        return None
     return None
 
 
 def frontmost_application() -> tuple[str | None, int | None]:
     """(bundle id, pid) of the frontmost application, or (None, None)."""
     try:
-        from AppKit import NSWorkspace
+        from .native_applications import Workspace as NSWorkspace
 
         application = NSWorkspace.sharedWorkspace().frontmostApplication()
         if application is None:
@@ -885,14 +887,14 @@ def raise_application(bundle_id: object, timeout_seconds: float = 2.0) -> bool:
     if type(bundle_id) is not str or not bundle_id:
         return False
     try:
-        from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication
+        from .native_applications import RunningApplication as NSRunningApplication
 
         running = list(
             NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle_id)
         )
         if not running:
             return False
-        running[0].activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+        running[0].activateWithOptions_(1)
     except Exception:
         return False
     deadline = time.monotonic() + max(0.0, timeout_seconds)
@@ -908,7 +910,7 @@ def post_answer_key(pid: int, key_code: int) -> None:
     if type(pid) is not int or pid <= 0 or type(key_code) is not int:
         raise AnswerRefusal("send_failed", "Invalid keystroke target.", "bad_target")
     try:
-        from Quartz import (
+        from .native_events import (
             CGEventCreateKeyboardEvent,
             CGEventPostToPid,
             CGEventSetFlags,
@@ -977,7 +979,7 @@ def post_answer_text(pid: int, text: str) -> None:
     if type(pid) is not int or pid <= 0 or type(text) is not str or not text:
         raise AnswerRefusal("send_failed", "Invalid keystroke target.", "bad_target")
     try:
-        from Quartz import (
+        from .native_events import (
             CGEventCreateKeyboardEvent,
             CGEventKeyboardSetUnicodeString,
             CGEventPostToPid,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from jrbar.status_bar_legacy import refresh_timing_line
+from jrbar.daemon_controller import refresh_timing_line
 
 
 def _fields(line: str) -> dict[str, int]:

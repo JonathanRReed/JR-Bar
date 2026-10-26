@@ -17,8 +17,8 @@ from test_core_runtime import _effect_pack_payload, _effects_daemon, _PackReads
 from test_refresh_budget import _refreshable, _tick
 
 from jrbar import core_runtime
+from jrbar import daemon_controller as legacy
 from jrbar import settings as settings_module
-from jrbar import status_bar_legacy as legacy
 from jrbar.persistence_writer import PersistenceDisposition
 from jrbar.settings import SettingsConcurrentWriteError, SettingsWriteRefusedError
 

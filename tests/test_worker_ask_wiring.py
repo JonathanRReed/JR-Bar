@@ -12,7 +12,7 @@ from jrbar.settings import AgentMonitorSettings
 
 def test_the_ingress_reads_the_live_sub_agent_ask_setting(monkeypatch) -> None:
     try:
-        from jrbar import status_bar_legacy
+        from jrbar import daemon_controller
     except SystemExit as exit_:
         pytest.skip(str(exit_))
 
@@ -25,9 +25,9 @@ def test_the_ingress_reads_the_live_sub_agent_ask_setting(monkeypatch) -> None:
         def start(self):
             return "socket"
 
-    monkeypatch.setattr(status_bar_legacy, "HookIngressService", _Service)
+    monkeypatch.setattr(daemon_controller, "HookIngressService", _Service)
     monkeypatch.setattr(
-        status_bar_legacy,
+        daemon_controller,
         "AppOwnedHookIngressProcessor",
         lambda *args, **kwargs: object(),
     )
@@ -41,7 +41,7 @@ def test_the_ingress_reads_the_live_sub_agent_ask_setting(monkeypatch) -> None:
         _record_hook_ingress_receipt=lambda receipt: None,
     )
 
-    status_bar_legacy.StatusBarController.start_hook_ingress(controller)
+    daemon_controller.StatusBarController.start_hook_ingress(controller)
 
     reader = built[0]["subagent_asks_alert"]
     assert reader() is False

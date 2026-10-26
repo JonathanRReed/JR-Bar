@@ -36,7 +36,7 @@ class _NativeMacBridge:
     """Small lazy PyObjC boundary; importing this module remains portable."""
 
     def open_app(self, bundle_id: str) -> str:
-        from AppKit import NSWorkspace
+        from .native_applications import Workspace as NSWorkspace
 
         workspace = NSWorkspace.sharedWorkspace()
         app_url = workspace.URLForApplicationWithBundleIdentifier_(bundle_id)
@@ -45,8 +45,9 @@ class _NativeMacBridge:
         return "opened" if workspace.openURL_(app_url) else "open_failed"
 
     def post_shortcut(self, bundle_id: str, key_code: int, modifiers: tuple[str, ...]) -> str:
-        from AppKit import NSRunningApplication, NSWorkspace
-        from Quartz import (
+        from .native_applications import RunningApplication as NSRunningApplication
+        from .native_applications import Workspace as NSWorkspace
+        from .native_events import (
             CGEventCreateKeyboardEvent,
             CGEventPostToPid,
             CGEventSetFlags,

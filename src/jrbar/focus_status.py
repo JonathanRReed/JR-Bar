@@ -101,9 +101,9 @@ def _load_focus_status_center(
         return None
     try:
         if objc_loader is None:
-            import objc
+            from .native_process_info import FocusCenter
 
-            bridge = objc
+            return FocusCenter.defaultCenter()
         else:
             bridge = objc_loader()
         # scan_classes=False is load-bearing: the default scan wraps every

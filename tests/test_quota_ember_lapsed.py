@@ -104,7 +104,7 @@ def test_an_empty_lane_never_keeps_a_standing_exhaustion_light() -> None:
 
 
 def test_the_runway_led_program_reads_its_state_once_and_survives_a_lapse() -> None:
-    from jrbar import status_bar_legacy
+    from jrbar import daemon_controller
 
     calls: list[int] = []
     states: list[tuple[float, str] | None] = [(0.6, "#D97757"), None]
@@ -114,8 +114,8 @@ def test_the_runway_led_program_reads_its_state_once_and_survives_a_lapse() -> N
         return states[0]
 
     controller = SimpleNamespace(quota_runway_state=runway_state)
-    entries = status_bar_legacy.StatusBarController.signal_display_entries(controller)
-    factory = entries[status_bar_legacy.LED_DISPLAY_QUOTA_RUNWAY][0]
+    entries = daemon_controller.StatusBarController.signal_display_entries(controller)
+    factory = entries[daemon_controller.LED_DISPLAY_QUOTA_RUNWAY][0]
 
     program = factory(255, 8)
 

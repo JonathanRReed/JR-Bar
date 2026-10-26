@@ -120,7 +120,7 @@ _GLANCE_WHY: Final = {
     "unresolved_failure": "failed",
     "capacity": "capacity",
 }
-# Device display kinds (status_bar_legacy.LED_DISPLAY_*) that name the
+# Device display kinds (daemon_controller.LED_DISPLAY_*) that name the
 # light's reason outright; ``agent`` and anything unlisted defer to the glance.
 _DISPLAY_KIND_WHY: Final = {
     "battery": "battery",

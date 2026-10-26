@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-LEGACY = Path(__file__).resolve().parents[1] / "src" / "jrbar" / "status_bar_legacy.py"
+LEGACY = Path(__file__).resolve().parents[1] / "src" / "jrbar" / "daemon_controller.py"
 
 
 def _method(class_name: str, name: str) -> ast.FunctionDef:

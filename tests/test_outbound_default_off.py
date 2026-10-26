@@ -310,7 +310,7 @@ class ControllerDefaultOffTests(unittest.TestCase):
             mock.patch.dict("os.environ", {"JRBAR_CLOUD_INGEST": "1"}),
             tripwires(
                 commands=(
-                    "jrbar.status_bar_legacy.start_cloud_ingest",
+                    "jrbar.daemon_controller.start_cloud_ingest",
                     "jrbar.cloud_ingest.CloudIngestServer.start",
                 )
             ) as net,
@@ -329,7 +329,7 @@ class ControllerDefaultOffTests(unittest.TestCase):
         publisher = mock.MagicMock(name="publisher")
         with (
             mock.patch.object(controller, "_ledger_publisher", return_value=publisher, create=True),
-            mock.patch("jrbar.status_bar_legacy.threading.Thread", side_effect=AssertionError("a thread started")),
+            mock.patch("jrbar.daemon_controller.threading.Thread", side_effect=AssertionError("a thread started")),
             tripwires(
                 commands=(
                     "subprocess.run",
@@ -364,7 +364,7 @@ class ControllerDefaultOffTests(unittest.TestCase):
             ),
             tripwires(
                 commands=(
-                    "jrbar.status_bar_legacy.read_keychain_secret",
+                    "jrbar.daemon_controller.read_keychain_secret",
                     "jrbar.claude_quota.fetch_windows",
                 )
             ) as net,

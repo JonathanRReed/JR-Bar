@@ -127,9 +127,9 @@ def test_refresh_builds_each_projection_once(headless) -> None:
 def test_hardware_write_result_still_publishes_lights_immediately(headless) -> None:
     """Outside a refresh, a completed hardware write publishes at once --
     the deferral only exists inside the refresh pass."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
     controller = _refreshable(headless)
     pro = controller.status_bar_devices(remember=False)[0]
@@ -162,7 +162,7 @@ def test_refresh_kicks_the_worker_when_its_sweep_is_stale_or_absent(headless) ->
     """The sweep forks ``ps``, which took seconds under load, so the run
     loop never sweeps itself: a stale sweep starts the worker and the
     refresh carries on."""
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
 
     controller = _refreshable(headless)
     reaps = []
@@ -274,7 +274,7 @@ def test_a_failed_settings_save_is_retried_by_the_next_refresh(headless, monkeyp
     next refresh resubmits it to the writer, once nothing is queued there.
     The harness's fake threads never run the writer, so its submit is
     driven inline."""
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.persistence_writer import PersistenceDisposition
 
     controller = _refreshable(headless)

@@ -211,16 +211,12 @@ def test_with_the_away_condition_off_a_line_goes_while_at_the_mac() -> None:
 
 
 def test_the_system_probe_without_a_session_is_not_away(monkeypatch) -> None:
-    import builtins
+    from jrbar import native_displays
 
-    real_import = builtins.__import__
+    def refuse(*args):
+        raise OSError("no display session here")
 
-    def refuse(name, *args, **kwargs):
-        if name == "Quartz":
-            raise ImportError("no Quartz here")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse)
+    monkeypatch.setattr(native_displays, "user_is_away", refuse)
     assert ntfy_alert.system_is_away() is False
 
 

@@ -30,7 +30,7 @@ CONTROLLER_CLASSES = frozenset(
     }
 )
 CONTROLLER_MODULES = (
-    "status_bar_legacy.py",
+    "daemon_controller.py",
     "_status_bar_production.py",
     "provider_usage_status_bar.py",
     "core_runtime.py",

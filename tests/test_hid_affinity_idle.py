@@ -50,7 +50,21 @@ def test_the_pump_sleeps_in_its_run_loop_for_an_hour_not_half_a_second(monkeypat
     loop_runs: list[str] = []
     fake_hid = types.ModuleType("hid")
     fake_hid.enumerate = lambda: []  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "Foundation", _fake_foundation(slept, loop_runs))
+    from jrbar import native_run_loop
+
+    class Pump:
+        def __init__(self):
+            loop_runs.append("port")
+
+        def run(self, seconds):
+            slept.append(seconds)
+            loop_runs.append("run")
+            hid_affinity._stop.set()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(native_run_loop, "Pump", Pump)
     monkeypatch.setitem(sys.modules, "hid", fake_hid)
     monkeypatch.setattr(hid_affinity, "_stop", hid_affinity.threading.Event())
     monkeypatch.setattr(hid_affinity, "_ready", hid_affinity.threading.Event())

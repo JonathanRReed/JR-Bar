@@ -29,7 +29,7 @@ def apply_deck_input(target, batch: object) -> None:
                         else deck_executor(target))
             receipts = batch.owner.deliver(batch, executor)
         except Exception:
-            from . import status_bar_legacy as _legacy
+            from . import daemon_controller as _legacy
 
             _legacy.log_status_bar(
                 f"deck: input delivery failed: {traceback.format_exc(limit=6)}")

@@ -131,7 +131,7 @@ def test_controller_feeds_the_factor_into_the_night_dim_stage(headless, monkeypa
     controller.applicationDidFinishLaunching_(None)
     monkeypatch.setattr(auto_dim, "display_brightness_fraction", lambda: 0.5)
     monkeypatch.setattr(auto_dim, "ambient_light_lux", lambda: None)
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     device = StatusBarDevice("sidepulse:pro:TEST", "SidePulse", Path("/tmp/x"), Path("/tmp/x/LEDS.LED"), True, "agent", 200)
 
@@ -167,7 +167,7 @@ def test_screen_bar_auto_brightness_keeps_ambient_auto_dim_separate(headless, mo
     monkeypatch.setattr(auto_dim, "display_brightness_fraction", lambda: 0.3)
     monkeypatch.setattr(auto_dim, "ambient_light_lux", lambda: None)
     from jrbar import display_brightness
-    from jrbar.status_bar_legacy import VIRTUAL_DEVICE_ID, StatusBarDevice
+    from jrbar.daemon_controller import VIRTUAL_DEVICE_ID, StatusBarDevice
 
     monkeypatch.setattr(display_brightness, "auto_led_brightness", lambda: 72)
     bar = StatusBarDevice(VIRTUAL_DEVICE_ID, "Screen Bar", Path("/tmp/x"), Path("/tmp/x/LEDS.LED"), True, "agent", 255,

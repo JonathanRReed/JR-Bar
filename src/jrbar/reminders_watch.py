@@ -28,7 +28,7 @@ _store = None
 
 def _eventkit():
     try:
-        import EventKit
+        from . import native_eventkit as EventKit
 
         return EventKit
     except Exception as exc:  # pragma: no cover - environment-specific
@@ -188,7 +188,7 @@ def fetch_due(lookback_seconds: float, completion) -> None:
             pass
 
     try:
-        from Foundation import NSDate
+        from .native_eventkit import Date as NSDate
 
         store = _shared_store()
         end = NSDate.date()

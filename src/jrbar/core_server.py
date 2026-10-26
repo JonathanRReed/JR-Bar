@@ -99,6 +99,7 @@ DEFAULT_CAPABILITIES: Final = (
     "deck",
     "roster",
     "event_replay",
+    "environment",
 )
 _COALESCED_KINDS: Final = ("state", "lights", "settings")
 # Reads that scan transcripts or run diagnostics, all ``main_thread=False``

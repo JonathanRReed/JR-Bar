@@ -142,8 +142,8 @@ def _install_native_fakes(monkeypatch, *, trusted: bool, running: list[FakeRunni
         kCGEventFlagMaskControl=4,
         kCGEventFlagMaskShift=8,
     )
-    monkeypatch.setitem(sys.modules, "AppKit", appkit)
-    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+    monkeypatch.setitem(sys.modules, "jrbar.native_applications", SimpleNamespace(Workspace=appkit.NSWorkspace, RunningApplication=appkit.NSRunningApplication))
+    monkeypatch.setitem(sys.modules, "jrbar.native_events", quartz)
     monkeypatch.setattr(deck_actions_macos, "_is_accessibility_trusted", lambda: trusted)
     return posted
 
@@ -207,7 +207,7 @@ def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal__and_2_more(m
 
     # --- scenario: native_shortcut_uses_quartz_flag_function_and_never_real_post
     monkeypatch.undo()
-    import Quartz
+    from jrbar import native_events as Quartz
 
     target = FakeRunningApp("com.openai.codex", 712)
     posted: list[tuple[int, object]] = []
@@ -216,7 +216,7 @@ def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal__and_2_more(m
         NSRunningApplication=SimpleNamespace(runningApplicationsWithBundleIdentifier_=lambda bundle_id: [target]),
         NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace),
     )
-    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+    monkeypatch.setitem(sys.modules, "jrbar.native_applications", SimpleNamespace(Workspace=appkit.NSWorkspace, RunningApplication=appkit.NSRunningApplication))
     monkeypatch.setattr(deck_actions_macos, "_is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(Quartz, "CGEventPostToPid", lambda pid, event: posted.append((pid, event)))
 
@@ -253,8 +253,8 @@ def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal__and_2_more(m
         kCGEventFlagMaskControl=4,
         kCGEventFlagMaskShift=8,
     )
-    monkeypatch.setitem(sys.modules, "AppKit", appkit)
-    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+    monkeypatch.setitem(sys.modules, "jrbar.native_applications", SimpleNamespace(Workspace=appkit.NSWorkspace, RunningApplication=appkit.NSRunningApplication))
+    monkeypatch.setitem(sys.modules, "jrbar.native_events", quartz)
 
     receipt = MacDeckActionExecutor().execute(
         DeckAction(kind="shortcut", bundle_id="com.openai.codex", key_code=45, modifiers=("command",))
@@ -289,8 +289,8 @@ def test_native_shortcut_attempts_key_up_when_key_down_post_raises(monkeypatch) 
         kCGEventFlagMaskControl=4,
         kCGEventFlagMaskShift=8,
     )
-    monkeypatch.setitem(sys.modules, "AppKit", appkit)
-    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+    monkeypatch.setitem(sys.modules, "jrbar.native_applications", SimpleNamespace(Workspace=appkit.NSWorkspace, RunningApplication=appkit.NSRunningApplication))
+    monkeypatch.setitem(sys.modules, "jrbar.native_events", quartz)
     monkeypatch.setattr(deck_actions_macos, "_is_accessibility_trusted", lambda: True)
 
     receipt = MacDeckActionExecutor().execute(

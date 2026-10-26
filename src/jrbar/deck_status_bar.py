@@ -38,7 +38,7 @@ def install_deck_status_bar(base):
             reconfigure_deck_runtime(self)
 
         def beginCreatorMicroSetupApply_(self, preview) -> None:
-            from .creator_micro_setup_controller import begin_creator_micro_apply
+            from .creator_micro_setup_runtime import begin_creator_micro_apply
 
             begin_creator_micro_apply(self, preview)
 

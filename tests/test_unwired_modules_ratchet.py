@@ -152,18 +152,18 @@ def test_no_new_module_becomes_unreachable__and_2_more() -> None:
 
 def test_announcer_stack_modules_are_wired_to_production_owners__and_1_more() -> None:
     # --- scenario: announcer_stack_modules_are_wired_to_production_owners
-    assert "status_bar_legacy" in _module_importers("announcer_stack")
+    assert "daemon_controller" in _module_importers("announcer_stack")
 
     # --- scenario: answer_in_place_runtime_is_wired_to_the_controller
-    assert "status_bar_legacy" in _module_importers("answer_runtime")
-    assert "status_bar_legacy" in _module_importers("answer_controller")
+    assert "daemon_controller" in _module_importers("answer_runtime")
+    assert "daemon_controller" in _module_importers("answer_controller")
     assert "answer_controller" in _module_importers("answer_runtime")
     assert "answer_controller" in _module_importers("answer_in_place")
 
 
 
 def test_the_headless_screen_bar_is_the_one_surface_the_controller_builds() -> None:
-    assert "status_bar_legacy" in _module_importers("headless_screen_bar")
+    assert "daemon_controller" in _module_importers("headless_screen_bar")
 
 
 def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatch) -> None:
@@ -237,7 +237,7 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
     monkeypatch.undo()
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from jrbar import _status_bar_production as production
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
 
     calls: dict[str, object] = {}
 

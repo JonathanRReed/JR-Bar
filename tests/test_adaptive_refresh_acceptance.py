@@ -200,9 +200,9 @@ def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkey
         return original_request(*args, **kwargs)
 
     controller.request_usage_refresh = record_request
-    monkeypatch.setattr("jrbar.status_bar_legacy.time.monotonic", lambda: 10_000.0)
+    monkeypatch.setattr("jrbar.daemon_controller.time.monotonic", lambda: 10_000.0)
     monkeypatch.setattr(
-        "jrbar.status_bar_legacy.runtime_render_environment",
+        "jrbar.daemon_controller.runtime_render_environment",
         lambda **_kwargs: SimpleNamespace(low_power=False),
     )
     monkeypatch.setattr(Path, "read_text", refuse_io)

@@ -14,8 +14,8 @@ from types import SimpleNamespace
 from test_jrbar import isolate_controller
 
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.daemon_controller import StatusBarDevice
 from jrbar.models import AgentMode, AgentStatus
-from jrbar.status_bar_legacy import StatusBarDevice
 
 _NOW = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
 

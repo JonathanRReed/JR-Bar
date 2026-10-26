@@ -206,7 +206,6 @@ else:
             except Exception:
                 return
 
-        @_legacy.objc.IBAction
         def applyProviderUsageState_(self, payload) -> None:
             if type(payload) is not ProviderUsageApply:
                 return
@@ -482,7 +481,6 @@ else:
                     publish("reset_save_failed")
             return book.document()
 
-        @_legacy.objc.IBAction
         def applyResetPersistenceReceipt_(self, completion):
             from .reset_persistence import ResetPersistenceCompletion
 
@@ -530,7 +528,6 @@ else:
                 "retryPendingResetDeliveries:",
             )
 
-        @_legacy.objc.IBAction
         def retryPendingResetDeliveries_(self, timer) -> None:
             if timer is not getattr(self, "_jrbar_reset_delivery_timer", None):
                 return
@@ -562,7 +559,6 @@ else:
                 remember=remember,
             )
 
-        @_legacy.objc.IBAction
         def refresh_(self, sender):
             self._deliver_pending_reset_events()
             self._request_provider_usage(force=False)
@@ -625,7 +621,7 @@ else:
 def install_provider_usage_status_bar():
     """Install the final provider controller once."""
     if _PROBE_IMPORT_MODE:
-        from . import status_bar_legacy as legacy
+        from . import daemon_controller as legacy
 
         legacy.StatusBarController = JRProviderUsageStatusBarController
         return JRProviderUsageStatusBarController

@@ -318,7 +318,7 @@ def test_what_plays_uses_the_live_mix_and_each_device_override(daemon, tmp_path,
 
 
 def test_hardware_layers_celebration_on_the_live_program_and_restores_it(daemon, tmp_path, monkeypatch):
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.ambient_effect_dispatch import compile_ambient_effect_dispatch
     from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
     from tests.test_light_mix import statuses
@@ -653,7 +653,7 @@ def test_screen_bar_layer_applies_brightness_once_to_both_programs(daemon, monke
     from dataclasses import replace
     from unittest.mock import MagicMock
 
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.ambient_effect_dispatch import compile_ambient_effect_dispatch
     from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
     from tests.test_light_mix import statuses

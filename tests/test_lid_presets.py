@@ -96,7 +96,7 @@ def test_iris_is_drawn_for_each_device() -> None:
 
 
 def test_the_player_draws_a_shape_look_per_device() -> None:
-    from jrbar.status_bar_legacy import program_for_lid_animation
+    from jrbar.daemon_controller import program_for_lid_animation
 
     name, seconds, program = lid_presets.preset(LID_ANIMATION_OPEN, "Iris")
     animation = LedAnimationSetting(program, seconds, shape=lid_presets.LID_SHAPE_IRIS_OPEN)
@@ -212,7 +212,7 @@ def test_iris_closes_on_what_was_lit_and_only_a_thumbnail_starts_cyan() -> None:
     """On the desk the Iris close starts from whatever the strip shows --
     never a flash of cyan first, even from idle-dark. A thumbnail starts
     dark, so only the drawings Effect Studio shows get the lead-in."""
-    from jrbar.status_bar_legacy import program_for_lid_animation
+    from jrbar.daemon_controller import program_for_lid_animation
 
     seed = f"{lid_presets.DEFAULT_LID_ACCENT} 200ms cosine"
     _name, seconds, program = lid_presets.preset(LID_ANIMATION_CLOSED, "Iris")

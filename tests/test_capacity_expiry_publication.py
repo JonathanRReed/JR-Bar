@@ -56,8 +56,8 @@ def test_four_second_expiry_admits_unchanged_state_and_publishes_normal_lighting
     dynamic = method("_status_bar_production.py", "_dynamic_display_requires_refresh", production_scope)
     production_refresh = method("_status_bar_production.py", "refresh_", production_scope)
     expiry_scope = {"ResolvedGlance": ResolvedGlance}
-    retire = method("status_bar_legacy.py", "_retire_elapsed_ui_deadlines", expiry_scope)
-    expiry = method("status_bar_legacy.py", "_finite_ui_deadline_fired", expiry_scope)
+    retire = method("daemon_controller.py", "_retire_elapsed_ui_deadlines", expiry_scope)
+    expiry = method("daemon_controller.py", "_finite_ui_deadline_fired", expiry_scope)
 
     class Controller:
         settings = SimpleNamespace(devices=(), led_display="agent", quota_alerts_enabled=True)

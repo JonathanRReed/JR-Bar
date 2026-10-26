@@ -659,10 +659,10 @@ def test_the_burst_budget_sets_how_long_a_sweep_claims_the_bar(controller, monke
     """The wired proof of B: the "burst of exactly 3" number is the one
     in the budget, and moving it moves the surface. The clock is held
     still, so a slow machine cannot move the hold it measures."""
-    from jrbar import status_bar_legacy
+    from jrbar import daemon_controller
 
     clock = _FrozenMonotonic(50_000.0)
-    monkeypatch.setattr(status_bar_legacy, "time", clock)
+    monkeypatch.setattr(daemon_controller, "time", clock)
     monkeypatch.setattr(controller, "_presentation_monotonic", clock.monotonic)
     controller.settings = controller.settings.with_completion_sweep_enabled(True)
     controller.track_completions((_status("codex", AgentMode.WORKING),))

@@ -28,7 +28,7 @@ SELF_CALL_CLASSES = CONTROLLER_CLASSES | {"JRDeckStatusBarController"}
 SRC = Path(__file__).resolve().parent.parent / "src" / "jrbar"
 
 CONTROLLER_FILES = (
-    "status_bar_legacy.py",
+    "daemon_controller.py",
     "_status_bar_production.py",
     "provider_usage_status_bar.py",
 )
@@ -83,7 +83,7 @@ def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
     PRESENTATION_TIMER_BINDINGS must name a method the controller
     actually defines -- a renamed callback must fail HERE, not as a
     silent getattr surprise at launch."""
-    text = (SRC / "status_bar_legacy.py").read_text()
+    text = (SRC / "daemon_controller.py").read_text()
     names = re.findall(r'\(RuntimeFeature\.\w+, "(\w+)"\)', text)
     # Floor only guards against the regex silently matching nothing; the
     # table lost its weather and timebox rows in the 0.8 rebuild and its

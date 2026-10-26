@@ -19,8 +19,8 @@ from test_persistence_daemon import _Daemon
 from test_refresh_budget import _tick
 from test_serve_answers import TOKEN, _call
 
+from jrbar import daemon_controller as legacy
 from jrbar import settings as settings_module
-from jrbar import status_bar_legacy as legacy
 from jrbar.core_server import CommandError
 from jrbar.serve import create_serve_server
 from jrbar.serve_answers import ControllerAnswers

@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var feed: LEDFeed?
     private var monitor: AgentStateMonitor?
     private var core: CoreModel?
+    private var workspaceReporter: WorkspaceReporter?
     private var store: PanelStore?
     /// The HUD a closed panel's feedback lands in (`showFeedback`).
     private let feedbackHUD = PaletteHUD()
@@ -288,6 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.feed = feed
         self.monitor = monitor
         self.core = core
+        workspaceReporter = WorkspaceReporter(core: core)
         self.store = store
         self.panel = panel
 
@@ -1058,6 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Self.shutdownLog.notice("quit.requested")
         isQuitting = true
+        workspaceReporter?.stop()
         SingleInstanceLock.markQuitting(instanceLockFD)
         guard let supervisor, supervisor.state != .stopped, supervisor.state != .idle else {
             Self.shutdownLog.notice("quit.immediate")
@@ -1210,6 +1213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         core.onAuthenticated = { [weak self] in
             restarts = 0
             self?.sealCoordinator?.authenticationSucceeded()
+            self?.workspaceReporter?.connected()
         }
         sealCoordinator?.onNeedsDaemonRestart = { [weak supervisor] in supervisor?.restart() }
         core.onAuthRefused = { [weak supervisor, weak core] reason in

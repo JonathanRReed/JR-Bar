@@ -50,7 +50,7 @@ def test_a_quick_run_loop_is_never_logged__and_3_more() -> None:
     because by then the run loop has moved on."""
     clock = _Clock()
     watchdog, posted, logged, recorded = _watchdog(
-        clock, stacks=["status_bar_legacy.py:3061 refresh_ < process_registry.py:230 list_processes"]
+        clock, stacks=["daemon_controller.py:3061 refresh_ < process_registry.py:230 list_processes"]
     )
     watchdog.tick()
     for _ in range(8):
@@ -65,7 +65,7 @@ def test_a_quick_run_loop_is_never_logged__and_3_more() -> None:
     assert recorded == [2100.0]
     assert logged == [
         "core: run loop stalled 2.10s in set_setting: "
-        "status_bar_legacy.py:3061 refresh_ < process_registry.py:230 list_processes"
+        "daemon_controller.py:3061 refresh_ < process_registry.py:230 list_processes"
     ]
     assert len(posted) == 2
 

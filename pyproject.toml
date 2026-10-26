@@ -125,7 +125,7 @@ ignore = [
 # what a dozen tests patch, LED_DISPLAY_CHOICES is read by core_runtime. Ruff's
 # safe fix would delete those, and `make format` runs it. The order is the
 # controller's load order, left alone on purpose.
-"src/jrbar/status_bar_legacy.py" = ["F401", "I001"]
+"src/jrbar/daemon_controller.py" = ["F401", "I001"]
 "tests/test_capacity_authority.py" = ["I001"]
 "tests/test_claude_limits_reachable.py" = ["I001"]
 "tests/test_first_run_honesty.py" = ["I001"]
