@@ -51,7 +51,7 @@ struct SoundsPage: View {
                 }
             }
         }
-        .onAppear { available = SoundPlayer.availableSounds() }
+        .task { available = await SoundPlayer.soundChoices() }
 
         SettingGroup("Volume") {
             SettingRow("JR-Bar sounds", subtitle: "Every sound above, apart from the Mac's own volume.") {
@@ -349,9 +349,16 @@ private struct CommandLineGroup: View {
             SettingRow("jrbar in Terminal", subtitle: subtitle) {
                 switch state {
                 case .notInstalled, .stale:
-                    Button("Install") { run { try CommandLineTool.install(link: link, bundled: $0) } }
+                    Button("Install") {
+                        let target = link
+                        run { try CommandLineTool.install(link: target, bundled: $0) }
+                    }
                 case .installed:
-                    Button("Remove") { run { _ in try CommandLineTool.uninstall(link: link, bundled: bundled) } }
+                    Button("Remove") {
+                        let target = link
+                        let source = bundled
+                        run { _ in try CommandLineTool.uninstall(link: target, bundled: source) }
+                    }
                 case .unavailable, .occupied:
                     EmptyView()
                 }
@@ -361,18 +368,27 @@ private struct CommandLineGroup: View {
     }
 
     private func refresh() {
-        state = CommandLineTool.state(link: link, bundled: bundled)
+        let target = link
+        let source = bundled
+        Task {
+            let cache = BackgroundLookupCache<Int, CommandLineTool.State>(load: { _ in
+                CommandLineTool.state(link: target, bundled: source)
+            })
+            if let result = await cache.resolve(0) { state = result }
+        }
     }
 
-    private func run(_ change: (String) throws -> Void) {
+    private func run(_ change: @escaping @Sendable (String) throws -> Void) {
         guard let bundled else { return }
-        do {
-            try change(bundled)
-            failure = nil
-        } catch {
-            failure = error.localizedDescription
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try change(bundled) }.value
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+            }
+            refresh()
         }
-        refresh()
     }
 }
 

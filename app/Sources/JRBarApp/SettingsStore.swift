@@ -1818,12 +1818,14 @@ final class SettingsStore {
         panel.canCreateDirectories = true
         panel.message = "The file holds the menu bar's curated apps, your shortcuts and your ntfy topic; keep it where only you can read it. Webhook URLs and hook programs are never written to it."
         guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
-        do {
-            try bundle.write(to: url)
-            let parts = bundle.categories.map { $0.title.lowercased() }
-            show(status: "Exported \(parts.joined(separator: ", ")) to \(url.lastPathComponent)")
-        } catch {
-            report(error: "Export: \(error.localizedDescription)")
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try bundle.write(to: url) }.value
+                let parts = bundle.categories.map { $0.title.lowercased() }
+                show(status: "Exported \(parts.joined(separator: ", ")) to \(url.lastPathComponent)")
+            } catch {
+                report(error: "Export: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1834,10 +1836,16 @@ final class SettingsStore {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
-        do {
-            pendingImport = try SettingsBundle.read(contentsOf: url)
-        } catch {
-            report(error: "Import: \(error.localizedDescription)")
+        Task {
+            let reader = BackgroundLookupCache<URL, Result<SettingsBundle, Error>>(load: { url in
+                Result { try SettingsBundle.read(contentsOf: url) }
+            })
+            guard let result = await reader.resolve(url) else {
+                report(error: "Import: file read timed out")
+                return
+            }
+            do { pendingImport = try result.get() }
+            catch { report(error: "Import: \(error.localizedDescription)") }
         }
     }
 
@@ -2085,11 +2093,7 @@ final class SettingsStore {
     func revealStateFolder() {
         let directory = (core.socketPath as NSString).deletingLastPathComponent
         let url = URL(fileURLWithPath: directory)
-        if FileManager.default.fileExists(atPath: directory) {
-            DesktopServices.automatic.reveal([url])
-        } else {
-            DesktopServices.automatic.reveal([url.deletingLastPathComponent()])
-        }
+        DesktopServices.automatic.reveal([url])
     }
 
     // MARK: Launch at login

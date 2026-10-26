@@ -146,7 +146,11 @@ final class OverviewStore {
     /// this often and read HEAD again.
     static let gitRefreshInterval: TimeInterval = 60
     /// The lookup, replaceable in tests.
-    @ObservationIgnored var gitResolver: @Sendable (String) -> GitWorkspace? = { GitWorkspace.resolve(cwd: $0) }
+    @ObservationIgnored var gitResolver: @Sendable (String) -> GitWorkspace? = {
+        guard ExternalFilePolicy(home: NSHomeDirectory()).available(URL(fileURLWithPath: $0)) else { return nil }
+        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        return GitWorkspace.resolve(cwd: $0, canRead: { policy.available($0) })
+    }
 
     func workspace(for entry: CoreRosterEntry) -> GitWorkspace? {
         guard !entry.session.remote, let cwd = entry.session.cwd else { return nil }
