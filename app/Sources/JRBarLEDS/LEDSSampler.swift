@@ -32,10 +32,10 @@ public final class LEDSSampler: Sendable {
     ///   - initialCodes: the colours the LEDs were showing (before brightness)
     ///     when this program was parsed; the firmware starts the first line's
     ///     transitions from them. Defaults to all off.
-    public init(program: LEDSProgram, ledCount requestedLedCount: Int = 8, initialCodes: [RGB8]? = nil) {
+    public init(program: LEDSProgram, ledCount requestedLedCount: Int = 8, initialCodes: [RGB8]? = nil, outputLedCount: Int? = nil) {
         let ledCount = LEDSProgram.normalizedLedCount(requestedLedCount)
         self.program = program
-        self.ledCount = ledCount
+        self.ledCount = outputLedCount.map(LEDSProgram.normalizedLedCount) ?? ledCount
         self.brightness = program.brightness
         var initial = initialCodes ?? []
         if initial.count < ledCount { initial += Array(repeating: RGB8.black, count: ledCount - initial.count) }
@@ -59,7 +59,8 @@ public final class LEDSSampler: Sendable {
 
     /// The stored LED state before brightness; what the next program starts from.
     public func rawCodes(atMilliseconds milliseconds: Int) -> [RGB8] {
-        timeline.codes(at: max(0, milliseconds))
+        let source = timeline.codes(at: max(0, milliseconds))
+        return (0..<ledCount).map { source[$0 * source.count / ledCount] }
     }
 
     /// Float colours in 0...1 (codes / 255) at `seconds` after the parse.

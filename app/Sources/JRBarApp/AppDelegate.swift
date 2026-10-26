@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Speaks each new ask once to VoiceOver.
     private let askAnnouncer = AskAnnouncer()
     private var pendingHookRefreshStamp: String?
-    private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?)?
+    private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?, sourceLedCount: Int)?
     private var lastLightsSource: String?
     /// When the last `completed` event arrived: the menu bar's state dot
     /// holds green for `completionDotWindow` after it.
@@ -774,13 +774,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         events.askDesk = store.askDesk
 
         // File feeds: the fallback until the daemon is connected.
-        feed?.onProgram = { [weak self] text, source, anchor in
+        feed?.onProgram = { [weak self] text, source, anchor, sourceLedCount in
             guard let self else { return }
             // A strip giving way to the idle breath fades rather than cuts.
             if case .device = self.lastFileProgram?.source, source == .builtInIdle {
                 self.screenBar?.crossfadeNextProgram()
             }
-            self.lastFileProgram = (text, source, anchor)
+            self.lastFileProgram = (text, source, anchor, sourceLedCount)
             self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }
         }
@@ -2005,7 +2005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshLights() {
         guard let core, let screenBar else { return }
         if core.isLive, let surface = core.lights?.screenBar, !surface.program.isEmpty {
-            screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor, stripTransfer: surface.stripTransfer)
+            screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor, stripTransfer: surface.stripTransfer, sourceLedCount: surface.sourceLedCount)
             let why = surface.why.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""
             let description = "monitor" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
             if description != lastLightsSource {
@@ -2034,7 +2034,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The anchor is the file's write instant — the firmware restarts
         // on every LEDS.LED write, so the bar phase-locks to that, not
         // to whenever this read landed.
-        screenBar.apply(programText: last.text, anchorEpoch: last.anchor)
+        screenBar.apply(programText: last.text, anchorEpoch: last.anchor,
+                        sourceLedCount: last.sourceLedCount)
         ScreenBarLiveStatus.shared.noteOfflineFeed(last.source)
         let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
         if description != lastLightsSource {

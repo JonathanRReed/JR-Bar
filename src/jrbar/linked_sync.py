@@ -592,10 +592,10 @@ def unroll(step: RollStep, state: list[RGB], led_count: int) -> list[PaintStep] 
     ``led_count`` LEDs that is ``led_count`` crossfades from each shift to
     the next (probed on the Dot: ``roll 2s`` equals two one-second linear
     crossfades within a code). Exact for a linear roll; an eased roll is
-    spelled per crossfade with the easing that fits it best. ``None`` for
-    anything wider than two LEDs, which is never rotated.
+    spelled per crossfade with the easing that fits it best. Wider strips
+    use the same crossfades, subject to the caller's byte budget.
     """
-    if led_count > 2 or led_count < 1:
+    if led_count < 1:
         return None
     total = float(step.duration_ms)
     if total <= 0:
@@ -663,7 +663,7 @@ def _cut_step(
 ) -> tuple[list, list] | None:
     """``(before, after)``: one step cut ``within`` ms in, as two runs of
     lines that together play exactly what the step plays."""
-    span = step_duration_ms(step)
+    span = playback_span_ms(step)
     if type(step) is PaintStep:
         before = slice_window(
             step, state=state, led_count=led_count, start=0.0, stop=within, max_lines=max_lines
@@ -716,6 +716,29 @@ def _cut_step(
     return before, after
 
 
+def playback_span_ms(step) -> int:
+    """A zero-span paint occupies one firmware frame, not zero time."""
+    if type(step) is not PaintStep:
+        return step_duration_ms(step)
+    spans = []
+    for segment in step.segments:
+        timing = segment.timing
+        untimed = timing.duration_ms is None and timing.easing is None and timing.delay_ms is None
+        spans.append(17 if untimed else timing.span_ms)
+    span = max(spans, default=0)
+    return span if span else 17
+
+
+def playback_loop_ms(animation: Animation) -> int | None:
+    """The repeating span, including zero-duration firmware frames."""
+    total = 0
+    for step in animation.steps:
+        if type(step) is RepeatStep:
+            return total
+        total += playback_span_ms(step)
+    return None
+
+
 def rotate_program(
     program: str,
     phase_ms: float,
@@ -756,7 +779,7 @@ def rotate_program(
     while lead_length < len(body) and type(body[lead_length]) in (BrightnessStep, CommentStep):
         lead_length += 1
     lead, loop = body[:lead_length], body[lead_length:]
-    total = sum(step_duration_ms(step) for step in loop)
+    total = sum(playback_span_ms(step) for step in loop)
     if total <= 0:
         return None
     looping = repeat_at is not None
@@ -769,14 +792,14 @@ def rotate_program(
     index = len(loop)
     within = 0.0
     for position, step in enumerate(loop):
-        span = step_duration_ms(step)
+        span = playback_span_ms(step)
         if offset < elapsed + span:
             index, within = position, offset - elapsed
             break
         elapsed += span
     if index >= len(loop):
         return program
-    if step_duration_ms(loop[index]) - within < 0.5:
+    if playback_span_ms(loop[index]) - within < 0.5:
         index, within = index + 1, 0.0
     if within < 0.5:
         rotated_loop = loop[index:] + loop[:index]
@@ -811,7 +834,7 @@ def snap_rotation(program: str, phase_ms: float, *, led_count: int) -> tuple[str
     animation, problems = read_program(program, led_count=led_count)
     if animation is None or errors_only(problems):
         return None
-    lap = loop_duration_ms(animation)
+    lap = playback_loop_ms(animation)
     if not lap:
         return None
     wanted = phase_ms % lap
@@ -819,7 +842,7 @@ def snap_rotation(program: str, phase_ms: float, *, led_count: int) -> tuple[str
     for step in animation.steps:
         if type(step) is RepeatStep:
             break
-        edges.append(edges[-1] + step_duration_ms(step))
+        edges.append(edges[-1] + playback_span_ms(step))
     best = min(edges, key=lambda edge: min(abs(edge - wanted), lap - abs(edge - wanted)))
     rotated = rotate_program(program, best, led_count=led_count)
     return (rotated, best) if rotated is not None else None
@@ -947,6 +970,10 @@ def fits_budget(program: str) -> bool:
     return len(text.encode("utf-8")) <= MAX_PROGRAM_BYTES and len(text.splitlines()) <= MAX_PROGRAM_LINES
 
 
+class PhaseRotationUnavailable(ValueError):
+    """A reassert must wait because its phase cannot fit the firmware budget."""
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceTiming:
     """What a linked Dot's write has to know about time.
@@ -961,6 +988,8 @@ class DeviceTiming:
     rate: float = 1.0
     trim_ms: float = 0.0
     latency_ms: float | None = None
+    preserve_phase: bool = False
+    nominal_program: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -980,6 +1009,7 @@ class TimedProgram:
     #: the real lap. Whole milliseconds leave it up to half a millisecond a
     #: lap off ``rate``, and the closed loop has to know that to predict.
     effective_rate: float | None = None
+    nominal_program: str | None = None
 
 
 def apply_device_timing(
@@ -1001,8 +1031,8 @@ def apply_device_timing(
     Never a wrong program.
     """
     animation, problems = read_program(program, led_count=led_count)
-    lap = loop_duration_ms(animation) if animation is not None and not errors_only(problems) else None
-    total = sum(step_duration_ms(step) for step in animation.steps) if animation is not None else 0
+    total = sum(playback_span_ms(step) for step in animation.steps) if animation is not None else 0
+    lap = playback_loop_ms(animation) if animation is not None and not errors_only(problems) else None
     predicted = now + max(0.0, float(latency_ms)) / 1000.0
     rate = min(MAX_CLOCK_RATE, max(MIN_CLOCK_RATE, float(timing.rate or 1.0)))
     span = lap if lap else total
@@ -1014,6 +1044,13 @@ def apply_device_timing(
         # of playing the whole cue after the strip has stopped.
         elapsed = (predicted - timing.anchor) * 1000.0 + float(timing.trim_ms)
         wanted = min(elapsed, total - 1.0) if elapsed > 0.0 and total > 1 else 0.0
+    paired: dict[str, str] = {}
+    nominal = timing.nominal_program if timing.preserve_phase else None
+    if nominal is not None:
+        nominal_animation, nominal_problems = read_program(nominal, led_count=led_count)
+        nominal_lap = playback_loop_ms(nominal_animation) if nominal_animation is not None else None
+        if errors_only(nominal_problems) or nominal_lap != lap:
+            raise PhaseRotationUnavailable("The nominal and delivered timelines differ.")
     candidates: list[tuple[str, float, str]] = []
     if wanted:
         # The finest cut first, then cheaper ones -- the last spends no
@@ -1023,23 +1060,40 @@ def apply_device_timing(
         for extra in (MAX_SLICE_EXTRA_LINES, 2, 0):
             rotated = rotate_program(program, wanted, led_count=led_count, max_extra_lines=extra)
             if rotated is not None:
+                if nominal is not None:
+                    nominal_cut = rotate_program(nominal, wanted, led_count=led_count, max_extra_lines=extra)
+                    if nominal_cut is None or not fits_budget(nominal_cut):
+                        continue
+                    paired[rotated] = nominal_cut
                 candidates.append((rotated, wanted, "exact"))
+                if timing.preserve_phase and fits_budget(rotated):
+                    break
     else:
         candidates.append((program, 0.0, "exact"))
-    if lap:
+        if nominal is not None:
+            paired[program] = nominal
+    if lap and not timing.preserve_phase:
         snapped = snap_rotation(program, wanted, led_count=led_count)
         if snapped is not None:
             candidates.append((snapped[0], snapped[1], "snapped"))
-    candidates.append((program, 0.0, "unrotated"))
+    if not timing.preserve_phase:
+        candidates.append((program, 0.0, "unrotated"))
     for text, used, how in candidates:
         timed = retime_program(text, rate, led_count=led_count)
         if timed is not None and fits_budget(timed):
             written, _problems = read_program(timed, led_count=led_count)
-            written_lap = loop_duration_ms(written) if written is not None else None
+            written_lap = playback_loop_ms(written) if written is not None else None
             effective = written_lap / lap if lap and written_lap else rate
-            return TimedProgram(timed, used, predicted, rate, lap, how, effective)
+            nominal_cut = paired.get(text)
+            if nominal_cut is not None:
+                nominal_cut = retime_program(nominal_cut, rate, led_count=led_count)
+                if nominal_cut is None or not fits_budget(nominal_cut):
+                    continue
+            return TimedProgram(timed, used, predicted, rate, lap, how, effective, nominal_cut)
         if fits_budget(text) and how == "unrotated":
             return TimedProgram(text, 0.0, predicted, 1.0, lap, how, 1.0)
+    if timing.preserve_phase:
+        raise PhaseRotationUnavailable("The running phase does not fit the firmware budget.")
     return TimedProgram(program, 0.0, predicted, 1.0, lap, "unrotated", 1.0)
 
 

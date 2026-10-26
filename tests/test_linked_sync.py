@@ -601,3 +601,14 @@ def test_continue_mirrors_what_it_cannot_carry__and_1_more() -> None:
         assert worst <= 0.40 * span and mean <= 0.12 * span, name
         carried += 1
     assert carried >= 4
+
+
+def test_zero_duration_frames_keep_the_timed_programs_actual_clock_rate():
+    from jrbar.linked_sync import DeviceTiming, apply_device_timing
+
+    program = "0:#164880 1:#603A16 0ms\n#164880 500ms linear\n#603A16 500ms linear\nrepeat"
+    prepared = apply_device_timing(program, DeviceTiming(anchor=0, preserve_phase=True),
+                                   led_count=2, now=0.7, latency_ms=0)
+    assert prepared.rotation == "exact"
+    assert prepared.lap_ms == 1017
+    assert prepared.effective_rate == 1.0

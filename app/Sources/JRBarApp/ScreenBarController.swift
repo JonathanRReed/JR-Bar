@@ -559,6 +559,7 @@ final class ScreenBarController {
     private var lastSeenText = ""
     private var lastSeenTransfer: CoreStripTransfer?
     private var stripTransfer: CoreStripTransfer?
+    private var sourceLedCount = ScreenBarGeometry.ledCount
     private var lastSeenAnchor: Double?
     private(set) var lastRejection: String?
 
@@ -1450,8 +1451,9 @@ final class ScreenBarController {
     /// phase-locks the band to the hardware, so a pulse on the desk and the
     /// pulse under the notch swell together. Without it the program starts
     /// now, as a file feed would.
-    func apply(programText text: String, anchorEpoch: Double? = nil, stripTransfer transfer: CoreStripTransfer? = nil) {
-        if text == lastSeenText, anchorEpoch == lastSeenAnchor, transfer == lastSeenTransfer, sampler != nil {
+    func apply(programText text: String, anchorEpoch: Double? = nil, stripTransfer transfer: CoreStripTransfer? = nil, sourceLedCount requestedSource: Int? = nil) {
+        let sourceCount = requestedSource ?? ScreenBarGeometry.ledCount
+        if sourceCount == sourceLedCount, text == lastSeenText, anchorEpoch == lastSeenAnchor, transfer == lastSeenTransfer, sampler != nil {
             // A verbatim republish -- same text at the same epoch -- carries
             // no new information at all.
             return
@@ -1459,7 +1461,7 @@ final class ScreenBarController {
         lastSeenText = text
         lastSeenAnchor = anchorEpoch
         lastSeenTransfer = transfer
-        if text == lastRawText, sampler != nil {
+        if sourceCount == sourceLedCount, text == lastRawText, sampler != nil {
             if transfer != stripTransfer {
                 stripTransfer = transfer
                 planQueue.discardPending()
@@ -1483,7 +1485,7 @@ final class ScreenBarController {
             present()
             return
         }
-        let decision = Self.programDecision(text, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
+        let decision = Self.programDecision(text, sourceLedCount: sourceCount, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
         let wasRefusing = lastRejection != nil
         lastRejection = decision.rejection
         guard let program = decision.program, let compiledText = decision.programText else {
@@ -1501,7 +1503,7 @@ final class ScreenBarController {
             return
         }
         let previousText = lastRawText
-        let transferChanged = transfer != stripTransfer
+        let transferChanged = transfer != stripTransfer || sourceCount != sourceLedCount
         stripTransfer = transfer
         lastRawText = text
         // Only a band on screen arms a fade: armed while hidden, it would
@@ -1526,7 +1528,10 @@ final class ScreenBarController {
             lastRaw = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
         }
         programText = compiledText
-        let sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
+        let initial = (0..<sourceCount).map { lastRaw[$0 * lastRaw.count / sourceCount] }
+        sourceLedCount = sourceCount
+        let sampler = LEDSSampler(program: program, ledCount: sourceCount, initialCodes: initial,
+                                  outputLedCount: ScreenBarGeometry.ledCount)
         self.sampler = sampler
         plan = nil
         planGeneration &+= 1
@@ -1576,21 +1581,24 @@ final class ScreenBarController {
     /// (the firmware would strobe red). Pure — no panel, no clock — so the
     /// acceptance rules are testable. On refusal nothing is installed and
     /// `lastRejection` carries the reason; the previous program stays.
-    nonisolated static func programDecision(_ text: String, fallback: String) -> (program: LEDSProgram?, programText: String?, rejection: String?) {
-        let compiled = LEDSPresentationCompiler.compile(text, ledCount: ScreenBarGeometry.ledCount, fallback: fallback)
+    nonisolated static func programDecision(_ text: String, sourceLedCount: Int = ScreenBarGeometry.ledCount, fallback: String) -> (program: LEDSProgram?, programText: String?, rejection: String?) {
+        guard sourceLedCount == 2 || sourceLedCount == ScreenBarGeometry.ledCount else {
+            return (nil, nil, "unsupported source LED count")
+        }
+        let compiled = LEDSPresentationCompiler.compile(text, ledCount: sourceLedCount, fallback: fallback)
         guard compiled.accepted else {
             // The compiler's own reasons when the raw text parses; the
             // parse error itself when it does not — the more specific
             // sentence is the one worth logging.
             do {
-                _ = try LEDSProgram.parse(text, ledCount: ScreenBarGeometry.ledCount)
+                _ = try LEDSProgram.parse(text, ledCount: sourceLedCount)
                 return (nil, nil, compiled.reasons.joined(separator: ", "))
             } catch {
                 return (nil, nil, error.description)
             }
         }
         do {
-            let program = try LEDSProgram.parse(compiled.program, ledCount: ScreenBarGeometry.ledCount)
+            let program = try LEDSProgram.parse(compiled.program, ledCount: sourceLedCount)
             return (program, compiled.program, nil)
         } catch {
             return (nil, nil, error.description)

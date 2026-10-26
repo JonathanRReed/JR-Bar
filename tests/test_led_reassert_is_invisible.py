@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jrbar.led_status import (
     AgentLedController,
     LedDisplayState,
@@ -33,48 +35,65 @@ def test_steady_state_variant_drops_only_the_approach_frame__and_1_more() -> Non
 
 
 
-def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
-    device = tmp_path / "SidePulsePro"
-    device.mkdir()
-    controller = AgentLedController(device_path=device)
-    controller.reassert_after_seconds = 0.0
+@pytest.mark.parametrize("program", [
+    "#163A58 700ms linear\n#603A16 900ms cosine\nrepeat",
+    "#163A58\n#603A16 900ms cosine\n#163A58 700ms linear\nrepeat",
+    "0:#164880 1:#603A16\n#603A16 900ms cosine\n#164880 700ms linear\nrepeat",
+])
+def test_reassert_preserves_phase_across_repeated_device_writes(tmp_path, monkeypatch, program):
+    from jrbar.led_wasm import RawSdLedWasmController
 
-    program = (
-        "// approach\n"
-        "0:#F87C5F 160ms none; 1:#260C06 160ms none\n"
-        "0:#010101 1600ms pulse 0ms; 1:#020305 1600ms pulse 200ms\n"
-        "repeat"
-    )
-    def content_lines() -> list[str]:
-        return [
-            line
-            for line in (device / "LEDS.LED").read_text().splitlines()
-            if line and not line.startswith(("brightness ", "//"))
-        ]
-
-    first = controller.sync_program(
-        program, LedDisplayState.WORKING, dedupe_token=("t", 1)
-    )
+    clock = [100.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    controller = AgentLedController(device_path=tmp_path)
+    first = controller.sync_program(program, LedDisplayState.IDLE)
     assert first.changed
-    # Full write: approach frame + loop + repeat (colours strip-transferred).
-    assert len(content_lines()) == 3
+    continuous = RawSdLedWasmController(8)
+    restarted = RawSdLedWasmController(8)
+    for engine in (continuous, restarted):
+        engine.reset(0)
+        assert engine.parse(first.program, 0).ok
+    previous = 0
+    for elapsed in (240736, 481472):
+        for engine in (continuous, restarted):
+            engine.step_batch(previous, 16, (elapsed - previous) // 16)
+        clock[0] = 100.0 + elapsed / 1000
+        update = controller.sync_program(program, LedDisplayState.IDLE)
+        assert update.error is None
+        if update.changed:
+            assert update.timed.rotation == "exact"
+            assert update.target.read_text() == update.program
+            assert controller.last_program == update.program
+            assert controller.last_applied_monotonic == clock[0]
+            assert restarted.parse(update.program, elapsed).ok
+        expected = continuous.step_batch(elapsed, 16, 100)
+        actual = restarted.step_batch(elapsed, 16, 100)
+        error = max(abs(a - b) for x, y in zip(expected, actual)
+                    for p, q in zip(x, y) for a, b in zip(p, q))
+        assert error <= 3
+        previous = elapsed + 1600
 
-    second = controller.sync_program(
-        program, LedDisplayState.WORKING, dedupe_token=("t", 1)
-    )
-    assert second.changed
-    lines = content_lines()
-    assert len(lines) == 2
-    assert lines[-1].startswith("repeat")
-    # What the surfaces publish is what is RUNNING: after a reassert the
-    # device loops the steady-state variant (no approach frame), so the
-    # reported program is the variant -- a linked Screen Bar mirroring the
-    # full text would loop a span the strip is not running and drift off
-    # phase every lap.
-    assert [
-        line for line in controller.last_program.splitlines() if line and not line.startswith(("brightness ", "//"))
-    ] == lines
-    assert controller.last_nominal_program == _steady_state_variant(program)
+
+def test_full_budget_reassert_keeps_running_when_a_phase_cut_cannot_fit(tmp_path, monkeypatch):
+    from jrbar.linked_sync import PhaseRotationUnavailable
+
+    clock = [100.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    controller = AgentLedController(device_path=tmp_path)
+    program = "#163A58 700ms linear\n#603A16 900ms cosine\nrepeat"
+    first = controller.sync_program(program, LedDisplayState.IDLE)
+    before = first.target.read_bytes()
+
+    def no_room(*args, **kwargs):
+        raise PhaseRotationUnavailable("no room for a phase cut")
+
+    monkeypatch.setattr("jrbar.linked_sync.apply_device_timing", no_room)
+    clock[0] += 241
+    update = controller.sync_program(program, LedDisplayState.IDLE)
+    assert not update.changed
+    assert update.error is None
+    assert first.target.read_bytes() == before
+    assert controller.last_applied_monotonic == 100.0
 
 
 def test_the_strip_keeps_its_phase_free_dedupe(tmp_path: Path) -> None:
@@ -164,3 +183,26 @@ def test_a_done_agent_rests_dark_beside_a_working_one() -> None:
     # Only the WORKING agent's pulses may get bright; a steady-held done
     # peak lit half the strip before this rule.
     assert len(bright_leds) <= 4, (bright_leds, max_seen)
+
+
+def test_calibrated_reassert_never_publishes_drive_bytes_as_nominal(tmp_path, monkeypatch):
+    from jrbar.animation import read_program
+    from jrbar.linked_sync import fits_budget, playback_loop_ms
+
+    clock = [100.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    controller = AgentLedController(device_path=tmp_path, channel_gains=(1, 0.38, 1))
+    program = '#164880 #040E1A #040E1A #040E1A #040E1A #040E1A #040E1A #040E1A 300ms cosine\nroll-right 2200ms linear\n#160C09 #160C09 #160C09 #160C09 #160C09 #160C09 #160C09 #6C3C2C 300ms cosine\nroll-left 2200ms linear\n#2E4258 #090D12 #090D12 #090D12 #090D12 #090D12 #090D12 #090D12 300ms cosine\nroll-right 2200ms linear\nrepeat'
+    first = controller.sync_program(program, LedDisplayState.IDLE)
+    assert first.changed
+    lap = playback_loop_ms(read_program(first.program)[0])
+    clock[0] += (int(241000 / lap) + 1.37) * lap / 1000
+    update = controller.sync_program(program, LedDisplayState.IDLE)
+    if update.changed:
+        assert update.nominal_program != update.program
+        assert fits_budget(update.nominal_program)
+        assert update.nominal_program == update.timed.nominal_program
+    else:
+        assert first.target.read_text() == first.program
+        assert controller.last_nominal_program == first.nominal_program
+    assert controller.last_error is None

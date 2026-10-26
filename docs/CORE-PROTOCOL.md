@@ -1338,6 +1338,13 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
   once after that conversion. Without this metadata, including legacy
   daemons, unlinked programs, and surfaces that do not mirror a strip, the
   existing color path is unchanged.
+- `source_led_count`, optional on `screen_bar`, is the program's source
+  canvas, either 2 or 8. Without it the canvas is eight LEDs. When mirroring
+  a lone Dot it is 2: parse and sample the original two-LED program, then
+  repeat each sampled pixel over four display LEDs. Expand after sampling,
+  including rolls, brightness and initial state. The program stays within
+  the firmware's 512-byte and 20-line limits. `led_count` remains the display
+  output size.
 - `cue` (on `screen_bar`, `hardware` or `dot`, only while one is staged
   there) names the semantic ambient cue on that surface, `{id, name}` --
   `{"id":"handoff_baton","name":"Handoff baton"}` -- so Why this light can

@@ -8727,7 +8727,7 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_build_lights(self) -> dict[str, Any]:
-            from .dot_role import normalize_dot_role, upsample_program
+            from .dot_role import normalize_dot_role
             from .dot_role import replace_brightness_line as apply_brightness_line
             from .led_status import (
                 NEUTRAL_CHANNEL_GAINS,
@@ -8899,9 +8899,8 @@ def build_headless_controller_class() -> type:
                     ),
                 )
             # What a linked bar mirrors: the followed strip when one is
-            # mounted, else a lone Dot -- its two-LED program widened to the
-            # bar's ``legacy.LED_COUNT``, since the bar compiles at eight and
-            # a 2-LED text would leave six of them dark. Never ``asks``: the
+            # mounted, else a lone Dot. Keep the source canvas with its
+            # program so the app widens sampled pixels, including rolls. Never ``asks``: the
             # beacon is deliberately dark until someone is needed, and the
             # bar must not mirror that darkness -- it keeps its own render.
             mirror = surfaces.get("hardware")
@@ -8911,18 +8910,12 @@ def build_headless_controller_class() -> type:
             mirror_nominal = hardware_mirror_nominal
             mirror_gains = hardware_mirror_gains
             if mirror is None and "dot" in surfaces and dot_role not in ("asks", "call"):
-                widened = upsample_program(
-                    dot_mirror_program or surfaces["dot"].program,
-                    source_leds=2,
-                    led_count=legacy.LED_COUNT,
-                )
-                if widened is not None:
-                    mirror = surfaces["dot"]
-                    mirror_anchor = dot_anchor
-                    mirror_program = widened
-                    mirror_source = dot_mirror_source
-                    mirror_nominal = dot_mirror_nominal
-                    mirror_gains = dot_mirror_gains
+                mirror = surfaces["dot"]
+                mirror_anchor = dot_anchor
+                mirror_program = dot_mirror_program or mirror.program
+                mirror_source = dot_mirror_source
+                mirror_nominal = dot_mirror_nominal
+                mirror_gains = dot_mirror_gains
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(
@@ -9008,8 +9001,8 @@ def build_headless_controller_class() -> type:
                     anchor = mirror_anchor + bar_phase_offset
                 if linked and mirror is not None:
                     # Linked means the bar FOLLOWS the mirrored device: its
-                    # own program on its own anchor -- a lone Dot's widened
-                    # to the bar's eight -- not the virtual render's
+                    # own program and source canvas on its own anchor,
+                    # rather than the virtual render's
                     # re-reading of the same state. The display's brightness
                     # line is its own gain. The renderer samples drive colors
                     # before decoding emission and removing source calibration.
@@ -9028,6 +9021,7 @@ def build_headless_controller_class() -> type:
                         override=override,
                         why_detail=mirror.why_detail,
                         strip_transfer=mirror_transfer,
+                        source_led_count=mirror.led_count,
                     )
                 else:
                     surfaces["screen_bar"] = SurfaceFacts(
@@ -9063,6 +9057,7 @@ def build_headless_controller_class() -> type:
                     override=override,
                     why_detail=mirror.why_detail,
                     strip_transfer=mirror_transfer,
+                    source_led_count=mirror.led_count,
                 )
             try:
                 auto_dim = self.auto_dim_result().to_dict()

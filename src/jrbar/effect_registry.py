@@ -504,7 +504,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_CHASE: (
-        _duration(),
+        _duration(minimum=1.0),
         _choice("direction", "forward", "Direction of travel.", _DIRECTIONS),
         _integer("crests", 1, "How many waves travel the strip at once.", 1, 3),
         _number(
@@ -544,7 +544,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
     ),
     colors_module.MOTION_SCANNER: (
         _background_glow(),
-        _duration(minimum=0.5),
+        _duration(minimum=1.0),
         _integer("beam_width", 1, "Width of the bright scanning beam in LEDs.", 1, 4),
         _number("trail", 0.35, "Relative length of the fading trail.", 0.0, 1.0),
     ),
@@ -555,7 +555,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         _number("overlap", 0.5, "Overlap between the eye's light bands.", 0.1, 1.0),
     ),
     colors_module.MOTION_COMET: (
-        _duration(minimum=0.5),
+        _duration(minimum=1.0),
         _integer("head_width", 1, "Width of the bright comet head in LEDs.", 1, 4),
         _integer("trail_length", 3, "Length of the fading trail in LEDs.", 1, 6),
         _choice("direction", "forward", "Direction of comet travel.", _DIRECTIONS),
@@ -567,7 +567,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_FLICKER: (
-        _duration(minimum=1.2),
+        _duration(minimum=1.7),
         _integer("seed", 271, "Picks one of many repeatable flicker patterns.", 0, 2_147_483_647),
         _number("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
         _number("variation", 0.25, "How far the brightness wanders as it flickers.", 0.0, 0.5),
@@ -583,7 +583,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_TWINKLE: (
-        _duration(minimum=1.2),
+        _duration(minimum=1.7),
         _number("density", 0.15, "Maximum fraction of LEDs sparkling at once.", 0.02, 0.3),
         _integer("seed", 271, "Picks one of many repeatable sparkle patterns.", 0, 2_147_483_647),
     ),
@@ -626,7 +626,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_BLOOM: (
-        _duration(minimum=0.7),
+        _duration(minimum=1.0),
         _number(
             "hold_ratio",
             0.0,

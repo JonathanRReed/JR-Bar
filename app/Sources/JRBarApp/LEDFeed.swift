@@ -8,8 +8,8 @@ import JRBarLEDS
 ///    file, watched like the device file;
 /// 2. `LEDS.LED` on a mounted SidePulse volume -- the hardware's own file, so
 ///    the on-screen band shows exactly what the device is playing. A strip is
-///    preferred over a Dot; a lone Dot's two-LED program is widened to the
-///    bar's eight before it is published;
+///    preferred over a Dot. A lone Dot keeps its two-LED source canvas;
+///    the renderer expands its sampled pixels to the bar's eight;
 /// 3. a built-in calm breathing program.
 ///
 /// There is deliberately no daemon state file here: the monitor's programs
@@ -148,7 +148,7 @@ final class LEDFeed {
     /// modification instant -- the firmware restarts LEDS.LED on every
     /// write, so the bar phase-locks to the write, not to whenever the
     /// read happened to land. nil for the built-in idle breath.
-    var onProgram: (@MainActor (String, Source, Double?) -> Void)?
+    var onProgram: (@MainActor (String, Source, Double?, Int) -> Void)?
     private(set) var source: Source = .builtInIdle
     private var fileWatcher: FileWatcher?
     private var directoryWatcher: FileWatcher?
@@ -158,7 +158,7 @@ final class LEDFeed {
     /// the file's arrival re-resolve the feed.
     private var pendingDeviceWatcher: FileWatcher?
     private var pendingRead: DispatchWorkItem?
-    private var lastPublished: (text: String, source: Source, mtime: Double?)?
+    private var lastPublished: (text: String, source: Source, mtime: Double?, sourceLedCount: Int)?
     /// Resolve and read are independent pipelines: a scheduled read must
     /// not kill an in-flight device resolution, so they carry separate
     /// generations. A resolve still supersedes an in-flight read — it
@@ -332,6 +332,12 @@ final class LEDFeed {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    nonisolated static func sourceLedCount(for source: Source) -> Int {
+        if case .device(let path) = source,
+           isDotVolume((path as NSString).deletingLastPathComponent) { return 2 }
+        return 8
+    }
+
     private func readAndPublish() {
         readGeneration += 1
         let generation = readGeneration
@@ -341,14 +347,8 @@ final class LEDFeed {
             publish(Self.idleProgram, source: source)
         case .device(let path), .stateFile(let path):
             Task.detached(priority: .utility) {
-                var text = try? String(contentsOfFile: path, encoding: .utf8)
-                // A Dot's program addresses two LEDs; the bar compiles at
-                // eight, so it is widened before it is published.
-                if let program = text, case .device = source,
-                   Self.isDotVolume((path as NSString).deletingLastPathComponent),
-                   let parsed = try? LEDSProgram.parse(program, ledCount: 2) {
-                    text = parsed.widened(from: 2, to: 8).render()
-                }
+                let text = try? String(contentsOfFile: path, encoding: .utf8)
+                let sourceLedCount = Self.sourceLedCount(for: source)
                 // The write's own instant is the program's epoch: the
                 // firmware restarts on every LEDS.LED write, so the anchor
                 // is the file's mtime rather than this read's landing time.
@@ -362,7 +362,7 @@ final class LEDFeed {
                     // and the event instant is the only honest anchor.
                     let anchor = max(mtime ?? 0, self.writeEpoch)
                     if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        self.publish(text, source: source, mtime: anchor > 0 ? anchor : nil)
+                        self.publish(text, source: source, mtime: anchor > 0 ? anchor : nil, sourceLedCount: sourceLedCount)
                     } else if case .stateFile = source {
                         // The override file is empty or missing: breathe
                         // until it has a program.
@@ -375,14 +375,14 @@ final class LEDFeed {
         }
     }
 
-    private func publish(_ text: String, source: Source, mtime: Double? = nil) {
+    private func publish(_ text: String, source: Source, mtime: Double? = nil, sourceLedCount: Int = 8) {
         // Dedupe on (text, mtime), not text alone: the daemon's periodic
         // reassert rewrites LEDS.LED with identical bytes and the firmware
         // restarts the loop from line 1. An unchanged mtime is the same
         // program still running; an advanced one is a restart the bar must
         // re-anchor to, or it keeps a stale phase and visibly jumps.
-        if let last = lastPublished, last.text == text, last.source == source, last.mtime == mtime { return }
-        lastPublished = (text, source, mtime)
-        onProgram?(text, source, mtime)
+        if let last = lastPublished, last.text == text, last.source == source, last.mtime == mtime, last.sourceLedCount == sourceLedCount { return }
+        lastPublished = (text, source, mtime, sourceLedCount)
+        onProgram?(text, source, mtime, sourceLedCount)
     }
 }
