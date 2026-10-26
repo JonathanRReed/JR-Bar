@@ -33,19 +33,24 @@ try:
     drain()
     assert all(type(value) is bool for value in (getattr(received[0], key) for key in received[0].__dataclass_fields__))
     center = owner.tokens[0][0]
+    sleep_name = _string("NSWorkspaceWillSleepNotification")
     name = _string("NSWorkspaceDidWakeNotification")
     for _ in range(2):
         led.last_attempt_monotonic = 42.0
         _call(center.pointer, "postNotificationName:object:", None,
+              (c.c_void_p, c.c_void_p), (sleep_name.pointer, None))
+        drain()
+        assert led.last_attempt_monotonic == 42.0
+        _call(center.pointer, "postNotificationName:object:", None,
               (c.c_void_p, c.c_void_p), (name.pointer, None))
         drain()
         assert led.last_attempt_monotonic == 0.0
-    assert received[1:] == ["handle_wake", "refresh", "handle_wake", "refresh"]
+    assert received[1:] == ["handle_sleep", "handle_wake", "refresh"] * 2
     owner.close()
     _call(center.pointer, "postNotificationName:object:", None,
           (c.c_void_p, c.c_void_p), (name.pointer, None))
     drain()
-    assert len(received) == 5
+    assert len(received) == 7
     assert not {"AppKit", "Foundation", "objc"} & set(sys.modules)
 finally:
     owner.close()

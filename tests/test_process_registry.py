@@ -451,17 +451,23 @@ int main(int argc, char **argv) {
     try:
         lines = [parent.stdout.readline().strip(), parent.stdout.readline().strip()]
         child = int(next(line for line in lines if line != "ready"))
-        table = read_process_table()
-        assert table[parent.pid].basename == "claude"
-        assert Path(table[parent.pid].executable).name == "1.0.0"
-        entry = pr.discover_agent_process("claude", start_pid=child, table=table)
-        assert entry.pid == parent.pid
-        record = pr.record_agent_process("claude", "synthetic", entry, state_dir=tmp_path)
+        native = read_process_table()
+        assert native[parent.pid].basename == "claude"
+        assert Path(native[parent.pid].executable).name == "1.0.0"
+        legacy = pr._list_processes_uncached(lambda *args, **kwargs: subprocess.run(*args, **kwargs))
+        records = []
+        for reader, table in (("libproc", native), ("ps", legacy)):
+            assert table[parent.pid].basename == "claude"
+            assert table[child].basename == "node"
+            entry = pr.discover_agent_process("claude", start_pid=child, table=table)
+            assert entry.pid == parent.pid
+            records.append(pr.record_agent_process("claude", f"synthetic-{reader}", entry, state_dir=tmp_path))
         parent.stdin.write("\n")
         parent.stdin.flush()
         assert parent.stdout.readline().strip() == "exited"
         assert parent.poll() is None
-        assert pr.process_is_live(record, read_process_table()) == (True, "alive")
+        remaining = read_process_table()
+        assert all(pr.process_is_live(record, remaining) == (True, "alive") for record in records)
     finally:
         if child is not None:
             try:
