@@ -1,5 +1,4 @@
 import AppKit
-import Carbon
 import SwiftUI
 
 /// The Effect Studio window (Settings › Devices & Lighting › Effects…, the panel's
@@ -14,12 +13,6 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         self.store = store
         super.init()
         store.prepareForOpening()
-    }
-
-    func registerShortcut(center: HotkeyCenter = .shared) {
-        let chord = HotkeyChord(keyCode: UInt32(kVK_ANSI_L), modifiers: UInt32(optionKey | cmdKey))
-        let result = center.register("studio", title: "Open Studio", chord: chord) { [weak self] in self?.show() }
-        if result != .registered { store.fail("Studio shortcut unavailable. Another shortcut uses option-command-L.") }
     }
 
     func show(effect: String? = nil) {

@@ -222,15 +222,4 @@ struct StudioLightsTests {
         } catch { await fixture.stop(); throw error }
     }
 
-    @Test("Studio registers option-command-L through the shared shortcut registry")
-    func studioShortcut() {
-        let registrar = HotkeyCenterTests.Recorder()
-        let center = HotkeyCenter(registrar: registrar)
-        let suite = ScratchDefaults.suiteName("studio-shortcut")
-        defer { ScratchDefaults.remove(suite) }
-        let store = EffectStudioStore(core: CoreModel(socketPath: "/tmp/jrbar-studio-shortcut-unused.sock"), defaults: ScratchDefaults.open(suite))
-        let controller = EffectStudioWindowController(store: store)
-        controller.registerShortcut(center: center)
-        #expect(registrar.registered.map(\.chord) == [HotkeyChord(keyCode: UInt32(kVK_ANSI_L), modifiers: UInt32(optionKey | cmdKey))])
-    }
 }
