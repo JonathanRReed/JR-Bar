@@ -14,17 +14,20 @@ struct PanelCompositionTests {
 
     static func session(_ id: String, provider: String = "claude", mode: String = "working",
                         since: Double = time - 120, group: String? = nil, worker: Bool = false,
-                        unlinked: Bool = false, ask: CoreAsk? = nil) -> CoreSession {
+                        unlinked: Bool = false, workers: Int = 0, ask: CoreAsk? = nil) -> CoreSession {
         CoreSession(id: id, provider: provider, kind: worker ? "worker" : "session",
                     label: worker ? "Review tests" : "Sample project", cwd: "/tmp/sample/project",
-                    mode: mode, lifecycle: mode == "done" ? "completed" : nil, since: since, ask: ask, groupId: group, unlinkedWorker: unlinked)
+                    mode: mode, lifecycle: mode == "done" ? "completed" : nil, since: since, ask: ask, workers: workers, groupId: group, unlinkedWorker: unlinked)
     }
 
     static func store(_ sessions: [CoreSession] = [], groups: [CoreAgentGroup] = [],
                       asks: [CoreAsk] = [], usage: [CoreProviderUsage] = []) -> PanelStore {
         let core = CoreModel(socketPath: "/tmp/jrbar-u2-unused.sock")
         core.handle(.connected)
-        core.apply(.state(CoreState(now: time, sessions: sessions, asks: asks,
+        let aggregate = CoreAggregate(mode: "working", needsYou: asks.count,
+                                      active: sessions.filter { $0.mode == "working" }.count,
+                                      ready: sessions.filter { $0.mode == "done" }.count)
+        core.apply(.state(CoreState(now: time, aggregate: aggregate, sessions: sessions, asks: asks,
                                    usage: CoreUsage(providers: usage), agentGroups: groups)))
         let store = PanelStore(core: core, draftsDefaults: ScratchDefaults.open(ScratchDefaults.suiteName("u2")), screenBarShown: false)
         store.now = Date(timeIntervalSince1970: time)
@@ -58,7 +61,7 @@ struct PanelCompositionTests {
 
     @Test func publishedMembershipGroupsAcrossProvidersAndAsksStayIndividual() {
         let ask = CoreAsk(session: "codex:child", summary: "Run the sample tests?", answerable: true)
-        let sessions = [Self.session("claude:root", group: "group"),
+        let sessions = [Self.session("claude:root", group: "group", workers: 2),
                         Self.session("gemini:child", provider: "gemini", group: "group", worker: true),
                         Self.session("codex:child", provider: "codex", mode: "waiting", group: "group", worker: true, ask: ask),
                         Self.session("factory:unlinked", provider: "factory", worker: true, unlinked: true)]
@@ -124,6 +127,20 @@ struct PanelCompositionTests {
         #expect(composition.usageLimit >= 1)
         #expect(composition.asksHeight >= CGFloat(PanelLayout.askRowHeight))
         #expect(composition.agentsHeight >= PanelComposition.rowHeight)
+        #expect(composition.asksHeight.truncatingRemainder(dividingBy: CGFloat(PanelLayout.askRowHeight)) == 0)
+    }
+
+    @Test func anExpandedFirstAskKeepsItsWholeCardAndTheFooterOnAShortScreen() {
+        let ask = CoreAsk(session: "claude:expanded-short", summary: "Sample request", answerable: true,
+                          request: "expanded-short-test", detail: CoreAskDetail(command: "make test"))
+        let store = Self.store(asks: [ask], usage: [Self.usage(), Self.usage("codex")])
+        store.screenHeight = 600
+        AskExpansion.shared.toggle(ask)
+        defer { AskExpansion.shared.collapse(ask) }
+        let composition = PanelComposition(store: store)
+        #expect(composition.totalHeight <= 588)
+        #expect(composition.askDetailHeight >= 24)
+        #expect(composition.asksHeight == CGFloat(PanelLayout.askRowHeight) + composition.askDetailHeight)
     }
 
     @Test func editsSaveTheSharedOrderAndPanelVisibilityLeavesTrackOn() async throws {
@@ -211,6 +228,111 @@ struct PanelCompositionTests {
         hotkey.setEnabled(true)
         #expect(hotkey.registrationFailed)
         #expect(center.owner(of: PanelHotkey.studioDefault)?.id == "occupied")
+    }
+
+    @Test func keyboardExpandsGroupsAndReachesEarlierWithMotionAllowed() {
+        let root = Self.session("claude:root", group: "group", workers: 1)
+        let child = Self.session("codex:child", provider: "codex", group: "group", worker: true)
+        let earlier = Self.session("claude:old", mode: "done", since: Self.time - 700)
+        let store = Self.store([root, child, earlier], groups: [Self.group([root.id, child.id])])
+        store.reduceMotion = false
+        store.moveSelection(by: 1)
+        #expect(store.selectedID == root.id)
+        #expect(store.handleDisclosureKey(124))
+        #expect(store.expandedAgentGroups.contains(root.id))
+        store.moveSelection(by: 1)
+        #expect(store.selectedID == child.id)
+        store.moveSelection(by: 1)
+        #expect(store.selectedID == PanelStore.earlierSelectionID)
+        #expect(store.handleDisclosureKey(124))
+        store.moveSelection(by: 1)
+        #expect(store.selectedID == earlier.id)
+        store.moveSelection(by: -1)
+        #expect(store.handleDisclosureKey(123))
+        #expect(!store.earlierExpanded)
+        store.selectedID = root.id
+        #expect(store.handleDisclosureKey(123))
+        #expect(!store.expandedAgentGroups.contains(root.id))
+    }
+
+    @Test func aMissingRootAndAnUnpublishedGroupKeepWorkersClickable() {
+        let child = Self.session("codex:child", provider: "codex", group: "group", worker: true)
+        let plain = Self.session("claude:plain", worker: true)
+        let store = Self.store([child, plain], groups: [Self.group(["claude:missing", child.id])])
+        #expect(Set(store.panelAgents.map(\.id)) == Set([child.id, plain.id]))
+        #expect(store.panelAgents.allSatisfy { $0.members.isEmpty })
+        #expect(store.panelSelectableRows.count == 2)
+    }
+
+    @Test func groupsUseThePublishedLiveWorkerCount() throws {
+        let root = Self.session("claude:root", group: "group", workers: 1)
+        let child = Self.session("codex:done", provider: "codex", mode: "done", group: "group", worker: true)
+        let store = Self.store([root, child], groups: [Self.group([root.id, child.id, "codex:gone"])])
+        let group = try #require(store.panelAgents.first)
+        #expect(group.workerCount == 1)
+        #expect(group.displayMembers.map(\.id) == [root.id, child.id])
+    }
+
+    @Test func findTrimsTheSameQueryForAgentsAndAsks() {
+        let ask = CoreAsk(session: "codex:ask", summary: "Sample request", answerable: true)
+        let store = Self.store([Self.session("claude:root")], asks: [ask])
+        store.find("  sample  ")
+        #expect(store.visibleAskRows.count == 1)
+        #expect(store.panelAgents.count == 1)
+        #expect(store.findSummary == "“sample” · 2 of 2")
+    }
+
+    @Test func anAskingLeadCountsOnceInFindResults() {
+        let ask = CoreAsk(session: "claude:root", summary: "Sample request", answerable: true)
+        let root = Self.session("claude:root", mode: "waiting", group: "group", workers: 1, ask: ask)
+        let child = Self.session("codex:child", provider: "codex", group: "group", worker: true)
+        let store = Self.store([root, child], groups: [Self.group([root.id, child.id])], asks: [ask])
+        store.find(" sample ")
+        #expect(store.findSummary == "“sample” · 2 of 2")
+        #expect(Set(store.panelSelectionIDs).count == store.panelSelectionIDs.count)
+        store.find("request")
+        #expect(store.findSummary == "“request” · 1 of 2")
+    }
+
+    @Test func movingInBothDirectionsKeepsProvidersOutsideThePanelOrder() async throws {
+        let store = Self.store(usage: [Self.usage(), Self.usage("codex"), Self.usage("kiro", availability: "absent")])
+        let fixtures = ProviderListStoreTests()
+        store.providerList.readRows = { try [fixtures.row(), fixtures.row("codex"), fixtures.row("kiro")] }
+        store.providerList.writePresentation = { fixtures.reply($0) }
+        await store.providerList.refresh()
+        let row = try #require(store.panelEditProviders.first { $0.id == "claude" })
+        await store.shiftPanelProvider(row, by: 1)
+        #expect(store.providerList.preferences.order == ["codex", "claude", "kiro"])
+        await store.shiftPanelProvider(row, by: -1)
+        #expect(store.providerList.preferences.order == ["claude", "codex", "kiro"])
+    }
+
+    @Test func editCapacityUsesWholeFortyFourPointRows() async throws {
+        let store = Self.store()
+        let fixtures = ProviderListStoreTests()
+        store.providerList.readRows = { try [fixtures.row(), fixtures.row("codex"), fixtures.row("gemini"), fixtures.row("kiro")] }
+        await store.providerList.refresh()
+        store.editingProviders = true
+        store.screenHeight = 600
+        let composition = PanelComposition(store: store)
+        #expect(composition.usageLimit == 2)
+        #expect(composition.totalHeight <= 588)
+    }
+
+    @Test func headerNamesEveryStateBesideTheAgentsTitle() {
+        let store = Self.store()
+        store.core.apply(.state(CoreState(generation: 2, aggregate: CoreAggregate(needsYou: 1, active: 2, ready: 1))))
+        #expect(store.headerCounts == "2 working · 1 asking · 1 done")
+    }
+
+    @Test func sectionOrderStaysFixedUntilTheNextOpen() {
+        let store = Self.store([Self.session("claude:root")])
+        store.providerList.readRows = { [] }
+        store.panelDidOpen()
+        defer { store.panelDidClose() }
+        store.core.apply(.state(CoreState(generation: 2, usage: CoreUsage(providers: [Self.usage()]))))
+        #expect(!store.panelHasRunningAgents)
+        #expect(store.panelAgentsFirst == true)
     }
 
     @Test func motionUsesApprovedDurations() {

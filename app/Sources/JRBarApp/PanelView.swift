@@ -11,32 +11,28 @@ struct PanelView: View {
     var body: some View {
         let composition = PanelComposition(store: store)
         VStack(spacing: 0) {
-            HStack {
-                Text("JR-Bar").font(JRBarTokens.TypeStyle.headline.font)
-                Spacer()
-                ConnectionDot(state: store.connectionDot, reduced: store.reduceMotion, active: store.marksMove)
-                    .help(store.connectionDescription)
-            }
-            .padding(.horizontal, JRBarTokens.Space.md).frame(height: PanelComposition.rowHeight)
+            PanelTitleBar(store: store)
             if store.coreCrashed {
                 StatusBanner("Monitor stopped", kind: .failure, detail: store.coreCrashDetail) {
                     Button("Restart") { store.restartCore() }
-                }.frame(height: 70)
+                }.padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if !store.isLive {
-                StatusBanner("Connecting to the monitor", detail: store.connectionDescription).frame(height: 70)
+                StatusBanner("Connecting to the monitor", detail: store.connectionDescription)
+                    .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if let failure = store.providerList.failure {
-                StatusBanner("Provider list unavailable", kind: .failure, detail: failure).frame(height: 70)
+                StatusBanner("Provider list unavailable", kind: .failure, detail: failure)
+                    .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             }
             if !store.visibleAskRows.isEmpty || store.demoRow != nil {
                 panelSectionTitle("Needs you")
                 SnapshotScrollView {
                     VStack(spacing: 0) {
-                        if let demo = store.demoRow { AskRow(row: demo, store: store) }
-                        ForEach(store.visibleAskRows) { row in AskRow(row: row, store: store) }
+                        if let demo = store.demoRow { AskRow(row: demo, store: store, detailHeight: composition.askDetailHeight) }
+                        ForEach(store.visibleAskRows) { row in AskRow(row: row, store: store, detailHeight: composition.askDetailHeight) }
                     }
                 }.frame(height: composition.asksHeight)
             }
-            if store.panelHasRunningAgents {
+            if store.panelAgentsFirst ?? store.panelHasRunningAgents {
                 PanelAgentsSection(store: store, composition: composition)
                 Hairline()
                 PanelProviderSection(store: store, composition: composition)
@@ -45,6 +41,8 @@ struct PanelView: View {
                 Hairline()
                 PanelAgentsSection(store: store, composition: composition)
             }
+            Hairline()
+            PanelDevicesRow(store: store)
             Hairline()
             PanelActionsFooter(store: store)
         }
@@ -332,101 +330,6 @@ struct ScrollEdgeFade: ViewModifier {
 
 // MARK: - Header
 
-struct PanelHeader: View {
-    @Bindable var store: PanelStore
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 9) {
-            PanelStateMark(state: store.coreCrashed ? .failed : store.aggregate)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(store.headerWord)
-                    .font(JRBarTokens.TypeStyle.title3.font)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-                    .id("word-\(store.headerWord)")
-                    .transition(.opacity)
-                if store.coreCrashed {
-                    Text(store.coreCrashDetail)
-                        .font(JRBarTokens.TypeStyle.callout.font)
-                        .foregroundStyle(Color.red)
-                        .lineLimit(1)
-                    Button("Restart") { store.restartCore() }
-                        .buttonStyle(PillButtonStyle(prominent: false))
-                        .help("Launch the monitor again")
-                } else {
-                    Text(store.headerCounts)
-                        .font(JRBarTokens.TypeStyle.callout.font)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .contentTransition(.numericText())
-                }
-            }
-            Spacer(minLength: 8)
-            if let quietLabel = store.quietLabel {
-                // `state.focus` says a quiet is in effect: the moon so it
-                // is visible at a glance, the label on hover for the
-                // countdown. "Quiet…" in the footer says the same words.
-                Image(systemName: "moon.zzz.fill")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.secondary)
-                    .help(quietLabel)
-                    .accessibilityLabel("Quiet: \(quietLabel)")
-            }
-            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.marksMove)
-                .help(store.connectionDescription)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 2)
-        .frame(height: CGFloat(PanelLayout.headerHeight))
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerWord)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerCounts)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.coreCrashed)
-    }
-}
-
-/// The header's state as a mark before its word: amber for an ask, red
-/// for a failure, green once it is done — the rows' own words — and a
-/// fixed calm blue while work runs, never the accent, which a red accent
-/// would turn into a failure (the unseen dot's reasoning). Idle is grey.
-struct PanelStateMark: View {
-    let state: AgentAggregateState
-
-    private var symbol: String {
-        switch state {
-        case .idle: return "zzz"
-        case .working: return "bolt.fill"
-        case .needsInput: return "hand.raised.fill"
-        case .completed: return "checkmark"
-        case .failed: return "xmark"
-        }
-    }
-
-    private var tint: Color {
-        switch state {
-        case .idle: return .secondary
-        case .working: return Color(nsColor: .systemBlue)
-        case .needsInput: return SessionActivity.waiting.tint
-        case .completed: return SessionActivity.done.tint
-        case .failed: return SessionActivity.failed.tint
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            Circle().fill(tint.opacity(0.16))
-            Circle().strokeBorder(tint.opacity(0.22), lineWidth: 0.5)
-            Image(systemName: symbol)
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(tint)
-                .id(symbol)
-                .transition(.opacity)
-        }
-        .frame(width: 22, height: 22)
-        .accessibilityHidden(true)
-    }
-}
-
 struct ConnectionDot: View {
     let state: PanelStore.ConnectionDot
     let reduced: Bool
@@ -483,285 +386,6 @@ struct PulsingConnectionDot: View {
 }
 
 // MARK: - Sessions
-
-struct SessionsSection: View {
-    @Bindable var store: PanelStore
-    let layout: PanelLayout
-
-    var body: some View {
-        let trailing = trailingWidth
-        VStack(spacing: 0) {
-            SectionLabel(text: "Sessions", trailing: sessionsTrailing)
-            if store.visibleRows.isEmpty, store.demoRow == nil {
-                SessionsEmptyState(store: store)
-            } else {
-                SnapshotScrollView {
-                    // Lazy: every row is a fixed height (`PanelLayout`), so
-                    // only the rows in the viewport are built and laid out
-                    // when a frame lands, not all sixty.
-                    LazyVStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
-                        if let demo = store.demoRow {
-                            // The Try it ask, above the real ones and not one of them.
-                            AskRow(row: demo, store: store)
-                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-                        }
-                        ForEach(store.visibleAskRows) { row in
-                            AskRow(row: row, store: store)
-                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-                        }
-                        ForEach(store.visiblePlainRows) { row in
-                            SessionRowView(row: row, store: store, trailingWidth: trailing)
-                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-                        }
-                    }
-                    .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.visibleRowIDs)
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(height: CGFloat(layout.sessionsHeight))
-                .clipped()
-                .modifier(ScrollEdgeFade(active: layout.sessionsScroll))
-            }
-            if store.hiddenCount > 0 {
-                HiddenSessionsRow(store: store)
-                    .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-            }
-            if let explanation = store.lightExplanation {
-                WhyLightRow(explanation: explanation, store: store)
-                    .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-            }
-        }
-        .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
-        .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
-        .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
-    }
-
-    /// The rows' shared trailing column, as wide as the widest state word
-    /// among them, or a quiet row's "quiet 1h 05m".
-    private var trailingWidth: CGFloat {
-        SessionRowView.trailingWidth(rows: store.visiblePlainRows, now: store.now)
-    }
-
-    /// "3" — or, while a find query narrows the list, "“opus” · 2 of 5".
-    private var sessionsTrailing: String? {
-        if !store.findQuery.isEmpty {
-            return "“\(store.findQuery)” · \(store.visibleRows.count) of \(store.rows.count)"
-        }
-        return store.rows.isEmpty ? nil : "\(store.rows.count)"
-    }
-}
-
-/// "3 earlier in History →": the runs the daemon has stopped listing
-/// because they were acknowledged. Clicking opens History, where they are.
-struct HiddenSessionsRow: View {
-    @Bindable var store: PanelStore
-    @ViewState private var hovering = false
-
-    var body: some View {
-        Button { store.openHistory() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12)
-                Text(store.hiddenFooterText)
-                    .font(JRBarTokens.TypeStyle.callout.font)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .contentTransition(.numericText())
-                Image(systemName: "arrow.right")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.tertiary)
-                    .opacity(hovering && store.isOpen ? 1 : 0.45)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: CGFloat(PanelLayout.hiddenFooterHeight) - 3)
-            .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
-                .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 6)
-        .padding(.top, 3)
-        .onHover { hovering = $0 }
-        .help("Sessions you have already cleared live in History (⌘Y)")
-        .accessibilityLabel("\(store.hiddenFooterText). Opens History.")
-    }
-}
-
-/// "Why this light": one line under the sessions explaining what the strip
-/// and the Screen Bar are doing; hover for the programs and the settings.
-struct WhyLightRow: View {
-    let explanation: LightExplanation
-    @Bindable var store: PanelStore
-    @ViewState private var hovering = false
-    @ViewState private var frame: CGRect = .zero
-    @ViewState private var pending: DispatchWorkItem?
-
-    private var showsHover: Bool { hovering && store.isOpen }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Image(systemName: "light.max")
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(showsHover ? .secondary : .tertiary)
-                .frame(width: 12)
-            HStack(spacing: 0) {
-                Text("\(explanation.motion): ")
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .lineLimit(1)
-                    .fixedSize()
-                Text(explanation.reason)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .font(JRBarTokens.TypeStyle.callout.font)
-            .id(explanation.headline)
-            .transition(.opacity)
-            Spacer(minLength: 4)
-            if explanation.session != nil {
-                Image(systemName: "arrow.up.forward")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.tertiary)
-                    .opacity(showsHover ? 1 : 0)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.whyRowHeight) - 3)
-        .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous).fill(Color.primary.opacity(showsHover ? 0.05 : 0)))
-        .padding(.horizontal, 6)
-        .padding(.top, 3)
-        .contentShape(Rectangle())
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newFrame in
-            frame = newFrame
-            store.whyRowFrame = newFrame
-            // Rows above may have come or gone: keep the popover under the row.
-            if hovering, pending == nil { store.whyHover(true, frame: newFrame) }
-        }
-        .onChange(of: explanation.headline) {
-            if hovering, pending == nil { store.whyHover(true, frame: frame) }
-        }
-        .onHover { inside in
-            hovering = inside
-            pending?.cancel()
-            if inside {
-                let work = DispatchWorkItem { MainActor.assumeIsolated { pending = nil; if hovering { store.whyHover(true, frame: frame) } } }
-                pending = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
-            } else {
-                pending = nil
-                store.whyHover(false, frame: frame)
-            }
-        }
-        .onChange(of: store.isOpen) { _, open in if !open { hovering = false; pending?.cancel(); pending = nil } }
-        .onDisappear { pending?.cancel(); store.whyHover(false, frame: frame) }
-        .onTapGesture { store.openExplainedSession() }
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: explanation.headline)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Why this light: \(explanation.headline)")
-        .help("Why this light · hover for the programs and brightness settings")
-    }
-}
-
-/// Nothing to list: a drawn state rather than a sentence in the void — a
-/// soft mark, the headline, and one line saying what happens next. Live
-/// and quiet reads differently from "the monitor is not there".
-struct SessionsEmptyState: View {
-    @Bindable var store: PanelStore
-
-    private var live: Bool { store.isLive }
-
-    /// A find query narrowed every row away — a different state from an
-    /// empty roster, and it says how to get the rows back.
-    private var finding: Bool { !store.findQuery.isEmpty && !store.rows.isEmpty }
-
-    private var symbol: String {
-        if finding { return "magnifyingglass" }
-        if live { return store.hiddenCount > 0 ? "checkmark" : "moon.stars" }
-        return "antenna.radiowaves.left.and.right.slash"
-    }
-
-    /// Green when everything you ran is done and seen, amber when the
-    /// monitor is not there, grey otherwise.
-    private var tint: Color {
-        if finding { return .secondary }
-        if !live { return .orange }
-        return store.hiddenCount > 0 && store.staleDetail == nil ? SessionActivity.done.tint : .secondary
-    }
-
-    private var headline: String {
-        if finding { return "Nothing matches “\(store.findQuery)”" }
-        if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
-        if store.core.stateRejected != nil { return "Can't read the monitor" }
-        return store.coreMayBeStarting ? "Starting…" : "Monitor not connected"
-    }
-
-    private var detail: String {
-        if finding {
-            return "Searched labels, models, folders and asks across \(store.rows.count) session\(store.rows.count == 1 ? "" : "s"). ⌫ edits, Esc clears."
-        }
-        if live {
-            if let stale = store.staleDetail {
-                return "\(stale); showing what it last sent."
-            }
-            if store.hiddenCount > 0 {
-                return "Everything you had running is finished and acknowledged."
-            }
-            // A live core with hooks never installed is a setup state, not
-            // a quiet one: say what to do rather than "they will appear".
-            if !store.missingHooks.isEmpty {
-                let names = store.missingHooks.prefix(3).map { SessionLabel.providerName($0) }.joined(separator: ", ")
-                return "Install hooks for \(names)."
-            }
-            return "No sessions are reporting. Check setup in Settings › Agents & Usage."
-        }
-        if let why = store.core.stateRejected {
-            return "The monitor sent an update this app could not read (\(why)). Showing the file feeds until the next good one."
-        }
-        return "Showing the file feeds: \(store.fallbackDetail.lowercased())."
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 11) {
-            ZStack {
-                Circle().fill(RadialGradient(colors: [tint.opacity(0.18), tint.opacity(0.05)],
-                                             center: .center, startRadius: 2, endRadius: 17))
-                Circle().strokeBorder(tint.opacity(0.18), lineWidth: 0.5)
-                Image(systemName: symbol)
-                    .font(JRBarTokens.TypeStyle.body.font)
-                    .foregroundStyle(tint)
-            }
-            .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(headline)
-                    .font(JRBarTokens.TypeStyle.body.font)
-                    .lineLimit(1)
-                Text(detail)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            if live && !finding && !store.missingHooks.isEmpty {
-                // The one thing this state needs is a way forward.
-                Button("Set up agents…") { store.openSettings(page: .agents) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
-                    .help("Install or repair agent hooks in Settings › Agents & Usage")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .frame(height: CGFloat(PanelLayout.emptySessionsHeight), alignment: .top)
-        .clipped()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(headline). \(detail)")
-    }
-}
 
 struct SessionRowView: View {
     let row: SessionRow
@@ -1058,6 +682,10 @@ struct SessionContextMenu: View {
     }
 
     var body: some View {
+        if store.lightExplanation != nil {
+            Button("Why this light") { store.whyHover(true, frame: store.whyRowFrame) }
+            Divider()
+        }
         if row.isRemote {
             Text(row.remoteMachine.map { "Runs on \($0)" } ?? "Runs on a peer Mac")
             if let host = store.screenSharingHost(for: row) {
@@ -1167,6 +795,7 @@ struct AskCardPlate: View {
 struct AskRow: View {
     let row: SessionRow
     @Bindable var store: PanelStore
+    var detailHeight: CGFloat = CGFloat(PanelLayout.askDetailHeight)
     /// The reply draft rides the store: a half-typed answer survives the
     /// panel closing and a relaunch, and a refused send keeps the text.
     private var replyText: Binding<String> {
@@ -1208,14 +837,14 @@ struct AskRow: View {
                 }
             }
             if showsDetail, let ask = row.ask {
-                AskDetailView(ask: ask, height: CGFloat(PanelLayout.askDetailHeight) - 6,
+                AskDetailView(ask: ask, height: detailHeight - 6,
                               onOpenSession: row.isRemote || ask.session == nil ? nil : { store.open(row) })
             }
             verbRow
         }
         .opacity(snoozed ? 0.55 : 1)
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.askRowHeight) + (showsDetail ? CGFloat(PanelLayout.askDetailHeight) : 0))
+        .frame(height: CGFloat(PanelLayout.askRowHeight) + (showsDetail ? detailHeight : 0))
         .background(AskCardPlate(selected: store.selectedID == row.id, quiet: snoozed, demo: isDemo))
         .overlay(
             RoundedRectangle(cornerRadius: AskCardPlate.radius, style: .continuous)
@@ -1260,7 +889,7 @@ struct AskRow: View {
     /// row's quiet states.
     private var titleLine: some View {
         HStack(spacing: 6) {
-            Text(isDemo ? DemoAsk.label : row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+            Text(isDemo ? DemoAsk.label : "\(row.style.name) · \(row.cwdTail ?? row.label)").fontWeight(.medium).lineLimit(1).truncationMode(.tail)
             if isDemo {
                 DemoAskBadge()
             } else {
@@ -1377,7 +1006,7 @@ struct AskRow: View {
             } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask, at: now) {
                 // A held question: its options are the answer, sent
                 // through the agent's own hook — Deny declines it.
-                Button("Deny") { store.deny(ask) }
+                Button("Deny ⌘D") { store.deny(ask) }
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .disabled(store.isAnswerPending(ask))
                     .help("Decline the question (⌘D)")
@@ -1389,7 +1018,7 @@ struct AskRow: View {
                 // the refusal — not a guess — is what the toast then
                 // shows. All go quiet while the answer is on the wire
                 // so a double click cannot post twice.
-                Button("Deny") { store.deny(ask) }
+                Button("Deny ⌘D") { store.deny(ask) }
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .disabled(store.isAnswerPending(ask))
                     .help("Answer no (⌘D)")
@@ -1401,7 +1030,7 @@ struct AskRow: View {
                         .disabled(store.isAnswerPending(ask))
                         .help("Approve, and let \(row.style.name) remember the rule it offered")
                 }
-                Button("Approve") { store.approve(ask) }
+                Button("Approve ⌘↩") { store.approve(ask) }
                     .buttonStyle(PillButtonStyle(prominent: true))
                     .disabled(store.isAnswerPending(ask))
                     .help(approveHelp(ask, now: now))
@@ -1579,7 +1208,7 @@ private struct PillButtonBody: View {
     @ViewBuilder
     private var plate: some View {
         if prominent {
-            let amber = SessionActivity.waiting.tint
+            let amber = JRBarTokens.Ink.accent
             let top = amber.opacity(pressed ? 0.8 : 1)
             let bottom = amber.opacity(pressed ? 0.7 : 0.88)
             Capsule()
@@ -1599,295 +1228,6 @@ private struct PillButtonBody: View {
 
 // MARK: - Usage
 
-struct UsageSection: View {
-    @Bindable var store: PanelStore
-    let layout: PanelLayout
-
-    var body: some View {
-        VStack(spacing: 0) {
-            SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Usage Center" : nil, onDetail: { store.openUsageCenter() })
-            if store.usage.isEmpty && store.quietUsage.isEmpty {
-                Text(store.isLive ? "No usage reported yet." : "Usage comes from the monitor.")
-                    .font(JRBarTokens.TypeStyle.callout.font)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .frame(height: CGFloat(PanelLayout.emptyUsageHeight), alignment: .top)
-            } else {
-                SnapshotScrollView {
-                    VStack(spacing: CGFloat(PanelLayout.usageRowSpacing)) {
-                        // `identity` (id|instance), not `id`: two accounts
-                        // of one provider are two rows here.
-                        ForEach(store.usage, id: \.identity) { usage in
-                            UsageRow(usage: usage, store: store)
-                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-                        }
-                        // The providers with nothing to say share one
-                        // trailing row that names them.
-                        if !store.quietUsage.isEmpty {
-                            UsageQuietRow(providers: store.quietUsage, store: store)
-                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    // A list that scrolls ends in room as deep as the fade,
-                    // so scrolled to its end the last row clears the fade
-                    // and reads at full strength.
-                    .padding(.bottom, layout.usageScroll ? Self.fadeDepth : 0)
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
-                               value: store.usage.map(\.identity) + store.quietUsage.map(\.identity))
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(height: CGFloat(layout.usageHeight))
-                .clipped()
-                .modifier(ScrollEdgeFade(active: layout.usageScroll, depth: Self.fadeDepth))
-            }
-        }
-        .padding(.bottom, CGFloat(PanelLayout.usageBottomPadding))
-    }
-
-    /// The list is cut with its last row's top half showing: the fade
-    /// covers that half, tile and words together.
-    static let fadeDepth = CGFloat(PanelLayout.usageRowHeight / 2)
-
-    private var refreshed: String? {
-        guard let at = store.core.state?.usage?.refreshedAt else { return nil }
-        guard let elapsed = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: store.now) else { return nil }
-        return "\(elapsed) ago"
-    }
-}
-
-/// The providers with nothing to say — every window at 0 %, no window
-/// at all, the source not found or off — as one row: a neutral tile in
-/// the tile column, so the names line up with the rows above, their
-/// names, and why ("2 at 0% · 1 not found"). A click opens the Usage
-/// Center, on the provider when there is only one.
-struct UsageQuietRow: View {
-    let providers: [CoreProviderUsage]
-    @Bindable var store: PanelStore
-    @ViewState private var hovering = false
-
-    private var providerNames: [String] {
-        providers.map {
-            UsageSourceNotes.displayName(ProviderStyle.style(for: $0.id, document: store.settingsDocument).name, instance: $0.instance)
-        }
-    }
-
-    var body: some View {
-        let names = providerNames
-        // Laid out as a `UsageRow` is: the tile on the name's line and the
-        // lines hung from the row's top, so its tile and name sit where
-        // every row above puts them.
-        HStack(alignment: .top, spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: JRBarTokens.Radius.providerTile(size: 20), style: .continuous)
-                    .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
-                Image(systemName: "ellipsis")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(width: 20, height: 20)
-            .alignmentGuide(.top) { $0[.top] + UsageRow.tileLift }
-            VStack(alignment: .leading, spacing: 3) {
-                // The chevron rides the name's line, where the rows above
-                // put their percent.
-                HStack(spacing: 4) {
-                    Text(names.joined(separator: ", "))
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right")
-                        .font(JRBarTokens.TypeStyle.caption.font)
-                        .foregroundStyle(.tertiary)
-                        .opacity(hovering && store.isOpen ? 1 : 0.5)
-                }
-                Text(PanelStore.quietSummary(providers))
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
-                .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.identity : nil) }
-        .help(tooltip(names))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(tooltip(names))
-        .accessibilityHint("Opens the Usage Center")
-        .accessibilityAddTraits(.isButton)
-    }
-
-    /// "Gemini: at 0%", one line per provider.
-    private func tooltip(_ names: [String]) -> String {
-        zip(names, providers).map { "\($0): \(PanelStore.quietWord($1))" }.joined(separator: "\n")
-    }
-}
-
-struct UsageRow: View {
-    let usage: CoreProviderUsage
-    @Bindable var store: PanelStore
-    @ViewState private var hovering = false
-
-    /// The percent column: `~100%` fits with room to spare.
-    static let percentWidth: CGFloat = 46
-    /// How far the 20 pt tile rises above the name's line box, which
-    /// centres it on the name. It is layout, not an offset, so the first
-    /// row's tile is never clipped by the list's top edge.
-    nonisolated static let tileLift: CGFloat = 2
-
-    private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
-    private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
-    /// The leading window's session-aware forecast — the Usage Center's
-    /// own, so the row and the card never disagree about "holding".
-    private var paceForecast: UsageForecast? {
-        windows.primary.map { UsageCenterStore.forecast(for: usage, window: $0, core: store.core, now: store.now) }
-    }
-
-    var body: some View {
-        if usage.availability == "not_found" {
-            HStack(spacing: 6) {
-                ProviderTile(style: style, size: 20)
-                Text("\(style.name): not found on this Mac")
-                    .lineLimit(1)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 2)
-                Button("Hide") { store.runUsageAction(usage, action: "hide") }
-                    .buttonStyle(.plain)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
-        } else {
-            readingRow
-        }
-    }
-
-    private var readingRow: some View {
-        let (primary, secondary) = windows
-        return HStack(alignment: .top, spacing: 9) {
-            // The tile sits on the name's line, so the list's half row,
-            // cut below that line, shows a tile and a name together.
-            ProviderTile(style: style, size: 20)
-                .alignmentGuide(.top) { $0[.top] + Self.tileLift }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(UsageSourceNotes.displayName(style.name, instance: usage.instance))
-                        .fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                    if let tag {
-                        UsageTagText(tag: tag)
-                            .help(tagHelp(tag))
-                    }
-                    Spacer(minLength: 4)
-                    Text(primary?.percentText ?? "")
-                        .font(JRBarTokens.TypeStyle.callout.font)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .foregroundStyle(barColor(primary?.usedPct))
-                        .contentTransition(.numericText())
-                        .frame(width: Self.percentWidth, alignment: .trailing)
-                        .help(primary?.isUnknown == true
-                              ? "\(style.name) reports this window without a number"
-                              : (usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure"))
-                }
-                if let status = usage.statusText {
-                    Text(status)
-                        .font(JRBarTokens.TypeStyle.caption.font)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help(status)
-                } else {
-                    HStack(spacing: 8) {
-                        if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
-                        if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
-                    }
-                }
-                HStack(spacing: 6) {
-                    Text(resetLine(primary: primary, secondary: secondary))
-                        .font(JRBarTokens.TypeStyle.caption.font)
-                        .monospacedDigit()
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 2)
-                    if usage.statusText != nil, let action = usage.action {
-                        Button(action) { store.runUsageAction(usage, action: usage.actionKind) }
-                            .buttonStyle(.plain)
-                            .font(JRBarTokens.TypeStyle.caption.font)
-                            .foregroundStyle(.tint)
-                    }
-                    if let values = store.sparkline(for: usage.id) {
-                        UsageSparklineView(values: values, accent: style.accent)
-                            .transition(.opacity)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 8)
-        // Hung from the top, as `UsageQuietRow` is, so every name in the
-        // list sits the same distance below its row's top.
-        .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
-                .fill(Color.primary.opacity(hovering ? 0.05 : 0))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: usage.identity) }
-        .help("Open \(style.name) in the Usage Center")
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: primary?.usedPct)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens \(style.name) in the Usage Center")
-        .accessibilityAddTraits(.isButton)
-    }
-
-    /// The one thing the row's tag says: Stale, Used up, Runs out in X
-    /// (or a vendor incident); nothing when the provider is on track.
-    private var tag: PanelStore.UsageTag? {
-        PanelStore.usageTag(for: usage, primary: windows.primary,
-                            heldIdle: paceForecast?.heldIdle == true, now: store.now)
-    }
-
-    private func tagHelp(_ tag: PanelStore.UsageTag) -> String {
-        switch tag {
-        case .stale: return PanelStore.staleHelp(action: usage.action)
-        case .usedUp: return "The \(windows.primary?.longName ?? "leading") window is used up until it resets"
-        case .runsOut: return paceForecast.map { $0.headline(now: store.now) } ?? "The forecast runs dry before the reset"
-        case .incident(let text): return text
-        }
-    }
-
-    /// The resets, one line (`PanelStore.usageResetLine`): a stale
-    /// source's fix-it first, "no room for +1" when one more agent would
-    /// not fit before the reset.
-    private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
-        // The decision the panel is opened for, said only when the answer
-        // is no: one more agent at today's burn would not fit.
-        let noRoom = paceForecast.map { SessionAwarePace.roomForOneMore($0, now: store.now.timeIntervalSince1970) == false } ?? false
-        return PanelStore.usageResetLine(for: usage, primary: primary, secondary: secondary,
-                                         noRoomForOneMore: noRoom, now: store.now)
-    }
-
-    /// A window with no reading is grey: not calm, not spent -- unread.
-    private func barColor(_ pct: Double?) -> Color {
-        guard let pct else { return .secondary }
-        if pct >= 95 { return .red }
-        if pct >= 80 { return .orange }
-        return .primary
-    }
-}
-
-/// A usage row's tag: red when the window is used up, amber otherwise.
 struct UsageTagText: View {
     let tag: PanelStore.UsageTag
 
@@ -2047,7 +1387,7 @@ struct ContextHairline: View {
 
 // MARK: - Devices
 
-struct DevicesSection: View {
+struct PanelDevicesRow: View {
     @Bindable var store: PanelStore
 
     /// The daemon's `dot_link` word, when it sends one; the glyph between
@@ -2100,8 +1440,6 @@ struct DevicesSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SectionLabel(text: "Devices", trailing: store.isLive ? nil : "from files")
-                .overlay(alignment: .bottomTrailing) { KeepAwakeFooter(power: store.isLive ? store.core.state?.power : nil) }
             HStack(spacing: 6) {
                 ForEach(chips, id: \.id) { chip in
                     if chip.id == "dot", let glyph = linkGlyph {
@@ -2124,9 +1462,8 @@ struct DevicesSection: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 14)
-            .frame(height: 20)
-            .padding(.bottom, 8)
+            .padding(.horizontal, JRBarTokens.Space.md)
+            .frame(height: PanelComposition.sectionHeight)
             HStack(spacing: 8) {
                 // The bar is a brightness target too — with no strip
                 // attached this slider still dims it (`set_brightness
@@ -2134,7 +1471,7 @@ struct DevicesSection: View {
                 // is not a reason to grey it out.
                 let hasTarget = store.hasHardware
                     || store.devices.contains { $0.kind == "screen_bar" && $0.isPresent }
-                Image(systemName: "sun.min").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
+                Text("Devices").font(JRBarTokens.TypeStyle.section.font).foregroundStyle(JRBarTokens.Ink.secondary)
                 Slider(value: Binding(
                     get: { store.brightness },
                     set: { store.setBrightness($0, final: false) }
@@ -2151,12 +1488,12 @@ struct DevicesSection: View {
                     .frame(width: 38, alignment: .trailing)
                     .contentTransition(.numericText())
             }
-            .padding(.horizontal, 14)
-            .frame(height: 18)
-            .padding(.bottom, 10)
+            .padding(.horizontal, JRBarTokens.Space.md)
+            .frame(height: PanelComposition.sectionHeight)
+            .padding(.bottom, JRBarTokens.Space.sm)
             .help(brightnessHelp)
         }
-        .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)
+        .frame(height: PanelComposition.devicesHeight, alignment: .top)
         .clipped()
     }
 
@@ -2214,172 +1551,7 @@ struct DeviceChip: View {
 
 // MARK: - Footer
 
-/// The panel's footer: the verbs that act on the list on the left —
-/// Clear finished (with its Undo) and Quiet — and the ways out on the
-/// right, as marks with tooltips: the awake hold, History, More and
-/// Settings. Quit lives at the bottom of More; ⌘Q still works while the
-/// panel is key. When the left side runs long the whole row tightens
-/// rather than clip, so the footer fits `PanelLayout.width` with every
-/// optional piece showing.
-struct PanelFooter: View {
-    @Bindable var store: PanelStore
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            PanelFooterRow(store: store, compact: false)
-            PanelFooterRow(store: store, compact: true)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.footerHeight))
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
-    }
-}
-
-/// One way to lay the footer out: `compact` trims every button's padding
-/// and the Undo link to its word — its countdown stays in the tooltip.
-struct PanelFooterRow: View {
-    @Bindable var store: PanelStore
-    let compact: Bool
-
-    var body: some View {
-        HStack(spacing: compact ? 0 : 2) {
-            PanelFooterLeading(store: store, compact: compact)
-            Spacer(minLength: 4)
-            PanelFooterTrailing(store: store, compact: compact)
-        }
-    }
-}
-
-/// Clear finished, its Undo while the offer stands, and the Quiet menu.
-struct PanelFooterLeading: View {
-    @Bindable var store: PanelStore
-    var compact = false
-
-    private var padding: CGFloat { compact ? 4 : 7 }
-
-    var body: some View {
-        HStack(spacing: compact ? 0 : 2) {
-            // "Clear finished" never leaves: while an undo offer stands it
-            // shrinks to a small inline link beside the button rather than
-            // replacing it — a footer that swaps its verb out from under
-            // the pointer is a trap.
-            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen,
-                         horizontalPadding: padding) { store.clearCompleted() }
-                .help(store.completedCount == 0
-                      ? "Nothing finished to acknowledge"
-                      : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
-            if let countdown = store.undoCountdown {
-                Button(compact ? "Undo" : "Undo \(countdown)") { store.undoClear() }
-                    .buttonStyle(.plain)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, 3)
-                    .help("Put the sessions you just cleared back (\(countdown) left)")
-                    .transition(.opacity)
-            }
-            Menu {
-                Button("30 minutes") { store.quietFor(seconds: 30 * 60) }
-                Button("1 hour") { store.quietFor(seconds: 60 * 60) }
-                Button("4 hours") { store.quietFor(seconds: 240 * 60) }
-                Button(PanelStore.morningLabel(verb: "Until", target: store.morningTarget)) {
-                    store.quietFor(seconds: PanelStore.secondsUntilMorning())
-                }
-                Divider()
-                Menu("Mode") {
-                    ForEach(PanelStore.quietModes, id: \.id) { mode in
-                        Button {
-                            store.quietMode = mode.id
-                        } label: {
-                            if store.quietMode == mode.id {
-                                Label(mode.label, systemImage: "checkmark")
-                            } else {
-                                Text(mode.label)
-                            }
-                        }
-                    }
-                }
-                if store.quietIsOurs {
-                    Divider()
-                    Button("End quiet") { store.endQuiet() }
-                }
-            } label: {
-                // "Quiet…" idle; "Paused 42m" while the daemon's focus
-                // says a quiet is in effect, in the waiting amber.
-                Text(store.isQuietChanging ? "Changing…" : store.quietLabel ?? "Quiet…")
-                    .lineLimit(1)
-                    .foregroundStyle(store.quiet != nil ? SessionActivity.waiting.tint : .primary)
-            }
-            .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
-            .disabled(!store.isLive || store.isQuietChanging)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(quietHelp)
-            .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
-        }
-    }
-
-    private var quietHelp: String {
-        guard let label = store.quietLabel else { return "Quiet the lights and sounds for a while" }
-        let source = (store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu"
-        return "Quiet: \(label) · from \(source)"
-    }
-}
-
-/// The footer's marks: the awake hold, History, More and Settings, each
-/// an icon whose words are its tooltip.
-struct PanelFooterTrailing: View {
-    @Bindable var store: PanelStore
-    var compact = false
-
-    private var padding: CGFloat { compact ? 4 : 7 }
-
-    var body: some View {
-        HStack(spacing: compact ? 0 : 2) {
-            if let hold = store.awakeHold {
-                // The hold on sleep is a mark, not a sentence: the words
-                // live in the tooltip, and a click opens the Power rows.
-                Button { store.openSettings(page: .alerts) } label: {
-                    Image(systemName: hold.symbol).font(JRBarTokens.TypeStyle.caption.font)
-                }
-                .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
-                .help(hold.text)
-                .accessibilityLabel(hold.text)
-                .contextMenu { KeepAwakeMenuItems() }
-            }
-            Button { store.openHistory() } label: {
-                Image(systemName: "clock.arrow.circlepath").font(JRBarTokens.TypeStyle.callout.font)
-            }
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
-            .help("History (⌘Y)")
-            .accessibilityLabel("History")
-            Menu {
-                PanelMoreMenuItems(store: store)
-            } label: {
-                Image(systemName: "ellipsis.circle").font(JRBarTokens.TypeStyle.callout.font)
-            }
-            .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More: the palette (⇧⌘K), History (⌘Y), Events (⌘R), Overview (⌘O), Usage Center (⌘U), Settings (⌘,), Quit (⌘Q)")
-            .accessibilityLabel("More")
-            Button { store.openSettings() } label: {
-                Image(systemName: "gearshape").font(JRBarTokens.TypeStyle.callout.font)
-            }
-            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
-            .help("Settings… (⌘,)")
-            .accessibilityLabel("Settings")
-        }
-        .fixedSize()
-    }
-}
-
-/// The footer's More menu: the catalog the status item's right-click
-/// menu shares (`AppMenuCatalog`), section by section.
+/// The panel and status item share these commands.
 struct PanelMoreMenuItems: View {
     @Bindable var store: PanelStore
 
@@ -2407,47 +1579,6 @@ struct PanelMoreMenuItem: View {
         }
     }
 }
-
-struct FooterButton: View {
-    let title: String
-    let dimmed: Bool
-    var active: Bool = true
-    var horizontalPadding: CGFloat = 7
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .lineLimit(1)
-                .fixedSize()
-        }
-        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active, horizontalPadding: horizontalPadding))
-    }
-}
-
-struct FooterButtonStyle: ButtonStyle {
-    let dimmed: Bool
-    var active: Bool = true
-    var horizontalPadding: CGFloat = 7
-    @ViewState private var hovering = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(JRBarTokens.TypeStyle.callout.font)
-            .foregroundStyle(dimmed ? Color.secondary.opacity(0.7) : Color.primary.opacity(0.85))
-            .padding(.horizontal, horizontalPadding)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
-                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : (hovering && active ? 0.06 : 0)))
-            )
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .onChange(of: active) { _, isActive in if !isActive { hovering = false } }
-    }
-}
-
-// MARK: - Toast
 
 struct ToastView: View {
     let text: String?

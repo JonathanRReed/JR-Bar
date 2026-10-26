@@ -14,19 +14,34 @@ struct PanelRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func panelStatesAtBothWidthsAndAppearances() async throws {
         for state in ["groups", "expanded", "seven-members", "asks", "earlier", "idle", "source-idle",
-                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen"] {
+                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen", "find", "undo", "quiet-awake", "missing-root", "retry", "edit-accounts", "motion", "expanded-short-screen", "alerts"] {
             let store = try await fixture(state)
             for width: CGFloat in [PanelView.width, 320] {
                 for dark in [false, true] {
                     try await render(PanelView(store: store, panelWidth: width),
-                                     name: "panel-\(state)-\(Int(width))", width: width, dark: dark)
+                                     name: "panel-\(state)-\(Int(width))", width: width, dark: dark, reduced: store.reduceMotion)
                 }
+            }
+            if state == "expanded-short-screen", let ask = store.visibleAskRows.first?.ask { AskExpansion.shared.collapse(ask) }
+        }
+    }
+
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func studioShortcutConflictAndOffSwitch() async throws {
+        let suite = ScratchDefaults.suiteName("studio-shortcut-proof")
+        defer { ScratchDefaults.remove(suite) }
+        let store = SettingsStore(core: CoreModel(), shortcutDefaults: ScratchDefaults.open(suite))
+        store.studioHotkeyRegistrationFailed = true
+        let center = HotkeyCenter(registrar: HotkeyCenterTests.Recorder())
+        for width: CGFloat in [PanelView.width, 320] {
+            for dark in [false, true] {
+                try await render(ShortcutsPage(store: store, center: center), name: "studio-shortcut-conflict-\(Int(width))", width: width, dark: dark)
             }
         }
     }
 
     private func fixture(_ name: String) async throws -> PanelStore {
-        let root = Fixture.session("claude:root", group: "group")
+        var root = Fixture.session("claude:root", group: "group", workers: 2)
         let workers = [Fixture.session("codex:child", provider: "codex", group: "group", worker: true),
                        Fixture.session("gemini:child", provider: "gemini", group: "group", worker: true),
                        Fixture.session("factory:child", provider: "factory", mode: "done", group: "group", worker: true)]
@@ -36,15 +51,19 @@ struct PanelRenderProofTests {
         let group = Fixture.group(([root] + workers).map(\.id))
         let store: PanelStore
         switch name {
-        case "groups", "expanded", "earlier", "reduced-motion":
+        case "groups", "expanded", "earlier", "reduced-motion", "find", "undo", "motion":
             store = Fixture.store([root] + workers + [unlinked, finished, earlier], groups: [group],
                                   usage: [Fixture.usage(), Fixture.usage("codex")])
             if name == "expanded" { store.expandedAgentGroups.insert(root.id) }
             if name == "earlier" { store.earlierExpanded = true }
+            if name == "find" { store.find(" sample ") }
+            if name == "undo" { store.undoOffer = (batch: "sample-batch", at: store.now, cleared: 2) }
+            if name == "motion" { store.reduceMotion = false; store.animationsArmed = true; store.expandedAgentGroups.insert(root.id) }
         case "seven-members":
             let six = (0..<6).map { index in
                 Fixture.session("worker:\(index)", provider: ["codex", "claude", "factory"][index % 3], group: "group", worker: true)
             }
+            root.workers = 6
             store = Fixture.store([root] + six, groups: [Fixture.group(([root] + six).map(\.id))], usage: [Fixture.usage()])
             store.expandedAgentGroups.insert(root.id)
         case "asks":
@@ -72,10 +91,17 @@ struct PanelRenderProofTests {
             store = Fixture.store([Fixture.session("claude:active")], usage: [Fixture.usage("gemini", elapsed: true)])
         case "empty":
             store = Fixture.store(usage: [Fixture.usage("grok", availability: "absent")])
-        case "edit":
+        case "edit", "edit-accounts":
             store = Fixture.store([Fixture.session("claude:active")], usage: [Fixture.usage(), Fixture.usage("codex")])
             let fixtures = ProviderListStoreTests()
-            store.providerList.readRows = { try [fixtures.row(), fixtures.row("codex"), fixtures.row("cursor", hidden: true), fixtures.row("kiro", enabled: false)] }
+            store.providerList.readRows = {
+                var account = try fixtures.row("claude")
+                account.instance = "sample-work"
+                account.label = "Claude Work"
+                var rows = try [fixtures.row(), fixtures.row("codex"), fixtures.row("cursor", hidden: true), fixtures.row("kiro", enabled: false)]
+                if name == "edit-accounts" { rows.insert(account, at: 1) }
+                return rows
+            }
             store.providerList.writePresentation = { fixtures.reply($0) }
             await store.providerList.refresh()
             try await store.providerList.setMenuBarVisible("cursor", false)
@@ -83,6 +109,30 @@ struct PanelRenderProofTests {
         case "overflow":
             store = Fixture.store([Fixture.session("claude:active")],
                                   usage: ["claude", "codex", "gemini", "cursor", "antigravity", "grok"].map { Fixture.usage($0) })
+        case "alerts":
+            let selected = Fixture.session("claude:alerts-selected")
+            let watched = Fixture.session("codex:alerts-watched", provider: "codex")
+            let quiet = Fixture.session("claude:alerts-quiet", since: Fixture.time - 720)
+            store = Fixture.store([selected, watched, quiet], usage: [Fixture.usage()])
+            if let row = store.rows.first(where: { $0.id == watched.id }) { store.toggleDoneWatch(row) }
+            store.selectedID = selected.id
+            store.toast = nil
+        case "quiet-awake":
+            store = Fixture.store([root], usage: [Fixture.usage()])
+            let power = try JSONDecoder().decode(CorePower.self, from: Data(#"{"keep_awake":true,"hold":{"state":"manual","lease":{"kind":"indefinite"}}}"#.utf8))
+            store.core.apply(.state(CoreState(generation: 2, now: Fixture.time, aggregate: CoreAggregate(active: 1), sessions: [root], devices: WindowsRenderProofTests.devices,
+                usage: CoreUsage(providers: [Fixture.usage()]), power: power, focus: CoreFocus(mode: "pause", source: "override", until: Fixture.time + 1800))))
+            store.core.apply(.lights(CoreLights(surfaces: ["hardware": CoreLightSurface(program: LEDPreviewStripTests.sweep, ledCount: 8)])))
+        case "missing-root":
+            store = Fixture.store(workers, groups: [group], usage: [Fixture.usage()])
+        case "retry":
+            store = Fixture.store([root], usage: [Fixture.usage("codex", availability: "failing", action: "Retry later")])
+        case "expanded-short-screen":
+            let ask = CoreAsk(session: "claude:expanded-short-proof", summary: "Run the sample tests?", answerable: true,
+                              request: "expanded-short-proof", preview: "make test", detail: CoreAskDetail(command: "make test"))
+            store = Fixture.store(asks: [ask], usage: [Fixture.usage(), Fixture.usage("codex")])
+            store.screenHeight = 600
+            AskExpansion.shared.toggle(ask)
         case "short-screen":
             let asks = (0..<6).map { CoreAsk(session: "claude:ask:\($0)", summary: "Sample request", answerable: true, request: "request-\($0)") }
             let sessions = (0..<8).map { Fixture.session("codex:session:\($0)", provider: "codex") }
@@ -126,7 +176,7 @@ struct PanelRenderProofTests {
         NotificationCenter.default.removeObserver(notification)
     }
 
-    private func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool, contrast: Bool = false) async throws {
+    private func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool, contrast: Bool = false, reduced: Bool = true) async throws {
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u2-proof")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let appearanceName: NSAppearance.Name = contrast
@@ -137,7 +187,7 @@ struct PanelRenderProofTests {
         app.setActivationPolicy(.regular)
         let staged = view.environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.controlActiveState, .key)
-            .jrbarAccessibility(reduceMotion: true)
+            .jrbarAccessibility(reduceMotion: reduced)
             .frame(width: width).fixedSize(horizontal: false, vertical: true)
             .background(JRBarTokens.Ink.window)
         let hosting = NSHostingView(rootView: staged)

@@ -52,7 +52,7 @@ struct PanelHeaderTests {
                                screenBarShown: false)
         store.now = Date(timeIntervalSince1970: t)
         #expect(store.headerWord == "Working")
-        #expect(store.headerCounts == "2 of 3 sessions")
+        #expect(store.headerCounts == "2 working")
         #expect(store.rows.count == 3)
     }
 }

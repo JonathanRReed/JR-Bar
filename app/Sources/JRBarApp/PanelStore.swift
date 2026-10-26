@@ -337,6 +337,7 @@ final class PanelStore {
     @ObservationIgnored private var openRequestGeneration = 0
     @ObservationIgnored var opener: @MainActor (String) async -> String? = { await SessionOpener.open($0) }
     @ObservationIgnored var requestUsageRefresh: @MainActor ([String]) async throws -> CoreReply
+    var panelAgentsFirst: Bool?
     @ObservationIgnored var panelAgentsMemo: PanelAgentsMemo?
     var editingProviders = false
     var earlierExpanded = false
@@ -526,6 +527,7 @@ final class PanelStore {
     func panelDidOpen() {
         panelGeneration &+= 1
         isOpen = true
+        panelAgentsFirst = panelHasRunningAgents
         animationsArmed = false
         // Nothing is selected until an arrow key says so.
         selectedID = nil
@@ -571,7 +573,7 @@ final class PanelStore {
     /// Count the panel's groups and expanded members, rather than worker sessions twice.
     var layoutContent: PanelLayout.Content {
         let agents = currentPanelAgents + (earlierExpanded ? earlierPanelAgents : [])
-        let members = agents.filter { expandedAgentGroups.contains($0.id) }.reduce(0) { $0 + $1.members.count }
+        let members = agents.filter { expandedAgentGroups.contains($0.id) }.reduce(0) { $0 + $1.displayMembers.count }
         let providers = editingProviders ? panelEditProviders.count : panelUsage.count
         return PanelLayout.Content(asks: askCardCount, sessions: agents.count + members, hasWhyRow: false,
                                    usageProviders: providers, hasHiddenFooter: hiddenCount > 0 || !earlierPanelAgents.isEmpty,
@@ -688,9 +690,7 @@ final class PanelStore {
 
     var headerWord: String { aggregate.label }
 
-    /// "1 needs you · 1 failed · 2 working · 1 ready", or the file-feed
-    /// detail line. The order is `CoreAggregate.countParts`' — the daemon's
-    /// precedence and the status icon's label agree.
+    /// Counts beside the Agents title, from the daemon's aggregate.
     var headerCounts: String {
         if core.stateRejected != nil { return Self.stateRejectedDetail }
         guard core.isLive, let state = core.state else { return fallbackDetail }
@@ -698,12 +698,17 @@ final class PanelStore {
         // now's — the disclosure takes the line rather than present a
         // stale frame as current.
         if let stale = staleDetail { return stale }
-        let parts = state.aggregate.countParts
+        let aggregate = state.aggregate
+        var parts: [String] = []
+        if aggregate.active > 0 { parts.append("\(aggregate.active) working") }
+        if aggregate.needsYou > 0 { parts.append("\(aggregate.needsYou) asking") }
+        if aggregate.ready > 0 { parts.append("\(aggregate.ready) done") }
+        if aggregate.failed > 0 { parts.append("\(aggregate.failed) failed") }
         if parts.isEmpty {
             let total = state.mainSessions.count
             return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
-        return Self.countLine(parts: parts, headerWord: headerWord, total: state.mainSessions.count)
+        return Self.countLine(parts: parts, headerWord: "Agents", total: state.mainSessions.count)
     }
 
     /// What the header and the status item's tooltip say while the monitor's
@@ -1098,7 +1103,7 @@ final class PanelStore {
     /// The daemon's hold on sleep, as the footer's mark says it — why
     /// the Mac is awake and when it lets go; nil while nothing holds it.
     var awakeHold: (symbol: String, text: String)? {
-        Self.awakeHold(power: core.state?.power,
+        Self.awakeHold(power: isLive ? core.state?.power : nil,
                        working: rows.filter { $0.activity == .working && !$0.isRemote }.count)
     }
 
@@ -1206,7 +1211,7 @@ final class PanelStore {
     /// query change and shared by every read in between.
     private var currentCut: RowCut {
         let memo = currentRows
-        let query = findQuery.trimmingCharacters(in: .whitespaces)
+        let query = trimmedFindQuery
         if let cut = memo.cut, cut.query == query { return cut }
         let visible = query.isEmpty ? memo.rows : memo.rows.filter { $0.matches(query) }
         let cut = RowCut(query: query, visible: visible,
@@ -2497,15 +2502,16 @@ final class PanelStore {
     // MARK: Keyboard
 
     func moveSelection(by delta: Int) {
-        let rows = panelSelectableRows
-        guard !rows.isEmpty else { return }
+        let ids = panelSelectionIDs
+        guard !ids.isEmpty else { return }
         selectionByKeyboard = true
-        let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
-        let next = min(rows.count - 1, max(0, current + delta))
-        selectedID = rows[next].id
+        let current = ids.firstIndex { $0 == selectedID } ?? (delta > 0 ? -1 : ids.count)
+        let next = min(ids.count - 1, max(0, current + delta))
+        selectedID = ids[next]
     }
 
     func activateSelection() {
+        if selectedID == Self.earlierSelectionID { earlierExpanded.toggle(); return }
         guard let row = panelSelectableRows.first(where: { $0.id == selectedID }) else { return }
         open(row)
     }

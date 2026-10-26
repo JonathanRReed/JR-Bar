@@ -93,6 +93,7 @@ public struct UsageGaugeRow: View {
     private let tileAccent: Color?
     public let style: Style
     public let windowNames: [String]
+    public let suppressDisconnectedStatus: Bool
     public let snapshotReceivedAt: Double?
     public let locale: Locale
     public let timeZone: TimeZone
@@ -105,7 +106,7 @@ public struct UsageGaugeRow: View {
 
     public init(provider: CoreProviderUsage, name: String, now: Double, connected: Bool = true,
                 accent: Color? = nil, style: Style = .detail, windowNames: [String]? = nil,
-                snapshotReceivedAt: Double? = nil, locale: Locale = .current, timeZone: TimeZone = .current,
+                snapshotReceivedAt: Double? = nil, suppressDisconnectedStatus: Bool = false, locale: Locale = .current, timeZone: TimeZone = .current,
                 pace: [String: Double] = [:], fix: String? = nil,
                 onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil) {
         self.provider = provider
@@ -117,6 +118,7 @@ public struct UsageGaugeRow: View {
         self.style = style
         self.windowNames = Self.orderedWindowNames(windowNames ?? provider.windows.map(\.name))
         self.snapshotReceivedAt = snapshotReceivedAt
+        self.suppressDisconnectedStatus = suppressDisconnectedStatus
         self.locale = locale
         self.timeZone = timeZone
         self.pace = pace
@@ -139,7 +141,7 @@ public struct UsageGaugeRow: View {
         !connected || provider.isStale || ["missing_recent", "source_idle", "failing"].contains(provider.availability)
     }
     private var status: String? {
-        if !connected { return "Disconnected" }
+        if !connected && !suppressDisconnectedStatus { return "Disconnected" }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
         if !provider.quotaSource { return "Sessions only" }

@@ -10,7 +10,7 @@ typealias ViewState<Value> = SwiftUICore.State<Value>
 /// feels like the same object moving.
 ///
 /// * `unfoldDuration` -- the panel itself arriving (the controller's
-///   window fade and 4 pt rise);
+///   window fade and 98% scale);
 /// * `contents`  -- rows entering, leaving and reordering;
 /// * `crossfade` -- a word or number changing in place.
 ///

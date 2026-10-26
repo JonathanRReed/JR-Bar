@@ -7,7 +7,9 @@ struct PanelAgent: Identifiable {
     let members: [SessionRow]
     let unlinked: Bool
     let workerCount: Int
+    var askingCount: Int = 0
     var id: String { row.id }
+    var displayMembers: [SessionRow] { (row.ask == nil ? [row] : []) + members }
 
     func isEarlier(at now: Date) -> Bool {
         ([row] + members).allSatisfy {
@@ -39,13 +41,58 @@ extension PanelStore {
         }
     }
 
+    static let earlierSelectionID = "panel:earlier"
+    var trimmedFindQuery: String { findQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var panelHasEarlier: Bool { !earlierPanelAgents.isEmpty || hiddenCount > 0 }
+    var panelSelectionIDs: [String] {
+        let current = visibleAskRows.map(\.id) + currentPanelAgents.flatMap(selectionIDs)
+        return current + (panelHasEarlier ? [Self.earlierSelectionID] : [])
+            + (earlierExpanded ? earlierPanelAgents.flatMap(selectionIDs) : [])
+    }
+    private func selectionIDs(_ agent: PanelAgent) -> [String] {
+        (agent.row.ask == nil ? [agent.id] : []) + (expandedAgentGroups.contains(agent.id) ? agent.members.map(\.id) : [])
+    }
+    var findSummary: String? {
+        guard !trimmedFindQuery.isEmpty else { return nil }
+        let matched = visibleRows.count
+        return "“\(trimmedFindQuery)” · \(matched) of \(rows.count)"
+    }
+
+    @discardableResult
+    func handleDisclosureKey(_ keyCode: UInt16) -> Bool {
+        guard keyCode == 123 || keyCode == 124 else { return false }
+        return setSelectedDisclosure(expanded: keyCode == 124)
+    }
+
+    @discardableResult
+    func setSelectedDisclosure(expanded: Bool) -> Bool {
+        if selectedID == Self.earlierSelectionID {
+            earlierExpanded = expanded
+            return true
+        }
+        guard let agent = panelAgents.first(where: { $0.id == selectedID }), !agent.unlinked,
+              agent.workerCount > 0 || !agent.members.isEmpty else { return false }
+        if expanded { expandedAgentGroups.insert(agent.id) }
+        else { expandedAgentGroups.remove(agent.id) }
+        return true
+    }
+
+    func shiftPanelProvider(_ row: ProviderRow, by delta: Int) async {
+        var ids: [String] = []
+        for provider in panelEditProviders where !ids.contains(provider.id) { ids.append(provider.id) }
+        guard let index = ids.firstIndex(of: row.id), ids.indices.contains(index + delta) else { return }
+        let neighbor = ids[index + delta]
+        if delta < 0 { await movePanelProvider(row.id, before: neighbor) }
+        else { await movePanelProvider(neighbor, before: row.id) }
+    }
+
     /// Only the daemon's published membership joins sessions. Asks keep their own cards.
     var panelAgents: [PanelAgent] {
         guard isLive else { return [] }
         let sessions = core.sessions
         let inputs = PanelAgentsInputs(sessions: sessions, groups: core.state?.agentGroups ?? [],
                                        settings: core.settings, usage: sessionUsage.usage,
-                                       asks: askRows.compactMap(\.ask), query: findQuery)
+                                       asks: askRows.compactMap(\.ask), query: trimmedFindQuery)
         if let memo = panelAgentsMemo, memo.inputs == inputs { return memo.agents }
         let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let askingRows = Dictionary(askRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -64,15 +111,15 @@ extension PanelStore {
             claimed.formUnion(proven.map(\.id))
             // An asking root is already visible. Its non-asking workers remain expandable.
             if !asks.contains(root.id) || !members.isEmpty {
-                result.append(PanelAgent(row: row(root), members: members, unlinked: false, workerCount: group.workerCount))
+                result.append(PanelAgent(row: row(root), members: members, unlinked: false, workerCount: max(0, root.workers),
+                                          askingCount: proven.filter { asks.contains($0.id) }.count))
             }
         }
         for session in sessions where !claimed.contains(session.id) && !asks.contains(session.id) {
-            guard session.kind != "worker" || session.unlinkedWorker else { continue }
             result.append(PanelAgent(row: row(session), members: [], unlinked: session.unlinkedWorker, workerCount: 0))
         }
-        if !findQuery.isEmpty {
-            result = result.filter { $0.row.matches(findQuery) || $0.members.contains { $0.matches(findQuery) } }
+        if !trimmedFindQuery.isEmpty {
+            result = result.filter { $0.row.matches(trimmedFindQuery) || $0.members.contains { $0.matches(trimmedFindQuery) } }
         }
         let sorted = result.sorted {
             if $0.row.activity.sortRank != $1.row.activity.sortRank { return $0.row.activity.sortRank < $1.row.activity.sortRank }
@@ -103,9 +150,10 @@ extension PanelStore {
     }
 
     var panelEditProviders: [ProviderRow] {
-        providerList.providers.filter { row in
+        let rows = providerList.rows.filter { row in
             core.usage.first { $0.id == row.id && ($0.instance ?? "default") == row.instance }?.availability != "absent"
         }
+        return providerList.arranged(rows, provider: { $0.id }, surface: .all)
     }
 
     var panelWindowNames: [String] {
