@@ -290,10 +290,6 @@
     "animation: duration: 0.3": 2
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
-    "font: .system(size: 13": 4,
-    "font: .system(size: 14": 1,
-    "font: .system(size: 15": 4,
-    "font: .system(size: 20": 1,
     "radius: cornerRadius: 14": 2,
     "radius: cornerRadius: 8": 3
   },

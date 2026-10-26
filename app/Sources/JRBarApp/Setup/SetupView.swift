@@ -1,5 +1,6 @@
 import AppKit
 import JRBarUI
+import JRBarCore
 import SwiftUI
 
 /// The walkthrough's content: a five-step pager — Welcome, Agents,
@@ -11,14 +12,42 @@ struct SetupView: View {
     private var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     var body: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+                ForEach(SetupStore.Step.allCases) { step in
+                    HStack(spacing: JRBarTokens.Space.sm) {
+                        ZStack {
+                            Circle().fill(step == store.step ? JRBarTokens.Ink.accent : JRBarTokens.Ink.fill)
+                                .frame(width: 24, height: 24)
+                            if store.completedSteps.contains(step) {
+                                Image(systemName: "checkmark").foregroundStyle(JRBarTokens.Ink.done)
+                            } else {
+                                Text("\(step.index + 1)").foregroundStyle(step == store.step ? Color.white : JRBarTokens.Ink.secondary)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(step.navigationTitle).font(JRBarTokens.TypeStyle.headline.font)
+                            if step.optional { Text("Optional").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary) }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityLabel("\(step.navigationTitle), \(store.completedSteps.contains(step) ? "done" : step == store.step ? "current" : step.optional ? "optional" : "upcoming")")
+                }
+                Spacer()
+            }
+            .padding(JRBarTokens.Space.lg).frame(width: 176)
+            .background(JRBarTokens.Ink.fill)
+            Divider()
+            VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.step.title)
-                    .font(.system(size: 20, weight: .semibold))
-                Text(store.step.subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(JRBarTokens.TypeStyle.title1.font)
+                if !store.step.subtitle.isEmpty {
+                    Text(store.step.subtitle)
+                        .font(JRBarTokens.TypeStyle.body.font)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 24)
@@ -29,6 +58,7 @@ struct SetupView: View {
                 switch store.step {
                 case .welcome: SetupWelcomeStep()
                 case .agents: SetupAgentsStep(store: store)
+                case .asks: SetupAsksStep(store: store)
                 case .permissions: SetupPermissionsStep(store: store)
                 case .appearance: SetupAppearanceStep(store: store)
                 case .done: SetupDoneStep(store: store)
@@ -55,6 +85,7 @@ struct SetupView: View {
                     .accessibilityElement(children: .combine)
             }
             footer
+            }
         }
         .frame(width: SetupWindowController.contentSize.width,
                height: SetupWindowController.contentSize.height)
@@ -64,14 +95,9 @@ struct SetupView: View {
     /// Next, or Finish on the last step (beside Open Toys).
     private var footer: some View {
         HStack(spacing: 12) {
-            SetupProgress(step: store.step.index, count: store.stepCount)
-            Text("Step \(store.stepNumber) of \(store.stepCount)")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
             Spacer()
             if store.canGoBack {
-                Button("Back") { store.goBack() }
+                Button("Back") { store.goBack() }.keyboardShortcut("[", modifiers: .command)
             }
             if store.canSkip {
                 Button("Skip") { store.skip() }
@@ -97,7 +123,7 @@ struct SetupProgress: View {
     /// The walkthrough's marks — the current pip, the mark's tile — in
     /// the calm blue What's New and the unseen dot wear, not the accent:
     /// on a Mac whose accent is red, a red first step read as an error.
-    static let tint = Color(nsColor: .systemBlue)
+    static let tint = JRBarTokens.Ink.accent
 
     var body: some View {
         HStack(spacing: 5) {
@@ -139,8 +165,8 @@ struct SetupWelcomeStep: View {
                             .strokeBorder(SetupProgress.tint.opacity(0.18), lineWidth: 0.5)
                     )
                     .accessibilityHidden(true)
-                Text("Your agents, your menu bar, your notch — one app.")
-                    .font(.system(size: 15))
+                Text("See which agents are working and which need you.")
+                    .font(JRBarTokens.TypeStyle.title3.font)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -174,7 +200,7 @@ struct SetupScreenBarPrimer: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("The Screen Bar")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
                 Spacer()
                 LEDStripPreview(program: Self.demoProgram, style: .band, dotSize: 5, showsBackground: false)
                     .frame(width: 120)
@@ -209,7 +235,7 @@ struct SetupScreenBarPrimer: View {
             }
             fact {
                 Image(systemName: "cursorarrow.rays")
-                    .font(.system(size: 15))
+                    .font(JRBarTokens.TypeStyle.title3.font)
                     .foregroundStyle(.secondary)
             } text: {
                 Text("Hover the band to see who's asking — click it to jump to that session.")
@@ -266,16 +292,18 @@ struct SetupAgentsStep: View {
                 }
                 .padding(.bottom, 10)
             }
-            if store.agentRows.isEmpty {
-                Text("No providers to show.")
+            Text("Other providers are available in Settings › Providers.")
+                .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            if store.installedAgentRows.isEmpty {
+                Text("No providers found on this Mac.")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             } else {
                 SnapshotScrollView {
                     VStack(spacing: 0) {
-                        ForEach(store.agentRows) { agent in
+                        ForEach(store.installedAgentRows) { agent in
                             SetupAgentRow(store: store, agent: agent)
-                            if agent.id != store.agentRows.last?.id {
+                            if agent.id != store.installedAgentRows.last?.id {
                                 Divider().opacity(0.5)
                             }
                         }
@@ -321,7 +349,7 @@ struct SetupAgentRow: View {
                 Text(agent.name)
                 HStack(spacing: 5) {
                     Circle().fill(statusColor).frame(width: 6, height: 6)
-                    Text(agent.statusWord(monitorLive: store.monitorLive))
+                    Text(store.monitorLive && agent.hookStatus == "missing" ? "Hooks not installed" : agent.statusWord(monitorLive: store.monitorLive))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -397,7 +425,7 @@ struct SetupUsageOfferView: View {
                         .controlSize(.small)
                         .disabled(busy)
                     if declined {
-                        Text("Off. Settings › Agents & Usage turns it on any time.")
+                        Text("Off. Settings › Providers turns it on any time.")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -430,7 +458,7 @@ struct SetupPermissionsStep: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Used by features that are on")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
                         .padding(.vertical, 12)
                     if store.activePermissions.isEmpty {
                         Text("The panel works without these grants. Enable optional features when you need them.")
@@ -474,7 +502,7 @@ struct SetupPermissionRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: permission.symbol)
-                .font(.system(size: 15))
+                .font(JRBarTokens.TypeStyle.title3.font)
                 .foregroundStyle(.secondary)
                 .frame(width: 24, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
@@ -515,8 +543,12 @@ struct SetupAppearanceStep: View {
     var body: some View {
         SnapshotScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                SettingLabel(title: "Menu bar icon",
-                             subtitle: "What the status item shows at a glance.")
+                if store.monitorLive {
+                    let devices = store.model.connectedLights()
+                    Text(devices.isEmpty ? "No light devices connected" : devices.joined(separator: ", "))
+                        .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
+                }
+                Text("Menu bar icon").font(JRBarTokens.TypeStyle.headline.font)
                 VStack(spacing: 0) {
                     ForEach(Array(StatusIconStyle.allCases.enumerated()), id: \.element) { index, style in
                         if index > 0 { Divider().opacity(0.5) }
@@ -534,8 +566,7 @@ struct SetupAppearanceStep: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
 
                 Toggle(isOn: $store.screenBarShown) {
-                    SettingLabel(title: "Show the Screen Bar",
-                                 subtitle: "The light strip along the top edge of the screen — toggle it and watch.")
+                    Text("Show the Screen Bar")
                 }
             }
             .padding(.horizontal, 24)
@@ -560,13 +591,13 @@ struct SetupDoneStep: View {
                     if index > 0 { Divider().padding(.leading, 54) }
                     HStack(alignment: .center, spacing: 12) {
                         Image(systemName: row.symbol)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
                             .foregroundStyle(row.ok ? Color.green : Color.orange)
                             .frame(width: 30, height: 30)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill((row.ok ? Color.green : Color.orange).opacity(0.14)))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(row.text).font(.system(size: 13, weight: .medium))
+                            Text(row.text).font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
                             Text(row.detail)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
@@ -574,7 +605,7 @@ struct SetupDoneStep: View {
                         }
                         Spacer(minLength: 8)
                         Image(systemName: row.ok ? "checkmark.circle.fill" : "circle.dashed")
-                            .font(.system(size: 15))
+                            .font(JRBarTokens.TypeStyle.title3.font)
                             .foregroundStyle(row.ok ? Color.green : Color.secondary)
                             .accessibilityLabel(row.ok ? "Done" : "Still to do")
                     }
@@ -605,5 +636,32 @@ struct SetupTryItRow: View {
     var body: some View {
         DemoAskTryRow { store.tryDemoAsk() }
             .windowWell(padding: 12)
+    }
+}
+
+struct SetupAsksStep: View {
+    @Bindable var store: SetupStore
+    @ViewState private var preview = Self.makePreview()
+
+    private static func makePreview() -> NotchCardModel {
+        let timerURL = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-setup-preview-timers.json")
+        let model = NotchCardModel(timers: ShelfTimerModel(storeURL: timerURL), tray: ShelfTrayModel(), runtimeEnabled: false)
+        model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "claude"), label: "Sample project",
+            word: "Needs you", clickSession: nil, explanation: nil)
+        model.rows = [NotchIslandRow(id: DemoAsk.sessionID, label: "Sample project", provider: "claude", activity: .waiting,
+            ask: CoreAsk(session: DemoAsk.sessionID, summary: "Run the tests?", answerable: false))]
+        return model
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
+            NotchCardView(model: preview, style: .island, width: 420, pinnedLayout: true, stillTurn: 1, stillReduced: true)
+                .background(.black, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
+                .allowsHitTesting(false)
+            Text("No hook, link or rule answers for you.")
+                .jrbarType(.body)
+            Button("Try an ask") { store.onTryDemoAsk() }
+            Spacer()
+        }.padding(.horizontal, JRBarTokens.Space.xxl)
     }
 }

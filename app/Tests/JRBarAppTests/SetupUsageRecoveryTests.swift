@@ -107,7 +107,7 @@ struct SetupUsageRecoveryTests {
         }
         let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
         await store.refreshUsageOffers()
-        store.jump(to: .permissions)
+        store.jump(to: .asks)
         detection.found = true
         store.goBack()
         #expect(store.step == .agents)

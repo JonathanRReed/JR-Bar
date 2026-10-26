@@ -98,6 +98,9 @@ import SwiftUI
         store.goNext()
         #expect(store.step == .agents)
         store.goNext()
+        #expect(store.step == .asks)
+        #expect(!store.canSkip)
+        store.goNext()
         #expect(store.step == .permissions)
         store.goNext()
         #expect(store.step == .appearance)
@@ -124,6 +127,8 @@ import SwiftUI
         store.goNext()
         #expect(store.canSkip)
         store.skip()
+        #expect(store.step == .asks)
+        store.goNext()
         #expect(store.step == .permissions)
         #expect(store.skippedSteps == [.agents])
         store.goNext()
@@ -155,6 +160,7 @@ import SwiftUI
         store.goNext()
         store.goNext()
         store.goNext()
+        store.goNext()                                   // appearance
         store.goNext()                                   // lands on done
         store.goNext()                                   // done's primary = Finish
         #expect(finished)
