@@ -23,7 +23,15 @@ from jrbar.colors import ColorSettings, _active_agents, program_for_snapshot
 from jrbar.effect_registry import PROVIDER_ANIMATION_EFFECTS
 from jrbar.led_status import LedDisplayState
 from jrbar.led_wasm import RawSdLedWasmController
-from jrbar.light_mix import MIX_LABELS, _body, _has_sweep, _share_steps, explain_what_plays, mix_catalog, selected_agents
+from jrbar.light_mix import (
+    MIX_LABELS,
+    _body,
+    _has_sweep,
+    _share_steps,
+    explain_what_plays,
+    mix_catalog,
+    selected_agents,
+)
 from jrbar.linked_sync import DeviceTiming, PhaseRotationUnavailable, apply_device_timing
 from jrbar.models import AgentMode, AgentStatus
 
