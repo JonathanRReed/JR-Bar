@@ -2378,6 +2378,8 @@ def _color_blend_program(
 ) -> str:
     blended = weighted_blend([(agent.color, float(agent.weight)) for agent in agents])
     state = _representative_state(agents)
+    if state is not LedDisplayState.ASK:
+        return apply_brightness(blended, brightness)
     return _single_agent_program(blended, state, led_count=led_count, brightness=brightness, settings=settings)
 
 
@@ -3270,15 +3272,18 @@ def program_for_snapshot(
     When ``statuses`` is empty (no per-agent breakdown available, e.g. the
     monitor itself failed and the caller only knows a single fallback mode),
     this renders exactly what ``program_for_display_state`` would for
-    ``fallback_mode`` -- this makes this function a strict superset of the
-    single-mode path rather than silently downgrading an error/blocked
-    fallback to Idle.
+    ``fallback_mode``. Calm mixes hold that colour steady, except that asks
+    keep their attention beat. An error fallback still uses the error colour.
     """
     settings = colors or ColorSettings.defaults()
     brightness = normalize_brightness(brightness)
 
     if not statuses:
         state = display_state_for_mode(fallback_mode)
+        if settings.mix_mode in {BLEND_MODE_CLASSIC, BLEND_MODE_COLOR} and state is not LedDisplayState.ASK:
+            color = (settings.rendered_error_color() if state is LedDisplayState.FAILED
+                     else settings.mode_color(_STATE_TO_MODE_KEY[state]))
+            return state, apply_brightness(color, brightness)
         program = _display_state_program(settings,
             state,
             led_count=led_count,
@@ -3508,6 +3513,8 @@ def program_for_projection(
     rows = tuple(projection.light_rows)
     if not rows:
         state = LedDisplayState.IDLE
+        if settings.mix_mode in {BLEND_MODE_CLASSIC, BLEND_MODE_COLOR}:
+            return state, apply_brightness(settings.mode_color(MODE_IDLE), brightness)
         return state, _display_state_program(settings,
             state,
             led_count=led_count,

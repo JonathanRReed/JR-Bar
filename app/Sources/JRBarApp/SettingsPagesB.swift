@@ -1515,8 +1515,8 @@ struct StreamDeckCard: View {
 
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
-            SettingRow("Endpoint") {
-                StatusPill(statusText, tint: statusColor)
+            if store.isLive {
+                SettingRow("Endpoint") { StatusPill(statusText, tint: statusColor) }
             }
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
                             subtitle: "Serve status, the status URL and its token.") {

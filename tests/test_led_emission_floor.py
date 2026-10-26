@@ -76,12 +76,13 @@ def _status(
     )
 
 
-def _written(tmp_path: Path, statuses, *, brightness: int = POLICY_FLOOR_NOMINAL) -> str:
+def _written(tmp_path: Path, statuses, *, brightness: int = POLICY_FLOOR_NOMINAL,
+             colors: ColorSettings | None = None) -> str:
     """What lands in LEDS.LED for these statuses, through the real controller."""
     device = tmp_path / "SidePulsePro"
     device.mkdir(exist_ok=True)
     controller = AgentLedController(device_path=device, brightness=brightness)
-    write = controller.sync_snapshot(tuple(statuses), _owner_like_colors())
+    write = controller.sync_snapshot(tuple(statuses), colors or _owner_like_colors())
     assert write.error is None
     return (device / "LEDS.LED").read_text()
 
@@ -158,8 +159,10 @@ def test_working_and_done_stay_different_lights_when_dimmed(tmp_path: Path) -> N
     brightness; the dim one was indistinguishable from idle. Held to the same
     floor they differ by what they are: working moves forever, done is a
     finite cue that settles."""
-    working = _written(tmp_path, [_status("codex", "codex:session:a", AgentMode.WORKING)])
-    done = _written(tmp_path, [_status("codex", "codex:session:a", AgentMode.COMPLETED)])
+    # Calm holds both states; this checks the animated mix's emission floor.
+    animated = _owner_like_colors().with_blend_mode("round_robin")
+    working = _written(tmp_path, [_status("codex", "codex:session:a", AgentMode.WORKING)], colors=animated)
+    done = _written(tmp_path, [_status("codex", "codex:session:a", AgentMode.COMPLETED)], colors=animated)
     assert _emitted_here(working) >= STRIP_VISIBLE_EMISSION_DRIVE
     assert _emitted_here(done) >= STRIP_VISIBLE_EMISSION_DRIVE
     assert finite_cue_duration_ms(working) is None

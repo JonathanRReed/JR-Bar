@@ -40,11 +40,14 @@ struct StudioWorkspace: View {
             Text("Studio").jrbarType(.heading).padding(JRBarTokens.Space.md)
             ForEach(EffectStudioStore.Mode.allCases) { mode in
                 Button { store.mode = mode } label: {
-                    Label(mode.label, systemImage: mode.symbol)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(JRBarTokens.Space.sm)
-                        .background(store.mode == mode ? JRBarTokens.Ink.accentSoft : .clear,
-                                    in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+                    Label {
+                        Text(mode.label)
+                            .foregroundStyle(store.mode == mode ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+                    } icon: {
+                        Image(systemName: mode.symbol)
+                            .foregroundStyle(store.mode == mode ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+                    }
+                    .jrbarSidebarSelection(store.mode == mode)
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(store.mode == mode ? .isSelected : [])

@@ -137,7 +137,7 @@ def _compose(settings: ColorSettings, *, active: bool = True, attention: bool = 
 
 
 def _tinted(tool: str | None, *, now: float, gate: ToolTintGate, enabled: bool = True) -> ColorSettings:
-    settings = ColorSettings.defaults().with_agent_animation("claude", "comet").with_tint_by_tool(enabled)
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("claude", "comet").with_tint_by_tool(enabled)
     return with_tool_tint(settings, (_status(tool),), "claude", now=now, gate=gate)
 
 

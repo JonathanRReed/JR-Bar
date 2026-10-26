@@ -413,9 +413,9 @@ struct LEDSStudioView: View {
     // MARK: Editor
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("LEDS.LED program").font(.system(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.md) {
+            HStack(spacing: JRBarTokens.Space.sm) {
+                Text("LEDS.LED program").jrbarType(.headline)
                 Spacer()
                 Button {
                     model.composing = true
@@ -466,9 +466,9 @@ struct LEDSStudioView: View {
                 // hyphen split out of roll-left is a different program.
                 .autocorrectionDisabled()
                 .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
+                .padding(JRBarTokens.Space.sm)
+                .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous).fill(JRBarTokens.Ink.group))
+                .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous)
                     .strokeBorder(model.analysis.firstError == nil ? Color.primary.opacity(0.10) : Color.red.opacity(0.55), lineWidth: 1))
                 .frame(minHeight: 220)
                 .accessibilityLabel("LEDS program")
@@ -484,16 +484,16 @@ struct LEDSStudioView: View {
             if model.analysis.compiled.transformed, model.analysis.compiled.accepted {
                 DisclosureGroup("What plays") {
                     Text(model.analysis.compiled.program)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(JRBarTokens.TypeStyle.caption.font.monospaced())
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 4)
+                        .padding(.top, JRBarTokens.Space.xs)
                 }
                 .font(.callout)
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(JRBarTokens.Space.lg)
     }
 
     /// The firmware's verdict for each device shape, in its own words.
@@ -508,20 +508,20 @@ struct LEDSStudioView: View {
         } else if let error = analysis.dot.error {
             errorLabel(error, device: "The Dot's firmware")
         } else {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                 Label("The firmware accepts this on the 8-LED strip and the 2-LED Dot.", systemImage: "checkmark.circle.fill")
                     .font(.callout)
                     .foregroundStyle(.green)
                 if !analysis.dot.ignoredLines.isEmpty {
                     Text("On the Dot, line\(analysis.dot.ignoredLines.count == 1 ? "" : "s") \(analysis.dot.ignoredLines.map(String.init).joined(separator: ", ")) name only LEDs it does not have; it skips them.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .foregroundStyle(.secondary).jrbarType(.caption)
                 }
             }
         }
     }
 
     private func errorLabel(_ error: LEDSParseError, device: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             Label(error.line > 0
                   ? "\(device) rejects line \(error.line), column \(error.column): \(error.kind.rawValue)"
                   : "\(device) rejects the program: \(error.kind.rawValue)",
@@ -529,7 +529,7 @@ struct LEDSStudioView: View {
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.red)
             Text(error.kind.explanation + " A rejected program makes the device blink red six times.")
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -537,7 +537,7 @@ struct LEDSStudioView: View {
 
     /// The firmware budget: two continuous bars, bytes and lines.
     private var budget: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: JRBarTokens.Space.lg) {
             BudgetBar(title: "Bytes", used: model.analysis.bytes, limit: LEDSLimits.maxProgramBytes)
             BudgetBar(title: "Lines", used: model.analysis.lines, limit: LEDSLimits.maxProgramLines)
         }
@@ -547,7 +547,7 @@ struct LEDSStudioView: View {
 
     private var previews: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
                 let program = model.analysis.playable ? model.analysis.compiled.program : "off"
                 previewBlock("SidePulse Pro · 8 LEDs") {
                     LEDStripPreview(program: program, ledCount: 8, style: .dots, dotSize: 18, spacing: 12)
@@ -564,21 +564,21 @@ struct LEDSStudioView: View {
                 studioProgram
                 startup
             }
-            .padding(16)
+            .padding(JRBarTokens.Space.lg)
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .background(JRBarTokens.Ink.group)
     }
 
     private func previewBlock<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+            Text(title).foregroundStyle(.secondary).jrbarType(.caption).fontWeight(.medium)
             content()
         }
     }
 
     private var playButtons: some View {
         let now = store.now
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             Button {
                 model.play(on: "screen_bar", name: "the Screen Bar")
             } label: {
@@ -603,7 +603,7 @@ struct LEDSStudioView: View {
     }
 
     private var studioProgram: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             Text("Studio program").font(.system(size: 13, weight: .semibold))
             Text(model.isSavedProgram
                  ? "This is the Studio program. A device set to Display › Studio program plays it."
@@ -627,14 +627,14 @@ struct LEDSStudioView: View {
     }
 
     private var startup: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             Text("Startup program").font(.system(size: 13, weight: .semibold))
             Text("INIT.LED is what a SidePulse plays when it powers up, before anything talks to it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if model.devices.isEmpty {
-                Text("Plug in a strip or a Dot to burn one.").font(.caption).foregroundStyle(.tertiary)
+                Text("Plug in a strip or a Dot to burn one.").foregroundStyle(.tertiary).jrbarType(.caption)
             }
             ForEach(model.devices, id: \.id) { device in
                 Button("Burn into \(device.name ?? (device.kind == "dot" ? "Dot" : "strip"))…") {
@@ -660,12 +660,12 @@ struct BudgetBar: View {
     private var tint: Color { fraction > 1 ? .red : fraction > 0.75 ? .orange : .accentColor }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             HStack {
-                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(title).foregroundStyle(.secondary).jrbarType(.caption)
                 Spacer()
                 Text("\(used) / \(limit)")
-                    .font(.caption.monospacedDigit())
+                    .jrbarType(.caption).monospacedDigit()
                     .foregroundStyle(fraction > 1 ? Color.red : Color.secondary)
             }
             GeometryReader { proxy in
@@ -696,7 +696,7 @@ private struct ShelveSheet: View {
                 .onSubmit(save)
             if model.shelf.contains(where: { $0.name == name.trimmingCharacters(in: .whitespaces) }) {
                 Text("Replaces the program already shelved under this name.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary).jrbarType(.caption)
             }
             HStack {
                 Spacer()

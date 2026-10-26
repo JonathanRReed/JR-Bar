@@ -661,7 +661,7 @@ def test_every_solo_motion_names_each_led_once_per_line() -> None:
     from jrbar import colors as colors_module
 
     resolved = _active_glance()
-    base = colors_module.ColorSettings.defaults()
+    base = colors_module.ColorSettings.defaults().with_blend_mode("round_robin")
     for motion in colors_module.PROVIDER_ANIMATION_CHOICES:
         settings = base.with_agent_animation("claude", motion)
         for led_count in (8, 2):
@@ -697,7 +697,7 @@ def test_a_chosen_motions_identity_changes_with_its_shape() -> None:
     from jrbar.presentation_policy import continuous_presentation_identity
 
     resolved = _active_glance()
-    base = colors_module.ColorSettings.defaults().with_agent_animation("claude", "comet")
+    base = colors_module.ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("claude", "comet")
     wide = base.with_agent_animation_parameters("claude", {"head_width": 3})
 
     def identity(settings):

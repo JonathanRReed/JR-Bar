@@ -280,7 +280,8 @@ def test_one_provider_on_steady_changes_only_its_own_leds__and_1_more() -> None:
         assert "claude" in {row["provider"] for row in explanation["providers"]}
 
     # --- scenario: a_lone_agent_also_gets_its_providers_animation
-    base = ColorSettings.defaults()
+    # Calm is the explicit exception; animated mixes retain the solo shape.
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
     changed = base.with_agent_animation("claude", MOTION_STEADY)
     statuses = (_status("claude", AgentMode.WORKING),)
 

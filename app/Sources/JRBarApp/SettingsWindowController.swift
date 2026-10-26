@@ -182,6 +182,14 @@ final class SettingsHostingController: NSHostingController<AnyView>, ReleasingWi
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // The shared row draws selection. Keep native List keyboard navigation.
+        if let table = SettingsWindowController.sidebarTable(in: view), table.selectionHighlightStyle != .none {
+            table.selectionHighlightStyle = .none
+        }
+    }
+
     func releaseRoot() {
         var transaction = Transaction()
         transaction.disablesAnimations = true

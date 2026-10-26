@@ -8,7 +8,7 @@ import SwiftUI
 /// The Dot's own clock runs about 2.7% slow, so the monitor times every
 /// Dot write from the strip's recorded start and the Dot's measured clock,
 /// and re-syncs it before it drifts past the tolerance. The page offers the
-/// look (continue or mirror), a constant trim for a pair that still reads
+/// physical placement, a constant trim for a pair that still reads
 /// off by eye, the clock correction itself, and Check sync, a minute of
 /// matched flashes to judge by eye.
 struct LinkedSyncControls: View {
@@ -44,9 +44,6 @@ struct LinkedSyncControls: View {
         if !extending {
             CardNote(Self.notExtendingNote)
         }
-        SettingPicker(store, "Look", subtitle: styleSubtitle, path: "dot_extend_style",
-                      options: Self.styles, default: "continue", segmented: true)
-            .disabled(!extending)
         if style == "continue" {
             SettingPicker(store, "The Dot sits", subtitle: Self.sideSubtitle,
                           path: "dot_extend_side", options: Self.sides, default: "after_last")
@@ -87,13 +84,6 @@ struct LinkedSyncControls: View {
     }
 
     static let sideSubtitle = "Which side of the strip, as you face them. The light runs on from that end."
-
-    private var styleSubtitle: String {
-        if style == "continue" {
-            return "Light runs off the end of the strip into the Dot. Only moving light continues; anything else mirrors."
-        }
-        return "The strip's eight LEDs folded into the Dot's two."
-    }
 
     private func checkSubtitle(running: Bool) -> String {
         if running { return "Watching for a minute: the two flashes should land together." }

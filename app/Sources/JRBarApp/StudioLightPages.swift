@@ -128,6 +128,8 @@ struct StudioDevicesPage: View {
                 ForEach(settings.deviceEntries) { device in
                     StudioDeviceRows(settings: settings, device: device, mixes: store.lightsStudio.plan?.mixes ?? [])
                 }
+                ScreenBarMotionSettings(store: settings)
+                    .environment(\.settingGroupsInline, true)
                 // Device assignments appear here once, without repeating provider assignments.
                 ForEach(store.devicePlayback) { assignment in
                     HStack {
@@ -187,6 +189,9 @@ private struct StudioDeviceRows: View {
                         ForEach(DotRole.allCases) { Text($0.label).tag($0.rawValue) }
                     }.labelsHidden().disabled(!(settings.values.bool("devices_linked") ?? true)).settingControl("dot_role")
                 }
+                SettingPicker(settings, "\(device.name): Look", path: "dot_extend_style",
+                              options: LinkedSyncControls.styles, default: "continue", segmented: true)
+                    .disabled(!LinkedSyncControls.isExtending(settings))
                 SettingsRow("\(device.name): Finished runs") {
                     Toggle("Also show finished runs", isOn: settings.bool("dot_role_include_completions"))
                         .labelsHidden().toggleStyle(.switch)

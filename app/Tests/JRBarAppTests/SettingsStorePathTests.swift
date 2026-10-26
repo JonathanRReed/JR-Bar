@@ -384,12 +384,15 @@ struct SettingsStorePathTests {
             store.reveal(lighting)
         }
         #expect(studioOpens == 4)
-        for title in ["Phase nudge", "Minimum glow"] {
+        for title in ["Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"] {
             let row = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
-            #expect(row.chapter == .devices)
+            #expect(row.chapter == .lighting)
             store.reveal(row)
-            #expect(store.page == .devices)
         }
+        let dotLook = try #require(SettingsSearch.rows.first { $0.group == "Pro & Dot" && $0.title == "Look" })
+        #expect(dotLook.chapter == .lighting)
+        store.reveal(dotLook)
+        #expect(studioOpens == 9)
         let advanced = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == "Gap width" })
         store.openFolds.removeAll()
         store.reveal(advanced)

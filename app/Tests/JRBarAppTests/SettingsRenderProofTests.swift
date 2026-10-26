@@ -18,6 +18,10 @@ import Testing
 @Suite("Settings render proof")
 @MainActor
 struct SettingsRenderProofTests {
+    init() throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }
+    }
+
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
     @Test("the mock's notification setting survives decoding and binding")
@@ -30,7 +34,7 @@ struct SettingsRenderProofTests {
     }
 
     @Test("native switch proofs place the on thumb to the right of off", .enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
-    func toggleStates() throws {
+    func toggleStates() async throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fixture = try Self.fixture()
         defer { fixture.toys.shutdown() }
@@ -45,14 +49,14 @@ struct SettingsRenderProofTests {
                 let view = Form {
                     SettingToggle(fixture.settings, "Notification banner", path: "completion_notification_enabled")
                 }.formStyle(.grouped).tint(.blue)
-                let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 140), dark: dark)
+                let rep = try await DesignFixBProof.snapshot(view, title: "Settings switches",
+                                                            size: CGSize(width: 560, height: 140), dark: dark)
                 try Self.write(rep, named: "toggle-\(on ? "on" : "off")-\(dark ? "dark" : "light")")
                 images.append(rep)
             }
             var brighter = (count: 0, x: CGFloat(0))
             var darker = (count: 0, x: CGFloat(0))
-            // The guarded host is inactive, so on switches are gray too.
-            // Compare the native thumb positions without relying on tint.
+            // Compare active native thumb positions without relying on tint.
             let off = images[0], on = images[1]
             for y in stride(from: 0, to: off.pixelsHigh, by: 4) {
                 for x in stride(from: off.pixelsWide - 160, to: off.pixelsWide, by: 4) {
@@ -61,8 +65,9 @@ struct SettingsRenderProofTests {
                     let beforeLight = (before.redComponent + before.greenComponent + before.blueComponent) / 3
                     let afterLight = (after.redComponent + after.greenComponent + after.blueComponent) / 3
                     let delta = afterLight - beforeLight
-                    if delta > 0.1 { brighter.count += 1; brighter.x += CGFloat(x) }
-                    if delta < -0.1 { darker.count += 1; darker.x += CGFloat(x) }
+                    // White on the near-white off track has a small luminance change.
+                    if delta > 0.03 { brighter.count += 1; brighter.x += CGFloat(x) }
+                    if delta < -0.03 { darker.count += 1; darker.x += CGFloat(x) }
                 }
             }
             try #require(brighter.count > 20 && darker.count > 20, "on and off must draw different thumb positions")
@@ -831,9 +836,8 @@ extension SettingsRenderProofTests {
         }
     }
 
-    private static func keySnapshot<V: View>(_ view: V, name: String, height: CGFloat, dark: Bool) async throws {
+    static func keySnapshot<V: View>(_ view: V, name: String, height: CGFloat, dark: Bool) async throws {
         let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
-        NSApplication.shared.setActivationPolicy(.regular)
         let previousAppearance = NSApp.appearance
         NSApp.appearance = appearance
         defer { NSApp.appearance = previousAppearance }
@@ -936,7 +940,7 @@ extension SettingsRenderProofTests {
             }
             #expect(!paths.isEmpty, "No controls rendered for \(route)")
             if route == "devices" {
-                #expect(paths.contains(ScreenBarController.stillOnCameraDefaultsKey))
+                #expect(!paths.contains(ScreenBarController.stillOnCameraDefaultsKey))
             }
             for key in paths.map(SettingsCatalogueHomes.normalized) where renderedOwners[key] != nil {
                 homes[key, default: []].insert(route)
@@ -968,6 +972,7 @@ extension SettingsRenderProofTests {
                 fixture.core.apply(.settings(CoreSettings(generation: generation, schema: CoreProtocol.knownSettingsSchema,
                                                           document: document.root)))
                 let paths = try await controlPaths(EffectStudioView(store: studio))
+                if mode == .devices { #expect(paths.contains(ScreenBarController.stillOnCameraDefaultsKey)) }
                 for key in paths.map(SettingsCatalogueHomes.normalized) where renderedOwners[key] != nil {
                     homes[key, default: []].insert(route)
                 }
@@ -989,7 +994,7 @@ extension SettingsRenderProofTests {
         #expect(fixture.core.settings?.document == beforeSearch, "Search must not write settings to reveal a control")
         let settingsCount = expected.values.filter { !$0.hasPrefix("studio.") }.count
         #expect(expected.count == 151)
-        #expect(settingsCount == 96)
+        #expect(settingsCount == 92)
         print("Catalogue homes: \(expected.count) keys rendered exactly once by destination, \(settingsCount) Settings and \(expected.count - settingsCount) Studio")
     }
 
@@ -1057,7 +1062,6 @@ extension SettingsRenderProofTests {
         fixture.settings.openFolds.insert(SettingsFold.dotClock)
         try await Self.keySnapshot(ScrollView { VStack {
             DeviceLinkSettings(store: fixture.settings)
-            ScreenBarMotionSettings(store: fixture.settings)
         }.padding(JRBarTokens.Space.lg) }.environment(fixture.settings), name: "fix-hardware-links", height: 620, dark: false)
         fixture.core.handle(.disconnected(reason: "Synthetic disconnect"))
         try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-devices-offline", height: 620, dark: false)

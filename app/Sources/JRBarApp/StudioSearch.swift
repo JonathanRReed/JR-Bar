@@ -39,6 +39,11 @@ extension EffectStudioStore {
             case "Milestones": target = (.moments, "milestone_odometer_steps")
             case "Rainstick idle": target = (.moments, "rainstick_idle_enabled")
             case "Completion milestones": target = (.moments, "milestone_odometer_enabled")
+            case "Look": target = (.devices, "dot_extend_style")
+            case "Mirror hardware strip": target = (.devices, "link_screen_bar_to_hardware")
+            case "Phase nudge": target = (.devices, "screen_bar_phase_offset_ms")
+            case "Minimum glow": target = (.devices, "screen_bar_min_glow")
+            case "Hold still on camera": target = (.devices, ScreenBarController.stillOnCameraDefaultsKey)
             case "Role": target = (.devices, "dot_role")
             case "Also glow for finished runs": target = (.devices, "dot_role_include_completions")
             default:

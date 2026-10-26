@@ -358,9 +358,9 @@ def test_a_finish_can_land_or_ripple__and_ends_dark() -> None:
             event_name="Stop",
         ),
     )
-    bloom = program_for_snapshot(done, led_count=8, colors=ColorSettings.defaults())[1]
+    bloom = program_for_snapshot(done, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin"))[1]
     landed = program_for_snapshot(
-        done, led_count=8, colors=ColorSettings.defaults().with_done_celebration_style("land")
+        done, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin").with_done_celebration_style("land")
     )[1]
     assert bloom != landed
     assert landed.startswith("off 90ms cosine")
@@ -432,7 +432,7 @@ def test_a_reversed_strip_mirrors_every_position__and_2_more() -> None:
             event_name="PreToolUse",
         ),
     )
-    base = ColorSettings.defaults().with_agent_animation("claude", "comet")
+    base = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("claude", "comet")
     pro = program_for_snapshot(working, led_count=8, colors=base)[1]
     flipped = program_for_snapshot(
         working, led_count=8, colors=base.for_device(led_direction="reversed")
@@ -559,7 +559,7 @@ def test_the_relay_on_a_dot_travels_the_way_its_travel_row_says() -> None:
             event_name="PreToolUse",
         ),
     )
-    base = ColorSettings.defaults()
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
     wiping = program_for_snapshot(working, led_count=2, colors=base.for_device(dot_travel_style="wipe"))[1]
     fading = program_for_snapshot(working, led_count=2, colors=base.for_device(dot_travel_style="crossfade"))[1]
     assert "roll" not in wiping and "\n1:" in wiping

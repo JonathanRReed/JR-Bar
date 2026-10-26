@@ -84,7 +84,7 @@ def test_ten_minute_ember_write_budget_tracks_base_reasserts(tmp_path, monkeypat
 
 
 def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():
-    _state, program = program_for_snapshot(statuses(1), colors=ColorSettings.defaults())
+    _state, program = program_for_snapshot(statuses(1), colors=ColorSettings.defaults().with_blend_mode("round_robin"))
     written = _steady_state_variant(program, single_track=True)
     assert written != program
     firmware = [RawSdLedWasmController(8), RawSdLedWasmController(8)]
@@ -102,7 +102,7 @@ def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():
     assert max(jumps) <= 45
     halves = "#050505 3s cosine\n#808080 3s cosine\nrepeat"
     assert _steady_state_variant(halves) == halves
-    breath = ColorSettings.defaults().with_agent_animation("codex", "breathe")
+    breath = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "breathe")
     _state, program = program_for_snapshot(statuses(1), colors=breath)
     assert len(_steady_state_variant(program, single_track=True).splitlines()) == 3
 
@@ -128,7 +128,7 @@ def test_legacy_celebrations_layer_briefly_while_an_agent_works(monkeypatch, cue
     expected_color = {"completion": "#00FF66", "all_clear": "#F5EDE0", "reset_celebration": "#FFD700"}[cue]
     assert presentation.nominal_static_fallback_program == expected_color
     assert presentation.next_visual_change_at == 101.0
-    state, base = program_for_snapshot(statuses(1), colors=ColorSettings.defaults())
+    state, base = program_for_snapshot(statuses(1), colors=ColorSettings.defaults().with_blend_mode("round_robin"))
     assert compose_ambient_layer(base, state, presentation) != base
     now[0] = 101.1
     assert active_ambient_presentation(owner, AmbientEffectSurface.SCREEN_BAR,
@@ -145,7 +145,7 @@ def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkey
 
     clock = [1000.0]
     monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
-    settings = ColorSettings.defaults().with_blend_mode("cycle")
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_blend_mode("cycle")
     for provider in ("codex", "claude"):
         settings = settings.with_agent_animation(provider, animation)
     controller = AgentLedController(device_path=tmp_path)
@@ -164,7 +164,7 @@ def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkey
 
 
 def test_a_new_turn_in_the_same_ember_band_gets_a_new_layer(monkeypatch):
-    colors = ColorSettings.defaults()
+    colors = ColorSettings.defaults().with_blend_mode("round_robin")
     owner = SimpleNamespace(settings=SimpleNamespace(colors=colors), _ambient_turn_starts={"synthetic:turn": 1.0})
     proposed = compile_ambient_effect_dispatch(turn_length_ember=plan_turn_length_ember(elapsed_seconds=1))
     first, starts = _merge_runtime_dispatch(owner, proposed, now=1000.0)

@@ -16,6 +16,10 @@ import JRBarCore
 @Suite("Aquarium render proof")
 @MainActor
 struct AquariumRenderProofTests {
+    init() throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }
+    }
+
     /// The tank everything renders: every item owned, a treasure half
     /// dug at mid-sand, a submarine queued for its pass, four live
     /// fish (one working with the tiny laptop, one wearing a party
@@ -410,7 +414,7 @@ struct AquariumRenderProofTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write inspection PNGs"))
-    func inspectionSnapshots() throws {
+    func inspectionSnapshots() async throws {
         let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
                       ?? "/tmp/jrbar-audit", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -426,7 +430,10 @@ struct AquariumRenderProofTests {
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }
         let toy = AquariumToy(core: core, store: store, saveFile: save)
-        var selected = try #require(toy.fish.first)
+        // The toy stays off in a proof. Seed the inspector without starting its runtime.
+        var selected = Fish(id: "inspection-proof", label: "Sample session", providerID: "codex",
+                            state: .idling, lane: 0.5, speed: 0.1, direction: 1,
+                            stateSince: Date(timeIntervalSince1970: 1_800_000_000))
         selected.label = "A long session label that still leaves room for inspector controls"
         let tank = AquariumView(toy: toy)
         for (name, size) in [("minimum", CGSize(width: 480, height: 300)),
@@ -439,7 +446,7 @@ struct AquariumRenderProofTests {
                     tank.inspectorStrip(selected)
                 }
             }
-            let rep = try Self.hostedSnapshot(view, size: size, dark: true)
+            let rep = try await DesignFixBProof.snapshot(view, title: "Aquarium", size: size, dark: true)
             let png = try #require(rep.representation(using: .png, properties: [:]))
             try png.write(to: dir.appendingPathComponent("aquarium-inspection-\(name).png"))
         }

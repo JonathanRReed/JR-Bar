@@ -121,13 +121,7 @@ struct SettingsSidebarList: View {
         } icon: {
             SidebarIcon(symbol: page.symbol, tint: page.tint)
         }
-        .frame(maxWidth: .infinity, minHeight: JRBarTokens.Space.xxxl, alignment: .leading)
-        .padding(.horizontal, JRBarTokens.Space.sm)
-        .background {
-            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
-                .fill(store.page == page ? JRBarTokens.Ink.accent : .clear)
-                .padding(.horizontal, -JRBarTokens.Space.sm)
-        }
+        .jrbarSidebarSelection(store.page == page)
         .listRowInsets(EdgeInsets())
         .tag(page)
     }

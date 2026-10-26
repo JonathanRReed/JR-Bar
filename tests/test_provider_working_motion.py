@@ -44,7 +44,7 @@ def render(statuses, settings, renderer):
 
 
 @pytest.mark.parametrize("renderer", ("snapshot", "projection", "fleet"))
-@pytest.mark.parametrize("blend", ("round_robin", "color_blend", "spatial_split"))
+@pytest.mark.parametrize("blend", ("round_robin", "spatial_split"))
 def test_a_providers_chosen_working_shape_survives_more_sessions(renderer, blend):
     settings = ColorSettings.defaults().with_blend_mode(blend).with_agent_animation("codex", "kitt")
     solo = [status("codex", AgentMode.WORKING)]
@@ -69,3 +69,22 @@ def test_a_chosen_working_motion_never_hides_a_permission_request(renderer):
 
     assert render(statuses, chosen, renderer)[0] == render(statuses, automatic, renderer)[0]
     assert render(statuses, chosen, renderer) != render([statuses[0]], chosen, renderer)
+
+
+@pytest.mark.parametrize("renderer", ("snapshot", "projection", "fleet"))
+@pytest.mark.parametrize("mix", ("classic", "color_blend"))
+def test_calm_overrides_solo_motion_in_every_light_renderer(renderer, mix):
+    from jrbar.led_wasm import RawSdLedWasmController
+
+    # Calm is the explicit exception to solo-provider animation equivalence.
+    settings = ColorSettings.defaults().with_blend_mode(mix).with_agent_animation("codex", "kitt")
+    rows = [status("codex", AgentMode.WORKING)]
+    state, program = render(rows, settings, renderer)
+    assert state is LedDisplayState.WORKING
+    firmware = RawSdLedWasmController(8)
+    assert firmware.parse(program, 0).ok
+    frames = firmware.step_batch(0, 40, 250)
+    assert all(frame == frames[0] for frame in frames)
+    state, attention = render([*rows, status("claude", AgentMode.WAITING_FOR_INPUT)], settings, renderer)
+    assert state is LedDisplayState.ASK
+    assert attention != program
