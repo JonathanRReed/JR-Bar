@@ -59,6 +59,19 @@ struct StudioLightsTests {
         #expect(calls == 2)
     }
 
+    @Test("calm modes report motion when the daemon sends a travelling program")
+    func calmMotionIsNotHidden() {
+        let source = "#0088FF #000000 #000000 #000000 #000000 #000000 #000000 #000000 100ms cosine\nroll-right 2s linear\nrepeat"
+        for (mode, name) in [("classic", "Status Only"), ("color_blend", "Smooth")] {
+            let moving = StudioFleetPreview(program: source, label: "Two providers", played: mode,
+                                            reason: "Current state", warnings: [], ledCount: 8)
+            #expect(moving.playbackWarnings == ["\(name) still moves the working light."])
+            let still = StudioFleetPreview(program: "#0088FF", label: "Two providers", played: mode,
+                                           reason: "Current state", warnings: [], ledCount: 8)
+            #expect(still.playbackWarnings.isEmpty)
+        }
+    }
+
     @Test("an older preview cannot replace a newer scenario or clear its busy state")
     func oldReplyCannotWin() async throws {
         let core = CoreModel(socketPath: "/tmp/jrbar-studio-order-unused.sock")

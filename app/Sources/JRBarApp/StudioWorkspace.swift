@@ -153,7 +153,7 @@ struct StudioWhatPlays: View {
             ForEach(lights.auditions.keys.sorted(), id: \.self) { name in
                 if let audition = lights.auditions[name] {
                     Text("Last preview on \(name): \(audition.reason)").jrbarType(.caption)
-                    warnings(audition.warnings)
+                    warnings(audition.playbackWarnings)
                 }
             }
             if let failure = lights.scenario == .live ? lights.planFailure : lights.failure {
@@ -171,8 +171,9 @@ struct StudioWhatPlays: View {
             } else if let preview = lights.selectedPreview {
                 Text(preview.reason)
                 Text(preview.label).jrbarType(.caption).foregroundStyle(.secondary)
-                warnings(preview.warnings)
+                warnings(preview.playbackWarnings)
             } else { Text("Waiting for the daemon's preview.").foregroundStyle(.secondary) }
+            if lights.scenario == .live, let notice = lights.selectedPreview?.motionNotice { warnings([notice]) }
             if lights.scenario != .live {
                 ForEach(lights.plan?.devices.filter { !$0.warnings.isEmpty } ?? []) { device in
                     Text("Live \(lights.deviceName(device.device)): \(device.reason)").jrbarType(.caption)

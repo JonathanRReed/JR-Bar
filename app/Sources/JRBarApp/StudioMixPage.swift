@@ -27,14 +27,13 @@ struct StudioMixPage: View {
                         }
                     }
                     if lights.plan == nil { Text(lights.planFailure ?? "Waiting for the mix catalog.").foregroundStyle(.secondary) }
-                    if let selected = lights.plan?.mixes.first(where: { $0.id == lights.mix }) {
+                    if let selected = lights.plan?.mixes.first(where: { $0.id == lights.mix }),
+                       !selected.parameters.isEmpty || selected.id == "spatial_split" || selected.id == "cycle" {
                         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
                             if selected.id == "spatial_split" {
                                 Text("The extra LED goes to the agent that needs you most, then the one that started first.")
                             } else if selected.id == "cycle" {
                                 Text("Each provider holds the strip for 4 seconds.")
-                            } else if selected.id == "classic" {
-                                Text("Status Only shows no animation.")
                             }
                             ForEach(selected.parameters, id: \.key) { parameter in
                                 let path = "colors.mix_parameters.\(selected.id).\(parameter.key)"
@@ -88,12 +87,12 @@ private struct StudioMixCard: View {
                                 dotSize: 6, spacing: 5, paused: !connected)
                     .frame(maxWidth: .infinity)
                     .accessibilityLabel("\(mix.name) daemon preview")
-                if mix.id == "classic" {
-                    Text("Shows no animation").jrbarType(.caption).foregroundStyle(.secondary)
-                } else if let warning = preview?.warnings.first {
+                if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.attention).lineLimit(2)
-                        .help(preview?.warnings.joined(separator: " ") ?? warning)
+                        .help(preview?.playbackWarnings.joined(separator: " ") ?? warning)
+                } else if mix.id == "classic", preview?.played == "classic" {
+                    Text("Shows no animation").jrbarType(.caption).foregroundStyle(.secondary)
                 } else if preview == nil {
                     Text("Preview unavailable").jrbarType(.caption).foregroundStyle(.secondary)
                 }

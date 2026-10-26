@@ -55,6 +55,17 @@ struct StudioFleetPreview: Decodable, Hashable {
         case program, label, played, reason, warnings
         case ledCount = "led_count"
     }
+
+    @MainActor var motionNotice: String? {
+        let names = ["classic": "Status Only", "color_blend": "Smooth"]
+        guard let name = names[played],
+              let sampler = LEDPreviewSamplers.sampler(for: program, ledCount: ledCount), !sampler.isStatic else { return nil }
+        return "\(name) still moves the working light."
+    }
+
+    @MainActor var playbackWarnings: [String] {
+        warnings + [motionNotice].compactMap { $0 }
+    }
 }
 
 /// Caches daemon programs across window sessions. Opening Studio never plays hardware.
