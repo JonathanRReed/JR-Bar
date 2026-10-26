@@ -25,17 +25,17 @@ struct IntegrationsPage: View {
                 let devices = hardware(kind: kind)
                 if devices.isEmpty {
                     connection(kind == "pro" ? "SidePulse Pro" : "PulseDot",
-                               status: store.isLive ? "Not connected" : "Monitor not connected", page: .devices)
+                               status: DeviceConnectionState.device(nil, live: store.isLive).rawValue, page: .devices)
                 } else {
                     ForEach(devices) { device in
                         let firmware = store.firmware.status?.devices.first { $0.id == device.id && $0.mounted }?.version
                         connection(device.name ?? (kind == "pro" ? "SidePulse Pro" : "PulseDot"),
-                            status: IntegrationStatus.device(device, live: store.isLive, firmware: firmware), page: .devices)
+                            status: IntegrationStatus.device(device, state: store.deviceConnection(device.id), firmware: firmware), page: .devices)
                     }
                 }
             }
-            connection("Stream Deck", status: IntegrationStatus.server(live: store.isLive, enabled: serveEnabled,
-                                                                        running: serving), page: .remote)
+            connection("Stream Deck", status: IntegrationStatus.server(live: store.isLive,
+                enabled: store.values.bool("serve_enabled"), running: serving), page: .remote)
             connection("Creator Micro 2", status: IntegrationStatus.deck(store.deck, live: store.isLive), page: .devices)
             connection("Provider hooks", status: hookSummary, page: .agents)
         }
@@ -105,7 +105,7 @@ struct IntegrationsPage: View {
             if let index = devices.firstIndex(where: { $0.id == entry.id }) {
                 devices[index].enabled = enabled
             } else {
-                devices.append(CoreDevice(id: entry.id, kind: kind, name: entry.name, connected: false, enabled: enabled))
+                devices.append(CoreDevice(id: entry.id, kind: kind, name: entry.name, enabled: enabled))
             }
         }
         return devices
@@ -138,26 +138,23 @@ enum IntegrationStatus {
         running ? "Running" : installed ? "Not running" : "Not installed"
     }
 
-    static func server(live: Bool, enabled: Bool, running: Bool?) -> String {
-        guard live else { return "Monitor not connected" }
-        guard enabled else { return "Off" }
-        return running.map { $0 ? "Serving" : "Enabled, not serving" } ?? "Status not reported"
+    static func server(live: Bool, enabled: Bool?, running: Bool?) -> String {
+        DeviceConnectionState.streamDeck(enabled: enabled, running: running, live: live).rawValue
     }
 
     static func device(_ device: CoreDevice, live: Bool, firmware: String?) -> String {
-        guard live else { return "Monitor not connected" }
-        guard device.enabled != false else { return "Off" }
-        guard let connected = device.connected else { return "Status not reported" }
-        guard connected else { return "Not connected" }
-        return "Connected · " + (firmware.map { "Firmware \($0)" } ?? "Firmware not read")
+        self.device(device, state: .device(device, live: live), firmware: firmware)
+    }
+
+    static func device(_ device: CoreDevice, state: DeviceConnectionState, firmware: String?) -> String {
+        guard state.isConnected else { return state.rawValue }
+        return state.rawValue + " · " + (firmware.map { "Firmware \($0)" } ?? "Firmware not read")
     }
 
     static func deck(_ deck: DeckState?, live: Bool) -> String {
-        guard live else { return "Monitor not connected" }
-        guard let deck else { return "Status not reported" }
-        guard deck.settings.enabled else { return "Off" }
-        guard deck.device?.connected == true else { return "Not connected" }
-        if deck.device?.hasConflict == true { return "Connected · \(DeckDevice.conflictText)" }
-        return deck.device?.approved == true ? "Connected" : "Connected · Not enabled"
+        let state = DeviceConnectionState.creatorMicro(deck, live: live)
+        guard state.isConnected else { return state.rawValue }
+        if deck?.device?.hasConflict == true { return "Connected · \(DeckDevice.conflictText)" }
+        return deck?.device?.approved == true ? "Connected" : "Connected · Not enabled"
     }
 }

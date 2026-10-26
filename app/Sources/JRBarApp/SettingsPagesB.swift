@@ -1498,15 +1498,8 @@ struct StreamDeckCard: View {
 
     private var enabled: Bool { store.values.bool("serve_enabled") ?? false }
 
-    private var statusText: String {
-        guard store.isLive else { return "Monitor not connected" }
-        guard enabled else { return "Off — the endpoint is not serving" }
-        switch running {
-        case true: return "Serving on 127.0.0.1:8737"
-        case false: return "Enabled, not serving"
-        case nil: return "Enabled"
-        }
-    }
+    var connection: DeviceConnectionState { store.streamDeckConnection(running: running) }
+    var statusText: String { connection.rawValue }
 
     private var statusColor: Color {
         guard enabled, store.isLive else { return .secondary }
@@ -1554,7 +1547,8 @@ struct StreamDeckCard: View {
             }
         } header: {
             SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
-                                tint: Color(nsColor: .systemBlue))
+                                tint: Color(nsColor: .systemBlue), pill: connection.rawValue,
+                                pillTint: statusColor)
         }
         .task(id: enabled && store.isLive) { await refreshServeState() }
     }

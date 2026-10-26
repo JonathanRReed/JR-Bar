@@ -1414,10 +1414,8 @@ struct PanelDevicesRow: View {
     /// `state` is the word VoiceOver says after the name: "connected" for
     /// hardware, "shown"/"hidden"/"not reported" for the Screen Bar chip,
     /// which announces visibility rather than connectivity.
-    private var chips: [(id: String, name: String, present: Bool, help: String, state: String?)] {
+    var chips: [(id: String, name: String, present: Bool, help: String, state: String?)] {
         var result: [(String, String, Bool, String, String?)] = []
-        let pro = store.devices.first { $0.kind == "pro" }
-        let dot = store.devices.first { $0.kind == "dot" }
         let bar = store.devices.first { $0.kind == "screen_bar" }
         let pairNote: String? = switch dotLink?.state {
         case "linked": "linked as one"
@@ -1425,12 +1423,18 @@ struct PanelDevicesRow: View {
         case "failed": dotLink?.error.map { "linked write failed: \($0)" } ?? "linked write failed"
         default: nil
         }
-        let pairHelp = { (device: CoreDevice?, fallback: String) in
-            ([device.map { self.deviceHelp($0) } ?? fallback, pairNote].compactMap { $0 } + ["click for Devices settings"])
-                .joined(separator: " · ")
+        for (kind, name, fullName) in [("pro", "Pro", "SidePulse Pro"), ("dot", "Dot", "PulseDot")] {
+            let state = store.deviceConnection(kind: kind)
+            var parts = [state.help(name: fullName)]
+            if state.isConnected, let device = store.devices.first(where: { $0.kind == kind }) {
+                if let leds = device.leds { parts.append("\(leds) LEDs") }
+                if let error = device.error, !error.isEmpty { parts.append(error) }
+                if let pairNote { parts.append(pairNote) }
+            }
+            parts.append("click for Devices settings")
+            let help = parts.joined(separator: " · ")
+            result.append((kind, name, state.isConnected, help, state.rawValue))
         }
-        result.append(("pro", "Pro", pro?.isPresent ?? false, pairHelp(pro, "SidePulse Pro: not reported"), nil))
-        result.append(("dot", "Dot", dot?.isPresent ?? false, pairHelp(dot, "PulseDot: not reported"), nil))
         // The band is the app's own chrome: no device row means the state
         // is unknown, not "connected".
         let barShown = store.screenBarShown && (bar?.isPresent == true)
@@ -1514,14 +1518,6 @@ struct PanelDevicesRow: View {
     private var brightnessWords: String {
         store.brightnessIsMixed ? "Mixed: \(store.brightnessBreakdown)" : "\(Int((store.brightness * 100).rounded())) percent"
     }
-
-    private func deviceHelp(_ device: CoreDevice) -> String {
-        var parts: [String] = [device.name ?? device.kind]
-        parts.append(device.isPresent ? "connected" : "disconnected")
-        if let leds = device.leds { parts.append("\(leds) LEDs") }
-        if let error = device.error, !error.isEmpty { parts.append(error) }
-        return parts.joined(separator: " · ")
-    }
 }
 
 struct DeviceChip: View {
@@ -1534,6 +1530,10 @@ struct DeviceChip: View {
     /// What a tap does, for VoiceOver ("opens Devices settings" /
     /// "toggles the band" for the Screen Bar chip).
     var action: String? = nil
+
+    var accessibilityText: String {
+        "\(name) \(state ?? (present ? "connected" : "not connected"))" + (action.map { " · \($0)" } ?? "")
+    }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -1550,7 +1550,7 @@ struct DeviceChip: View {
         .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
         .opacity(dimmed ? 0.55 : 1)
         .contentShape(Capsule())
-        .accessibilityLabel("\(name) \(state ?? (present ? "connected" : "not connected"))" + (action.map { " · \($0)" } ?? ""))
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
     }
 }

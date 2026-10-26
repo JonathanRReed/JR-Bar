@@ -378,7 +378,9 @@ final class EventCoordinator {
         }
         if let toast = delivery.toast {
             let symbol = event.kind == "device_disconnected" ? "cable.connector.slash" : (event.kind.hasPrefix("peer") ? "person.2.wave.2" : "cable.connector")
-            hud.show(toast, symbol: symbol)
+            let settings = core.settings.map { SettingsDocument($0.document) }
+            let deviceToast = DeviceConnectionState.toast(event, settings: settings, live: core.isLive)
+            hud.show(deviceToast ?? toast, symbol: symbol)
         }
         if let pulse = delivery.statusPulse, pulse != isPulsing {
             isPulsing = pulse

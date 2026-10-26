@@ -47,16 +47,16 @@ struct DevicePresentationTests {
         #expect(device.id == "screen-bar")
         #expect(device.enabled == true)
         #expect(store.deviceEntries.first?.id == "virtual:status-bar")
-        #expect(DeviceConnectionLine.title(device: device, live: store.isLive) == "Connected")
+        #expect(DevicesPage.screenBarStatus(device: device, live: store.isLive) == "Shown")
         #expect(store.deviceLastWrite("virtual:status-bar") == 1_800_000_001)
         #expect(store.deviceSurface("virtual:status-bar") == surface)
         store.core.stop()
-        #expect(DeviceConnectionLine.title(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
+        #expect(DevicesPage.screenBarStatus(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
             == "Monitor not connected")
         store.core.handle(.connected)
         store.core.apply(.state(CoreState(devices: [])))
         #expect(store.deviceFacts("virtual:status-bar") == nil)
-        #expect(DeviceConnectionLine.title(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
+        #expect(DevicesPage.screenBarStatus(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
             == "Not reported")
     }
 
@@ -117,16 +117,16 @@ struct DevicePresentationTests {
         let store = Self.fixture(live: false)
         let device = try #require(store.deviceFacts("pro"))
         #expect(device.isPresent)
-        #expect(DeviceConnectionLine.title(device: device, live: store.isLive) == "Monitor not connected")
+        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Unknown")
         store.core.handle(.connected)
         store.core.apply(.state(CoreState(devices: [device])))
-        #expect(DeviceConnectionLine.title(device: device, live: store.isLive) == "Connected")
+        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Connected")
     }
 
     @Test func unknownAndDisconnectedDevicesAreNamed() {
-        #expect(DeviceConnectionLine.title(device: nil, live: true) == "Not reported")
-        #expect(DeviceConnectionLine.title(device: nil, live: false) == "Monitor not connected")
+        #expect(DeviceConnectionState.device(nil, live: true).rawValue == "Unknown")
+        #expect(DeviceConnectionState.device(nil, live: false).rawValue == "Unknown")
         let absent = CoreDevice(id: "dot", kind: "dot", connected: false, error: "")
-        #expect(DeviceConnectionLine.title(device: absent, live: true) == "Not connected")
+        #expect(DeviceConnectionState.device(absent, live: true).rawValue == "Not connected")
     }
 }

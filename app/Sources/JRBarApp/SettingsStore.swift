@@ -1402,7 +1402,7 @@ final class SettingsStore {
         id == "virtual:status-bar" ? "screen-bar" : id
     }
 
-    private static func guessKind(id: String, name: String) -> String {
+    static func guessKind(id: String, name: String) -> String {
         let text = (id + " " + name).lowercased()
         if text.contains("status-bar") || text.contains("screen bar") { return "screen_bar" }
         if text.contains("dot") { return "dot" }

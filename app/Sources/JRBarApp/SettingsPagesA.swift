@@ -590,7 +590,9 @@ struct DevicesPage: View {
                 }
             }
         }
-        let firstFirmwareID = devices.first { $0.kind == "pro" || $0.kind == "dot" }?.id
+        let firstFirmwareID = devices.first {
+            ($0.kind == "pro" || $0.kind == "dot") && store.deviceConnection($0.id).isConnected
+        }?.id
         ForEach(devices) { device in
             DeviceCard(store: store, device: device, firmware: store.firmware,
                        isFirstFirmware: device.id == firstFirmwareID)
@@ -635,17 +637,17 @@ struct DeviceCard: View {
     let firmware: FirmwareStore
     var isFirstFirmware = false
 
-    private var state: CoreDevice? { store.deviceFacts(device.id) }
+    var connection: DeviceConnectionState { store.deviceConnection(device.id) }
     var body: some View {
         SettingGroup {
-            if state?.isPresent == true {
+            if connection.isConnected {
                 DeviceRightNowRow(store: store, deviceID: device.id)
             }
-            if store.isLive, device.kind == "pro" || device.kind == "dot" {
+            if connection.isConnected, device.kind == "pro" || device.kind == "dot" {
                 FirmwareRows(firmware: firmware, device: device, isLive: store.isLive,
                              isFirst: isFirstFirmware, stateJob: store.core.firmware)
             }
-            if store.isLive && state?.isPresent == true {
+            if connection.isConnected {
                 settingsRows
             } else {
                 DisclosureRow("Saved settings", subtitle: savedBrightness, fold: "device.saved.\(device.id)") {
@@ -657,8 +659,8 @@ struct DeviceCard: View {
             SettingsGroupHeader(title: device.name,
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
                                 tint: SettingsStore.Page.devices.tint,
-                                pill: store.isLive ? DeviceConnectionLine.title(device: state, live: true) : nil,
-                                pillTint: store.isLive && state?.isPresent == true ? .green : .orange,
+                                pill: connection.rawValue,
+                                pillTint: connection.isConnected ? .green : .secondary,
                                 trailing: device.kind == "dot" ? "2 LEDs" : device.kind == "pro" ? "8 LEDs" : nil)
         }
     }
@@ -887,21 +889,19 @@ struct CreatorMicroCard: View {
     private var live: Bool { store.isLive && deck != nil }
 
     private var statusColor: Color {
-        guard let device, device.connected else { return .secondary }
+        guard connection.isConnected, let device else { return .secondary }
         if device.hasConflict { return .red }
         return device.approved ? .green : .orange
     }
 
-    private var statusText: String {
-        guard store.isLive else { return "Monitor not connected" }
-        guard deck != nil else { return "Not in this version" }
-        guard let device, device.connected else { return "Not connected" }
-        var parts: [String] = []
-        if device.hasConflict { parts.append(DeckDevice.conflictText) }
-        else if !device.approved { parts.append("Connected, needs approval") }
-        else { parts.append("Connected") }
-        if let transport = device.transport { parts.append(transport.label) }
-        if let serial = device.serial { parts.append(serial) }
+    var connection: DeviceConnectionState { store.creatorMicroConnection }
+
+    var statusText: String {
+        var parts = [IntegrationStatus.deck(deck, live: store.isLive)]
+        if connection.isConnected {
+            if let transport = device?.transport { parts.append(transport.label) }
+            if let serial = device?.serial { parts.append(serial) }
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -989,9 +989,8 @@ struct CreatorMicroCard: View {
         } header: {
             SettingsGroupHeader(title: "Creator Micro", symbol: "keyboard.fill",
                                 tint: Color(nsColor: .systemIndigo),
-                                pill: device?.approved == false && device?.connected == true
-                                    ? "Approve it in Creator Micro" : nil,
-                                pillTint: .orange)
+                                pill: connection.rawValue,
+                                pillTint: statusColor)
         }
     }
 
