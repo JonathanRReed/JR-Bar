@@ -227,7 +227,7 @@ private struct DockSampleGlass: View {
 @MainActor
 enum DockPreviewSamples {
     static func icon(_ path: String) -> NSImage {
-        NSWorkspace.shared.icon(forFile: path)
+        ExternalFileMetadata.shared.icon(URL(fileURLWithPath: path))
     }
 
     /// An app's icon by bundle id, or the generic app icon when it
@@ -236,11 +236,11 @@ enum DockPreviewSamples {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             return NSWorkspace.shared.icon(for: .application)
         }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        return ExternalFileMetadata.shared.icon(url)
     }
 
     static var terminalIcon: NSImage {
-        FileManager.default.fileExists(atPath: "/Applications/Ghostty.app")
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") != nil
             ? icon("/Applications/Ghostty.app") : icon("/System/Applications/Utilities/Terminal.app")
     }
 

@@ -20,45 +20,46 @@ struct ApplicationsFolderIndexTests {
     }
 
     @Test("many asks inside the lifetime read the folder once")
-    func readsOnce() {
+    func readsOnce() async {
         let folder = Folder()
         let index = index(folder)
+        _ = await index.load()
         for _ in 0..<50 { _ = index.entries() }
         #expect(folder.listings == 1)
         #expect(index.entries().map(\.lastPathComponent) == ["Ice.app"])
     }
 
     @Test("past its lifetime the folder is listed again and a new install appears")
-    func expires() {
+    func expires() async {
         let folder = Folder()
         let index = index(folder)
-        _ = index.entries()
+        _ = await index.load()
         folder.uptime += ApplicationsFolderIndex.lifetime - 1
-        _ = index.entries()
+        _ = await index.load()
         #expect(folder.listings == 1)
         folder.apps.append(URL(fileURLWithPath: "/Applications/DockDoor.app"))
         folder.uptime += 2
-        #expect(index.entries().count == 2)
+        #expect(await index.load().count == 2)
         #expect(folder.listings == 2)
     }
 
     @Test("invalidate forces the next ask to read the folder")
-    func invalidates() {
+    func invalidates() async {
         let folder = Folder()
         let index = index(folder)
-        _ = index.entries()
+        _ = await index.load()
         index.invalidate()
-        _ = index.entries()
+        _ = await index.load()
         #expect(folder.listings == 2)
     }
 
     @Test("a clock that steps backward does not serve a listing forever")
-    func backwardClock() {
+    func backwardClock() async {
         let folder = Folder()
         let index = index(folder)
-        _ = index.entries()
+        _ = await index.load()
         folder.uptime -= 500
-        _ = index.entries()
+        _ = await index.load()
         #expect(folder.listings == 2)
     }
 }

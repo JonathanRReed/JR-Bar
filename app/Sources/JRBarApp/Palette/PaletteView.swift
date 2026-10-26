@@ -642,19 +642,13 @@ extension PaletteTag.Tone {
 /// something to pay per frame.
 @MainActor
 enum PaletteAppIcons {
-    private static var cache: [String: NSImage] = [:]
-
     static func icon(pid: Int32, bundleID: String?) -> NSImage {
-        let key = bundleID ?? "pid:\(pid)"
-        if let cached = cache[key] { return cached }
-        let image = NSRunningApplication(processIdentifier: pid)?.icon
+        let url = RunningApps.shared.app(pid: pid)?.bundleURL
             ?? bundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        return url.map { ExternalFileMetadata.shared.icon($0) }
             ?? NSWorkspace.shared.icon(for: .applicationBundle)
-        cache[key] = image
-        return image
     }
 
     /// Dropped on close — a relaunched app may have a new icon.
-    static func reset() { cache = [:] }
+    static func reset() {}
 }

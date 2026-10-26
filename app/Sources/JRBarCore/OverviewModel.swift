@@ -54,14 +54,15 @@ public struct GitWorkspace: Hashable, Sendable {
     /// `maxDepth` levels, and reads HEAD. Nil outside a repository or when
     /// the files cannot be read.
     public static func resolve(cwd: String, maxDepth: Int = 24,
-                               fileManager: FileManager = .default) -> GitWorkspace? {
+                               fileManager: FileManager = .default,
+                               canRead: (URL) -> Bool = { _ in true }) -> GitWorkspace? {
         var directory = URL(fileURLWithPath: cwd).standardizedFileURL
         for _ in 0..<maxDepth {
             let dotGit = directory.appendingPathComponent(".git")
             var isDirectory: ObjCBool = false
-            if fileManager.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
+            if canRead(dotGit), fileManager.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
                 if isDirectory.boolValue {
-                    return read(root: directory.path, gitDir: dotGit)
+                    return read(root: directory.path, gitDir: dotGit, canRead: canRead)
                 }
                 // A linked worktree, a submodule or a clone whose git dir
                 // lives elsewhere: `.git` is "gitdir: <path>". `read`
@@ -72,7 +73,7 @@ public struct GitWorkspace: Hashable, Sendable {
                 let raw = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
                 let gitDir = raw.hasPrefix("/") ? URL(fileURLWithPath: raw)
                     : directory.appendingPathComponent(raw).standardizedFileURL
-                return read(root: directory.path, gitDir: gitDir)
+                return read(root: directory.path, gitDir: gitDir, canRead: canRead)
             }
             let parent = directory.deletingLastPathComponent()
             if parent.path == directory.path { return nil }
@@ -81,8 +82,8 @@ public struct GitWorkspace: Hashable, Sendable {
         return nil
     }
 
-    private static func read(root: String, gitDir: URL) -> GitWorkspace? {
-        guard let head = try? String(contentsOf: gitDir.appendingPathComponent("HEAD"), encoding: .utf8) else {
+    private static func read(root: String, gitDir: URL, canRead: (URL) -> Bool) -> GitWorkspace? {
+        guard canRead(gitDir.appendingPathComponent("HEAD")), let head = try? String(contentsOf: gitDir.appendingPathComponent("HEAD"), encoding: .utf8) else {
             return nil
         }
         var workspace = GitWorkspace(root: root)
@@ -94,7 +95,7 @@ public struct GitWorkspace: Hashable, Sendable {
         // (<super>/.git/modules/<name>) has the same shape but no such
         // file, and neither has a git dir kept elsewhere, so those keep
         // their own folder as the repository.
-        guard let common = commonDirectory(of: gitDir) else { return workspace }
+        guard let common = commonDirectory(of: gitDir, canRead: canRead) else { return workspace }
         workspace.isLinkedWorktree = true
         if common.lastPathComponent == ".git" {
             workspace.mainRoot = common.deletingLastPathComponent().path
@@ -104,9 +105,9 @@ public struct GitWorkspace: Hashable, Sendable {
 
     /// The shared git dir a linked worktree's `commondir` points at; nil
     /// when the file is absent or empty.
-    private static func commonDirectory(of gitDir: URL) -> URL? {
+    private static func commonDirectory(of gitDir: URL, canRead: (URL) -> Bool) -> URL? {
         let file = gitDir.appendingPathComponent("commondir")
-        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        guard canRead(file), let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return nil }
         if raw.hasPrefix("/") { return URL(fileURLWithPath: raw).standardizedFileURL }

@@ -46,7 +46,7 @@ struct ShelfCopyTextOrderTests {
             board.setString("Previous clipboard", forType: .string)
         }
 
-        func entry(_ name: String, text: String = "Synthetic text") throws -> ShelfTrayModel.ShelfEntry {
+        func entry(_ name: String, text: String = "Synthetic text") async throws -> ShelfTrayModel.ShelfEntry {
             let folder = root.appendingPathComponent(name + "-source", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let url = folder.appendingPathComponent(name)
@@ -56,7 +56,7 @@ struct ShelfCopyTextOrderTests {
             let ownedEntry = try #require(tray.entries.first { entry in
                 entry.items.contains { $0.path == canonicalPath }
             })
-            #expect(tray.presentURLs(of: [ownedEntry]).count == 1)
+            #expect(await tray.presentURLs(of: [ownedEntry]).count == 1)
             return ownedEntry
         }
 
@@ -72,8 +72,8 @@ struct ShelfCopyTextOrderTests {
         let f = try Fixture()
         defer { f.clean() }
         let reader = Reader()
-        let oldEntry = try f.entry("old.txt")
-        let newEntry = try f.entry("new.txt")
+        let oldEntry = try await f.entry("old.txt")
+        let newEntry = try await f.entry("new.txt")
         let oldPending = f.tray.copyText([oldEntry], to: f.board, reader: { await reader.read($0) })
         let oldTask = try #require(oldPending)
         await reader.waitFor("old.txt")
@@ -102,11 +102,11 @@ struct ShelfCopyTextOrderTests {
         let f = try Fixture()
         defer { f.clean() }
         let reader = Reader()
-        let oldPending = f.tray.copyText([try f.entry("old.txt")], to: f.board,
+        let oldPending = f.tray.copyText([try await f.entry("old.txt")], to: f.board,
                                         reader: { await reader.read($0) })
         let oldTask = try #require(oldPending)
         await reader.waitFor("old.txt")
-        let newPending = f.tray.copyText([try f.entry("new.txt")], to: f.board,
+        let newPending = f.tray.copyText([try await f.entry("new.txt")], to: f.board,
                                         reader: { await reader.read($0) })
         let newTask = try #require(newPending)
         await reader.waitFor("new.txt")
@@ -127,7 +127,7 @@ struct ShelfCopyTextOrderTests {
         defer { f.clean() }
         let reader = Reader()
         f.tray.actionNotice = "Previous notice"
-        let pending = f.tray.copyText([try f.entry("pending.txt")], to: f.board,
+        let pending = f.tray.copyText([try await f.entry("pending.txt")], to: f.board,
                                      reader: { await reader.read($0) })
         let task = try #require(pending)
         await reader.waitFor("pending.txt")
@@ -144,9 +144,10 @@ struct ShelfCopyTextOrderTests {
         let f = try Fixture()
         defer { f.clean() }
         let reader = Reader()
-        let validEntry = try f.entry("valid.txt")
-        let missingEntry = try f.entry("missing.txt")
+        let validEntry = try await f.entry("valid.txt")
+        let missingEntry = try await f.entry("missing.txt")
         try FileManager.default.removeItem(at: missingEntry.items[0].url)
+        await f.tray.refreshMetadata()
         let pending = f.tray.copyText([validEntry], to: f.board,
                                      reader: { await reader.read($0) })
         let task = try #require(pending)
@@ -167,7 +168,7 @@ struct ShelfCopyTextOrderTests {
         let f = try Fixture()
         defer { f.clean() }
         let reader = Reader()
-        let entry = try f.entry("released.txt")
+        let entry = try await f.entry("released.txt")
         var tray: ShelfTrayModel? = ShelfTrayModel(defaults: f.defaults)
         weak var releasedTray = tray
         let pending = tray?.copyText([entry], to: f.board, reader: { await reader.read($0) })
@@ -186,7 +187,7 @@ struct ShelfCopyTextOrderTests {
     func defaultReaderCopiesFile() async throws {
         let f = try Fixture()
         defer { f.clean() }
-        let entry = try f.entry("source.txt", text: "Actual temporary source text")
+        let entry = try await f.entry("source.txt", text: "Actual temporary source text")
         let pending = f.tray.copyText([entry], to: f.board)
         let task = try #require(pending)
         await task.value

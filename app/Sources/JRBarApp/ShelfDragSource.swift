@@ -34,7 +34,7 @@ enum ShelfDragOutRule {
 /// pasteboard as plain file URLs.
 struct ShelfDragSource: NSViewRepresentable {
     /// The files the drag carries, read when it starts.
-    let urls: @MainActor () -> [URL]
+    let urls: @MainActor () async -> [URL]
     let policy: @MainActor () -> ShelfDragOut
     /// The drag ended: the operation the destination took, and whether
     /// it landed outside JR-Bar.
@@ -56,6 +56,7 @@ struct ShelfDragSource: NSViewRepresentable {
         nonisolated(unsafe) private var monitor: Any?
         private var downPoint: NSPoint?
         private var downInView = false
+        private var pressGeneration = 0
         /// ⌘ was held when the drag began.
         private var commandHeld = false
         /// The last place AppKit asked about while the drag moved.
@@ -69,6 +70,7 @@ struct ShelfDragSource: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window == nil {
+                pressGeneration &+= 1
                 if let monitor { NSEvent.removeMonitor(monitor) }
                 monitor = nil
             } else if monitor == nil {
@@ -86,6 +88,7 @@ struct ShelfDragSource: NSViewRepresentable {
             let point = convert(event.locationInWindow, from: nil)
             switch event.type {
             case .leftMouseDown:
+                pressGeneration &+= 1
                 downInView = takesPress(at: point)
                 downPoint = downInView ? point : nil
                 return event
@@ -95,14 +98,20 @@ struct ShelfDragSource: NSViewRepresentable {
                       let source else { return event }
                 downInView = false
                 downPoint = nil
-                let urls = source.urls()
-                guard !urls.isEmpty else { return event }
-                commandHeld = event.modifierFlags.contains(.command)
-                lastContext = .withinApplication
-                beginDraggingSession(with: items(for: urls, at: down), event: event, source: self)
+                let generation = pressGeneration
+                Task { [weak self] in
+                    let urls = await source.urls()
+                    guard let self, self.pressGeneration == generation,
+                          !urls.isEmpty, self.window != nil,
+                          NSEvent.pressedMouseButtons & 1 != 0 else { return }
+                    self.commandHeld = event.modifierFlags.contains(.command)
+                    self.lastContext = .withinApplication
+                    self.beginDraggingSession(with: self.items(for: urls, at: down), event: event, source: self)
+                }
                 // The drag is ours now; the chip's gestures never see it.
                 return nil
             default:
+                pressGeneration &+= 1
                 downInView = false
                 downPoint = nil
                 return event
@@ -126,7 +135,7 @@ struct ShelfDragSource: NSViewRepresentable {
         private func items(for urls: [URL], at point: NSPoint) -> [NSDraggingItem] {
             urls.enumerated().map { index, url in
                 let item = NSDraggingItem(pasteboardWriter: url as NSURL)
-                let icon = NSWorkspace.shared.icon(forFile: url.path)
+                let icon = ExternalFileMetadata.shared.cachedIcon(url) ?? NSWorkspace.shared.icon(for: .data)
                 let side: CGFloat = 32
                 let offset = CGFloat(min(index, 4)) * 4
                 item.setDraggingFrame(NSRect(x: point.x - side / 2 + offset, y: point.y - side / 2 - offset,

@@ -9007,6 +9007,8 @@ class StatusBarController(NSObject):
                 else True
             )
             previous_focus_ids = set(self.last_active_focus_ids)
+            if active_focus_ids != previous_focus_ids:
+                needs_refresh = True
             self.last_active_focus_ids = active_focus_ids
             self._focus_ids_cache = (
                 self._runtime_worker_monotonic(),

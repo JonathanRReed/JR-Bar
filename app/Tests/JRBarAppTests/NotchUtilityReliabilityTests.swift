@@ -156,12 +156,13 @@ struct NotchUtilityReliabilityTests {
     }
 
     @Test("undo clear restores stack references, selection and persisted state once")
-    func undoClearShelf() throws {
+    func undoClearShelf() async throws {
         let suite = "jrbar-notch-shelf-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         let tray = ShelfTrayModel(defaults: defaults)
         tray.add([URL(fileURLWithPath: "/tmp/jrbar-fixture-one/a.txt"),
                   URL(fileURLWithPath: "/tmp/jrbar-fixture-two/b.txt")])
+        await tray.refreshMetadata()
         let saved = tray.entries
         let stack = try #require(saved.first)
         tray.toggleSelection(stack)
@@ -173,7 +174,9 @@ struct NotchUtilityReliabilityTests {
         #expect(tray.entries == saved)
         #expect(tray.selectedIDs == [stack.id])
         #expect(!tray.canUndoClear)
-        #expect(ShelfTrayModel(defaults: defaults).entries == saved)
+        let restored = ShelfTrayModel(defaults: defaults)
+        await restored.refreshMetadata()
+        #expect(restored.entries == saved)
         tray.undoClear()
         #expect(tray.entries == saved)
     }

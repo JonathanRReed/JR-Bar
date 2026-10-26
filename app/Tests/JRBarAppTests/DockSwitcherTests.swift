@@ -514,6 +514,8 @@ struct DockSwitcherTests {
         let before = DockSwitcherList.signature(rows: rows, offRows: [], marks: [])
         let retitled = DockSwitcherList.signature(
             rows: [row(pid: 1, wid: 10, title: "⠐ Claude"), row(pid: 2, wid: 20)], offRows: [], marks: [])
+        let iconsReady = DockSwitcherList.signature(rows: rows, offRows: [], marks: [], metadataVersion: 1)
+        #expect(before != iconsReady, "completed icons rebuild stored cards")
         #expect(before == retitled, "a terminal's spinner must not rebuild the strip every frame")
         let opened = DockSwitcherList.signature(rows: rows + [row(pid: 1, wid: 11)], offRows: [], marks: [])
         #expect(before != opened, "a new window re-lists")

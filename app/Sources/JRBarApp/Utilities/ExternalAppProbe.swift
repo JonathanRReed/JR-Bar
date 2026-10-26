@@ -15,7 +15,8 @@ struct ExternalAppProbe {
     let appNames: [String]
 
     /// The app's location, or nil when it is not installed.
-    var url: URL? {
+    @MainActor var url: URL? {
+        _ = ExternalFileMetadata.shared.version
         for id in bundleIDs {
             if let found = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                 return found
@@ -30,7 +31,7 @@ struct ExternalAppProbe {
         return nil
     }
 
-    var installed: Bool { url != nil }
+    @MainActor var installed: Bool { url != nil }
 
     /// Running means a live process — a registered bundle id answers
     /// through the running-apps index, an unregistered app falls back to
@@ -64,35 +65,40 @@ final class ApplicationsFolderIndex: @unchecked Sendable {
     /// the card reads a fresh listing at most this late.
     static let lifetime: TimeInterval = 30
 
+    private let cache: BackgroundLookupCache<Int, [URL]>
     private let lock = NSLock()
-    private var cached: (at: TimeInterval, urls: [URL])?
-    /// How the folder is listed and what time it is — the tests' seams.
-    private let list: @Sendable () -> [URL]
-    private let now: @Sendable () -> TimeInterval
+    private var generation = 0
 
     init(list: @escaping @Sendable () -> [URL] = {
-            (try? FileManager.default.contentsOfDirectory(
-                at: URL(fileURLWithPath: "/Applications"), includingPropertiesForKeys: nil)) ?? []
-        },
-         now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.list = list
-        self.now = now
+            let url = URL(fileURLWithPath: "/Applications")
+            guard ExternalFilePolicy(home: NSHomeDirectory()).available(url) else { return [] }
+            return (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+        }, now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        cache = BackgroundLookupCache(lifetime: Self.lifetime, now: now,
+            changed: { Task { @MainActor in ExternalFileMetadata.shared.invalidateViews() } }, load: { _ in list() })
     }
 
     func entries() -> [URL] {
         lock.lock()
-        defer { lock.unlock() }
-        let current = now()
-        if let cached, current - cached.at >= 0, current - cached.at < Self.lifetime { return cached.urls }
-        let urls = list()
-        cached = (current, urls)
-        return urls
+        let key = generation
+        lock.unlock()
+        return cache.value(for: key) ?? []
     }
 
-    /// Forget the listing: the next ask reads the folder.
+    func load() async -> [URL] {
+        let key = currentGeneration()
+        return await cache.resolve(key) ?? []
+    }
+
+    private func currentGeneration() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation
+    }
+
     func invalidate() {
         lock.lock()
-        cached = nil
+        generation += 1
         lock.unlock()
     }
 }

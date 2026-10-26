@@ -421,7 +421,7 @@ final class ShelfUtilityModel {
         guard let bundle = media?.bundleIdentifier else { return nil }
         if let known = sourceNames[bundle] { return known }
         let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle).map {
-            FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "")
+            $0.deletingPathExtension().lastPathComponent
         }
         sourceNames[bundle] = .some(name)
         return name

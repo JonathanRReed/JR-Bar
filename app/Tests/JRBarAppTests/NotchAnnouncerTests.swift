@@ -115,17 +115,6 @@ struct NotchAnnouncerTests {
         #expect(FocusWatcher.announcedName(now: (false, "Focus"), before: nil) == "Focus")
     }
 
-    @Test("the daemon's quiet state is a Focus only when its source is a Focus")
-    func daemonFocus() {
-        // "off" is the daemon's nothing-quiet word — never a Focus on.
-        #expect(FocusWatcher.daemonFocus(mode: "off", source: nil).on == false)
-        #expect(FocusWatcher.daemonFocus(mode: nil, source: nil).on == false)
-        #expect(FocusWatcher.daemonFocus(mode: "dim", source: "focus").on)
-        // A quiet mode from the menu, or quiet hours, is not the Mac's Focus.
-        #expect(FocusWatcher.daemonFocus(mode: "mute", source: "override").on == false)
-        #expect(FocusWatcher.daemonFocus(mode: "dark", source: "schedule").on == false)
-    }
-
     @Test("the daemon's first focus document is a baseline: it settles and says nothing")
     func daemonBaseline() {
         let watcher = FocusWatcher()
@@ -133,16 +122,47 @@ struct NotchAnnouncerTests {
         var settled: [Bool] = []
         watcher.onChange = { _, on in said.append(on) }
         watcher.onSettle = { _, on in settled.append(on) }
-        // Only a Mac whose Assertions.json is unreadable relays.
-        watcher.readFile = { nil }
-        watcher.noteDaemon(mode: "off", source: nil)
+        watcher.noteDaemon(active: false, identifiers: [])
         #expect(said.isEmpty, "no 'Focus off' at launch")
         #expect(settled == [false])
-        watcher.noteDaemon(mode: "dim", source: "focus")
+        watcher.noteDaemon(active: true, identifiers: ["com.apple.focusmodes.work"])
         #expect(said == [true])
         #expect(settled == [false, true])
-        watcher.noteDaemon(mode: "dim", source: "focus")
+        watcher.noteDaemon(active: true, identifiers: ["com.apple.focusmodes.work"])
         #expect(said == [true], "the same state twice is one flip")
+    }
+
+    @Test("observed mode changes announce while Focus stays active")
+    func observedModes() {
+        let watcher = FocusWatcher()
+        var names: [String] = []
+        watcher.onChange = { name, _ in names.append(name) }
+        watcher.noteDaemon(active: false, identifiers: [])
+        watcher.noteDaemon(active: true, identifiers: ["com.apple.focusmodes.work"])
+        watcher.noteDaemon(active: true, identifiers: ["com.apple.focusmodes.personal"])
+        watcher.noteDaemon(active: nil, identifiers: [])
+        watcher.noteDaemon(active: false, identifiers: [])
+        #expect(names == ["Work", "Personal", "Personal"])
+    }
+
+    @Test("public Focus observation runs off main and ignores quiet-policy activation")
+    func publicFocusWithoutSync() async {
+        let watcher = FocusWatcher(readPublic: {
+            #expect(!Thread.isMainThread)
+            return true
+        })
+        var settled: [String] = []
+        var announced: [String] = []
+        watcher.onChange = { name, _ in announced.append(name) }
+        watcher.onSettle = { name, on in settled.append("\(name):\(on)") }
+        await watcher.refreshPublic()
+        #expect(settled == ["Focus:true"])
+        watcher.noteDaemon(active: nil, identifiers: ["com.apple.focusmodes.work"])
+        watcher.noteDaemon(active: nil, identifiers: ["com.apple.focusmodes.personal"])
+        #expect(settled == ["Focus:true", "Work:true", "Personal:true"])
+        #expect(announced == ["Personal"])
+        watcher.noteDaemon(active: false, identifiers: [])
+        #expect(settled.last == "Focus:false", "a new daemon observation replaces an older public read")
     }
 
     @Test("Caps Lock is feedback; a display is news")

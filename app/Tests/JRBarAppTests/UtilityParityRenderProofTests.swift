@@ -283,7 +283,7 @@ struct UtilityParityRenderProofTests {
     // MARK: Shelf
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the parity PNGs"))
-    func shelfMultiselect() throws {
+    func shelfMultiselect() async throws {
         let (toy, store, _) = Self.makeToy()
         defer { withExtendedLifetime(store) {} }
         let tray = toy.cardModel.tray
@@ -306,7 +306,7 @@ struct UtilityParityRenderProofTests {
         try Self.writeCard(toy, name: "notch-card-shelf-multiselect")
 
         // The chip's menu for that two-chip selection.
-        let picked = tray.presentURLs(of: tray.targets(for: chips[0]))
+        let picked = await tray.presentURLs(of: tray.targets(for: chips[0]))
         var rows: [MenuStill.Row] = ["Hand to review-patch", "Quick Look", "Reveal in Finder",
                                      "Send via AirDrop", "Share…"].map { MenuStill.Row(title: $0) }
         rows += ShelfActionMenu.verbs(for: picked).enumerated().map { index, verb in

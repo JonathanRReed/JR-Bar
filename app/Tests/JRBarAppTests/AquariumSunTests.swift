@@ -121,9 +121,9 @@ struct AquariumSunTests {
     }
 
     @Test("the Mac's own zone.tab reads, and names Chicago's city")
-    func systemTable() throws {
+    func systemTable() async throws {
         try #require(FileManager.default.fileExists(atPath: AquariumSun.zoneTabPath))
-        let place = try #require(AquariumSun.zoneTable["America/Chicago"])
+        let place = try #require(await AquariumSun.loadZoneTable()["America/Chicago"])
         #expect(abs(place.latitude - 41.85) < 0.01)
         #expect(AquariumSun.zoneTable.count > 300)
     }

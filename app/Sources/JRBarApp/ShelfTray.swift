@@ -20,7 +20,9 @@ final class ShelfTrayModel {
     static let maxItems = 40
     /// Largest file "Attach" will offer to a draft without a confirm —
     /// anything bigger stays a path reference only.
-    static let attachCopyBound: Int64 = 8 * 1024 * 1024
+    nonisolated static let attachCopyBound: Int64 = 8 * 1024 * 1024
+
+    @ObservationIgnored let fileMetadata: ExternalFileMetadata
 
     private static let defaultsKey = "jrbar.shelfTray.paths"
     private static let pasteFailureNotice = "Couldn't save this copy. Try Paste again."
@@ -102,7 +104,9 @@ final class ShelfTrayModel {
         var missing: Bool { items.allSatisfy(\.missing) }
     }
 
-    private(set) var entries: [ShelfEntry] = []
+    private(set) var entries: [ShelfEntry] = [] {
+        didSet { fileMetadata.setShelfPaths(Set(items.map(\.path))) }
+    }
 
     // MARK: Session homes
 
@@ -175,9 +179,20 @@ final class ShelfTrayModel {
     var canUndoClear: Bool { clearedShelf != nil }
     var clearedItemCount: Int { clearedShelf?.entries.flatMap(\.items).count ?? 0 }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, metadata: ExternalFileMetadata = ExternalFileMetadata()) {
         self.defaults = defaults
+        self.fileMetadata = metadata
         load()
+        watchMetadata()
+    }
+
+    private func watchMetadata() {
+        withObservationTracking { _ = self.fileMetadata.version } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.revalidate(refresh: false)
+                self?.watchMetadata()
+            }
+        }
     }
 
     /// Drop-in or explicit add: dedupes, bounds the strip, persists.
@@ -362,6 +377,7 @@ final class ShelfTrayModel {
         let paths = Set(known.flatMap(\.items).map(\.path))
         icons = icons.filter { paths.contains($0.key) }
         pendingThumbs = pendingThumbs.filter { paths.contains($0.key) }
+        requestedThumbs.formIntersection(paths)
         revalidate()
         persist()
     }
@@ -379,6 +395,7 @@ final class ShelfTrayModel {
         for item in current.items {
             icons.removeValue(forKey: item.path)
             pendingThumbs.removeValue(forKey: item.path)
+            requestedThumbs.remove(item.path)
         }
         remapSelection(from: [entry.id], to: [])
         evictionNotice = nil
@@ -393,6 +410,7 @@ final class ShelfTrayModel {
         entries.removeAll()
         icons.removeAll()
         pendingThumbs.removeAll()
+        requestedThumbs.removeAll()
         selectedIDs.removeAll()
         selectionAnchor = nil
         keyboardSelectionID = nil
@@ -488,7 +506,7 @@ final class ShelfTrayModel {
 
     /// Open live files in the pick, including a selected stack's members.
     /// A missing file or refused opener says why instead of claiming success.
-    func openKeyboardSelection() -> String? {
+    func openKeyboardSelection() async -> String? {
         guard shelfEnabled() else { return keyboardOpenRefusal("The Shelf is turned off.") }
         revalidate()
         selectedIDs.formIntersection(Set(entries.map(\.id)))
@@ -497,9 +515,9 @@ final class ShelfTrayModel {
         guard !picked.isEmpty else {
             return keyboardOpenRefusal(entries.isEmpty ? "The Shelf has no files to open." : "No Shelf files are selected.")
         }
-        let urls = presentURLs(of: picked)
+        let urls = await presentURLs(of: picked)
         guard !urls.isEmpty else { return keyboardOpenRefusal("The selected files moved or were deleted.") }
-        let missing = picked.flatMap(\.items).contains(where: \.missing)
+        let missing = urls.count < Set(picked.flatMap(\.items).map(\.path)).count
         var failed = false
         for url in urls { if !openURL(url) { failed = true } }
         if missing {
@@ -556,14 +574,45 @@ final class ShelfTrayModel {
     /// The files of `entries` that still resolve, each once — what a drag
     /// out, the share menu and every verb carry. A moved file is never
     /// offered, and a canceled share claims nothing (T50).
-    func presentURLs(of entries: [ShelfEntry]) -> [URL] {
-        revalidate()
+    func presentURLs(of entries: [ShelfEntry]) async -> [URL] {
+        let requested = entries.flatMap(\.items)
+        let metadata = fileMetadata
+        let valid = await withTaskGroup(of: (String, Bool).self, returning: Set<String>.self) { group in
+            for item in requested {
+                group.addTask { (item.path, await metadata.validate(item.url)?.available == true) }
+            }
+            var found = Set<String>()
+            for await (path, available) in group where available { found.insert(path) }
+            return found
+        }
+        if valid.count < Set(requested.map(\.path)).count {
+            actionNotice = "Some files moved, were deleted, or are unavailable."
+        }
+        let checked = Set(requested.map(\.path))
+        entriesMissing(checked: checked, valid: valid)
+        // Membership can change while validation is suspended.
         let ids = Set(entries.map(\.id))
         var seen = Set<String>()
         return self.entries.filter { ids.contains($0.id) }
             .flatMap(\.items)
-            .filter { !$0.missing && seen.insert($0.path).inserted }
+            .filter { valid.contains($0.path) && seen.insert($0.path).inserted }
             .map(\.url)
+    }
+
+    private func entriesMissing(checked: Set<String>, valid: Set<String>) {
+        func updated(_ item: Entry) -> Entry {
+            var result = item
+            if checked.contains(item.path) { result.missing = !valid.contains(item.path) }
+            return result
+        }
+        entries = entries.map { entry in
+            switch entry {
+            case .item(let item): return .item(updated(item))
+            case .stack(var stack):
+                stack.items = stack.items.map(updated)
+                return .stack(stack)
+            }
+        }
     }
 
     // MARK: Verbs on a pick
@@ -576,8 +625,8 @@ final class ShelfTrayModel {
 
     /// Reveal in Finder: the pick's files that still resolve, selected
     /// together in Finder. A moved file is never revealed.
-    func reveal(_ picked: [ShelfEntry]) {
-        let live = presentURLs(of: picked)
+    func reveal(_ picked: [ShelfEntry]) async {
+        let live = await presentURLs(of: picked)
         guard !live.isEmpty else { return }
         DesktopServices.automatic.reveal(live)
     }
@@ -586,8 +635,8 @@ final class ShelfTrayModel {
     /// Alcove's headline shelf verb — with every file of the pick that
     /// still resolves. Returns whether the service ran.
     @discardableResult
-    func sendViaAirDrop(_ picked: [ShelfEntry]) -> Bool {
-        let urls = presentURLs(of: picked)
+    func sendViaAirDrop(_ picked: [ShelfEntry]) async -> Bool {
+        let urls = await presentURLs(of: picked)
         guard !urls.isEmpty,
               let service = NSSharingService(named: .sendViaAirDrop) else { return false }
         service.perform(withItems: urls)
@@ -596,12 +645,12 @@ final class ShelfTrayModel {
 
     /// Quick Look from a chip. A chip in a pick previews the pick, opened
     /// on that chip; a lone chip previews the whole shelf, opened on it.
-    func quickLook(_ entry: ShelfEntry, among picked: [ShelfEntry]) {
+    func quickLook(_ entry: ShelfEntry, among picked: [ShelfEntry]) async {
         guard picked.count > 1 else {
-            quickLook(entry)
+            await quickLook(entry)
             return
         }
-        let urls = presentURLs(of: picked)
+        let urls = await presentURLs(of: picked)
         guard !urls.isEmpty else { return }
         let paths = Set(entry.items.map(\.path))
         ShelfQuickLook.shared.show(urls: urls, at: urls.firstIndex { paths.contains($0.path) } ?? 0)
@@ -613,10 +662,10 @@ final class ShelfTrayModel {
     /// person pastes it into the session this opens. False when no file
     /// of the pick is present.
     @discardableResult
-    func copyForAgent(_ picked: [ShelfEntry], to board: NSPasteboard = .general) -> Bool {
-        let urls = presentURLs(of: picked)
+    func copyForAgent(_ picked: [ShelfEntry], to board: NSPasteboard = .general) async -> Bool {
+        let urls = await presentURLs(of: picked)
         guard !urls.isEmpty else { return false }
-        let attach = picked.count == 1 && canAttachCopy(picked[0])
+        let attach = picked.count == 1
         copyForAgent(urls, attachImage: attach, to: board)
         return true
     }
@@ -644,9 +693,9 @@ final class ShelfTrayModel {
     /// in a stack or loose, rather than turning up missing.
     func relocate(from old: String, to new: String) {
         guard old != new else { return }
-        var isDirectory: ObjCBool = false
-        let movedDirectory = FileManager.default.fileExists(atPath: new, isDirectory: &isDirectory)
-            && isDirectory.boolValue
+        let references = entries + (clearedShelf?.entries ?? [])
+        let movedDirectory = references.flatMap(\.items).contains { $0.path.hasPrefix(old + "/") }
+            || fileMetadata.snapshot(URL(fileURLWithPath: new))?.directory == true
         let prefix = old == "/" ? old : old + "/"
         func relocatedEntries(_ source: [ShelfEntry])
             -> (entries: [ShelfEntry], owners: [String: [String]], invalidated: Set<String>) {
@@ -666,11 +715,11 @@ final class ShelfTrayModel {
                     path = URL(fileURLWithPath: new)
                         .appendingPathComponent(String(item.path.dropFirst(prefix.count))).path
                 } else {
-                    return Entry(path: item.path, missing: !FileManager.default.fileExists(atPath: item.path))
+                    return Entry(path: item.path, missing: fileMetadata.snapshot(item.url).map { !$0.available } ?? item.missing)
                 }
                 invalidated.insert(item.path)
                 invalidated.insert(path)
-                return Entry(path: path, missing: !FileManager.default.fileExists(atPath: path))
+                return Entry(path: path, missing: fileMetadata.snapshot(URL(fileURLWithPath: path)).map { !$0.available } ?? false)
             }
             let mapped = source.map { entry in
                 switch entry {
@@ -708,6 +757,7 @@ final class ShelfTrayModel {
         for path in active.invalidated {
             icons.removeValue(forKey: path)
             pendingThumbs.removeValue(forKey: path)
+            requestedThumbs.remove(path)
         }
         if var snapshot = clearedShelf {
             let restored = relocatedEntries(snapshot.entries)
@@ -715,6 +765,7 @@ final class ShelfTrayModel {
             for path in restored.invalidated {
                 icons.removeValue(forKey: path)
                 pendingThumbs.removeValue(forKey: path)
+                requestedThumbs.remove(path)
             }
             snapshot.selectedIDs = remapped(snapshot.selectedIDs, owners: restored.owners)
             snapshot.selectionAnchor = snapshot.selectionAnchor.flatMap { restored.owners[$0]?.first ?? $0 }
@@ -730,28 +781,37 @@ final class ShelfTrayModel {
     /// off-actor; the generic face shows until it lands.
     private var icons: [String: NSImage] = [:]
     private var pendingThumbs: [String: UUID] = [:]
+    private var requestedThumbs: Set<String> = []
     @ObservationIgnored var loadThumbnail: @MainActor (
         String, @escaping @MainActor @Sendable (NSImage?) -> Void
     ) -> Void = { path, completion in
-        let request = QLThumbnailGenerator.Request(
-            fileAt: URL(fileURLWithPath: path), size: CGSize(width: 32, height: 32),
-            scale: NSScreen.main?.backingScaleFactor ?? 2, representationTypes: .thumbnail)
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
-            let image = representation?.nsImage
-            Task { @MainActor in completion(image) }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        DispatchQueue.global(qos: .utility).async {
+            let url = URL(fileURLWithPath: path)
+            let policy = ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path])
+            guard policy.available(url) else {
+                Task { @MainActor in completion(nil) }
+                return
+            }
+            let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 32, height: 32),
+                                                       scale: scale, representationTypes: .thumbnail)
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+                let image = representation.flatMap { ExternalFileMetadata.decoded($0.nsImage) }
+                Task { @MainActor in completion(image) }
+            }
         }
     }
 
     func icon(for entry: Entry) -> NSImage {
+        let snapshot = fileMetadata.snapshot(entry.url)
         if let cached = icons[entry.path] { return cached }
-        // `icon(forFile:)` hands back a shared cached NSImage for
-        // generic types — resize a copy so every other consumer in
-        // the process keeps the size it asked for.
-        let image = (NSWorkspace.shared.icon(forFile: entry.path).copy()
-                     as? NSImage) ?? NSImage()
+        let completed = fileMetadata.cachedIcon(entry.url)?.copy() as? NSImage
+        let image = completed ?? NSWorkspace.shared.icon(for: .data)
         image.size = NSSize(width: 11, height: 11)
-        icons[entry.path] = image
-        if !entry.missing { upgradeThumbnail(for: entry.path) }
+        if snapshot?.available == true {
+            if let completed { icons[entry.path] = completed }
+            upgradeThumbnail(for: entry.path)
+        }
         return image
     }
 
@@ -760,7 +820,8 @@ final class ShelfTrayModel {
     /// (folders, binaries) simply keeps its type icon — nothing
     /// reverts, nothing retries in a loop.
     private func upgradeThumbnail(for path: String) {
-        guard pendingThumbs[path] == nil else { return }
+        guard !requestedThumbs.contains(path) else { return }
+        requestedThumbs.insert(path)
         let token = UUID()
         pendingThumbs[path] = token
         loadThumbnail(path) { [weak self] image in
@@ -825,6 +886,7 @@ final class ShelfTrayModel {
         stack.items.removeAll { $0.id == item.id }
         icons.removeValue(forKey: item.path)
         pendingThumbs.removeValue(forKey: item.path)
+        requestedThumbs.remove(item.path)
         if stack.items.isEmpty {
             entries.remove(at: at)
             remapSelection(from: [stackID], to: [])
@@ -842,14 +904,12 @@ final class ShelfTrayModel {
     /// Reveal in Finder — only for entries that still resolve. A
     /// stack reveals its live members.
     func reveal(_ entry: ShelfEntry) {
-        reveal([entry])
+        Task { await reveal([entry]) }
     }
 
     /// File size for the attach bound — nil when unresolvable.
     func size(of entry: Entry) -> Int64? {
-        guard let values = try? entry.url.resourceValues(forKeys: [.fileSizeKey]),
-              let size = values.fileSize else { return nil }
-        return Int64(size)
+        fileMetadata.snapshot(entry.url)?.size
     }
 
     /// Whether a hand-off may carry this file's bytes as well as its
@@ -878,21 +938,27 @@ final class ShelfTrayModel {
     /// offer back as the Paste chip on the next open — its change count
     /// counts as pasted.
     func copyForAgent(_ urls: [URL], attachImage: Bool, to board: NSPasteboard = .general) {
-        guard let written = Self.copyForAgent(urls, attachImage: attachImage, to: board) else { return }
+        guard let written = Self.copyForAgent(urls, attachImage: false, to: board) else { return }
         pastedChangeCount = written
         pasteOffered = false
+        guard attachImage, urls.count == 1, let url = urls.first else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let image = await self.fileMetadata.attachment(url), board.changeCount == written else { return }
+            guard let count = Self.copyForAgent(urls, attachImage: true, to: board, image: image) else { return }
+            self.pastedChangeCount = count
+        }
     }
 
     /// The pasteboard write: the `@path` text first, a small single
     /// image as image data beside it, then the file URLs for a GUI app.
     /// The board's change count after the write; nil when nothing was.
-    static func copyForAgent(_ urls: [URL], attachImage: Bool, to board: NSPasteboard) -> Int? {
+    static func copyForAgent(_ urls: [URL], attachImage: Bool, to board: NSPasteboard, image: NSImage? = nil) -> Int? {
         guard !urls.isEmpty else { return nil }
         board.clearContents()
         var objects: [NSPasteboardWriting] = [agentReferences(urls.map(\.path)) as NSString]
         if attachImage, urls.count == 1, let url = urls.first,
            let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
-           let image = NSImage(contentsOf: url) {
+           let image {
             objects.append(image)
         }
         board.writeObjects(objects)
@@ -902,8 +968,8 @@ final class ShelfTrayModel {
 
     /// Whether a dropped file is small enough to ride along as bytes.
     static func withinAttachBound(_ url: URL) -> Bool {
-        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return false }
-        return Int64(size) <= attachCopyBound
+        guard let size = ExternalFileMetadata.shared.snapshot(url)?.size else { return false }
+        return size <= attachCopyBound
     }
 
     /// Mark missing entries by re-reading the filesystem — the same
@@ -958,16 +1024,25 @@ final class ShelfTrayModel {
         }
     }
 
-    func revalidate() {
+    func refreshMetadata() async {
+        for item in items {
+            fileMetadata.refresh(item.url)
+            _ = await fileMetadata.resolve(item.url)
+        }
+        revalidate(refresh: false)
+    }
+
+    func revalidate(refresh: Bool = true) {
+        if refresh { for item in items { fileMetadata.refresh(item.url) } }
         entries = entries.map { entry in
             switch entry {
             case .item(var item):
-                item.missing = !FileManager.default.fileExists(atPath: item.path)
+                item.missing = fileMetadata.snapshot(item.url).map { !$0.available } ?? item.missing
                 return .item(item)
             case .stack(var stack):
                 stack.items = stack.items.map {
                     var item = $0
-                    item.missing = !FileManager.default.fileExists(atPath: item.path)
+                    item.missing = fileMetadata.snapshot(item.url).map { !$0.available } ?? item.missing
                     return item
                 }
                 return .stack(stack)
@@ -978,13 +1053,26 @@ final class ShelfTrayModel {
     /// The chip's Quick Look — the system preview panel over the
     /// tray's still-resolving entries, opened on this one's first
     /// live member.
-    func quickLook(_ entry: ShelfEntry) {
-        revalidate()
-        let live = entries.flatMap(\.items).filter { !$0.missing }
-        guard let index = live.firstIndex(where: {
-            entry.items.contains($0)
-        }) else { return }
-        ShelfQuickLook.shared.show(urls: live.map(\.url), at: index)
+    func quickLook(_ entry: ShelfEntry) async {
+        let urls = await presentURLs(of: entries)
+        let paths = Set(entry.items.map(\.path))
+        guard let index = urls.firstIndex(where: { paths.contains($0.path) }) else { return }
+        ShelfQuickLook.shared.show(urls: urls, at: index)
+    }
+
+    @ObservationIgnored private var sharePicker: NSSharingServicePicker?
+
+    func share(_ picked: [ShelfEntry]) async {
+        let window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.contentView != nil }
+        let urls = await presentURLs(of: picked)
+        guard !urls.isEmpty else { return }
+        guard let window, window.isVisible, let view = window.contentView else {
+            actionNotice = "The Shelf window is no longer open."
+            return
+        }
+        let picker = NSSharingServicePicker(items: urls)
+        sharePicker = picker
+        picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
     }
 
     /// Keep each path with its existing owner during a move, or its first

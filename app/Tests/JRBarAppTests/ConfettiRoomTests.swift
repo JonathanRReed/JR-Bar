@@ -531,8 +531,8 @@ struct ConfettiSoundTests {
     }
 
     @Test("on the alert device, the pop plays beside a session's sound instead of cutting it off")
-    func popLeavesTheEventSoundPlaying() throws {
-        _ = try #require(SoundPlayer.url(for: "Glass"))
+    func popLeavesTheEventSoundPlaying() async throws {
+        _ = try #require(await SoundPlayer.prepareURL(for: "Glass"))
         let player = SoundPlayer()
         player.preferences = {
             var preferences = SoundPreferences()

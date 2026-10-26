@@ -34,15 +34,17 @@ struct ShelfThumbnailOrderTests {
     }
 
     @Test("an old thumbnail cannot overwrite the new request after re-adding a path")
-    func readdedPathKeepsNewReply() throws {
+    func readdedPathKeepsNewReply() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let url = try f.file("file.txt")
         f.tray.add([url])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         f.tray.remove(f.tray.entries[0])
         f.tray.add([url])
         let current = f.tray.entries[0].items[0]
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: current)
         #expect(f.replies.count == 2)
         let newer = NSImage(size: NSSize(width: 32, height: 32))
@@ -52,84 +54,96 @@ struct ShelfThumbnailOrderTests {
     }
 
     @Test("a removed reference's late reply cannot warm the cache for a fresh add")
-    func removedReplyIsRetired() throws {
+    func removedReplyIsRetired() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let url = try f.file("file.txt")
         f.tray.add([url])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         f.tray.remove(f.tray.entries[0])
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([url])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         #expect(f.replies.count == 2)
     }
 
-    @Test("a failed thumbnail keeps its generic icon without a retry loop")
-    func failureKeepsGenericIcon() throws {
-        let f = try Fixture()
-        defer { f.clean() }
-        f.tray.add([try f.file("file.txt")])
-        let entry = f.tray.entries[0].items[0]
-        let generic = f.tray.icon(for: entry)
-        f.replies[0](nil)
-        #expect(f.tray.icon(for: entry) === generic)
-        #expect(f.replies.count == 1)
-    }
-
-    @Test("clear retires thumbnail replies before a path is re-added")
-    func clearRetiresReplies() throws {
+    @Test("a failed thumbnail keeps its completed file icon without a retry loop")
+    func failureKeepsCompletedIcon() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let url = try f.file("file.txt")
         f.tray.add([url])
+        let entry = f.tray.entries[0].items[0]
+        await f.tray.refreshMetadata()
+        _ = await f.tray.fileMetadata.resolveIcon(url)
+        let completed = f.tray.icon(for: entry)
+        f.replies[0](nil)
+        #expect(f.tray.icon(for: entry) === completed)
+        #expect(f.replies.count == 1)
+    }
+
+    @Test("clear retires thumbnail replies before a path is re-added")
+    func clearRetiresReplies() async throws {
+        let f = try Fixture()
+        defer { f.clean() }
+        let url = try f.file("file.txt")
+        f.tray.add([url])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         f.tray.removeAll()
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([url])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         #expect(f.replies.count == 2)
     }
 
     @Test("relocation retires the request for the old path")
-    func relocationRetiresReply() throws {
+    func relocationRetiresReply() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let old = try f.file("old.txt")
         let new = try f.file("new.txt")
         f.tray.add([old])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         f.tray.relocate(from: old.path, to: new.path)
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([old])
         let entry = try #require(f.tray.entries.flatMap(\.items).first { $0.path == old.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: entry)
         #expect(f.replies.count == 2)
     }
 
     @Test("removing a stack member retires its thumbnail")
-    func removedMemberRetiresReply() throws {
+    func removedMemberRetiresReply() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt")
         f.tray.add([first, try f.file("second.txt")])
         let stack = f.tray.entries[0]
         let item = try #require(stack.items.first { $0.path == first.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: item)
         f.tray.removeItem(item, from: stack.id)
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([first])
         let current = try #require(f.tray.entries.flatMap(\.items).first { $0.path == first.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: current)
         #expect(f.replies.count == 2)
     }
 
     @Test("capacity eviction retires pending thumbnails for dropped references")
-    func evictionRetiresReply() throws {
+    func evictionRetiresReply() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let old = try f.file("old.txt")
         f.tray.add([old])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         let files = try (0..<ShelfTrayModel.maxItems).map { try f.file("new-\($0).txt") }
         f.tray.add(files)
@@ -137,12 +151,13 @@ struct ShelfThumbnailOrderTests {
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([old])
         let current = try #require(f.tray.entries.flatMap(\.items).first { $0.path == old.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: current)
         #expect(f.replies.count == 2)
     }
 
     @Test("removing an old stack snapshot retires thumbnails for its current members")
-    func staleStackRemovalRetiresCurrentMembers() throws {
+    func staleStackRemovalRetiresCurrentMembers() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt")
@@ -152,10 +167,12 @@ struct ShelfThumbnailOrderTests {
         let menuEntry = f.tray.entries[0]
         f.tray.relocate(from: old.path, to: currentURL.path)
         let item = try #require(f.tray.entries[0].items.first { $0.path == currentURL.path })
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: item)
         f.tray.remove(menuEntry)
         f.replies[0](NSImage(size: NSSize(width: 32, height: 32)))
         f.tray.add([currentURL])
+        await f.tray.refreshMetadata()
         _ = f.tray.icon(for: f.tray.entries[0].items[0])
         #expect(f.replies.count == 2)
     }

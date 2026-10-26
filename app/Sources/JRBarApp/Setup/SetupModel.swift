@@ -411,7 +411,7 @@ extension SetupModel {
             .screenRecording: FoldCapturePermission.recheck() ? .granted : .needed,
             // The check AlcoveFollower runs before reading Alcove's frames.
             .accessibility: AXIsProcessTrusted() ? .granted : .needed,
-            .fullDiskAccess: probeFullDiskAccess() ? .granted : .needed,
+            .fullDiskAccess: .unknown,
             // The app's own Focus grant — MenuBarTriggers' rules and
             // the combined status item's moon read `INFocusStatusCenter`.
             .focusStatus: focusStatus(),
@@ -579,19 +579,6 @@ extension SetupModel {
         case .notDetermined: return .needed
         @unknown default: return .unknown
         }
-    }
-
-    /// The same fact `focus_sync` needs: readability of the Focus
-    /// daemon's assertions file, TCC-protected under Full Disk Access.
-    /// The legacy setup window ran `focus_sync.configured_focus_modes()`
-    /// and caught the refusal; here the probe is a plain read of the
-    /// file the daemon's `is_focus_active` reads. It answers for this
-    /// process — in the packaged build the helper shares the app's grant,
-    /// while a dev `swift run` can misreport, so the row's copy names
-    /// the monitor, not the app.
-    static func probeFullDiskAccess() -> Bool {
-        let path = NSString("~/Library/DoNotDisturb/DB/Assertions.json").expandingTildeInPath
-        return (try? Data(contentsOf: URL(fileURLWithPath: path))) != nil
     }
 
     // MARK: Permission requests — the flows that already exist

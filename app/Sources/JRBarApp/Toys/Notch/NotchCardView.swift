@@ -378,8 +378,10 @@ final class NotchCardModel {
     /// on the pasteboard and the session's window comes forward, ready
     /// for the person's paste. Nothing is ever typed for them.
     func handToAgent(_ entries: [ShelfTrayModel.ShelfEntry], session: String) {
-        guard tray.copyForAgent(entries) else { return }
-        onOpenRow?(session)
+        Task {
+            guard await tray.copyForAgent(entries) else { return }
+            onOpenRow?(session)
+        }
     }
 
     /// Files dropped straight onto a session row — the same hand-off,
@@ -387,8 +389,7 @@ final class NotchCardModel {
     func handFiles(_ urls: [URL], session: String) {
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
-        tray.copyForAgent(files, attachImage: files.count == 1
-                          && ShelfTrayModel.withinAttachBound(files[0]))
+        tray.copyForAgent(files, attachImage: files.count == 1)
         onOpenRow?(session)
     }
 
@@ -2095,7 +2096,7 @@ struct ShelfTrayRow: View {
         // A copy unless ⌘ is held (`shelfDragOut`); a picked chip drags
         // the whole selection.
         .background(ShelfDragSource(
-            urls: { tray.presentURLs(of: tray.targets(for: entry)) },
+            urls: { await tray.presentURLs(of: tray.targets(for: entry)) },
             policy: { tray.dragOutPolicy() },
             ended: { operation, outside in
                 for dragged in tray.targets(for: entry) {
@@ -2160,9 +2161,9 @@ struct ShelfTrayRow: View {
                 }
                 Divider()
             }
-            Button("Quick Look") { tray.quickLook(entry, among: picked) }
-            Button("Reveal in Finder") { tray.reveal(picked) }
-            Button("Send via AirDrop") { _ = tray.sendViaAirDrop(picked) }
+            Button("Quick Look") { _ = Task { await tray.quickLook(entry, among: picked) } }
+            Button("Reveal in Finder") { _ = Task { await tray.reveal(picked) } }
+            Button("Send via AirDrop") { _ = Task { _ = await tray.sendViaAirDrop(picked) } }
             shareMenu(for: picked)
             Divider()
             ShelfActionMenuItems(tray: tray, targets: picked)
@@ -2224,7 +2225,7 @@ struct ShelfTrayRow: View {
         .contentShape(RoundedRectangle(cornerRadius: Self.tileRadius, style: .continuous))
         .foregroundStyle(item.missing ? style.faintColor : style.subColor)
         .onTapGesture(count: 2) {
-            if !item.missing { tray.quickLook(entry) }
+            if !item.missing { _ = Task { await tray.quickLook(entry) } }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.name)
@@ -2232,7 +2233,7 @@ struct ShelfTrayRow: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(item.missing ? "" : "Preview file")
         .accessibilityAction {
-            if !item.missing { tray.quickLook(entry) }
+            if !item.missing { _ = Task { await tray.quickLook(entry) } }
         }
     }
 
@@ -2241,10 +2242,7 @@ struct ShelfTrayRow: View {
     /// moved offers nothing to share.
     @ViewBuilder
     private func shareMenu(for picked: [ShelfTrayModel.ShelfEntry]) -> some View {
-        let urls = tray.presentURLs(of: picked)
-        if !urls.isEmpty {
-            ShareLink(items: urls) { Text("Share…") }
-        }
+        Button("Share…") { _ = Task { await tray.share(picked) } }
     }
 }
 
@@ -2346,7 +2344,7 @@ private struct ShelfStackChip: View {
                                                      style: .continuous))
                     .opacity(item.missing ? 0.38 : 1)
                     .background(ShelfDragSource(
-                        urls: { FileManager.default.fileExists(atPath: item.path) ? [item.url] : [] },
+                        urls: { item.missing ? [] : [item.url] },
                         policy: { tray.dragOutPolicy() },
                         ended: { operation, outside in
                             if ShelfDragOutRule.removes(operation: operation, outside: outside,
@@ -2356,13 +2354,13 @@ private struct ShelfStackChip: View {
                         }))
                     .onTapGesture(count: 2) {
                         if !item.missing {
-                            tray.quickLook(.item(item))
+                            _ = Task { await tray.quickLook(.item(item)) }
                         }
                     }
                     .contextMenu {
                         if !item.missing {
                             Button("Quick Look") {
-                                tray.quickLook(.item(item))
+                                _ = Task { await tray.quickLook(.item(item)) }
                             }
                             Button("Reveal in Finder") {
                                 tray.reveal(.item(item))

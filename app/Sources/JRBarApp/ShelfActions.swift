@@ -194,6 +194,9 @@ enum ShelfActions {
     /// reads in an image (on this Mac; nothing is sent anywhere), or a
     /// text file's contents. nil when there is none.
     nonisolated static func text(of url: URL) throws -> String? {
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url) else {
+            throw ActionError.failed("the file is unavailable locally")
+        }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
         let raw: String?
         if type.conforms(to: .pdf) {
@@ -219,7 +222,8 @@ enum ShelfActions {
     /// `e5rtError … 13`). The same request then runs on the CPU, which
     /// always takes it: slower, and the same words.
     nonisolated static func recognizeText(in url: URL) throws -> String? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let up = orientation(of: source)
         do {
@@ -274,7 +278,8 @@ enum ShelfActions {
         guard !format.holds(url) else {
             throw ActionError.failed("\(url.lastPathComponent) is already a \(format.title)")
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: [url.path]).available(url),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               CGImageSourceGetCount(source) > 0,
               CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else {
             throw ActionError.failed("\(url.lastPathComponent) isn't an image ImageIO can read")
@@ -377,15 +382,16 @@ enum ShelfActions {
 extension ShelfTrayModel {
     /// Compress: the zip lands beside the files and on the shelf.
     func compress(_ entries: [ShelfEntry]) {
-        let urls = presentURLs(of: entries)
-        guard !urls.isEmpty else { return }
         Task { [weak self] in
+            guard let self else { return }
+            let urls = await self.presentURLs(of: entries)
+            guard !urls.isEmpty else { return }
             do {
                 let zip = try await ShelfActions.compress(urls)
-                self?.add([zip])
-                self?.actionNotice = "Compressed into \(zip.lastPathComponent)"
+                self.add([zip])
+                self.actionNotice = "Compressed into \(zip.lastPathComponent)"
             } catch {
-                self?.actionNotice = "Couldn't compress: \(error.localizedDescription)"
+                self.actionNotice = "Couldn't compress: \(error.localizedDescription)"
             }
         }
     }
@@ -399,11 +405,13 @@ extension ShelfTrayModel {
         }
     ) -> Task<Void, Never>? {
         let boardChangeCount = board.changeCount
-        let urls = presentURLs(of: entries).filter(ShelfActions.hasText)
-        guard !urls.isEmpty else { return nil }
+        let paths = Set(entries.flatMap(\.items).map(\.path))
+        guard items.contains(where: { paths.contains($0.path) && !$0.missing && ShelfActions.hasText($0.url) }) else { return nil }
         let token = UUID()
         latestCopyTextToken = token
         return Task { [weak self] in
+            guard let urls = await self?.presentURLs(of: entries).filter(ShelfActions.hasText),
+                  !urls.isEmpty else { return }
             let read = await reader(urls)
             guard let self, self.latestCopyTextToken == token,
                   board.changeCount == boardChangeCount else { return }
@@ -419,13 +427,14 @@ extension ShelfTrayModel {
     /// Convert: each image not already in `format` re-encoded beside
     /// itself, off the main thread, then shelved.
     func convert(_ entries: [ShelfEntry], to format: ShelfActions.ImageFormat) {
-        let urls = presentURLs(of: entries).filter { ShelfActions.isImage($0) && !format.holds($0) }
-        guard !urls.isEmpty else { return }
         _ = Task { [weak self] in
+            guard let self else { return }
+            let urls = await self.presentURLs(of: entries).filter { ShelfActions.isImage($0) && !format.holds($0) }
+            guard !urls.isEmpty else { return }
             let result = await Task.detached(priority: .userInitiated) {
                 ShelfActions.convert(urls, to: format)
             }.value
-            self?.finishConvert(made: result.made, failure: result.failure, format: format)
+            self.finishConvert(made: result.made, failure: result.failure, format: format)
         }
     }
 
@@ -441,14 +450,15 @@ extension ShelfTrayModel {
     /// the main thread, so a big copy to another disk never freezes the
     /// notch or the panel. A moved file's chip follows it to its new home.
     func transfer(_ entries: [ShelfEntry], move: Bool) {
-        let urls = presentURLs(of: entries)
-        guard !urls.isEmpty,
-              let folder = ShelfActions.chooseFolder(prompt: move ? "Move Here" : "Copy Here") else { return }
         _ = Task { [weak self] in
+            guard let self else { return }
+            let urls = await self.presentURLs(of: entries)
+            guard !urls.isEmpty,
+                  let folder = ShelfActions.chooseFolder(prompt: move ? "Move Here" : "Copy Here") else { return }
             let result = await Task.detached(priority: .userInitiated) {
                 ShelfActions.transfer(urls, to: folder, move: move)
             }.value
-            self?.finishTransfer(result, to: folder, move: move)
+            self.finishTransfer(result, to: folder, move: move)
         }
     }
 

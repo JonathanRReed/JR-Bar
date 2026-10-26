@@ -1817,7 +1817,7 @@ final class FoldToy: Toy {
     var bendyURL: URL? {
         _ = workspaceVersion
         let path = URL(fileURLWithPath: "/Applications/Bendy.app")
-        guard let id = Bundle(url: path)?.bundleIdentifier else { return nil }
+        guard let id = ExternalFileMetadata.shared.bundleID(path) else { return nil }
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) ?? path
     }
 
