@@ -634,8 +634,6 @@
     "radius: cornerRadius: 3.5": 2
   },
   "app/Sources/JRBarApp/Toys/Notch/NotchTimerGlance.swift": {
-    "font: .system(size: 11": 2,
-    "font: .system(size: 12": 1,
     "radius: cornerRadius: 10": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyBodies.swift": {

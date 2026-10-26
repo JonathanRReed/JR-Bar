@@ -82,15 +82,22 @@ struct FeatureLifecycleTests {
             defer { toys.shutdown() }
             let notch = toys.notch!
             notch.isOn = true
+            let cachedWindow = notch.island
             #expect(notch.notificationObserverCount > 0)
+            for _ in 0..<2 {
+                notch.isOn = false
+                await drain()
+                #expect(notch.island === cachedWindow)
+                #expect(notch.island?.isPresented != true)
+                stopped(notch.lifecycleResources.filter { $0.key != "windows" }, feature: contract.id)
+                #expect(notch.lifecycleResources["windows"] == (cachedWindow == nil ? 0 : 1))
+                notch.isOn = true
+                #expect(notch.island === cachedWindow)
+                #expect(notch.notificationObserverCount > 0)
+            }
             notch.isOn = false
             await drain()
-            stopped(notch.lifecycleResources, feature: contract.id)
-            notch.isOn = true
-            #expect(notch.notificationObserverCount > 0)
-            notch.isOn = false
-            await drain()
-            stopped(notch.lifecycleResources, feature: contract.id)
+            stopped(notch.lifecycleResources.filter { $0.key != "windows" }, feature: contract.id)
         case "screen-bar":
             let bar = ScreenBarController(planRenderer: { _ in nil }, reduceMotionOverride: false,
                                           nativeNoticesEnabled: false)

@@ -1,5 +1,4 @@
 import Foundation
-import JRBarUI
 import SwiftUI
 
 /// One timer on Now: a finished timer waits for dismissal, otherwise
@@ -78,11 +77,6 @@ struct NotchTimerGlanceRow: View {
     /// Render proofs supply a fixed date without starting a timer.
     var stillDate: Date? = nil
 
-    private func detailLabel(_ glance: NotchTimerGlance) -> String {
-        if glance.action == .resume { return "Paused" }
-        return glance.count > 1 ? "\(glance.count) timers on Shelf" : "Timer on Shelf"
-    }
-
     var body: some View {
         if let stillDate {
             row(at: stillDate)
@@ -100,21 +94,22 @@ struct NotchTimerGlanceRow: View {
                 Button(action: onOpenShelf) {
                     HStack(spacing: 7) {
                         Image(systemName: glance.symbol)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .foregroundStyle(glance.action == .dismiss ? Color.green : Color.orange)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(glance.entry.label)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 11, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .foregroundStyle(style.titleColor)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text(detailLabel(glance))
-                                .font(JRBarTokens.TypeStyle.caption.font)
+                            Text(glance.action == .resume ? "Paused" : glance.count > 1
+                                 ? "\(glance.count) timers on Shelf" : "Timer on Shelf")
+                                .font(.system(size: 9)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                                 .foregroundStyle(style.faintColor)
                         }
                         Spacer(minLength: 4)
                         Text(glance.timeText)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                             .monospacedDigit()
                             .foregroundStyle(style.subColor)
                             .fixedSize()
@@ -128,7 +123,7 @@ struct NotchTimerGlanceRow: View {
 
                 Button { glance.perform(on: timers) } label: {
                     Text(glance.actionLabel)
-                        .font(JRBarTokens.TypeStyle.caption.font)
+                        .font(.system(size: 10, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                         .foregroundStyle(style.subColor)
                         .padding(.horizontal, 8)
                         .frame(height: 26)

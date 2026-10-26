@@ -237,7 +237,6 @@ public enum AlcoveEventPolicy {
         default: return nil
         }
         guard kinds.isOn(kind) else { return nil }
-        if kind == .completed, !(event.duration.map { $0.isFinite && $0 > 120 } ?? false) { return nil }
 
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }
@@ -304,7 +303,7 @@ public enum AlcoveCapsuleVerdict: Equatable, Sendable {
     case after(TimeInterval)
     /// A capsule is up; this one waits. At most one waits — newest wins.
     case queued
-    /// A repeat inside the cooldown, or ordinary news behind a waiting ask.
+    /// Same kind and subject inside the cooldown: strobe, dropped.
     case suppressed
 }
 
@@ -411,49 +410,13 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         return key[...]
     }
 
-    private static func priority(_ kind: AlcoveNoticeKind) -> Int {
-        switch kind {
-        case .ask: return 3
-        case .timer, .meeting: return 2
-        case .failed: return 1
-        default: return 0
-        }
-    }
-
-    /// A notice shown for this long needs no second announcement elsewhere.
-    private static let interruptedFallbackThreshold: TimeInterval = 1.5
-
-    private mutating func parkInterrupted(at now: Date) {
-        guard let shown = current else { return }
-        let shownAt = currentShownAt ?? now
-        let fresh = now.timeIntervalSince(shownAt) < Self.pendingStaleAfter
-        let pendingFresh = pending?.kind == .ask
-            || pendingAt.map { now.timeIntervalSince($0) < Self.pendingStaleAfter } ?? false
-        let outranks = pending.map { Self.priority(shown.kind) > Self.priority($0.kind) } ?? true
-        if fresh && (!pendingFresh || outranks) {
-            wait(shown, at: now)
-            pendingAt = shownAt
-        } else if fresh && now.timeIntervalSince(shownAt) < Self.interruptedFallbackThreshold {
-            onEvict?(shown)
-        }
-    }
-
     @discardableResult
     public mutating func offer(_ notice: AlcoveNotice, at now: Date) -> AlcoveCapsuleVerdict {
-        // A refused notice must not displace an ask or spend its cooldown.
-        if pending?.kind == .ask, notice.kind != .ask { return .suppressed }
         recent = recent.filter { now.timeIntervalSince($0.value) < Self.sameKeyCooldown }
         if let seen = recent[notice.key], now.timeIntervalSince(seen) < Self.sameKeyCooldown {
             return .suppressed
         }
         recent[notice.key] = now
-        if notice.kind == .ask, current?.kind != .ask {
-            parkInterrupted(at: now)
-            current = notice
-            currentShownAt = now
-            overlay = nil
-            return .now
-        }
         guard current == nil else {
             wait(notice, at: now)
             return .queued
@@ -540,17 +503,6 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             pendingAt = nil
         }
         return current.map(matches) ?? false
-    }
-
-    /// A person selected an ask with the keyboard. It stays at the ordinary tier.
-    public mutating func selectAsk(_ notice: AlcoveNotice, at now: Date) {
-        guard notice.kind == .ask else { return }
-        overlay = nil
-        var selected = notice
-        selected.takeover = false
-        current = selected
-        currentShownAt = now
-        if pending?.session == notice.session { pending = nil; pendingAt = nil }
     }
 
     /// The ask escalated to the takeover tier. The capsule already

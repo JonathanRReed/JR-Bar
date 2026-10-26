@@ -445,7 +445,7 @@ struct ToysStateTests {
     @Test("the notch's new knobs default to today's behaviour")
     func notchUtilityDefaults() {
         let notch = NotchSettings()
-        #expect(notch.hoverOpenDelay == 0.15)
+        #expect(notch.hoverOpenDelay == 0.12)
         #expect(notch.notchDisplay == .builtIn)
         #expect(notch.shelfEnabled)
         #expect(notch.shelfDragOut == .copy)
@@ -473,7 +473,7 @@ struct ToysStateTests {
              "shelfDragOut": "teleport", "shelfShakeSensitivity": "high",
              "shelfShakeExcludedBundleIDs": "com.apple.finder", "shelfYieldToRivals": "no"}
             """)
-        #expect(mistyped.hoverOpenDelay == 0.15)
+        #expect(mistyped.hoverOpenDelay == 0.12)
         #expect(mistyped.notchDisplay == .builtIn)
         #expect(mistyped.shelfEnabled)
         #expect(mistyped.shelfDragOut == .copy)
@@ -486,7 +486,7 @@ struct ToysStateTests {
         let low = try decode(NotchSettings.self, #"{"hoverOpenDelay": -1, "shelfShakeSensitivity": -2}"#)
         #expect(low.hoverOpenDelay == 0)
         #expect(low.shelfShakeSensitivity == 0)
-        #expect(NotchSettings.clampedHoverOpenDelay(.nan) == 0.15)
+        #expect(NotchSettings.clampedHoverOpenDelay(.nan) == 0.12)
         #expect(NotchSettings.clampedShakeSensitivity(.nan) == 0.5)
     }
 
