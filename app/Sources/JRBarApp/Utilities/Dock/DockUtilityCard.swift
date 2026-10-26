@@ -624,11 +624,12 @@ enum DockInstalledApps {
     static func scan(_ directories: [URL]) -> [App] {
         var seen = Set<String>()
         var apps: [App] = []
-        for directory in directories {
+        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        for directory in directories where policy.available(directory) {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
             for name in names where name.hasSuffix(".app") {
                 let url = directory.appendingPathComponent(name)
-                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                guard policy.available(url), let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
                       seen.insert(id).inserted else { continue }
                 let display = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
                     ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
@@ -639,8 +640,10 @@ enum DockInstalledApps {
         return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    private static let installedApps = BackgroundLookupCache<Int, [App]>(load: { _ in scan(directories) })
+
     static func load() async -> [App] {
-        await Task.detached(priority: .utility) { scan(directories) }.value
+        await installedApps.resolve(0) ?? []
     }
 
     /// The installed apps the menu's running half and the list don't

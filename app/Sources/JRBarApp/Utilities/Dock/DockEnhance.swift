@@ -165,7 +165,7 @@ extension DockTileApp {
     @MainActor
     init(_ app: NSRunningApplication) {
         self.init(pid: app.processIdentifier, name: app.localizedName, bundleID: app.bundleIdentifier,
-                  bundleURL: app.bundleURL, icon: app.icon, isTerminated: app.isTerminated)
+                  bundleURL: app.bundleURL, icon: app.bundleURL.map { ExternalFileMetadata.shared.icon($0) }, isTerminated: app.isTerminated)
     }
 }
 
@@ -438,7 +438,6 @@ final class DockEnhanceController {
     @ObservationIgnored private var quitTargetsStamp: (at: TimeInterval, listFrame: CGRect)?
     /// Tile URL → bundle id, so the mirror never re-opens a bundle it
     /// already read. A tile no bundle answers for stays nil.
-    @ObservationIgnored private var tileBundleIDs: [URL: String?] = [:]
     /// The preview action keys last mirrored into the tap.
     @ObservationIgnored private var mirroredChars: Set<String> = []
     /// Windows whose hovered still is being re-taken — one capture each.
@@ -984,8 +983,7 @@ final class DockEnhanceController {
             quitTargetsStamp = (cached.at, list.frame)
             let running = RunningApps.shared.bundleIDs
             targets = Self.quickQuitTargets(
-                cached.items.map { ($0.frame, $0.kind, $0.url.flatMap(bundleID(forTile:))) },
-                running: running)
+                cached.items, running: running, resolve: bundleID(forTile:))
         } else {
             quitTargetsStamp = nil
         }
@@ -1007,11 +1005,15 @@ final class DockEnhanceController {
         }
     }
 
+    static func quickQuitTargets(_ items: [DockAXItem], running: Set<String>,
+                                 resolve: (URL) -> String?) -> [CGRect] {
+        quickQuitTargets(items.filter { $0.kind == .app }.map {
+            ($0.frame, $0.kind, $0.url.flatMap(resolve))
+        }, running: running)
+    }
+
     private func bundleID(forTile url: URL) -> String? {
-        if let known = tileBundleIDs[url] { return known }
-        let id = Bundle(url: url)?.bundleIdentifier
-        tileBundleIDs[url] = .some(id)
-        return id
+        ExternalFileMetadata.shared.bundleID(url)
     }
 
     /// The list's app tiles — the cached read while it is fresh and the
@@ -1171,7 +1173,7 @@ final class DockEnhanceController {
     /// lookups, no Accessibility.
     private func resolveTile(for item: DockAXItem) -> PreviewTile {
         guard item.kind == .app else { return PreviewTile() }
-        let bundleID = item.url.flatMap { Bundle(url: $0)?.bundleIdentifier }
+        let bundleID = item.url.flatMap { ExternalFileMetadata.shared.bundleID($0) }
         if let bundleID, preferences.excludedBundleIDs.contains(bundleID) {
             return PreviewTile(bundleID: bundleID, excluded: true)
         }
@@ -1706,7 +1708,7 @@ final class DockEnhanceController {
     /// opens the file — the same verb as dropping the document on the
     /// app's Dock tile, one panel nearer.
     private func openDocumentInPreview(_ url: URL) -> Bool {
-        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path),
+        guard url.isFileURL,
               let bundleID = preview.bundleID,
               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         else { return false }
@@ -2501,6 +2503,9 @@ final class DockEnhanceController {
     ///
     /// Capped at 60: the pop is a quick-open surface, not Finder.
     nonisolated static func folderListing(of url: URL, sort: DockFolderSort = .name) -> DockFolderListing {
+        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        guard policy.allows(url) else { return DockFolderListing(failed: true) }
+        guard policy.available(url) else { return DockFolderListing(failed: true) }
         guard let dir = opendir(url.path) else {
             // Downloads/Desktop/Documents gate behind Files-and-Folders
             // consent — the denial surfaces as EACCES/EPERM, or EINTR
@@ -2517,7 +2522,8 @@ final class DockEnhanceController {
                     String(cString: $0)
                 }
             }
-            guard name != ".", name != "..", !name.hasPrefix(".") else { continue }
+            guard name != ".", name != "..", !name.hasPrefix("."),
+                  policy.available(url.appendingPathComponent(name)) else { continue }
             rows.append(.init(name: name, url: url.appendingPathComponent(name),
                               isDir: ent.pointee.d_type == DT_DIR))
         }
@@ -2573,8 +2579,8 @@ final class DockEnhanceController {
         guard let list = dockList(near: axPoint, force: true, at: now),
               Self.listReach(of: list.frame).contains(axPoint),
               let item = tiles(of: list, force: true, at: now).first(where: { $0.frame.contains(axPoint) }),
-              let appURL = item.url,
-              let bundleID = Bundle(url: appURL)?.bundleIdentifier,
+              item.kind == .app, let appURL = item.url,
+              let bundleID = ExternalFileMetadata.shared.bundleID(appURL),
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
         else { return }
         // Never let the verb reach our own family — a ⌘-click on our
@@ -2699,7 +2705,7 @@ final class DockEnhanceController {
                 showPreview(for: item)
             }
         case .down:
-            guard let url = item.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
+            guard let url = item.url, let bundleID = ExternalFileMetadata.shared.bundleID(url),
                   !MenuBarUtility.isOwnFamily(bundleID),
                   let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
                   app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
@@ -2730,7 +2736,7 @@ final class DockEnhanceController {
 
     private func minimizeFrontWindows(of item: DockAXItem, frontmostPID: pid_t?, clickAt: TimeInterval) {
         guard running, preferences.clickToMinimize, item.kind == .app,
-              let url = item.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
+              let url = item.url, let bundleID = ExternalFileMetadata.shared.bundleID(url),
               !MenuBarUtility.isOwnFamily(bundleID),
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
               DockEnhanceMath.clickMinimizes(

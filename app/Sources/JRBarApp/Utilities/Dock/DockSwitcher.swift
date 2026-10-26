@@ -1692,7 +1692,7 @@ final class DockSwitcherController {
             excludedPIDs: excluded,
             windowsForApp: { windows.windows[$0] ?? [] },
             appName: { apps[$0]?.localizedName ?? "App" },
-            icon: { apps[$0]?.icon })
+            icon: { apps[$0]?.bundleURL.map { ExternalFileMetadata.shared.icon($0) } })
         if showsWindowless() {
             let own = ProcessInfo.processInfo.processIdentifier
             let running = NSWorkspace.shared.runningApplications.filter {
@@ -1701,7 +1701,7 @@ final class DockSwitcherController {
             let windowlessExcluded = DockSwitcherList.excludedPIDs(DockSwitcherList.appsByPID(running),
                 bundleIDs: excludedBundleIDs(), bundleID: { $0.bundleIdentifier })
             items += DockSwitcherList.windowlessItems(
-                apps: running.map { ($0.processIdentifier, $0.localizedName ?? "App", $0.icon) },
+                apps: running.map { ($0.processIdentifier, $0.localizedName ?? "App", $0.bundleURL.map { ExternalFileMetadata.shared.icon($0) }) },
                 listed: Set(items.map(\.pid)), excludedPIDs: windowlessExcluded)
         }
         items = DockSwitcherList.arranged(items, order: order())
@@ -1832,7 +1832,7 @@ final class DockSwitcherController {
             guard !excluded.contains(pid), let app = byPID[pid] else { return nil }
             return SwitcherItem(id: "app\(pid)", pid: pid,
                                 appName: app.localizedName ?? "App",
-                                icon: app.icon,
+                                icon: app.bundleURL.map { ExternalFileMetadata.shared.icon($0) },
                                 title: app.localizedName ?? "App",
                                 minimized: false, onScreen: true,
                                 element: nil, windowID: frontWindow[pid],
