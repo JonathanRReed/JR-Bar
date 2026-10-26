@@ -624,10 +624,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
-        let effectsStore = EffectStudioStore(core: core)
+        let effectsStore = EffectStudioStore(core: core, settings: settingsStore)
         let effectsWindow = EffectStudioWindowController(store: effectsStore)
         self.effectsStore = effectsStore
         self.effectsWindow = effectsWindow
+        effectsWindow.registerShortcut()
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }

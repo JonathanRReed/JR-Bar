@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import SwiftUI
 
 /// The Effect Studio window (Settings › Devices & Lighting › Effects…, the panel's
@@ -12,6 +13,13 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     init(store: EffectStudioStore) {
         self.store = store
         super.init()
+        store.prepareForOpening()
+    }
+
+    func registerShortcut(center: HotkeyCenter = .shared) {
+        let chord = HotkeyChord(keyCode: UInt32(kVK_ANSI_L), modifiers: UInt32(optionKey | cmdKey))
+        let result = center.register("studio", title: "Open Studio", chord: chord) { [weak self] in self?.show() }
+        if result != .registered { store.fail("Studio shortcut unavailable. Another shortcut uses option-command-L.") }
     }
 
     func show(effect: String? = nil) {
@@ -20,7 +28,10 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)
-        if let effect { store.selectedID = effect }
+        if let effect {
+            store.mode = store.catalog?.effect(effect)?.catalog == "provider_animation" ? .providers : .effects
+            store.selectedID = effect
+        }
         store.windowDidOpen()
         WindowFront.bring(window)
         noteOcclusion(of: window)
@@ -46,13 +57,13 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 1160, height: 860),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         attachContent(to: window)
         window.toolbarStyle = .unified
-        window.setContentSize(NSSize(width: 1060, height: 680))
-        window.minSize = NSSize(width: 900, height: 540)
+        window.setContentSize(NSSize(width: 1160, height: 860))
+        window.minSize = NSSize(width: 960, height: 640)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
