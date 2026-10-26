@@ -801,3 +801,12 @@ The query returns the top of the argument area when the buffer is short,
 so JR-Bar queries the required size before decoding the saved launch path.
 It keeps that path separate from libproc's resolved executable and erases
 the transient argument buffer. No source code was copied.
+
+### Headless power observations, 2026-10-26
+
+Reviewed Apple's [IOPMLib declarations](https://github.com/apple-oss-distributions/IOKitUser/blob/323ead896d04424f87184d8f6ff0cce811aab106/pwr_mgt.subproj/IOPMLib.h),
+commit `323ead896d04424f87184d8f6ff0cce811aab106`, under APSL 2.0.
+The daemon acknowledges only the two sleep requests that require it, then
+closes the notifier, notification port and connection in the documented
+order. CoreGraphics display and session declarations were checked against
+the local macOS SDK. No source code was copied.
