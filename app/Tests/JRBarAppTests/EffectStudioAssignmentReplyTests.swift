@@ -169,6 +169,34 @@ struct EffectStudioAssignmentReplyTests {
         }
     }
 
+    @Test("Mix scope sends the effect and parameters without changing provider assignments", arguments: [false, true])
+    func mixAssignment(_ accepted: Bool) async throws {
+        try await withStore { fixture, store in
+            let marquee = EffectDefinition(id: "marquee", label: "Marquee", meaning: "working", parameters: [
+                EffectParameter(name: "duration_seconds", type: .number, defaultValue: .number(2.2), minimum: 0.3, maximum: 10)
+            ], preview: EffectPreview(program: "#0A84FF"))
+            try await seed(fixture, store, effects: [marquee])
+            store.lightsStudio.requestPlan = { StudioLightPlan(mixes: [StudioMix(id: "effect", name: "Play an effect", parameters: [])], devices: []) }
+            await store.lightsStudio.refreshPlan()
+            store.beginAssigningMix(marquee)
+            #expect(store.draftIsMix && store.canCommitAssignment)
+            let before = store.assignments?.assignments
+            let action = try #require(store.commitAssignment())
+            try await fixture.pending(1)
+            let pending = try await fixture.core.send("fixture_pending")
+            let request = try #require(pending.result?["requests"]?.arrayValue?.first)
+            #expect(request["name"]?.stringValue == "set_assignment")
+            #expect(request["args"]?["scope"]?.stringValue == "mix")
+            #expect(request["args"]?["effect_id"]?.stringValue == "marquee")
+            #expect(request["args"]?["parameters"]?["duration_seconds"] == .number(2.2))
+            try await fixture.release(error: accepted ? nil : "refused", result: object(EffectAssignmentDocument()))
+            await action.value
+            #expect(store.assigning == !accepted)
+            #expect(store.assignments?.assignments == before)
+            #expect(store.draftIsMix)
+        }
+    }
+
     private func render(_ name: String, _ store: EffectStudioStore) throws {
         try WindowsRenderProofTests.write(name, size: CGSize(width: 460, height: 430)) {
             AssignSheet(store: store)

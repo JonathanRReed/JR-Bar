@@ -79,6 +79,7 @@ final class EffectStudioStore {
         let sheetID: UUID
         let draft: EffectAssignment
         let snapshot: Int
+        let isMix: Bool
     }
     private var pendingAssignment: AssignmentSubmission?
     @ObservationIgnored private var assignmentSheetID = UUID()
@@ -94,12 +95,16 @@ final class EffectStudioStore {
     }
     var canCommitAssignment: Bool {
         guard assigning, !assignmentSaving, assignmentEffectAvailable, let draft else { return false }
-        return draft.problem == nil && !isRemoving(draft)
+        return draft.problem == nil && (draftIsMix ? mixSupported : !isRemoving(draft))
     }
 
     private func ownsAssignmentSheet(_ request: AssignmentSubmission) -> Bool {
-        assigning && assignmentSheetID == request.sheetID && draft == request.draft
+        assigning && assignmentSheetID == request.sheetID && draft == request.draft && draftIsMix == request.isMix
     }
+    var draftIsMix = false { didSet { assignmentError = nil; hydrateDraftParameters() } }
+    var mixSupported: Bool { lightsStudio.plan?.mixes.contains { $0.id == "effect" } == true }
+    private(set) var mixSaving = false
+
     var draftScope: EffectScope = .provider {
         didSet { assignmentError = nil; hydrateDraftParameters() }
     }
@@ -832,6 +837,7 @@ final class EffectStudioStore {
 
     func beginAssigning(_ effect: EffectDefinition, scope: EffectScope? = nil, target: String? = nil) {
         assignmentSheetID = UUID()
+        draftIsMix = false
         assignmentEffect = effect
         assignmentError = nil
         selectedID = effect.id
@@ -842,23 +848,52 @@ final class EffectStudioStore {
         hydrateDraftParameters(for: effect)
     }
 
+    func beginAssigningMix(_ effect: EffectDefinition) {
+        beginAssigning(effect)
+        draftIsMix = true
+    }
+
+    private func writeMixEffect(_ effectID: String, parameters: [String: JSONValue]) async throws -> EffectAssignmentDocument {
+        try await core.request("set_assignment", args: ["scope": .string("mix"),
+            "effect_id": .string(effectID), "parameters": .object(parameters)], as: EffectAssignmentDocument.self)
+    }
+
+    @discardableResult
+    func chooseMixEffect(_ effect: EffectDefinition) -> Task<Void, Never>? {
+        guard isLive, mixSupported, !mixSaving, !assignmentSaving else { return nil }
+        let parameters = lightsStudio.settings.values.string("colors.mix_effect.effect_id") == effect.id
+            ? lightsStudio.settings.values.object("colors.mix_effect.parameters") ?? effect.defaultParameters
+            : effect.defaultParameters
+        mixSaving = true
+        return Task { [weak self] in
+            guard let self else { return }
+            defer { self.mixSaving = false }
+            do {
+                _ = try await self.writeMixEffect(effect.id, parameters: parameters)
+            } catch { self.fail("Mix effect not saved: \(Self.describe(error))") }
+        }
+    }
+
     /// Re-reads the sheet's parameter values for the current (scope,
     /// target): its saved or live values, then explicit inspector edits.
     /// Untouched values follow the target. Provider motion always loops.
     private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
         guard let effect = effect ?? assignmentEffect ?? selected else { draftParameters = [:]; return }
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
-        var values = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
-            ?? effect.defaultParameters
-        if draftScope == .provider, let provider = target {
+        var values = draftIsMix ? effect.defaultParameters
+            : assignments?.draftParameters(for: effect, scope: draftScope, targetID: target) ?? effect.defaultParameters
+        if !draftIsMix, draftScope == .provider, let provider = target {
             if assignments?.assignment(scope: .provider, targetID: provider) == nil,
                let live = Self.liveValues(for: effect, provider: provider, settings: core.settings?.document) {
                 values = live
             }
         }
+        if draftIsMix, lightsStudio.settings.values.string("colors.mix_effect.effect_id") == effect.id {
+            values = lightsStudio.settings.values.object("colors.mix_effect.parameters") ?? values
+        }
         values.merge(edits[effect.id] ?? [:]) { _, edited in edited }
         values = effect.normalizedParameters(values)
-        if draftScope == .provider { values = Self.loopingDraft(values, for: effect) }
+        if draftScope == .provider || draftIsMix { values = Self.loopingDraft(values, for: effect) }
         draftParameters = values
         scheduleRender(effect, values: draftParameters, color: draftColor)
     }
@@ -902,8 +937,8 @@ final class EffectStudioStore {
 
     var draft: EffectAssignment? {
         guard let effect = assignmentEffect ?? selected else { return nil }
-        let target: String? = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
-        return EffectAssignment(effectID: effect.id, scope: draftScope, targetID: target,
+        let target: String? = draftIsMix || draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
+        return EffectAssignment(effectID: effect.id, scope: draftIsMix ? .global : draftScope, targetID: target,
                                 parameters: draftUsesParameters ? draftParameters : [:])
     }
 
@@ -925,9 +960,9 @@ final class EffectStudioStore {
     @discardableResult
     func commitAssignment() -> Task<Void, Never>? {
         guard canCommitAssignment, let draft else { return nil }
-        let request = AssignmentSubmission(sheetID: assignmentSheetID, draft: draft, snapshot: nextAssignmentSnapshot())
+        let request = AssignmentSubmission(sheetID: assignmentSheetID, draft: draft, snapshot: nextAssignmentSnapshot(), isMix: draftIsMix)
         let effectName = assignmentEffect?.label ?? draft.effectID
-        let destination = draft.scope == .global
+        let destination = draftIsMix ? "when several providers work" : draft.scope == .global
             ? "everywhere"
             : "\(draft.scope.label.lowercased()) \(targetTitle(for: draft))"
         pendingAssignment = request
@@ -939,7 +974,12 @@ final class EffectStudioStore {
             }
             do {
                 guard self.pendingAssignment?.id == request.id, !Task.isCancelled else { return }
-                let document = try await self.core.setAssignment(request.draft)
+                let document: EffectAssignmentDocument
+                if request.isMix {
+                    document = try await self.writeMixEffect(request.draft.effectID, parameters: request.draft.parameters)
+                } else {
+                    document = try await self.core.setAssignment(request.draft)
+                }
                 guard self.pendingAssignment?.id == request.id, !Task.isCancelled else { return }
                 self.acceptAssignments(document, snapshot: request.snapshot)
                 guard self.ownsAssignmentSheet(request) else { return }
