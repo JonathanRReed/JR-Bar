@@ -941,6 +941,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "copy_runtime_notices.py",
         "sign_macos_app.py",
         "verify_macos_app.py",
+        "verify_daemon_runtime.py",
         "verify_entitlements.py",
         "verify_sparkle_bundle.py",
         "package_sparkle_archive.py",
@@ -999,6 +1000,18 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         f"lsregister -u {build_root / 'swift' / 'JR-Bar.app'}",
     ]
     assert "JR-Bar 0.5.0 (build 1801, " not in broken.stdout
+
+    event_log.write_text("")
+    broken_runtime = subprocess.run(
+        ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+        capture_output=True, text=True, timeout=60,
+        env=dict(environment, PACKAGE_TEST_FAIL_AT="verify_daemon_runtime.py"),
+    )
+    assert broken_runtime.returncode == 97, broken_runtime.stderr
+    steps = event_log.read_text().splitlines()
+    assert "verify_daemon_runtime.py" in steps
+    assert "package_sparkle_archive.py" not in steps
+    assert "package_macos_artifact.py" not in steps
 
     # No history to count and no override: the builder refuses rather than
     # stamp a build number that could sort behind a shipped one. A marketing

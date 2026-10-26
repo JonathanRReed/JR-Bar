@@ -2302,12 +2302,15 @@ workspace observations. Until a connected app successfully reports all four
 accessibility flags, the daemon keeps a native workspace fallback for
 accessibility changes, sleep/wake, display sleep, session and clock edges.
 A two-second startup grace lets a capable app report before the fallback
-loads AppKit. Without a report, including with a 0.9.17.2 app or no app,
-the fallback reads the actual flags and pumps native notifications. Before
-that first reading, unavailable flags remain conservative. A valid report
-stops native observations; losing that reporting connection restores them.
-Native fallback mode loads AppKit through its C ABI, without PyObjC or any
-window. Once loaded, the framework remains resident until daemon exit.
+starts. Without a report, including with a 0.9.17.2 app or no app,
+IOKit supplies sleep/wake notifications. CoreGraphics supplies display and
+session readings once a second, and Foundation supplies clock notifications.
+The fallback reads available boolean accessibility preferences from
+`com.apple.universalaccess`. An absent or unsupported preference keeps its
+last known flag, or conservatively reduces effects until the app reports
+the exact flag. A valid report stops native observations; losing that
+reporting connection restores them. The fallback loads neither AppKit nor
+PyObjC. The socket command and its ownership rules are unchanged.
 
 ## Hook shim
 
