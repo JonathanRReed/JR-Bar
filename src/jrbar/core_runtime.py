@@ -76,6 +76,7 @@ from .state_paths import default_state_dir
 
 CORE_VERSION: Final = __version__
 HOUSEKEEPING_SECONDS: Final = 1.0
+HOOK_BATCH_SECONDS: Final = 0.04
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
 # How long after a session's last event the daemon keeps re-reading a
@@ -4971,12 +4972,40 @@ def build_headless_controller_class() -> type:
     class JRCoreHeadlessController(base):
         headless = True
 
+        def schedule_event_refresh(self, *, urgent: bool = False) -> None:
+            if urgent:
+                self._event_refresh_urgent = True
+            if self.event_refresh_pending or getattr(self, "_runtime_termination_started", False):
+                return
+            self.event_refresh_pending = True
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_("coreArmEventRefresh:", None, False)
+            except Exception:
+                self.event_refresh_pending = False
+
+        def coreArmEventRefresh_(self, _payload):
+            if self._core_event_refresh_timer is None:
+                try:
+                    self._core_event_refresh_timer = _schedule_timer(HOOK_BATCH_SECONDS, self, "coreFlushEventRefresh:", False)
+                except Exception:
+                    self.event_refresh_pending = False
+                    raise
+
+        def coreFlushEventRefresh_(self, _timer):
+            self._core_event_refresh_timer = None
+            if self.event_refresh_pending:
+                self.refreshFromEvent_(None)
+            else:
+                self._event_refresh_urgent = False
+
         def _install_dnd_environment_observers(self):
             # The app reports these native workspace edges over core.sock.
             return None
 
         def _install_accessibility_display_observer(self):
-            return None
+            self._apply_accessibility_display_preferences(
+                legacy.refresh_accessibility_display_preferences(self._accessibility_display_preferences)
+            )
 
         # -- settings with a generation --------------------------------------
 
@@ -5109,6 +5138,7 @@ def build_headless_controller_class() -> type:
             # holds live hooks behind it (hook_pending).
             self._core_backlog_gate: threading.Event | None = None
             self._core_housekeeping_timer = None
+            self._core_event_refresh_timer = None
             self._core_supervision_timer = None
             self._core_last_stage_event = 0
             # Linked Pro + Dot: the Dot request riding on the Pro's worker
@@ -7489,7 +7519,7 @@ def build_headless_controller_class() -> type:
                     serve_server.server_close()
                 except Exception:
                     pass
-            for name in ("_core_housekeeping_timer", "_core_supervision_timer"):
+            for name in ("_core_housekeeping_timer", "_core_supervision_timer", "_core_event_refresh_timer"):
                 timer = getattr(self, name, None)
                 setattr(self, name, None)
                 if timer is not None:

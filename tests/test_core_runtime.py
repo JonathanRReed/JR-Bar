@@ -446,6 +446,30 @@ def test_headless_fixture_keeps_workers_inert_after_scenario_reset(headless, mon
     assert not ran.is_set(), "a scenario reset must not start real daemon workers"
 
 
+def test_parallel_hook_hints_share_one_bounded_refresh_and_keep_urgency(headless, monkeypatch):
+    controller = headless
+    arms = []
+    observed = []
+    monkeypatch.setattr(controller, "performSelectorOnMainThread_withObject_waitUntilDone_",
+        lambda selector, payload, wait: getattr(controller, selector.replace(":", "_"))(payload))
+    monkeypatch.setattr(core_runtime, "_schedule_timer", lambda delay, target, selector, repeats: arms.append(
+        (delay, target, selector, repeats)) or object())
+    controller.event_refresh_pending = False
+    controller._core_event_refresh_timer = None
+    controller.refreshFromEvent_ = lambda _: observed.append(controller._event_refresh_urgent)
+    controller.schedule_event_refresh()
+    controller.schedule_event_refresh(urgent=True)
+    controller.schedule_event_refresh()
+    assert len(arms) == 1 and arms[0][0] <= 0.05 and arms[0][3] is False
+    assert observed == []
+    controller.coreFlushEventRefresh_(None)
+    assert observed == [True]
+    assert controller._core_event_refresh_timer is None
+    controller.event_refresh_pending = False
+    controller.coreFlushEventRefresh_(None)
+    assert observed == [True], "a refresh that already covered the hints owes no second pass"
+
+
 def test_the_daemons_screen_bar_is_the_headless_one_that_draws_nothing(headless) -> None:
     from jrbar.headless_screen_bar import HeadlessScreenBar
 

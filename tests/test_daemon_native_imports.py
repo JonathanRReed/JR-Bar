@@ -25,6 +25,12 @@ from jrbar.application_composition import compose_status_bar_application
 from jrbar.core_runtime import build_headless_controller_class
 compose_status_bar_application()
 controller = build_headless_controller_class()
+instance = controller.alloc()
+instance._accessibility_display_preferences = None
+preferences = []
+instance._apply_accessibility_display_preferences = preferences.append
+controller._install_accessibility_display_observer(instance)
+assert preferences[0].reduce_motion, "unavailable native readings fail conservatively"
 from jrbar.led_wasm import RawSdLedWasmController
 engine = RawSdLedWasmController()
 assert engine.parse("#112233", 0).ok
