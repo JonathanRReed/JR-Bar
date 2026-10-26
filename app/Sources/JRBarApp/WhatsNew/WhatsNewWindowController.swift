@@ -145,6 +145,7 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     private func observeLive(_ core: CoreModel) {
         withObservationTracking {
             _ = core.isLive
+            _ = core.asks
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isArmed, let core = self.armedCore else { return }
@@ -185,7 +186,7 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
             fullScreen = ScreenBarController.windowFillsScreen(pid: front.processIdentifier, screen: screen)
         }
         return WhatsNewGate.Moment(coreLive: core.isLive, locked: MenuBarStateRunner.screenIsLocked(),
-                                   fullScreenInFront: fullScreen)
+                                   fullScreenInFront: fullScreen, asksWaiting: !core.asks.isEmpty)
     }
 }
 

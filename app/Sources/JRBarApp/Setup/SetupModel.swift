@@ -231,6 +231,7 @@ struct SetupIconPreview: Equatable, Sendable {
 struct SetupModel {
     /// Whether the daemon is connected with a state frame.
     var monitorLive: () -> Bool = { false }
+    var connectedLights: () -> [String] = { [] }
     /// The Agents step's rows — `health.detected` / `health.hooks` flattened.
     var agents: () -> [SetupAgent] = { [] }
     /// The usage questions for the providers found on this Mac, one each,
@@ -312,6 +313,9 @@ extension SetupModel {
     static func live(core: CoreModel) -> SetupModel {
         var model = SetupModel()
         model.monitorLive = { [weak core] in core?.isLive ?? false }
+        model.connectedLights = { [weak core] in
+            (core?.devices ?? []).filter { $0.connected == true }.map { $0.name ?? $0.kind }
+        }
         model.agents = { [weak core] in
             guard let core else { return [] }
             let document = SettingsDocument(core.settings?.document ?? .object([:]))

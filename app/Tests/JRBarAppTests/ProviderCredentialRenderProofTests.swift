@@ -139,16 +139,16 @@ struct ProviderCredentialRenderProofTests {
             try write(ProviderUsageSwitchRow(row: connectedRow, model: ProviderUsageSwitchesModel(), core: core).padding(20),
                 name: "factory-connected-row-\(dark ? "dark" : "light")",
                 size: CGSize(width: 580, height: 210), dark: dark, directory: directory)
-            try write(ProviderUsageCard(provider: provider, store: store).padding(20),
+            try write(UsageProviderDetail(provider: provider, store: store, showCost: true).padding(20),
                 name: "factory-usage-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 880), dark: dark, directory: directory)
             let disabled = CoreProviderUsage(id: "factory", state: "disabled")
-            try write(ProviderUsageCard(provider: disabled, store: store).padding(20),
+            try write(UsageProviderDetail(provider: disabled, store: store, showCost: true).padding(20),
                 name: "factory-usage-off-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 460), dark: dark, directory: directory)
             let missing = CoreProviderUsage(id: "factory", state: "needs_sign_in", action: "Add Factory API key",
                                              reason: "authentication_required")
-            try write(ProviderUsageCard(provider: missing, store: store).padding(20),
+            try write(UsageProviderDetail(provider: missing, store: store, showCost: true).padding(20),
                 name: "factory-key-needed-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 460), dark: dark, directory: directory)
         }

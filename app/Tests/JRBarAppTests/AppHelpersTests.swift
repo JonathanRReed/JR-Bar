@@ -435,7 +435,7 @@ import JRBarUI
     }
 
     @Test func listPriceNamesTheModelAndTable() {
-        let text = ProviderUsageCard.pricingDisclosure(Self.history(pricing: UsagePricing(
+        let text = UsageCardCopy.pricingDisclosure(Self.history(pricing: UsagePricing(
             inputPerMillion: 10, outputPerMillion: 50, cacheReadPerMillion: 1,
             asOf: "2026-09-20", model: "gpt-6-astra", source: "table", estimated: false)))
         #expect(text.hasPrefix("List price for gpt-6-astra: $10.00 in / $50.00 out / $1.00 cache per M tokens, as of 2026-09-20."))
@@ -443,7 +443,7 @@ import JRBarUI
     }
 
     @Test func estimatedNamesTheStandIn() {
-        let text = ProviderUsageCard.pricingDisclosure(Self.history(pricing: UsagePricing(
+        let text = UsageCardCopy.pricingDisclosure(Self.history(pricing: UsagePricing(
             inputPerMillion: 4, outputPerMillion: 20, asOf: "2026-09-20",
             model: "gpt-5.6-sol", source: "reference", estimated: true)))
         #expect(text.hasPrefix("Approximate: list prices"))
@@ -452,12 +452,12 @@ import JRBarUI
     }
 
     @Test func noTableKeepsTheOldSentence() {
-        #expect(ProviderUsageCard.pricingDisclosure(Self.history(pricing: nil))
+        #expect(UsageCardCopy.pricingDisclosure(Self.history(pricing: nil))
             .hasPrefix("Approximate: the monitor reported no price table"))
     }
 
     @Test func unpricedRecordsStillDisclose() {
-        let text = ProviderUsageCard.pricingDisclosure(Self.history(
+        let text = UsageCardCopy.pricingDisclosure(Self.history(
             pricing: UsagePricing(inputPerMillion: 10, outputPerMillion: 50, model: "gpt-6-astra", estimated: false),
             unpriced: 2, models: ["mystery-1"]))
         #expect(text.contains("2 records (mystery-1) have no price"))

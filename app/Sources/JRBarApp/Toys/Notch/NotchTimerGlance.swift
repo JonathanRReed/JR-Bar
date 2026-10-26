@@ -1,4 +1,5 @@
 import Foundation
+import JRBarUI
 import SwiftUI
 
 /// One timer on Now: a finished timer waits for dismissal, otherwise
@@ -77,6 +78,11 @@ struct NotchTimerGlanceRow: View {
     /// Render proofs supply a fixed date without starting a timer.
     var stillDate: Date? = nil
 
+    private func detailLabel(_ glance: NotchTimerGlance) -> String {
+        if glance.action == .resume { return "Paused" }
+        return glance.count > 1 ? "\(glance.count) timers on Shelf" : "Timer on Shelf"
+    }
+
     var body: some View {
         if let stillDate {
             row(at: stillDate)
@@ -102,9 +108,8 @@ struct NotchTimerGlanceRow: View {
                                 .foregroundStyle(style.titleColor)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text(glance.action == .resume ? "Paused" : glance.count > 1
-                                 ? "\(glance.count) timers on Shelf" : "Timer on Shelf")
-                                .font(.system(size: 9))
+                            Text(detailLabel(glance))
+                                .font(JRBarTokens.TypeStyle.caption.font)
                                 .foregroundStyle(style.faintColor)
                         }
                         Spacer(minLength: 4)
@@ -123,7 +128,7 @@ struct NotchTimerGlanceRow: View {
 
                 Button { glance.perform(on: timers) } label: {
                     Text(glance.actionLabel)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(style.subColor)
                         .padding(.horizontal, 8)
                         .frame(height: 26)

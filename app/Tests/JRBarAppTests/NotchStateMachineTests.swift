@@ -34,7 +34,7 @@ struct NotchStateMachineTests {
         toy.setHovered(true)
         #expect(toy.islandHoverPeek && !toy.islandExpanded, "the swell lands on the same turn: the first frame answers")
         #expect(!toy.islandExpanded)
-        timers.advance(by: 0.12)
+        timers.advance(by: NotchSettings.defaultHoverOpenDelay)
         #expect(toy.islandExpanded, "then the card")
         #expect(toy.stage.cardStaged && toy.stage.openness == 1, "with no window to carry it the card is simply there")
         toy.setHovered(false)
@@ -100,16 +100,14 @@ struct NotchStateMachineTests {
         #expect(timers.live == 0)
     }
 
-    @Test("a pointer from the menu bar's row tells slower and opens at the floor")
+    @Test("a pointer from the menu bar waits for the 300 ms floor")
     func fromTheBar() {
         let (toy, store, timers) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.bandHover(true, fromBar: true)
-        timers.advance(by: NotchMotion.peekDelay + 0.01)
-        #expect(!toy.islandHoverPeek, "not yet: it may only be reaching a menu")
-        timers.advance(by: NotchMotion.hoverDelay)
-        #expect(toy.islandHoverPeek && !toy.islandExpanded)
-        timers.advance(by: NotchMotion.barArrivalFloor)
+        timers.advance(by: NotchMotion.barArrivalFloor - 0.001)
+        #expect(!toy.islandExpanded)
+        timers.advance(by: 0.002)
         #expect(toy.islandExpanded)
     }
 

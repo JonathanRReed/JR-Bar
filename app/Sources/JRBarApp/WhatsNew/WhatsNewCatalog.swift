@@ -33,50 +33,32 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.17.2"
+    static let releaseID = "0.10.0"
 
     /// The header's one line.
-    static let headline = "Lighting, provider connections and menu-bar fixes."
+    static let headline = "Your providers, playing together."
+
+    static let measurementTODO = "TODO: Fill CPU and memory numbers after the 24-hour run."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
-        WhatsNewEntry(
-            id: "sweep-background", symbol: "light.beacon.max",
-            title: "Sweep background",
-            detail: "Knight Rider, Scanner and Pendulum clear inherited light and offer a Background glow control.",
-            tryIt: .window(.effects), opens: "Opens Effect Studio"),
-        WhatsNewEntry(
-            id: "working-motion", symbol: "waveform.path",
-            title: "Working motion",
-            detail: "Your selected motion stays intact when several sessions from one provider work at once.",
-            tryIt: .window(.effects), opens: "Opens Effect Studio"),
-        WhatsNewEntry(
-            id: "studio-controls", symbol: "slider.horizontal.3",
-            title: "Studio controls",
-            detail: "Edited parameters follow the assignment, and current-output previews show what the monitor sends.",
-            tryIt: .window(.effects), opens: "Opens Effect Studio"),
-        WhatsNewEntry(
-            id: "provider-order", symbol: "list.bullet",
-            title: "Provider visibility and order",
-            detail: "Choose which providers appear in the menu-bar icon and move them into your preferred order.",
-            tryIt: .settings(page: "general"), opens: "Opens General settings"),
-        WhatsNewEntry(
-            id: "provider-recovery", symbol: "key",
-            title: "Connection recovery",
-            detail: "Claude distinguishes lost Keychain permission, and Factory can follow browser renewals with explicit permission.",
-            tryIt: .settings(page: "usage"), opens: "Opens Agents & Usage"),
-        WhatsNewEntry(
-            id: "closed-lid-display", symbol: "laptopcomputer",
-            title: "Closed-lid display sleep",
-            detail: "Agent holds request display sleep when the lid is closed and no external display is active.",
-            tryIt: .settings(page: "general"), opens: "Opens General settings"),
-        WhatsNewEntry(
-            id: "menu-recovery", symbol: "menubar.rectangle",
-            title: "Hidden menu items",
-            detail: "The hiding fallback covers the blank reservation while keeping the JR-Bar icon exposed.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "mix", symbol: "waveform.path", title: "Mix",
+            detail: "Choose how several providers share your lights, with each provider keeping its own animation.",
+            tryIt: .window(.effects), opens: "Opens Studio", keys: "⌥⌘L"),
+        WhatsNewEntry(id: "agent-groups", symbol: "person.3", title: "Agent groups",
+            detail: "Related agents share one row and one place on the lights, while asks stay individual.",
+            tryIt: .panel(toggle: false), opens: "Opens the panel"),
+        WhatsNewEntry(id: "claude-sign-in", symbol: "key", title: "Claude stays signed in",
+            detail: "Usage follows Claude Code when it renews its sign-in.",
+            tryIt: .settings(page: "usage"), opens: "Opens Providers"),
+        WhatsNewEntry(id: "lighter", symbol: "leaf", title: "Lighter on your Mac",
+            detail: "Background work now keeps incremental token totals and updates only the facts that changed.",
+            tryIt: .window(.usage), opens: "Opens Usage Center"),
+        WhatsNewEntry(id: "studio", symbol: "slider.horizontal.3", title: "Studio owns the light",
+            detail: "Provider animations, mixes, colours and cues live together in Studio.",
+            tryIt: .window(.effects), opens: "Opens Studio"),
     ]
 }
 
@@ -96,12 +78,13 @@ enum WhatsNewGate {
         var coreLive: Bool
         var locked: Bool
         var fullScreenInFront: Bool
+        var asksWaiting = false
     }
 
     /// Whether now is a moment the window may take: the monitor has
     /// something to show, someone is at the Mac, and no film or
     /// full-screen work is in front.
     static func isRight(_ moment: Moment) -> Bool {
-        moment.coreLive && !moment.locked && !moment.fullScreenInFront
+        moment.coreLive && !moment.locked && !moment.fullScreenInFront && !moment.asksWaiting
     }
 }

@@ -92,3 +92,110 @@ enum UsageChartPreparation {
         }
     }
 }
+
+/// Parsed dates and chart summaries survive selection changes and the window's clock tick.
+@MainActor
+final class UsageChartCache {
+    struct HistoryData {
+        let points: [UsagePoint]
+        let visible: [UsagePoint]
+        let totals: [String: Double]
+        let axis: UsageChartAxis
+        let singletons: [UsagePoint]
+        let dates: [Date]
+        let byDate: [Date: [UsagePoint]]
+
+        func nearest(to selected: Date?) -> Date? {
+            guard let selected, !dates.isEmpty else { return nil }
+            var low = 0
+            var high = dates.count
+            while low < high {
+                let middle = (low + high) / 2
+                if dates[middle] < selected { low = middle + 1 } else { high = middle }
+            }
+            if low == 0 { return dates[0] }
+            if low == dates.count { return dates[low - 1] }
+            let before = dates[low - 1]
+            let after = dates[low]
+            return selected.timeIntervalSince(before) <= after.timeIntervalSince(selected) ? before : after
+        }
+    }
+
+    private struct Choice: Hashable {
+        let metric: String
+        let hidden: Set<String>
+    }
+    private struct HistoryEntry {
+        let history: UsageHistory
+        var choices: [Choice: HistoryData] = [:]
+        var points: [String: [UsagePoint]] = [:]
+    }
+    private var histories: [String: HistoryEntry] = [:]
+    private(set) var historyPreparations = 0
+    private(set) var historyPointPreparations = 0
+    private(set) var overviewPreparations = 0
+    private(set) var overviewPointPreparations = 0
+
+    func history(_ history: UsageHistory, range: UsageHistoryRange,
+                 metric: UsageCenterStore.Metric, hidden: Set<String>) -> HistoryData {
+        let key = history.provider + "|" + range.rawValue
+        var entry = histories[key] ?? HistoryEntry(history: history)
+        if entry.history != history { entry = HistoryEntry(history: history) }
+        let choice = Choice(metric: metric.rawValue, hidden: hidden)
+        if let data = entry.choices[choice] { return data }
+        let points: [UsagePoint]
+        if let cached = entry.points[metric.rawValue] { points = cached }
+        else {
+            historyPointPreparations += 1
+            points = UsageChartPreparation.points(history, range: range, metric: metric == .tokens ? .tokens : .cost)
+            entry.points[metric.rawValue] = points
+        }
+        historyPreparations += 1
+        let visible = points.filter { !hidden.contains($0.kind) }
+        let byDate = Dictionary(grouping: visible, by: \.date)
+        let totals = Dictionary(grouping: points, by: \.kind).mapValues { $0.reduce(0) { $0 + $1.value } }
+        let singles = Dictionary(grouping: visible, by: \.kind).values.filter { $0.count == 1 }.compactMap(\.first)
+        let axis = UsageChartAxis(maximum: visible.map(\.value).max() ?? 0, minimumStep: metric == .tokens ? 1 : 0.01)
+        let data = HistoryData(points: points, visible: visible, totals: totals, axis: axis,
+            singletons: singles, dates: byDate.keys.sorted(), byDate: byDate)
+        entry.choices[choice] = data
+        histories[key] = entry
+        return data
+    }
+
+    struct OverviewData {
+        let points: [UsageGraphView.Point]
+        let axis: UsageChartAxis
+        let providers: [String]
+        let runs: [String]
+        let colors: [String]
+        let totals: [String: Double]
+        let byDay: [Int: [UsageGraphView.Point]]
+    }
+    private var graph: CoreUsageGraph?
+    private var overviewChoices: [Set<String>: OverviewData] = [:]
+    private var overviewPoints: [UsageGraphView.Point] = []
+
+    func overview(_ graph: CoreUsageGraph, hidden: Set<String>) -> OverviewData {
+        if self.graph != graph {
+            self.graph = graph
+            overviewChoices = [:]
+            overviewPoints = UsageGraphView.splitPoints(graph)
+            overviewPointPreparations += 1
+        }
+        if let data = overviewChoices[hidden] { return data }
+        overviewPreparations += 1
+        let points = overviewPoints.filter { !hidden.contains($0.providerId) }
+        let providers = Array(Set(graph.series.map(\.providerId))).sorted()
+        let runProviders = Dictionary(points.map { ($0.seriesId, $0.providerId) }, uniquingKeysWith: { first, _ in first })
+        let runs = runProviders.keys.sorted()
+        let totals = Dictionary(grouping: graph.series, by: \.providerId).mapValues {
+            $0.flatMap(\.values).filter { $0 >= 0 }.reduce(0, +)
+        }
+        let data = OverviewData(points: points, axis: UsageChartAxis(maximum: points.map(\.value).max() ?? 0),
+            providers: providers, runs: runs, colors: runs.map { runProviders[$0] ?? "" },
+            totals: totals, byDay: Dictionary(grouping: points, by: \.day))
+        overviewChoices[hidden] = data
+        return data
+    }
+}

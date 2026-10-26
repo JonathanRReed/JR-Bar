@@ -72,7 +72,7 @@ struct RoomElsewhereRenderProofTests {
         core.apply(.state(CoreState(generation: 1000, usage: CoreUsage(refreshedAt: now, providers: [claude, codex]))))
         let store = UsageCenterStore(core: core)
         let view = VStack(spacing: 16) {
-            ProviderUsageCard(provider: claude, store: store)
+            UsageProviderDetail(provider: claude, store: store, showCost: true)
         }
         .padding(20)
         .frame(width: 720, alignment: .leading)

@@ -13,7 +13,8 @@ Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
 - `Radius` and `Space` hold the approved radii and 4 pt spacing grid.
   `Radius.pill` returns a Capsule. `Radius.providerTile(size:)` scales tiles.
 - `Motion` supplies quick 100 ms, panelEntrance 140 ms, rowChange 160 ms,
-  notchSettle 250 ms, notchClose 180 ms and reduced 80 ms. Quick and
+  notchSettle 250 ms, notchClose 180 ms and reduced 80 ms.
+  Native windows use `progress(at:)` on the same curves, with exact end times. Quick and
   notchClose ease in. Use `animation(reduceMotion:)` for fades and
   `transition(reduceMotion:)` for entrance transitions. When Reduce Motion
   is on, change layout without animation and fade inserted content only.

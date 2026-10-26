@@ -94,7 +94,7 @@ struct UsageHistoryFailureTests {
             for dark in [false, true] {
                 application.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 for width in [CGFloat(520), CGFloat(760)] {
-                    let card = ProviderUsageCard(provider: provider, store: store).padding(24)
+                    let card = UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor))
                     let bitmap = try SettingsRenderProofTests.snapshot(card, size: CGSize(width: width, height: 980), dark: dark)
