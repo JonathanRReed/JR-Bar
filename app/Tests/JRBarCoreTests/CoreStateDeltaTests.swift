@@ -86,6 +86,33 @@ struct CoreStateDeltaTests {
         #expect(model.stateRejected == nil)
     }
 
+    @Test("a missing delta baseline reconnects and receives a full snapshot", arguments: [2, 4])
+    func baselineRecoveryOverSocket(baseline: Int) async throws {
+        let stub = CoreClientTests.ReplayStubCore(path: CoreClientTests.temporarySocketPath())
+        stub.hellos = [#"{"t":"hello","v":1,"capabilities":["state_slices"]}"#]
+        stub.replyToCommands = true
+        let brokenDelta = "{\"t\":\"state_delta\",\"v\":1,\"generation\":5,\"base_generation\":\(baseline),"
+            + "\"slices\":{\"hidden_count\":{\"generation\":3,\"value\":99}}}"
+        stub.pushes = [
+            [
+                #"{"t":"state","v":1,"generation":3,"hidden_count":7}"#,
+                brokenDelta,
+            ],
+            [#"{"t":"state","v":1,"generation":7,"hidden_count":9}"#],
+        ]
+        try stub.start()
+        defer { stub.stop() }
+        let model = CoreModel(socketPath: stub.path)
+        model.start()
+        defer { model.stop() }
+        let firstConnection = model.eventGeneration
+        try #require(await MockCoreIntegrationTests.wait { model.isLive && model.state?.generation == 7 })
+        #expect(model.eventGeneration > firstConnection)
+        #expect(stub.receivedCommands.count == 2)
+        #expect(model.hiddenCount == 9)
+        #expect(model.stateRejected == nil)
+    }
+
     @Test("generations, nullable fields and reconnects preserve the snapshot boundary")
     func boundaries() throws {
         let model = CoreModel()
