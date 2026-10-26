@@ -59,7 +59,7 @@ KILL="${KILL_TOOL:-/bin/kill}"
 STOP_SLEEP="${STOP_SLEEP_TOOL:-/bin/sleep}"
 RECOVERY_OPEN="${RECOVERY_OPEN_TOOL:-/usr/bin/open}"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | grep -q . && echo '-dirty' || true)"
+DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | grep . >/dev/null && echo '-dirty' || true)"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)"
 
 MODE="dev"
@@ -195,7 +195,7 @@ if [[ "$MODE" == "pkg" ]]; then
                 JR-Bar.app/Contents/MacOS/JR-Bar \
                 JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core \
                 JR-Bar.app/Contents/Helpers/jrbar-hook; do
-                print -r -- "$payload" | /usr/bin/grep -Fxq "$required" || {
+                print -r -- "$payload" | /usr/bin/grep -Fx "$required" >/dev/null || {
                     echo "package payload is missing $required" >&2
                     exit 2
                 }

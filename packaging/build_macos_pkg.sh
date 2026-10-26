@@ -222,11 +222,11 @@ select_app_identity() {
         return 0
     fi
     listing="$("$SECURITY_TOOL" find-identity -v -p codesigning 2>/dev/null || true)"
-    if printf '%s\n' "$listing" | /usr/bin/grep -q '"Developer ID Application: '; then
+    if printf '%s\n' "$listing" | /usr/bin/grep '"Developer ID Application: ' >/dev/null; then
         printf '%s\n' "$listing" | /usr/bin/sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | /usr/bin/head -1
         return 0
     fi
-    if printf '%s\n' "$listing" | /usr/bin/grep -q '"Nautilus Local Dev"'; then
+    if printf '%s\n' "$listing" | /usr/bin/grep '"Nautilus Local Dev"' >/dev/null; then
         printf 'Nautilus Local Dev\n'
         return 0
     fi
