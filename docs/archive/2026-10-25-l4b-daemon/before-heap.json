@@ -1,0 +1,137 @@
+{
+  "duration_seconds": 60.0,
+  "sessions": 3,
+  "tracing": true,
+  "cpu_percent": 6.840141666666666,
+  "cpu_seconds": 4.1040849999999995,
+  "rss_mean_mb": 171.72494612068965,
+  "rss_max_mb": 194.703125,
+  "heap_max_mb": 49.087937355041504,
+  "messages_per_minute": {
+    "state": 35.0,
+    "lights": 47.0,
+    "log": 26.0,
+    "event": 9.0
+  },
+  "bytes_per_minute": {
+    "state": 573373.0,
+    "lights": 98567.0,
+    "log": 3825.0,
+    "event": 2161.0
+  },
+  "loop_max_ms": 35.93279200140387,
+  "loop_samples": 58,
+  "loop_over_250ms": 0,
+  "framework_modules": [
+    "AppKit",
+    "AppKit._AppKit",
+    "AppKit._inlines",
+    "AppKit._nsapp",
+    "Foundation",
+    "Foundation._Foundation",
+    "Foundation._context",
+    "Foundation._functiondefines",
+    "Foundation._inlines",
+    "Foundation._nsindexset",
+    "Foundation._nsobject",
+    "Foundation._nsurl",
+    "objc",
+    "objc._bridges",
+    "objc._bridgesupport",
+    "objc._callable_docstr",
+    "objc._category",
+    "objc._compat",
+    "objc._context",
+    "objc._convenience",
+    "objc._convenience_mapping",
+    "objc._convenience_nsarray",
+    "objc._convenience_nsdata",
+    "objc._convenience_nsdecimal",
+    "objc._convenience_nsdictionary",
+    "objc._convenience_nsobject",
+    "objc._convenience_nsset",
+    "objc._convenience_nsstring",
+    "objc._convenience_sequence",
+    "objc._descriptors",
+    "objc._dyld",
+    "objc._framework",
+    "objc._informal_protocol",
+    "objc._lazyimport",
+    "objc._locking",
+    "objc._new",
+    "objc._objc",
+    "objc._properties",
+    "objc._protocols",
+    "objc._pycoder",
+    "objc._pythonify",
+    "objc._structtype",
+    "objc._transform",
+    "objc._types"
+  ],
+  "hook_admissions": {
+    "HookIngressDisposition.ACCEPTED": 54
+  },
+  "max_visible_sessions": 3,
+  "errors": [],
+  "source_sha256": "0a36f2aee8f23f43fe256c5fd4136b12cc02d92a6a58a3ca3ec90c1f8c87ea96",
+  "spawn_counts": {
+    "ps": 3,
+    "touch": 1
+  },
+  "framework_images": [
+    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+    "/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit",
+    "/System/Library/Frameworks/WebKit.framework/Versions/A/Frameworks/WebKitLegacy.framework/Versions/A/WebKitLegacy",
+    "/System/Library/Frameworks/WebKit.framework/Versions/A/Frameworks/WebCore.framework/Versions/A/Frameworks/libwebrtc.dylib",
+    "/System/Library/Frameworks/WebKit.framework/Versions/A/Frameworks/WebCore.framework/Versions/A/WebCore",
+    "/System/Library/Frameworks/WebKit.framework/Versions/A/Frameworks/WebCore.framework/Versions/A/Frameworks/libANGLE-shared.dylib"
+  ],
+  "blocked_probe_attempts": {
+    "ioreg": 12,
+    "caffeinate": 39
+  },
+  "startup_ready_seconds": 8.868962291977368,
+  "performance": {
+    "metrics": {
+      "hardware_render": {
+        "count": 48,
+        "p50_ms": 11.071,
+        "p95_ms": 69.365,
+        "max_ms": 169.853,
+        "outcomes": {
+          "ok": 48
+        }
+      },
+      "refresh": {
+        "count": 59,
+        "p50_ms": 17.29,
+        "p95_ms": 55.839,
+        "max_ms": 259.614,
+        "outcomes": {
+          "ok": 59
+        }
+      },
+      "refresh_skipped": {
+        "count": 2,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "max_ms": 0.0,
+        "outcomes": {
+          "noop": 2
+        }
+      }
+    },
+    "cpu": {
+      "user_s": 15.14,
+      "system_s": 0.841,
+      "percent_since_last": null
+    },
+    "frames": {
+      "state_generation": 61,
+      "lights_generation": 70,
+      "state_per_minute": 35,
+      "lights_per_minute": 47
+    }
+  },
+  "source_commit": "299988d6684a85df2deddfe24450d989d00345ff"
+}

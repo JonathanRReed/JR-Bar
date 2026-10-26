@@ -1,0 +1,22 @@
+{
+  "before": {
+    "source_sha256": "0a36f2aee8f23f43fe256c5fd4136b12cc02d92a6a58a3ca3ec90c1f8c87ea96",
+    "firmware_sha256": "be2a9a5812db0ca446f6fce628942b83aacf2cfef55f24fe607b3d1bc779d197",
+    "probe_sha256": "8f727771680fb83e7a50903a65141ebbf977d678006fe4eb077ef70b10850e87"
+  },
+  "after-first": {
+    "source_sha256": "fd8ed1c26bb4032c1388ab162dbb29b96022d35a024b4eed9faaf9b73bb92241",
+    "firmware_sha256": "be2a9a5812db0ca446f6fce628942b83aacf2cfef55f24fe607b3d1bc779d197"
+  },
+  "after-exact": {
+    "source_sha256": "22b6e262f07ef2409e64995385a7b26259ea7e61fe5d3e7d68f5035d1d22e4fd",
+    "firmware_sha256": "be2a9a5812db0ca446f6fce628942b83aacf2cfef55f24fe607b3d1bc779d197"
+  },
+  "current_source_sha256": "2321ca0e1f895740fbd950004d8d80df876105ab607961db894838bf2e5fc77b",
+  "after-final": {
+    "source_sha256": "2321ca0e1f895740fbd950004d8d80df876105ab607961db894838bf2e5fc77b",
+    "firmware_sha256": "be2a9a5812db0ca446f6fce628942b83aacf2cfef55f24fe607b3d1bc779d197",
+    "probe_sha256": "976c8da8e91d14e4eaf4f646e4482cf982ea8dca1d6240947b8eb7717b925375"
+  },
+  "current_probe_sha256": "3ec1e449111c8afed4693551a6037a70836fd7c74ca1893e3c1f3136ff7625d1"
+}

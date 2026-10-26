@@ -1,0 +1,34 @@
+{
+  "before": {
+    "jrbar.core_runtime": {
+      "self_ms": 57.299,
+      "cumulative_ms": 606.013
+    },
+    "jrbar.cli_entry": {
+      "self_ms": 1.86,
+      "cumulative_ms": 363.738
+    },
+    "objc": {
+      "self_ms": 5.991,
+      "cumulative_ms": 133.73
+    },
+    "AppKit": {
+      "self_ms": 13.498,
+      "cumulative_ms": 77.879
+    },
+    "JavaScriptCore": {
+      "self_ms": 5.489,
+      "cumulative_ms": 9.477
+    }
+  },
+  "after": {
+    "jrbar.core_runtime": {
+      "self_ms": 43.663,
+      "cumulative_ms": 328.864
+    },
+    "jrbar.cli_entry": {
+      "self_ms": 0.602,
+      "cumulative_ms": 131.881
+    }
+  }
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "sha": "c0dd808161a4b383f75b4abb2caabdbde6afdb87",
+    "subject": "performance: measure an isolated daemon with synthetic agents"
+  },
+  {
+    "sha": "a7bea6bdf0455f90b22b47b105e1b2c78bacbe90",
+    "subject": "processes: read identities through libproc without ps"
+  },
+  {
+    "sha": "018a4eb3bcf5a931f526dbd3d314a36c454b3b41",
+    "subject": "protocol: define state slices and native workspace reports"
+  },
+  {
+    "sha": "c21cc55224ee72632d899eea4edee455a425ed0a",
+    "subject": "core: run the daemon without the AppKit controller"
+  },
+  {
+    "sha": "d4ed6a69d2dbc4a9069921bf26ab6688574a2621",
+    "subject": "protocol: send changed facts without replacing the app model"
+  },
+  {
+    "sha": "f9bf20ede8ad59752babcac8ae31f96cff5c44e1",
+    "subject": "performance: verify the CLI with live synthetic process records"
+  },
+  {
+    "sha": "84acdeb69f2ad8fb4ece031879f41567611cd3cf",
+    "subject": "tests: exercise plain callbacks and native date boundaries"
+  },
+  {
+    "sha": "4015fcc216fd371ffbb27c8bfafd55f793783f8f",
+    "subject": "lights: reuse exact samples while fitting linked curves"
+  },
+  {
+    "sha": "e3e70805815d2bdff8e11834406ef31a94a06af0",
+    "subject": "firmware: invoke JavaScriptCore through typed values"
+  },
+  {
+    "sha": "e708a156df25becc328819253621bf64e203204c",
+    "subject": "core: combine parallel hooks within forty milliseconds"
+  },
+  {
+    "sha": "a155f0572b3ab8c2d8e3e398817b24a43cee1228",
+    "subject": "performance: capture steady CPU profiles and daemon timings"
+  },
+  {
+    "sha": "b7cec932ee2bbe424443762a1c99257c3f5700d9",
+    "subject": "history: warm selected providers and reuse fresh scans"
+  },
+  {
+    "sha": "22bb0250da81ed09bb19cc6b43bb2e8e1d92fa08",
+    "subject": "performance: count CPU by controller job and native thread"
+  },
+  {
+    "sha": "b467952c937a717e5c9e637cb86f077a1a309c85",
+    "subject": "performance: reject failed daemon probe exits"
+  }
+]

@@ -61,6 +61,10 @@ the firmware's JavaScriptCore engine use narrow C interfaces. The app
 reports workspace sleep, activation and accessibility changes over the
 authenticated socket. Settings directories use kqueue, with a 30-second
 recovery poll. Atomic replacement is observed by watching the directory.
+Hook hints share a 40 ms publication window, with urgent hints retained.
+Socket acknowledgements and commands do not wait for that window. Token
+history warming covers the chosen graph and providers in the current
+roster. Fresh results are reused; other providers start when requested.
 
 Session truth is the daemon's, built from four sources that agree or
 disagree in the open: hook events (with the hook's `ppid` and process

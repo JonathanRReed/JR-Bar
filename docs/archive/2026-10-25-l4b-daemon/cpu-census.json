@@ -1,0 +1,122 @@
+{
+  "duration_seconds": 120.0,
+  "sessions": 3,
+  "tracing": false,
+  "cpu_percent": 1.1654449999999994,
+  "cpu_seconds": 1.3985339999999995,
+  "rss_mean_mb": 58.298356681034484,
+  "rss_max_mb": 65.40625,
+  "heap_max_mb": null,
+  "messages_per_minute": {
+    "state_delta": 21.0,
+    "log": 16.0,
+    "event": 9.0,
+    "lights": 22.0
+  },
+  "bytes_per_minute": {
+    "state_delta": 30766.0,
+    "log": 2384.0,
+    "event": 2163.5,
+    "lights": 53480.0
+  },
+  "loop_max_ms": 0.9014999959617853,
+  "loop_samples": 116,
+  "loop_over_250ms": 0,
+  "framework_modules": [],
+  "hook_admissions": {
+    "HookIngressDisposition.ACCEPTED": 90
+  },
+  "max_visible_sessions": 3,
+  "errors": [],
+  "source_sha256": "22b6e262f07ef2409e64995385a7b26259ea7e61fe5d3e7d68f5035d1d22e4fd",
+  "spawn_counts": {
+    "touch": 2
+  },
+  "framework_images": [],
+  "blocked_probe_attempts": {
+    "ioreg": 24,
+    "caffeinate": 60
+  },
+  "startup_ready_seconds": 2.2485356249962933,
+  "performance": {
+    "metrics": {
+      "hardware_render": {
+        "count": 71,
+        "p50_ms": 1.192,
+        "p95_ms": 10.683,
+        "max_ms": 22.594,
+        "outcomes": {
+          "ok": 71
+        }
+      },
+      "refresh": {
+        "count": 75,
+        "p50_ms": 4.016,
+        "p95_ms": 34.157,
+        "max_ms": 61.925,
+        "outcomes": {
+          "ok": 75
+        }
+      },
+      "refresh_skipped": {
+        "count": 9,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "max_ms": 0.0,
+        "outcomes": {
+          "noop": 9
+        }
+      }
+    },
+    "cpu": {
+      "user_s": 2.838,
+      "system_s": 1.047,
+      "percent_since_last": null
+    },
+    "frames": {
+      "state_generation": 77,
+      "lights_generation": 57,
+      "state_per_minute": 21,
+      "lights_per_minute": 22
+    }
+  },
+  "cpu_census": {
+    "refresh": {
+      "seconds": 0.4698514610000022,
+      "calls": 68
+    },
+    "housekeeping": {
+      "seconds": 0.03514062700000076,
+      "calls": 120
+    },
+    "hook_processing": {
+      "seconds": 0.11961016199999995,
+      "calls": 72
+    },
+    "hardware": {
+      "seconds": 0.2041779169999999,
+      "calls": 62
+    },
+    "state_projection": {
+      "seconds": 0.07849295500000064,
+      "calls": 60
+    },
+    "lights_projection": {
+      "seconds": 0.06529362199999733,
+      "calls": 122
+    },
+    "server_encoding": {
+      "seconds": 0.010421294999999681,
+      "calls": 136
+    },
+    "server_delivery": {
+      "seconds": 0.030135161000000004,
+      "calls": 136
+    },
+    "process_table": {
+      "seconds": 0.039889541,
+      "calls": 6
+    }
+  },
+  "source_commit": "a155f0572b3ab8c2d8e3e398817b24a43cee1228"
+}
