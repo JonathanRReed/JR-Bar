@@ -217,6 +217,7 @@ private struct StudioPlanInspector: View {
     var body: some View {
         SnapshotScrollView {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.md) {
+                EffectLiveOutput(lights: lights.core.lights, connected: lights.core.isLive)
                 Text("Devices").jrbarType(.headline)
                 if let failure = lights.planFailure { Text(failure).foregroundStyle(JRBarTokens.Ink.attention) }
                 ForEach(lights.plan?.devices ?? []) { device in
