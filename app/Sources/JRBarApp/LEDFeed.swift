@@ -354,6 +354,7 @@ final class LEDFeed {
                 // is the file's mtime rather than this read's landing time.
                 let mtime = (try? FileManager.default.attributesOfItem(atPath: path))
                     .flatMap { ($0[.modificationDate] as? Date)?.timeIntervalSince1970 }
+                let exists = FileManager.default.fileExists(atPath: path)
                 await MainActor.run { [weak self] in
                     guard let self, self.readGeneration == generation else { return }
                     // The later of the file's stamp and the observed write:
@@ -366,7 +367,7 @@ final class LEDFeed {
                         // The override file is empty or missing: breathe
                         // until it has a program.
                         self.publish(Self.idleProgram, source: .builtInIdle)
-                    } else if !FileManager.default.fileExists(atPath: path) {
+                    } else if !exists {
                         self.resolve()
                     }
                 }

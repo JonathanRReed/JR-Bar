@@ -2051,7 +2051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func watchSocketDirectory(_ socketPath: String) {
         guard isolatedPreview == nil else { return }
         let directory = (socketPath as NSString).deletingLastPathComponent
-        guard socketWatcher == nil, FileManager.default.fileExists(atPath: directory) else { return }
+        guard socketWatcher == nil else { return }
         socketWatcher = FileWatcher(path: directory, mask: [.write, .link, .attrib]) { [weak self] _ in
             self?.core?.retryNow()
         }

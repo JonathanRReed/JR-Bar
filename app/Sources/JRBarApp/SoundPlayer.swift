@@ -170,19 +170,23 @@ final class SoundPlayer {
     nonisolated static let systemSoundsFolder = "/System/Library/Sounds"
     nonisolated static let soundExtensions = ["aiff", "aif", "caf", "wav", "m4a", "mp3"]
 
-    static func url(for name: String) -> URL? {
+    static func url(for name: String) -> URL? { assets.value(for: name)?.url }
+
+    nonisolated private static func resolveURL(for name: String) -> URL? {
         var candidates = [
             "\(systemSoundsFolder)/\(name).aiff",
             "\(systemSoundsFolder)/\(name.capitalized).aiff",
         ]
         candidates += soundExtensions.map { "\(userSoundsFolder)/\(name).\($0)" }
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) }
+        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        return candidates.map { URL(fileURLWithPath: $0) }.first { policy.available($0) }
     }
 
     /// Every sound Settings can offer: the system's, then the person's
     /// own, by name, without duplicates.
     nonisolated static func availableSounds(fileManager: FileManager = .default) -> (system: [String], custom: [String]) {
         func names(in folder: String) -> [String] {
+            guard ExternalFilePolicy(home: NSHomeDirectory()).available(URL(fileURLWithPath: folder)) else { return [] }
             let files = (try? fileManager.contentsOfDirectory(atPath: folder)) ?? []
             return files
                 .filter { soundExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
@@ -193,6 +197,19 @@ final class SoundPlayer {
         let custom = names(in: userSoundsFolder).filter { !system.contains($0) }
         return (system, custom)
     }
+
+    private static let choices = BackgroundLookupCache<Int, SoundChoices>(load: { _ in
+        let result = availableSounds()
+        return SoundChoices(system: result.system, custom: result.custom)
+    })
+    private struct SoundChoices: Sendable { let system: [String]; let custom: [String] }
+
+    static func soundChoices() async -> (system: [String], custom: [String]) {
+        guard let result = await choices.resolve(0) else { return ([], []) }
+        return (result.system, result.custom)
+    }
+
+    static func prepareURL(for name: String) async -> URL? { await assets.resolve(name)?.url }
 
     /// Plays `name` `repeats` times, 0.45 s apart — or the person's
     /// choice for that moment, or nothing when they chose silence.
@@ -304,27 +321,45 @@ final class SoundPlayer {
     /// and reachable, else the cached AVAudioPlayer on the current output.
     private func playback(for name: String, preferences: SoundPreferences) -> (() -> Void)? {
         if let playbackOverride { return playbackOverride(name, preferences) }
-        let volume = Float(preferences.volume)
-        if preferences.useAlertDevice, let url = Self.url(for: name) {
-            let device = alertDevice
-            return { [weak self] in
-                if !device.play(url: url, volume: volume) { self?.playOnCurrentOutput(name, volume: volume) }
+        if let asset = Self.assets.value(for: name) {
+            return { [weak self] in self?.play(asset, name: name, preferences: preferences) }
+        }
+        return { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                guard let asset = await Self.assets.resolve(name) else { self.onMissing?(name); return }
+                self.play(asset, name: name, preferences: preferences)
             }
         }
-        guard player(named: name) != nil else { return nil }
-        return { [weak self] in self?.playOnCurrentOutput(name, volume: volume) }
     }
 
-    private func playOnCurrentOutput(_ name: String, volume: Float) {
-        guard let player = player(named: name) else { return }
+    private func play(_ asset: Asset, name: String, preferences: SoundPreferences) {
+        let volume = Float(preferences.volume)
+        if preferences.useAlertDevice, let file = asset.file,
+           alertDevice.play(file: file, volume: volume) { return }
+        guard let player = player(named: name, data: asset.data) else { return }
         player.volume = volume
         player.currentTime = 0
         player.play()
     }
 
-    private func player(named name: String) -> AVAudioPlayer? {
+    private struct Asset: @unchecked Sendable {
+        let url: URL
+        let data: Data
+        let file: AVAudioFile?
+    }
+
+    private static let assets = BackgroundLookupCache<String, Asset>(load: { name in
+        guard let url = resolveURL(for: name),
+              let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size <= 16 * 1024 * 1024,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return Asset(url: url, data: data, file: try? AVAudioFile(forReading: url))
+    })
+
+    private func player(named name: String, data: Data) -> AVAudioPlayer? {
         if let cached = players[name] { return cached }
-        guard let url = Self.url(for: name), let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        guard let player = try? AVAudioPlayer(data: data) else { return nil }
         player.prepareToPlay()
         players[name] = player
         return player
@@ -485,6 +520,15 @@ final class AlertDevicePlayer {
     func play(url: URL, volume: Float, pan: Float = 0) -> Bool {
         guard let target = alertOutputDevice(),
               let file = try? AVAudioFile(forReading: url) else { return false }
+        return play(file: file, on: target, volume: volume, pan: pan)
+    }
+
+    func play(file: AVAudioFile, volume: Float, pan: Float = 0) -> Bool {
+        guard let target = alertOutputDevice() else { return false }
+        return play(file: file, on: target, volume: volume, pan: pan)
+    }
+
+    private func play(file: AVAudioFile, on target: AudioObjectID, volume: Float, pan: Float) -> Bool {
         ring += 1
         let current = ring
         output.setPan(pan)

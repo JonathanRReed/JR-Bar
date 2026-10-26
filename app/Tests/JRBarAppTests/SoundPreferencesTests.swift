@@ -135,11 +135,11 @@ import Testing
         #expect(clients.filter { $0.pid == getpid() }.allSatisfy { $0.microphoneDevices == 0 })
     }
 
-    @MainActor @Test func theAlertDeviceLetsGoWhenTheNewestRingEnds() throws {
+    @MainActor @Test func theAlertDeviceLetsGoWhenTheNewestRingEnds() async throws {
         let output = RecordingAlertOutput()
         let player = AlertDevicePlayer(output: output)
         player.alertOutputDevice = { 42 }
-        let url = try #require(SoundPlayer.url(for: "Glass"))
+        let url = try #require(await SoundPlayer.prepareURL(for: "Glass"))
         #expect(player.play(url: url, volume: 0))
         #expect(player.play(url: url, volume: 0))
         #expect(player.isRunning)
@@ -150,11 +150,11 @@ import Testing
         #expect(output.devices == [42, 42])
     }
 
-    @MainActor @Test func noAlertDeviceFallsBackWithoutStarting() throws {
+    @MainActor @Test func noAlertDeviceFallsBackWithoutStarting() async throws {
         let output = RecordingAlertOutput()
         let player = AlertDevicePlayer(output: output)
         player.alertOutputDevice = { nil }
-        let url = try #require(SoundPlayer.url(for: "Glass"))
+        let url = try #require(await SoundPlayer.prepareURL(for: "Glass"))
         #expect(!player.play(url: url, volume: 1))
         #expect(output.ends.isEmpty && !player.isRunning)
     }

@@ -288,11 +288,11 @@ enum InstalledCopies {
     /// The copies worth a word: under /Applications or ~/Applications,
     /// not the running bundle, each once.
     nonisolated static func stale(among copies: [URL], running: URL, home: URL) -> [URL] {
-        let runningPath = running.resolvingSymlinksInPath().standardizedFileURL.path
+        let runningPath = running.standardizedFileURL.path
         let roots = ["/Applications", home.appending(path: "Applications").standardizedFileURL.path]
         var seen = Set<String>()
         return copies.filter { url in
-            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+            let path = url.standardizedFileURL.path
             guard path != runningPath, seen.insert(path).inserted else { return false }
             return roots.contains { path.hasPrefix($0 + "/") }
         }
