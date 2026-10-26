@@ -19,15 +19,27 @@ struct SettingsFeatureRow: View {
     let store: SettingsStore
     let toy: any Toy
     var body: some View {
-        let title = toy.id == "keepAwake" ? "Keep Awake manually" : toy.name
-        SettingsRow(title) {
-            Toggle(title, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
-                .labelsHidden().toggleStyle(.switch)
-            Button { store.subpage = toy.id; store.expandedCards.insert(toy.id) } label: {
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+        HStack(spacing: JRBarTokens.Space.md) {
+            Button { store.openFeature(toy.id) } label: {
+                HStack(spacing: JRBarTokens.Space.md) {
+                    SidebarIcon(symbol: toy.symbol, tint: ToyCard.tint(for: toy.id, page: .blue))
+                    Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open \(toy.name) settings")
+            Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
+                .labelsHidden().toggleStyle(.switch)
         }
+        .padding(JRBarTokens.Space.md)
+    }
+}
+
+extension SettingsStore {
+    func openFeature(_ id: String) {
+        subpage = id
+        expandedCards.insert(id)
     }
 }

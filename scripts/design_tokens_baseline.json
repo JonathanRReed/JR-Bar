@@ -665,7 +665,6 @@
     "radius: cornerRadius: 5.6": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyToy.swift": {
-    "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 11": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyView.swift": {
