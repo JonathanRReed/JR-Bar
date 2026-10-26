@@ -66,6 +66,7 @@ ENTRY_POINTS = {
     "hook_entry",
     "provider_fixture_ownership",
     "token_history_build",  # Utility child launched with -m by token_history_index.
+    "_packaging_probe",  # Run with -m by packaging/verify_daemon_runtime.py on the frozen daemon.
 }
 
 
