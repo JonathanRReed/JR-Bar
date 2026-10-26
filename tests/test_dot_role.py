@@ -853,14 +853,15 @@ def test_upsample_widens_a_dot_program_for_the_screen_bar__and_3_more() -> None:
 def test_upsample_passes_directives_through_and_refuses_garbage__and_2_more() -> None:
     # --- scenario: brightness_roll_repeat_and_comments_pass_through
     widened = upsample_program(
-        "brightness 128\n// keep me\nroll-left 2s\n#FF0000 #00FF00 500ms\nrepeat 3",
+        "brightness 128\n// keep me\n#FF0000 #00FF00 500ms\nrepeat 3",
         source_leds=2,
         led_count=8,
     )
     lines = widened.splitlines()
     assert lines[0] == "brightness 128"
     assert lines[1] == "// keep me"
-    assert lines[2] == "roll-left 2s"
+    assert upsample_program("#FF0000 #00FF00 500ms\nroll-left 2s\nrepeat",
+                            source_leds=2, led_count=8) is None
     assert lines[-1] == "repeat 3"
 
     # --- scenario: a_whole_bar_needs_no_widening
@@ -883,7 +884,9 @@ def test_upsample_round_trips_through_downsample() -> None:
             continue
         saw_dot_program = True
         widened = upsample_program(program, source_leds=2, led_count=8)
-        assert widened is not None, name
+        if widened is None:
+            # A roll or an expanded program over budget needs a source canvas.
+            continue
         # Widening preserves the loop's span too: the bar runs the Dot's
         # clock, not a stretched or compressed copy of it.
         assert _loop_span_ms(widened, 8) == _loop_span_ms(program, source_leds), name
@@ -1202,3 +1205,9 @@ def test_known_failure_is_steady_and_does_not_hide_a_real_ask():
     plan = plan_dot_surface(role="asks", facts=DotBeaconFacts(blocked=True), brightness=128)
     assert plan.why == "failed" and not plan.animated
     assert plan.program == "brightness 128\n" + DotRoleColors().blocked
+
+
+def test_upsample_refuses_an_expansion_over_the_firmware_budget():
+    source = "\n".join(["0:#164880 100ms"] * 12 + ["repeat"])
+    assert len(source.encode()) <= 512
+    assert upsample_program(source, source_leds=2, led_count=8) is None

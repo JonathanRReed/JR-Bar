@@ -2222,6 +2222,7 @@ public struct CoreWhyDetail: Codable, Hashable, Sendable {
 public struct CoreLightSurface: Codable, Hashable, Sendable {
     public var program: String
     public var stripTransfer: CoreStripTransfer?
+    public var sourceLedCount: Int?
     public var ledCount: Int?
     /// Epoch seconds at which the program's t=0 happened on the strip.
     public var anchor: Double?
@@ -2242,9 +2243,10 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
                 staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil,
                 whyDetail: CoreWhyDetail? = nil, role: String? = nil, cue: CoreLightCue? = nil,
-                stripTransfer: CoreStripTransfer? = nil) {
+                stripTransfer: CoreStripTransfer? = nil, sourceLedCount: Int? = nil) {
         self.program = program
         self.stripTransfer = stripTransfer
+        self.sourceLedCount = sourceLedCount
         self.ledCount = ledCount
         self.anchor = anchor
         self.motion = motion
@@ -2262,12 +2264,14 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         case staticFallback = "static_fallback"
         case whyDetail = "why_detail"
         case stripTransfer = "strip_transfer"
+        case sourceLedCount = "source_led_count"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         program = try c.decodeIfPresent(String.self, forKey: .program) ?? ""
         stripTransfer = try? c.decodeIfPresent(CoreStripTransfer.self, forKey: .stripTransfer)
+        sourceLedCount = try c.decodeIfPresent(Int.self, forKey: .sourceLedCount)
         ledCount = try c.decodeIfPresent(Int.self, forKey: .ledCount)
         anchor = try c.decodeIfPresent(Double.self, forKey: .anchor)
         motion = try c.decodeIfPresent(String.self, forKey: .motion)

@@ -780,8 +780,9 @@ def upsample_program(
 
     The inverse of ``downsample_program``, and simpler than it: expansion
     is one-to-many, so no band is ever left unaddressed and no "make
-    total" pass is needed. Brightness, roll, repeat and comment lines pass
-    through untouched -- the bar runs the same clock as the Dot.
+    total" pass is needed. Brightness, repeat and comments pass through.
+    Rolls and text over the firmware budget return ``None``. Mirrors carry
+    the source canvas and widen the sampled pixels instead.
     """
     if not isinstance(program, str) or not program.strip():
         return None
@@ -791,6 +792,8 @@ def upsample_program(
         program, led_count=max(source_leds, led_count)
     )
     if errors_only(problems):
+        return None
+    if source_leds != led_count and any(type(step) is RollStep for step in animation.steps):
         return None
     steps: list[object] = []
     for step in animation.steps:
@@ -817,7 +820,9 @@ def upsample_program(
         rendered = render_animation(Animation(animation.name, tuple(steps)))
     except Exception:
         return None
-    return rendered if rendered.strip() else None
+    from .linked_sync import fits_budget
+
+    return rendered if rendered.strip() and fits_budget(rendered) else None
 
 
 def beacon_program(

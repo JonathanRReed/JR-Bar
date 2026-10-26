@@ -222,6 +222,7 @@ class SurfaceFacts:
     #: purpose: every existing positional caller keeps its meaning.
     brightness_policy: float | None = None
     strip_transfer: dict[str, Any] | None = None
+    source_led_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1928,6 +1929,7 @@ def build_lights_document(
             "role",
             "why_detail",
             "strip_transfer",
+            "source_led_count",
         ):
             value = getattr(facts, key)
             if value is not None:
