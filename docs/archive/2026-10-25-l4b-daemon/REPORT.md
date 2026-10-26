@@ -1,6 +1,10 @@
 # L4b daemon efficiency
 
-The final synthetic workload meets the CPU, RSS and traffic budgets, and
+These original receipts predate the merge and review fixes. The
+[2026-10-26 fix round](fix-round.md) records current verification, new
+ten-minute measurements and the native fallback for older apps.
+
+The original synthetic workload met the CPU, RSS and traffic budgets, and
 no sampled loop delay exceeded 250 ms. The baseline is
 `299988d6`. Runtime code ends at `b7cec932`; the reproducible tool ends at
 `b467952c`. Timed probes freeze their own script, whose hashes are recorded.

@@ -1,0 +1,104 @@
+{
+  "revision": "70c3883751094c3fa1c2fc821bae3c576172da09",
+  "python_final": {
+    "status": "passed",
+    "command": "PYTHONPATH=$PWD/src /path/to/JR-Bar/.venv/bin/python -m pytest -q",
+    "log": "/tmp/jrbar-l4b-resume-python-final.log",
+    "passed": 15769,
+    "failed": 0,
+    "subtests_passed": 15,
+    "warnings": 4,
+    "seconds": 1212.76,
+    "log_sha256": "b2c3df34e495ba83f25b1fea059ce9e8d52fd3b4ee4679ef5da8629919369786"
+  },
+  "python_initial": {
+    "passed": 15768,
+    "failed": 1,
+    "subtests_passed": 15,
+    "failure": "test_every_lazy_controller_read_names_a_declared_attribute",
+    "fixed_by": "ba95079e"
+  },
+  "focused_process_slices_environment": {
+    "passed": 26
+  },
+  "focused_controller_environment_after_fix": {
+    "passed": 10
+  },
+  "swift": {
+    "passed": 6023,
+    "target_counts": [
+      116,
+      67,
+      1392,
+      4448
+    ],
+    "command": "env -u JRBAR_INTERACTIVE_TESTS swift build --build-tests && env -u JRBAR_INTERACTIVE_TESTS swift test --skip-build --no-parallel",
+    "log": "/tmp/jrbar-l4b-resume-swift-final.log",
+    "log_sha256": "176a91752075e1c1a9c416cbf4dd99f0749a16f25b64e0a40484d39674c1f9af"
+  },
+  "swift_socket_recovery": {
+    "test_cases": 2,
+    "baseline_generations": [
+      2,
+      4
+    ],
+    "recovered_generation": 7
+  },
+  "reviewer_slices": {
+    "stamped_updates": 10000,
+    "observer_registrations": 1,
+    "unrelated_callbacks": 0,
+    "roster_callbacks": 1,
+    "skipped_patch_rejected": true,
+    "log_sha256": "9da6219e718b8f10d9a6fe42ae329bb83bf06cdba244800ee289d114b621c204"
+  },
+  "fast_gate": {
+    "passed": true,
+    "seconds": 34.28,
+    "command": "/path/to/JR-Bar/.venv/bin/python scripts/verify_fast.py",
+    "log": "/tmp/jrbar-l4b-resume-fast-final.log",
+    "log_sha256": "dd0cac6e8098be25b8268bd178d2c8a0f3fd74b78333a5f8c81bbcbf00990c71"
+  },
+  "commits": [
+    {
+      "commit": "9921659108046a6b67b7370161ef09f06ec57f19",
+      "subject": "processes: preserve provider launch paths across symlinks"
+    },
+    {
+      "commit": "53cada7b65c5297409cd827a335c58f385cf7832",
+      "subject": "core: reject state deltas with a missing baseline"
+    },
+    {
+      "commit": "7108a7a168bf9636b6dfea669f994ba54800af21",
+      "subject": "processes: size launch identity reads before decoding"
+    },
+    {
+      "commit": "fffe47347a3309ace7bf0b6e6c91b85bf56517a0",
+      "subject": "core: retain native environment fallback for older apps"
+    },
+    {
+      "commit": "abac405d0ec230d590f36ac74a7f843b061461bc",
+      "subject": "performance: capture allocations at the sampled RSS peak"
+    },
+    {
+      "commit": "11da0b81b8511161f58ac7f914bb7df385f871d1",
+      "subject": "performance: reject probes that did not admit the workload"
+    },
+    {
+      "commit": "ec6c709df71b643be29bd9ca3dd251977408fcf6",
+      "subject": "docs: credit Darwin process launch identity sources"
+    },
+    {
+      "commit": "888aeeef5ab93086aaa9e88e3bad8a20584b5eba",
+      "subject": "tests: compare process readers and prove native sleep wake edges"
+    },
+    {
+      "commit": "ba95079e96e8b50ba03c2318d0daa517ace62785",
+      "subject": "core: declare the native environment fallback default"
+    },
+    {
+      "commit": "70c3883751094c3fa1c2fc821bae3c576172da09",
+      "subject": "tests: prove state baseline recovery over the socket"
+    }
+  ]
+}

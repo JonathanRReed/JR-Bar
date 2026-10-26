@@ -1,0 +1,91 @@
+{
+  "duration_seconds": 600.0,
+  "sessions": 3,
+  "tracing": false,
+  "cpu_percent": 0.8868211666666665,
+  "cpu_seconds": 5.320926999999999,
+  "rss_mean_mb": 96.09961273666093,
+  "rss_max_mb": 113.5,
+  "heap_max_mb": null,
+  "peak_allocations": null,
+  "messages_per_minute": {
+    "state_delta": 20.5,
+    "log": 11.3,
+    "event": 9.0,
+    "lights": 20.6
+  },
+  "bytes_per_minute": {
+    "state_delta": 30694.7,
+    "log": 1823.9,
+    "event": 2167.2,
+    "lights": 50684.2
+  },
+  "loop_max_ms": 3.9902919670566916,
+  "loop_samples": 581,
+  "loop_over_250ms": 0,
+  "framework_modules": [],
+  "hook_admissions": {
+    "HookIngressDisposition.ACCEPTED": 372
+  },
+  "max_visible_sessions": 3,
+  "errors": [],
+  "source_sha256": "1327d6da076342526a9ca730f2c93807f15ef0ac8be7044f855c03737b1bf239",
+  "spawn_counts": {
+    "touch": 10
+  },
+  "framework_images": [
+    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+  ],
+  "blocked_probe_attempts": {
+    "ioreg": 116,
+    "caffeinate": 291
+  },
+  "startup_ready_seconds": 1.0980907920165919,
+  "performance": {
+    "metrics": {
+      "hardware_render": {
+        "count": 302,
+        "p50_ms": 0.587,
+        "p95_ms": 7.588,
+        "max_ms": 13.879,
+        "outcomes": {
+          "ok": 302
+        }
+      },
+      "refresh": {
+        "count": 306,
+        "p50_ms": 2.035,
+        "p95_ms": 22.554,
+        "max_ms": 38.983,
+        "outcomes": {
+          "ok": 306
+        }
+      },
+      "refresh_skipped": {
+        "count": 38,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "max_ms": 0.0,
+        "outcomes": {
+          "noop": 38
+        }
+      }
+    },
+    "cpu": {
+      "user_s": 5.088,
+      "system_s": 1.79,
+      "percent_since_last": null
+    },
+    "frames": {
+      "state_generation": 308,
+      "lights_generation": 219,
+      "state_per_minute": 21,
+      "lights_per_minute": 22
+    }
+  },
+  "cpu_census": null,
+  "cpu_threads": null,
+  "source_commit": "70c3883751094c3fa1c2fc821bae3c576172da09",
+  "workload_valid": true,
+  "probe_sha256": "8edc12e277aa49de5187ef12bc849fedb797e346115ffc34cbae6ff4d12f27c6"
+}
