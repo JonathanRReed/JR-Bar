@@ -12,7 +12,8 @@ enum ShelfKeyboardInput {
         code == 49 ? .other : NotchAskFocus.key(forKeyCode: code, shift: shift)
     }
 
-    static func handle(_ key: NotchAskFocus.Key, tray: ShelfTrayModel, pasteboard: NSPasteboard? = nil) {
+    @discardableResult
+    static func handle(_ key: NotchAskFocus.Key, tray: ShelfTrayModel, pasteboard: NSPasteboard? = nil) -> Task<Void, Never>? {
         switch key {
         case .left: tray.moveKeyboardSelection(column: -1, row: 0)
         case .right: tray.moveKeyboardSelection(column: 1, row: 0)
@@ -22,13 +23,14 @@ enum ShelfKeyboardInput {
         case .tab: tray.moveKeyboardSelection(by: 1)
         case .activate:
             if tray.keyboardSelectionID == ShelfTrayModel.pasteKeyboardID {
-                guard tray.pasteOffered else { tray.beginKeyboardSelection(); return }
+                guard tray.pasteOffered else { tray.beginKeyboardSelection(); return nil }
                 tray.paste(from: pasteboard ?? .general)
             } else {
-                _ = tray.openKeyboardSelection()
+                return Task { _ = await tray.openKeyboardSelection() }
             }
         case .escape, .space, .other: break
         }
+        return nil
     }
 }
 

@@ -7,7 +7,7 @@ import Testing
 @Suite("Shelf keyboard selection")
 struct ShelfKeyboardSelectionTests {
     @Test("Clear retires the keyboard cursor and Undo restores the same selected tile")
-    func clearUndoRestoresKeyboardCursor() throws {
+    func clearUndoRestoresKeyboardCursor() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "one")
@@ -26,7 +26,7 @@ struct ShelfKeyboardSelectionTests {
         #expect(f.tray.keyboardSelectionID == second.path)
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(opened == [second])
         f.tray.removeAll()
         f.tray.clearSelection()
@@ -86,7 +86,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("Return can paste from an empty Shelf without opening a file")
-    func keyboardPaste() throws {
+    func keyboardPaste() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let copied = try f.file("copied.txt", folder: "copied")
@@ -103,7 +103,7 @@ struct ShelfKeyboardSelectionTests {
         #expect(!f.tray.pasteOffered)
         #expect(f.tray.keyboardSelectionID == copied.path)
         #expect(opened.isEmpty)
-        ShelfKeyboardInput.handle(.activate, tray: f.tray, pasteboard: board)
+        await ShelfKeyboardInput.handle(.activate, tray: f.tray, pasteboard: board)?.value
         #expect(opened == [copied])
     }
 
@@ -122,7 +122,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("dissolving a selected stack keeps its files selected and usable from the keyboard")
-    func dissolveKeepsSelection() throws {
+    func dissolveKeepsSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "stack")
@@ -135,14 +135,14 @@ struct ShelfKeyboardSelectionTests {
         #expect(f.tray.keyboardSelectionID == first.path)
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(opened == [first, second])
         f.tray.extendSelection(to: f.tray.entries[2])
         #expect(f.tray.selectedIDs == Set(f.tray.entries.map(\.id)))
     }
 
     @Test("merging either selected neighbor transfers selection to the new stack")
-    func mergeKeepsSelection() throws {
+    func mergeKeepsSelection() async throws {
         for pickSecond in [false, true] {
             let f = try Fixture()
             defer { f.clean() }
@@ -159,7 +159,7 @@ struct ShelfKeyboardSelectionTests {
             #expect(f.tray.keyboardSelectionID == id)
             var opened: [URL] = []
             f.tray.openURL = { opened.append($0); return true }
-            #expect(f.tray.openKeyboardSelection() == nil)
+            #expect(await f.tray.openKeyboardSelection() == nil)
             #expect(opened == [first, second])
             f.tray.extendSelection(to: f.tray.entries[1])
             #expect(f.tray.selectedIDs == Set(f.tray.entries.map(\.id)))
@@ -167,7 +167,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("a stack thinned to one file keeps that file selected")
-    func removingStackMemberKeepsSelection() throws {
+    func removingStackMemberKeepsSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "stack")
@@ -180,7 +180,7 @@ struct ShelfKeyboardSelectionTests {
         #expect(f.tray.keyboardSelectionID == second.path)
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(opened == [second])
     }
 
@@ -254,7 +254,7 @@ struct ShelfKeyboardSelectionTests {
     }
 
     @Test("Return uses the injected opener and reports a refused open")
-    func selectedOpenAndRefusal() throws {
+    func selectedOpenAndRefusal() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let file = try f.file("file.txt", folder: "one")
@@ -262,10 +262,10 @@ struct ShelfKeyboardSelectionTests {
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
         f.tray.beginKeyboardSelection()
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(opened == [file])
         f.tray.openURL = { _ in false }
-        #expect(f.tray.openKeyboardSelection() == "Some selected files could not be opened.")
+        #expect(await f.tray.openKeyboardSelection() == "Some selected files could not be opened.")
         #expect(f.tray.actionNotice == "Some selected files could not be opened.")
     }
 
@@ -287,7 +287,7 @@ struct ShelfKeyboardSelectionTests {
         let expected = refused
             ? "Some selected files moved, were deleted, or could not be opened."
             : "Some selected files moved or were deleted."
-        #expect(f.tray.openKeyboardSelection() == expected)
+        #expect(await f.tray.openKeyboardSelection() == expected)
         #expect(f.tray.actionNotice == expected)
         #expect(opened == [present])
     }
@@ -305,13 +305,13 @@ struct ShelfKeyboardSelectionTests {
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: first)
         await f.tray.refreshMetadata()
-        #expect(f.tray.openKeyboardSelection() == "The selected files moved or were deleted.")
+        #expect(await f.tray.openKeyboardSelection() == "The selected files moved or were deleted.")
         #expect(f.tray.actionNotice == "The selected files moved or were deleted.")
         #expect(opened.isEmpty)
         f.tray.remove(f.tray.entries[0])
         f.tray.beginKeyboardSelection()
         #expect(f.tray.selectedIDs == [f.tray.entries[0].id])
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(f.tray.actionNotice == nil)
         #expect(opened == [second])
     }
@@ -329,25 +329,25 @@ struct ShelfKeyboardSelectionTests {
         f.tray.beginKeyboardSelection()
         try FileManager.default.removeItem(at: first)
         await f.tray.refreshMetadata()
-        #expect(f.tray.openKeyboardSelection() == "Some selected files moved or were deleted.")
+        #expect(await f.tray.openKeyboardSelection() == "Some selected files moved or were deleted.")
         #expect(f.tray.actionNotice == "Some selected files moved or were deleted.")
         #expect(opened == [second])
     }
 
     @Test("an empty or disabled Shelf refuses without opening files")
-    func emptyAndDisabled() throws {
+    func emptyAndDisabled() async throws {
         let f = try Fixture()
         defer { f.clean() }
         f.tray.openURL = { _ in Issue.record("unexpected open"); return false }
         f.tray.beginKeyboardSelection()
         #expect(f.tray.selectedIDs.isEmpty)
-        #expect(f.tray.openKeyboardSelection() == "The Shelf has no files to open.")
+        #expect(await f.tray.openKeyboardSelection() == "The Shelf has no files to open.")
         f.tray.shelfEnabled = { false }
-        #expect(f.tray.openKeyboardSelection() == "The Shelf is turned off.")
+        #expect(await f.tray.openKeyboardSelection() == "The Shelf is turned off.")
     }
 
     @Test("removing the selected entry before Return never opens a different file")
-    func removalBeforeReturnDoesNotChooseAnotherFile() throws {
+    func removalBeforeReturnDoesNotChooseAnotherFile() async throws {
         let f = try Fixture()
         defer { f.clean() }
         f.tray.add([try f.file("selected.txt", folder: "one")])
@@ -356,14 +356,14 @@ struct ShelfKeyboardSelectionTests {
         f.tray.openURL = { opened.append($0); return true }
         f.tray.beginKeyboardSelection()
         f.tray.remove(f.tray.entries[0])
-        #expect(f.tray.openKeyboardSelection() == "No Shelf files are selected.")
+        #expect(await f.tray.openKeyboardSelection() == "No Shelf files are selected.")
         #expect(f.tray.actionNotice == "No Shelf files are selected.")
         #expect(opened.isEmpty)
         #expect(f.tray.selectedIDs.isEmpty)
     }
 
     @Test("a file moved through Shelf keeps keyboard selection and the shift-selection anchor")
-    func ownMoveKeepsSelection() throws {
+    func ownMoveKeepsSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("selected.txt", folder: "one")
@@ -380,14 +380,14 @@ struct ShelfKeyboardSelectionTests {
         #expect(f.tray.keyboardSelectionID == destination.path)
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(opened == [destination])
         f.tray.extendSelection(to: f.tray.entries[2])
         #expect(f.tray.selectedIDs == Set(f.tray.entries.map(\.id)))
     }
 
     @Test("moving one stack member keeps the stack's selection identity")
-    func ownStackMoveKeepsSelection() throws {
+    func ownStackMoveKeepsSelection() async throws {
         let f = try Fixture()
         defer { f.clean() }
         let first = try f.file("first.txt", folder: "stack")
@@ -403,7 +403,7 @@ struct ShelfKeyboardSelectionTests {
         #expect(f.tray.selectedIDs == [id] && f.tray.keyboardSelectionID == id)
         var opened: [URL] = []
         f.tray.openURL = { opened.append($0); return true }
-        #expect(f.tray.openKeyboardSelection() == nil)
+        #expect(await f.tray.openKeyboardSelection() == nil)
         #expect(Set(opened) == Set([destination, second]))
     }
 }

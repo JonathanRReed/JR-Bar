@@ -69,16 +69,18 @@ struct ShelfThumbnailOrderTests {
         #expect(f.replies.count == 2)
     }
 
-    @Test("a failed thumbnail keeps its generic icon without a retry loop")
-    func failureKeepsGenericIcon() async throws {
+    @Test("a failed thumbnail keeps its completed file icon without a retry loop")
+    func failureKeepsCompletedIcon() async throws {
         let f = try Fixture()
         defer { f.clean() }
-        f.tray.add([try f.file("file.txt")])
+        let url = try f.file("file.txt")
+        f.tray.add([url])
         let entry = f.tray.entries[0].items[0]
         await f.tray.refreshMetadata()
-        let generic = f.tray.icon(for: entry)
+        _ = await f.tray.fileMetadata.resolveIcon(url)
+        let completed = f.tray.icon(for: entry)
         f.replies[0](nil)
-        #expect(f.tray.icon(for: entry) === generic)
+        #expect(f.tray.icon(for: entry) === completed)
         #expect(f.replies.count == 1)
     }
 

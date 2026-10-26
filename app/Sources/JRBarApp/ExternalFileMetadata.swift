@@ -8,11 +8,16 @@ import UniformTypeIdentifiers
 struct ExternalFilePolicy: Sendable {
     let home: String
     var shelfPaths: Set<String> = []
+    var dockFolders: Set<String> = []
 
     func allows(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
         let path = url.standardizedFileURL.path
         if shelfPaths.contains(path) { return true }
+        // A configured Dock folder authorizes its listing and immediate entries.
+        if dockFolders.contains(path) || dockFolders.contains(URL(fileURLWithPath: path).deletingLastPathComponent().path) {
+            return !path.hasPrefix("/Volumes/") && !path.hasPrefix("/Network/")
+        }
         let protected = ["Desktop", "Documents", "Downloads", "Library/Mobile Documents", "Library/CloudStorage",
                          "Pictures", "Movies", "Music", ".Trash"]
         if (path == home + "/Library" || path.hasPrefix(home + "/Library/")),
@@ -40,7 +45,9 @@ struct ExternalFilePolicy: Sendable {
         var local = true
     }
 
-    func available(_ url: URL, inspect: (String) -> Facts? = ExternalFilePolicy.inspectLocal) -> Bool {
+    func available(_ url: URL) -> Bool { resolvedURL(url) != nil }
+
+    func available(_ url: URL, inspect: (String) -> Facts?) -> Bool {
         guard allows(url) else { return false }
         var path = ""
         for part in Self.localURL(url).pathComponents.dropFirst() {
@@ -48,6 +55,37 @@ struct ExternalFilePolicy: Sendable {
             guard let facts = inspect(path), !facts.symbolicLink, !facts.dataless, facts.local else { return false }
         }
         return true
+    }
+
+    /// Only an explicitly held reference may follow links. Check each link's
+    /// destination against policy before inspecting any destination component.
+    func resolvedURL(_ url: URL) -> URL? {
+        guard allows(url) else { return nil }
+        let explicit = shelfPaths.contains(url.standardizedFileURL.path)
+        var candidate = Self.localURL(url)
+        for _ in 0..<16 {
+            var path = ""
+            let parts = candidate.pathComponents.dropFirst()
+            var redirected = false
+            for (index, part) in parts.enumerated() {
+                path += "/" + part
+                guard let facts = Self.inspectLocal(path), !facts.dataless, facts.local else { return nil }
+                if facts.symbolicLink {
+                    guard explicit,
+                          let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { return nil }
+                    let parent = URL(fileURLWithPath: path).deletingLastPathComponent()
+                    var destination = target.hasPrefix("/") ? URL(fileURLWithPath: target) : parent.appendingPathComponent(target)
+                    for suffix in parts.dropFirst(index + 1) { destination.appendPathComponent(suffix) }
+                    destination = destination.standardizedFileURL
+                    guard allows(destination) else { return nil }
+                    candidate = Self.localURL(destination)
+                    redirected = true
+                    break
+                }
+            }
+            if !redirected { return candidate }
+        }
+        return nil
     }
 
     private static func inspectLocal(_ path: String) -> Facts? {
@@ -81,16 +119,22 @@ final class ExternalFileMetadata {
     @ObservationIgnored private var shelfGrants: [String: UUID] = [:]
     @ObservationIgnored private let home: String
     @ObservationIgnored private let reader: @Sendable (Request) -> ExternalFileSnapshot?
+    @ObservationIgnored private let iconReader: @Sendable (Request) -> ExternalFileSnapshot?
 
-    init(home: String = NSHomeDirectory(), reader: @escaping @Sendable (Request) -> ExternalFileSnapshot? = ExternalFileMetadata.read) {
+    init(home: String = NSHomeDirectory(),
+         reader: @escaping @Sendable (Request) -> ExternalFileSnapshot? = ExternalFileMetadata.read,
+         iconReader: @escaping @Sendable (Request) -> ExternalFileSnapshot? = ExternalFileMetadata.readIcon) {
         self.home = home
         self.reader = reader
+        self.iconReader = iconReader
     }
     @ObservationIgnored private lazy var cache = BackgroundLookupCache<Request, ExternalFileSnapshot>(
         changed: { [weak self] in Task { @MainActor in self?.version &+= 1 } },
         load: reader)
     @ObservationIgnored private lazy var icons = BackgroundLookupCache<Request, ExternalFileSnapshot>(
-        changed: { [weak self] in Task { @MainActor in self?.version &+= 1 } }, load: Self.readIcon)
+        changed: { [weak self] in Task { @MainActor in self?.version &+= 1 } }, load: iconReader)
+    @ObservationIgnored private lazy var validations = BackgroundLookupCache<Request, ExternalFileSnapshot>(
+        capacity: 64, load: reader)
     @ObservationIgnored private let attachments = BackgroundLookupCache<Request, ExternalFileSnapshot>(
         limit: 1, capacity: 2, load: ExternalFileMetadata.readAttachment)
 
@@ -99,6 +143,7 @@ final class ExternalFileMetadata {
         let shelf: Bool
         var grant: UUID? = nil
         var iconPID: pid_t? = nil
+        var validation: UUID? = nil
     }
 
     func setShelfPaths(_ paths: Set<String>) {
@@ -122,6 +167,17 @@ final class ExternalFileMetadata {
         let normalized = url.standardizedFileURL
         guard ExternalFilePolicy(home: home, shelfPaths: shelfPaths).allows(normalized) else { return ExternalFileSnapshot() }
         return await cache.resolve(request(normalized))
+    }
+
+    /// Each action gets a new read, including when a preview is already cached.
+    func validate(_ url: URL) async -> ExternalFileSnapshot? {
+        let normalized = url.standardizedFileURL
+        guard ExternalFilePolicy(home: home, shelfPaths: shelfPaths).allows(normalized) else { return nil }
+        var lookup = request(normalized)
+        lookup.validation = UUID()
+        let result = await validations.resolve(lookup)
+        guard request(normalized).grant == lookup.grant else { return nil }
+        return result
     }
 
     func snapshot(_ url: URL) -> ExternalFileSnapshot? {
@@ -162,7 +218,11 @@ final class ExternalFileMetadata {
     func attachment(_ url: URL) async -> NSImage? {
         let normalized = url.standardizedFileURL
         guard ExternalFilePolicy(home: home, shelfPaths: shelfPaths).allows(normalized) else { return nil }
-        return await attachments.resolve(request(normalized))?.image
+        var lookup = request(normalized)
+        lookup.validation = UUID()
+        let result = await attachments.resolve(lookup)?.image
+        guard request(normalized).grant == lookup.grant else { return nil }
+        return result
     }
 
     func bundleID(_ url: URL) -> String? {
@@ -174,9 +234,8 @@ final class ExternalFileMetadata {
 
     nonisolated static func read(_ request: Request) -> ExternalFileSnapshot? {
         let original = request.url
-        let url = ExternalFilePolicy.localURL(original)
         let policy = ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: request.shelf ? [original.path] : [])
-        guard policy.available(original) else { return ExternalFileSnapshot() }
+        guard let url = policy.resolvedURL(original) else { return ExternalFileSnapshot() }
         var info = stat()
         guard lstat(url.path, &info) == 0 else { return ExternalFileSnapshot() }
         var result = ExternalFileSnapshot(available: true, directory: info.st_mode & S_IFMT == S_IFDIR,
@@ -187,9 +246,9 @@ final class ExternalFileMetadata {
 
     nonisolated private static func readIcon(_ request: Request) -> ExternalFileSnapshot? {
         let policy = ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: request.shelf ? [request.url.path] : [])
-        guard policy.available(request.url) else { return nil }
+        guard let url = policy.resolvedURL(request.url) else { return nil }
         let running = request.iconPID.flatMap { NSRunningApplication(processIdentifier: $0)?.icon }
-        let source = running ?? declaredIcon(request.url) ?? NSWorkspace.shared.icon(forFile: request.url.path)
+        let source = running ?? declaredIcon(url) ?? NSWorkspace.shared.icon(forFile: url.path)
         return ExternalFileSnapshot(icon: decoded(source))
     }
 
@@ -204,14 +263,35 @@ final class ExternalFileMetadata {
 
     nonisolated private static func readAttachment(_ request: Request) -> ExternalFileSnapshot? {
         let policy = ExternalFilePolicy(home: NSHomeDirectory(), shelfPaths: request.shelf ? [request.url.path] : [])
-        guard policy.available(request.url) else { return nil }
-        var info = stat()
-        let url = ExternalFilePolicy.localURL(request.url)
-        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-              info.st_size <= ShelfTrayModel.attachCopyBound,
-              let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
-              let image = NSImage(contentsOf: url) else { return nil }
+        guard let url = policy.resolvedURL(request.url),
+              let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) else { return nil }
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var before = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
+              before.st_flags & UInt32(SF_DATALESS) == 0,
+              before.st_size >= 0, before.st_size <= ShelfTrayModel.attachCopyBound else { return nil }
+        var bytes = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while bytes.count <= ShelfTrayModel.attachCopyBound {
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            if count == 0 { break }
+            guard count > 0 else { return nil }
+            bytes.append(contentsOf: buffer.prefix(count))
+        }
+        var after = stat(), current = stat()
+        guard bytes.count <= ShelfTrayModel.attachCopyBound,
+              fstat(fd, &after) == 0, lstat(url.path, &current) == 0,
+              sameIdentity(before, after), sameIdentity(after, current),
+              let image = NSImage(data: bytes) else { return nil }
         return ExternalFileSnapshot(image: decoded(image))
+    }
+
+    nonisolated private static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
+        lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino && lhs.st_size == rhs.st_size
+            && lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec
+            && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
     }
 
     nonisolated static func decoded(_ image: NSImage) -> NSImage? {

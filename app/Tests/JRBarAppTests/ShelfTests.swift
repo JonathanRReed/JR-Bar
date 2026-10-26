@@ -166,7 +166,7 @@ import JRBarCore
         tray.add([gone])
         await tray.refreshMetadata()
         let entry = tray.entries.first!
-        #expect(tray.presentURLs(of: [entry]).isEmpty, "nothing to drag, share or reveal")
+        #expect(await tray.presentURLs(of: [entry]).isEmpty, "nothing to drag, share or reveal")
         #expect(!tray.canAttachCopy(entry))
     }
 
