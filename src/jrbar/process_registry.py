@@ -24,6 +24,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -248,6 +249,13 @@ def _tty_path(raw: str) -> str | None:
 
 
 def _list_processes_uncached(runner) -> dict[int, ProcessEntry]:
+    if runner is subprocess.run and sys.platform == "darwin":
+        from .process_table import read_process_table
+
+        try:
+            return read_process_table()
+        except OSError:
+            return {}
     # comm= is the executable path (no arguments), placed last so that a
     # path with spaces ("Application Support") stays intact. tty= is "??"
     # for a process without a terminal, so the column is never empty.
@@ -366,6 +374,14 @@ class ProcessTableRefresher:
 
 
 def process_start_epoch(pid: int, runner=subprocess.run) -> float | None:
+    if runner is subprocess.run and sys.platform == "darwin":
+        from .process_table import identity
+
+        try:
+            info = identity(pid)
+        except OSError:
+            return None
+        return info.start_sec + info.start_usec / 1_000_000 if info is not None else None
     try:
         completed = runner(
             ["/bin/ps", "-p", str(pid), "-o", "lstart="],
