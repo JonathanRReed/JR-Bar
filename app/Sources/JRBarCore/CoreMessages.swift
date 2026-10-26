@@ -2424,6 +2424,8 @@ public struct CoreDeviceReceipt: Codable, Hashable, Sendable {
 }
 
 public struct CoreLights: Codable, Hashable, Sendable {
+    public var generation: Int? = nil
+    public var deviceWriteHealth: [String: CoreWriteHealth] = [:]
     public var surfaces: [String: CoreLightSurface]
     public var linked: Bool?
     /// Additive (protocol 1, schema 3): the `devices_linked` setting in
@@ -2453,6 +2455,8 @@ public struct CoreLights: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case surfaces, linked
+        case generation
+        case deviceWriteHealth = "device_write_health"
         case devicesLinked = "devices_linked"
         case linkedSkewMs = "linked_skew_ms"
         case linkedSkewAt = "linked_skew_at"
@@ -2463,6 +2467,8 @@ public struct CoreLights: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        generation = try? c.decodeIfPresent(Int.self, forKey: .generation)
+        deviceWriteHealth = (try? c.decodeIfPresent([String: CoreWriteHealth].self, forKey: .deviceWriteHealth)) ?? [:]
         let rawSurfaces = try c.decodeIfPresent([String: JSONValue].self, forKey: .surfaces) ?? [:]
         surfaces = rawSurfaces.compactMapValues {
             try? ReplyDecoding.decode(CoreLightSurface.self, from: $0)
@@ -2761,6 +2767,7 @@ public struct CoreCommand: Codable, Hashable, Sendable {
 public enum CoreMessage: Hashable, Sendable {
     case hello(CoreHello)
     case state(CoreState)
+    case stateDelta(CoreStateDelta)
     case lights(CoreLights)
     case event(CoreEvent)
     case settings(CoreSettings)

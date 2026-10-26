@@ -99,6 +99,7 @@ DEFAULT_CAPABILITIES: Final = (
     "deck",
     "roster",
     "event_replay",
+    "state_slices",
     "environment",
 )
 _COALESCED_KINDS: Final = ("state", "lights", "settings")
@@ -276,6 +277,10 @@ class _Client:
         # Set for the life of the connection by a valid ``auth`` proof; only
         # then does the daemon take privileged commands from it.
         self.authenticated = False
+        self.state_slices = False
+        from .core_state_slices import StateSlices
+
+        self._state_slices = StateSlices()
         # The pid on the other end (log lines only) and the one nonce this
         # connection was offered in ``hello``; ``take_nonce`` spends it.
         self.peer_pid: int | None = None
@@ -342,6 +347,18 @@ class _Client:
         with self.write_lock:
             if not self.alive:
                 return False
+            if frame.startswith(b'{"t":"state",'):
+                document = json.loads(frame)
+                previous = self._state_slices.previous
+                generation = document.get("generation")
+                prior = previous.get("generation") if previous is not None else None
+                if type(generation) is int and type(prior) is int and generation > 0 and generation < prior:
+                    return True  # a held pre-greeting frame cannot regress it
+                delta = self._state_slices.delta(document)
+                if self.state_slices and previous is not None:
+                    outgoing = encode_frame(delta)
+                    if len(outgoing) <= MAX_FRAME_BYTES:
+                        frame = outgoing
             try:
                 self.connection.sendall(frame)
             except (TimeoutError, BlockingIOError):
@@ -863,7 +880,10 @@ class CoreServer:
         with self._lock:
             clients = list(self._clients)
         self.stats["frames_out"] += 1
-        dead = [client for client in clients if not client.deliver(frame)]
+        dead = []
+        for client in clients:
+            if not client.deliver(frame):
+                dead.append(client)
         if dead:
             self._drop_clients(dead)
 
@@ -1060,6 +1080,14 @@ class CoreServer:
             self._send_reply(client, self._reply(command_id, ok=False, code="bad_command", message="missing name"))
             return
         self.stats["commands"] += 1
+        if name == "subscribe" and "state_slices" in args:
+            if type(args["state_slices"]) is not bool:
+                self._send_reply(client, self._reply(command_id, ok=False, code="invalid_args", message="state_slices must be boolean"))
+                return
+            client.state_slices = args["state_slices"]
+            self._send_reply(client, {"t": "reply", "v": PROTOCOL_VERSION, "id": command_id,
+                                      "ok": True, "result": {"state_slices": client.state_slices}})
+            return
         if name == AUTH_COMMAND:
             self._handle_auth(client, command_id, args)
             return

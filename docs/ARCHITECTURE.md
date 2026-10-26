@@ -28,18 +28,20 @@ daemon boundary, the hook path or packaging. The wire contract itself is
   app. It spawns `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core`
   as a supervised child (`CoreSupervisor`: restart with backoff, "Core
   crashed" after 10 exits in 2 minutes, SIGTERM then SIGKILL on quit),
-  connects to `core.sock`, replaces its model wholesale on every `state`
-  frame, and sends `command` frames for everything the user does. It never
+  connects to `core.sock`, takes a full initial state, subscribes to changed
+  slices, and sends `command` frames for everything the user does. Slice
+  generations keep unrelated observations asleep. It never
   computes a fact it could ask the daemon for; the few things it owns
   locally are listed at the end of this file.
 - **jrbar-core** (`src/jrbar`, frozen by PyInstaller into the nested
-  helper bundle) is the pre-0.8 controller run without a UI:
+  helper bundle) runs a plain Python controller on one serial event loop:
   `python -m jrbar core` in a checkout. It listens on `core.sock` (mode
   0600, peer UID checked, 4 clients, 1 MiB frames; privileged commands only
   from the app's connection, which proves the per-launch secret the app
   handed the daemon on its stdin), refreshes on a 15 s
   timer plus every hook event, and pushes `state` / `lights` / `settings`
-  documents coalesced to 20 / 30 / 10 per second. It exits on its own when
+  documents coalesced to 20 / 30 / 10 per second. Each connection can opt
+  into changed state slices; older clients keep full states. It exits on its own when
   its supervisor is gone (`JRBAR_SUPERVISED=1`), and on any exit writes
   `off` to every mounted strip so a quit never leaves a loop running.
 - **jrbar-hook** (`hook/jrbar-hook.c`) is what every provider config
@@ -52,6 +54,13 @@ daemon boundary, the hook path or packaging. The wire contract itself is
   Deny) and the opt-in `--statusline --then` wrapper (3 s). Measured 6 ms
   wall per spawn on the plain path, of which the shim's own work is about
   3 ms (the old Python hook client took 88 ms).
+
+The daemon imports no AppKit or PyObjC host. Timers and worker callbacks
+run on `daemon_loop.py`. Foundation, Intents, CoreGraphics, EventKit and
+the firmware's JavaScriptCore engine use narrow C interfaces. The app
+reports workspace sleep, activation and accessibility changes over the
+authenticated socket. Settings directories use kqueue, with a 30-second
+recovery poll. Atomic replacement is observed by watching the directory.
 
 Session truth is the daemon's, built from four sources that agree or
 disagree in the open: hook events (with the hook's `ppid` and process
@@ -134,7 +143,7 @@ listed is a helper of the row it sits next to alphabetically.
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
 | Settings and persistence | `settings.py` (the model and its versioned, lossless file layer), `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
-| Retained controller (the AppKit controller class the daemon subclasses and runs headless: `core_runtime.build_headless_controller_class` calls its refresh, escalation and keep-awake methods through `objc.super`, and the daemon never creates a status item or a window) | `status_bar_legacy.py` (the class), `_status_bar_production.py` (its production subclass: refresh admission and the off-main battery, transcript, intake, ledger and webhook work), `status_bar.py` (the public name that forwards to both), `provider_usage_status_bar.py` and `deck_status_bar.py` (the provider usage and Creator Micro callbacks), `application_composition.py` (puts the layers together at startup) |
+| Daemon controller and native boundaries | `daemon_controller.py` (plain controller), `daemon_loop.py` (serial callbacks and timers), `_status_bar_production.py` (refresh admission and background reads), `status_bar.py` (the existing public facade), `provider_usage_status_bar.py` and `deck_status_bar.py` (usage and Creator Micro callbacks), `application_composition.py` (composition), `native_*.py` (bounded native API adapters), `javascript_runtime.py` (firmware engine), `core_environment.py` (workspace readings from the app) |
 | What the controller builds for the app | `usage_view.py` (the usage presentation the daemon documents share), `agent_browser.py` (the Agent Browser's rows and search), `agent_browser_payloads.py` (the two payloads the app sends back), `why_panel.py` (the words of the Why explanation), `exact_boundary_schedule.py` (the wake-up fence for a snoozed family) |
 
 The one-release `sidepulse` import shim and console alias are gone. Hook

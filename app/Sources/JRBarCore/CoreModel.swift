@@ -47,7 +47,16 @@ public final class CoreModel {
     @ObservationIgnored public var onSettingsFrame: (@MainActor (CoreSettings) -> Void)?
     public private(set) var connection: Connection = .idle
     public private(set) var hello: CoreHello?
-    public private(set) var state: CoreState?
+    // Keep the stored name used by the app's unobserved snapshot reader.
+    @ObservationIgnored private var _state: CoreState?
+    @ObservationIgnored private var sliceGenerations: [String: Int] = [:]
+    private var stateRevision: UInt64 = 0
+    /// Compatibility snapshot for readers that need several domains. New
+    /// readers observe the individual slices below.
+    public var state: CoreState? {
+        _ = stateRevision
+        return _state
+    }
     public private(set) var lights: CoreLights?
     public private(set) var settingsFrame: CoreSettingsFrame?
     /// A reconnect can deliver unchanged settings from the same daemon stream.
@@ -1223,7 +1232,9 @@ public final class CoreModel {
             authState = .unproven
             connection = .disconnected(reason: reason)
             connectedAt = nil
-            state = nil
+            _state = nil
+            sliceGenerations.removeAll()
+            stateRevision &+= 1
             stateRejected = nil
             applySlices(nil)
             lights = nil
@@ -1245,12 +1256,16 @@ public final class CoreModel {
             self.hello = hello
         case .state(let state):
             stateRejected = nil
-            self.state = state
+            _state = state
+            sliceGenerations.removeAll()
+            stateRevision &+= 1
             applySlices(state)
             hasStateForConnection = connection.isConnected
             refreshLive()
             lastStateAt = Date()
             usageSamples.record(state.usage, now: state.now ?? Date().timeIntervalSince1970)
+        case .stateDelta(let delta):
+            applyDelta(delta)
         case .lights(let lights):
             self.lights = lights
         case .settings(let settings):
@@ -1282,12 +1297,148 @@ public final class CoreModel {
             unknownMessageCount += 1
             // A `state` from another protocol version is not this app's to
             // read: the old model must not stand as current beside it.
-            if type == "state" {
+            if type == "state" || type == "state_delta" {
                 let theirs = version.map(String.init) ?? "unknown"
                 stateRejected = "its protocol version is \(theirs), this app speaks \(CoreProtocol.version)"
                 refreshLive()
             }
         }
+    }
+
+    private func applyDelta(_ delta: CoreStateDelta) {
+        guard stateRejected == nil, let current = _state,
+              delta.generation > current.generation else { return }
+        do {
+            // Decode the complete batch before changing any observed field.
+            let decoded = try delta.slices.compactMap { key, slice -> (String, Int, CoreState)? in
+                guard slice.generation > 0 else { throw CoreCodecError.malformed("invalid slice generation") }
+                guard slice.generation > sliceGenerations[key, default: 0] else { return nil }
+                let value: CoreState
+                if key == "sessions", slice.changes != nil {
+                    value = CoreState(sessions: try changedSessions(slice))
+                } else {
+                    let raw = try slice.patch.map { try patchedSlice(key, edits: $0) } ?? slice.value
+                    value = try ReplyDecoding.decode(CoreState.self, from: .object([key: raw]))
+                }
+                return (key, slice.generation, value)
+            }
+            var usageChanged = false
+            for (key, generation, value) in decoded {
+                switch key {
+                case "sessions":
+                    if allSessions != value.sessions {
+                        sessionRevision &+= 1
+                        allSessions = value.sessions
+                        assign(\.sessions, value.mainSessions)
+                    }
+                    _state?.sessions = value.sessions
+                case "aggregate":
+                    _state?.aggregate = value.aggregate
+                    assign(\.aggregate, value.aggregate)
+                case "asks": updateSlice(\.asks, \.asks, value.asks)
+                case "devices": updateSlice(\.devices, \.devices, value.devices)
+                case "usage":
+                    _state?.usage = value.usage
+                    assign(\.usage, value.usage?.providers ?? [])
+                    usageChanged = true
+                case "power": updateSlice(\.power, \.power, value.power)
+                case "focus": updateSlice(\.focus, \.focus, value.focus)
+                case "escalation": updateSlice(\.escalation, \.escalation, value.escalation)
+                case "health": updateSlice(\.health, \.health, value.health)
+                case "deck": updateSlice(\.deck, \.deck, value.deck)
+                case "presence": updateSlice(\.presence, \.presence, value.presence)
+                case "firmware": updateSlice(\.firmware, \.firmware, value.firmware)
+                case "hidden_count": updateSlice(\.hiddenCount, \.hiddenCount, value.hiddenCount)
+                case "catalog_generation": updateSlice(\.catalogGeneration, \.catalogGeneration, value.catalogGeneration)
+                case "settings_generation": updateSlice(\.settingsGeneration, \.stateSettingsGeneration, value.settingsGeneration)
+                case "unseen_completions": updateSlice(\.unseenCompletions, \.unseenCompletions, value.unseenCompletions)
+                case "provider_updates": updateSlice(\.providerUpdates, \.providerUpdates, value.providerUpdates)
+                case "peers": _state?.peers = value.peers
+                case "agent_groups": _state?.agentGroups = value.agentGroups
+                default: continue
+                }
+                sliceGenerations[key] = generation
+            }
+            _state?.generation = delta.generation
+            _state?.now = delta.now
+            stateRevision &+= 1
+            lastStateAt = Date()
+            if usageChanged { usageSamples.record(_state?.usage, now: delta.now ?? Date().timeIntervalSince1970) }
+        } catch {
+            stateRejected = "invalid state delta: \(error)"
+            refreshLive()
+            if client != nil {
+                stop()
+                start()
+            }
+        }
+    }
+
+    private func updateSlice<Value: Equatable>(_ document: WritableKeyPath<CoreState, Value>,
+                                               _ observed: ReferenceWritableKeyPath<CoreModel, Value>, _ value: Value) {
+        _state?[keyPath: document] = value
+        assign(observed, value)
+    }
+
+    private func changedSessions(_ slice: CoreStateDelta.Slice) throws -> [CoreSession] {
+        var rows = allSessions.reduce(into: [String: CoreSession]()) { $0[$1.id] = $1 }
+        for id in slice.removed ?? [] { rows[id] = nil }
+        for (id, changes) in slice.changes ?? [:] {
+            var fields: [String: JSONValue] = [:]
+            if let old = rows[id] {
+                let data = try JSONEncoder().encode(old)
+                if case .object(let encoded) = try JSONDecoder().decode(JSONValue.self, from: data) { fields = encoded }
+            }
+            fields.merge(changes) { _, newest in newest }
+            fields["id"] = .string(id)
+            rows[id] = try ReplyDecoding.decode(CoreSession.self, from: .object(fields))
+        }
+        let order = slice.order ?? []
+        guard Set(order).count == order.count, Set(order) == Set(rows.keys) else {
+            throw CoreCodecError.malformed("session order does not match its rows")
+        }
+        return order.compactMap { rows[$0] }
+    }
+
+    private func encodedSlice<Value: Encodable>(_ value: Value) throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
+    }
+
+    private func patchedSlice(_ key: String, edits: [CoreStateDelta.Edit]) throws -> JSONValue {
+        let previous: JSONValue
+        switch key {
+        case "aggregate": previous = try encodedSlice(_state?.aggregate)
+        case "usage": previous = try encodedSlice(_state?.usage)
+        case "power": previous = try encodedSlice(power)
+        case "focus": previous = try encodedSlice(focus)
+        case "escalation": previous = try encodedSlice(escalation)
+        case "health": previous = health ?? .null
+        case "deck": previous = try encodedSlice(deck)
+        case "presence": previous = try encodedSlice(presence)
+        case "firmware": previous = try encodedSlice(firmware)
+        case "provider_updates": previous = try encodedSlice(providerUpdates)
+        default: return .null
+        }
+        return try edits.reduce(previous) { value, edit in
+            guard !edit.path.isEmpty, edit.path.count <= 32 else {
+                throw CoreCodecError.malformed("invalid slice path")
+            }
+            return try editing(value, path: edit.path[...], edit: edit)
+        }
+    }
+
+    private func editing(_ value: JSONValue, path: ArraySlice<String>, edit: CoreStateDelta.Edit) throws -> JSONValue {
+        guard case .object(var fields) = value, let key = path.first else {
+            throw CoreCodecError.malformed("slice path has no object")
+        }
+        if path.count == 1 {
+            if edit.remove == true { fields[key] = nil }
+            else { fields[key] = edit.value ?? .null }
+        } else {
+            guard let child = fields[key] else { throw CoreCodecError.malformed("slice path does not exist") }
+            fields[key] = try editing(child, path: path.dropFirst(), edit: edit)
+        }
+        return .object(fields)
     }
 
     // MARK: Slices
