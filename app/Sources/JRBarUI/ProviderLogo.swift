@@ -110,7 +110,7 @@ public final class ProviderLogo: @unchecked Sendable {
 /// tile's own plate keep the raw accent.
 public enum ProviderMarkInk {
     /// Where a mark sits.
-    public enum Surface: Sendable {
+    public enum Surface: Sendable, Equatable {
         /// A tile's plate (the accent at 18 % over a dark window).
         case darkPlate
         /// A tile's plate over a light window. The same tile can sit in the
@@ -119,16 +119,22 @@ public enum ProviderMarkInk {
         case lightPlate
         /// Bare black: the Screen Bar's ears and the notch.
         case black
+        case blackPlate
+        /// Material over the approved light or dark window background.
+        case lightGlass, darkGlass
     }
 
     /// WCAG's floor for a graphic that has to be seen (1.4.11).
     public static let minimumContrast: CGFloat = 3
     /// The tile's plate: the accent at this opacity over the surface.
     public static let plateOpacity: CGFloat = 0.18
-    /// A dark window's rows and panels (`#2C2C2C`) and a light window's
-    /// background (`#ECECEC`), the plates' surfaces.
-    static let darkSurface = RGB(red: 44 / 255, green: 44 / 255, blue: 44 / 255)
-    static let lightSurface = RGB(red: 236 / 255, green: 236 / 255, blue: 236 / 255)
+    /// A dark window's rows and panels (`#232325`) and a light window's
+    /// background (`#FFFFFF`), the plates' surfaces.
+    static let darkSurface = RGB(red: 35 / 255, green: 35 / 255, blue: 37 / 255)
+    static let lightSurface = RGB.white
+
+    static let lightGlassSurface = RGB(red: 243 / 255, green: 243 / 255, blue: 245 / 255)
+    static let darkGlassSurface = RGB(red: 48 / 255, green: 48 / 255, blue: 52 / 255)
 
     struct RGB: Equatable {
         var red: CGFloat
@@ -171,6 +177,12 @@ public enum ProviderMarkInk {
         switch surface {
         case .darkPlate:
             return lifted(accent, toward: .white, against: plate(accent, over: darkSurface))
+        case .darkGlass:
+            return lifted(accent, toward: .white, against: plate(accent, over: darkGlassSurface))
+        case .lightGlass:
+            return lifted(accent, toward: .black, against: plate(accent, over: lightGlassSurface))
+        case .blackPlate:
+            return lifted(accent, toward: .white, against: plate(accent, over: .black))
         case .black:
             return lifted(accent, toward: .white, against: .black)
         case .lightPlate:

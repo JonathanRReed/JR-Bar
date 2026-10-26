@@ -28,6 +28,14 @@ public enum ProviderPalette {
                 blue: CGFloat(hex & 255) / 255, alpha: 1)
     }
 
+    public static func displayName(for provider: String) -> String {
+        let names = ["claude": "Claude", "codex": "Codex", "gemini": "Gemini", "antigravity": "Antigravity",
+                     "cursor": "Cursor", "factory": "Factory", "devin": "Devin", "opencode": "OpenCode",
+                     "kiro": "Kiro", "grok": "Grok", "openclaw": "OpenClaw", "pi": "Pi", "hermes": "Hermes",
+                     "kimi": "Kimi", "kilo": "Kilo", "openai-api": "OpenAI API", "jrbar": "JR-Bar", "t3code": "T3 Code"]
+        return names[provider.lowercased()] ?? provider.capitalized
+    }
+
     public static func logoID(for provider: String) -> String {
         switch provider.lowercased() {
         case "codex", "openai-api": "openai"
