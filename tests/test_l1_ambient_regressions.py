@@ -25,7 +25,8 @@ def test_only_named_cues_expire_after_two_seconds(monkeypatch, family):
         SemanticEffectCandidate("synthetic:ask", SemanticEventKind.ASK),)))
     output = replace(dispatch.for_surface(AmbientEffectSurface.SCREEN_BAR), family=family)
     owner = SimpleNamespace(_ambient_effect_dispatch=replace(dispatch, outputs=(output,)),
-        _ambient_effect_dispatch_started_at=10.0)
+        _ambient_effect_dispatch_started_at=10.0,
+        settings=SimpleNamespace(rainstick_idle_enabled=True, milestone_odometer_enabled=True))
     monkeypatch.setattr("jrbar.ambient_effect_runtime.time.monotonic", lambda: 13.0)
     presentation = active_ambient_presentation(owner, AmbientEffectSurface.SCREEN_BAR,
         reduce_motion=False, brightness=255)
