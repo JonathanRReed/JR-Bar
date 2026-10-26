@@ -121,8 +121,8 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
 
     def hold_publication(*args, **kwargs):
         real_link(*args, **kwargs)
-        linked.set()
         if during_publication:
+            linked.set()
             assert refused.wait(timeout=30.0)
 
     def publish_before_read(*args, **kwargs):
@@ -131,6 +131,7 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
             assert linked.wait(timeout=30.0)
         try:
             result = publish(*args, **kwargs)
+            linked.set()
             outcomes.append("created")
             return result
         except OSError as error:
