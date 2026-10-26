@@ -61,44 +61,6 @@ struct Hairline: View {
     }
 }
 
-struct SectionLabel: View {
-    let text: String
-    var trailing: String? = nil
-    /// An optional "Details ›" affordance on the right (the Usage Center).
-    var detailTitle: String? = nil
-    var onDetail: (() -> Void)? = nil
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(text)
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(.secondary)
-                .tracking(0.2)
-                .lineLimit(1)
-            Spacer()
-            if let trailing {
-                Text(trailing).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
-            }
-            if let detailTitle, let onDetail {
-                Button(action: onDetail) {
-                    HStack(spacing: 2) {
-                        Text(detailTitle)
-                        Image(systemName: "chevron.right").font(JRBarTokens.TypeStyle.caption.font)
-                    }
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("\(detailTitle) (⌘U)")
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 4)
-        .frame(height: CGFloat(PanelLayout.sectionLabelHeight), alignment: .bottom)
-    }
-}
-
 /// A provider tile using the shared component.
 struct ProviderTile: View {
     let style: ProviderStyle
@@ -301,28 +263,6 @@ struct PanelRowStyle: ButtonStyle {
         if selected { return 0.10 }
         if hovering && active { return 0.05 }
         return 0
-    }
-}
-
-/// A list cut half a row from its end fades out over the last few points,
-/// so the cut reads as "more below" rather than a torn row. A list whose
-/// cut row is tall fades over the whole half row, so no part of it is
-/// left drawn at full strength beside a part already gone.
-struct ScrollEdgeFade: ViewModifier {
-    let active: Bool
-    var depth: CGFloat = Self.fade
-    static let fade: CGFloat = 16
-
-    func body(content: Content) -> some View {
-        content.mask(
-            VStack(spacing: 0) {
-                Rectangle().fill(Color.black)
-                if active {
-                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
-                        .frame(height: depth)
-                }
-            }
-        )
     }
 }
 
@@ -1232,130 +1172,8 @@ private struct PillButtonBody: View {
     }
 }
 
-// MARK: - Usage
+// MARK: - Context
 
-struct UsageTagText: View {
-    let tag: PanelStore.UsageTag
-
-    var body: some View {
-        Text(tag.text)
-            .font(JRBarTokens.TypeStyle.caption.font)
-            .monospacedDigit()
-            .foregroundStyle(tag == .usedUp ? Color.red : Color.orange)
-            .lineLimit(1)
-    }
-}
-
-/// The last days of tokens as one smooth line over a soft fill, today a
-/// dot at its end. No axes, no labels, no numbers: it is there to say
-/// "busy Tuesday, quiet weekend" in the corner of a 50 pt row, and the
-/// Usage Center has the real graph. A day with nothing in it rests on
-/// the floor, so a quiet weekend never reads as a day not counted.
-struct UsageSparklineView: View {
-    /// Tokens per day, oldest first (`UsageSparkline.tokensPerDay`).
-    let values: [Double]
-    let accent: Color
-
-    static let width: CGFloat = 40
-    static let height: CGFloat = 12
-
-    private var normalised: [Double] { UsageSparkline.normalised(values) }
-
-    var body: some View {
-        let values = normalised
-        Canvas { context, size in
-            let points = Self.points(values, in: size)
-            guard points.count > 1, let today = points.last else { return }
-            let line = SmoothLine.path(through: points)
-            var fill = line
-            fill.addLine(to: CGPoint(x: today.x, y: size.height))
-            fill.addLine(to: CGPoint(x: points[0].x, y: size.height))
-            fill.closeSubpath()
-            context.fill(fill, with: .linearGradient(Gradient(colors: [accent.opacity(0.32), accent.opacity(0.02)]),
-                                                     startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-            context.stroke(line, with: .color(accent.opacity(0.85)),
-                           style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-            context.fill(Path(ellipseIn: CGRect(x: today.x - 1.6, y: today.y - 1.6, width: 3.2, height: 3.2)),
-                         with: .color(accent))
-        }
-        .frame(width: Self.width, height: Self.height)
-        .help(Self.summary(self.values))
-        .accessibilityLabel("Last \(values.count) days of tokens")
-        .accessibilityValue(Self.summary(self.values))
-    }
-
-    /// One point per day across the width, the line's weight and today's
-    /// dot kept inside the frame.
-    static func points(_ values: [Double], in size: CGSize) -> [CGPoint] {
-        guard values.count > 1 else { return [] }
-        let inset: CGFloat = 1.8
-        let step = (size.width - inset * 2) / CGFloat(values.count - 1)
-        return values.enumerated().map { index, value in
-            CGPoint(x: inset + CGFloat(index) * step,
-                    y: size.height - inset - (size.height - inset * 2) * CGFloat(min(1, max(0, value))))
-        }
-    }
-
-    /// "Last 7 days · 41.2M tokens · today 6.1M".
-    static func summary(_ values: [Double]) -> String {
-        let total = values.reduce(0, +)
-        let today = values.last ?? 0
-        return "Last \(values.count) days · \(UsageFormat.tokens(Int(saturating: total))) tokens · today \(UsageFormat.tokens(Int(saturating: today)))"
-    }
-}
-
-struct QuotaBar: View {
-    let window: CoreUsageWindow
-    let accent: Color
-    let reduced: Bool
-    var armed: Bool = true
-
-    /// `Monthly` and `Credits` at 10 pt fit this column; the bar takes the rest.
-    static let labelWidth: CGFloat = 42
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(window.shortName)
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: Self.labelWidth, alignment: .leading)
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.08))
-                    if let used = window.usedPct {
-                        Capsule()
-                            .fill(LinearGradient(colors: [fill.opacity(0.7), fill], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: max(3, proxy.size.width * CGFloat(min(100, max(0, used)) / 100)))
-                            .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: window.usedPct)
-                    } else {
-                        // No reading: a dashed outline over the whole track.
-                        // An empty bar would read as a window barely used.
-                        Capsule()
-                            .strokeBorder(Color.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                    }
-                }
-            }
-            .frame(height: 4)
-        }
-        .help(window.isUnknown
-              ? "\(window.name): the provider reports this window without a number"
-              : "\(window.name): \(window.spokenPercent)")
-        .accessibilityLabel("\(window.name) \(window.spokenPercent)")
-    }
-
-    private var fill: Color {
-        guard let used = window.usedPct else { return .secondary }
-        if used >= 95 { return .red }
-        if used >= 80 { return .orange }
-        return accent
-    }
-}
-
-/// A session's context fill as one continuous hairline: the provider's
-/// accent at rest, amber past 80 %, red past 95 % — the same thresholds
-/// the quota bars use, so "nearly full" reads the same everywhere.
 struct ContextHairline: View {
     let fraction: Double
     let accent: Color

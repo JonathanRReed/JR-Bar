@@ -419,10 +419,6 @@ final class PanelStore {
             guard let core else { throw CoreClientError.notConnected }
             return try await core.refreshUsage(providers: providers)
         }
-        self.fetchUsageHistory = { [weak core] provider, range in
-            guard let core else { throw CoreClientError.notConnected }
-            return try await core.usageHistory(provider: provider, range: range)
-        }
         self.sendUndoClear = { [weak core] batch in
             guard let core else { throw CoreClientError.notConnected }
             return try await core.send("undo_clear", args: ["batch": .string(batch)])
@@ -506,7 +502,6 @@ final class PanelStore {
         clock?.invalidate()
         brightnessFlush?.cancel()
         toastClear?.cancel()
-        sparklineWork?.cancel()
     }
 
     /// The media ear rides the shared feed — one monitor for every
@@ -548,7 +543,6 @@ final class PanelStore {
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
-        scheduleSparklines()
         refreshSessionUsage()
         Task { [weak self] in await self?.providerList.refresh() }
     }
@@ -568,8 +562,6 @@ final class PanelStore {
         findQuery = ""
         clock?.invalidate()
         clock = nil
-        sparklineWork?.cancel()
-        sparklineWork = nil
     }
 
     // MARK: Derived: layout
@@ -1568,104 +1560,6 @@ final class PanelStore {
         else { return nil }
         let elapsed = Self.elapsed(since: now.addingTimeInterval(-age), now: now) ?? "\(Int(age))s"
         return "feed quiet \(elapsed)"
-    }
-
-    // MARK: Derived: the usage sparklines
-
-    /// Tokens per day for the last week, per provider, oldest first: what
-    /// the tiny graph in each usage row draws. Filled in the background
-    /// from `usage_history`, never on the way to showing the panel.
-    private(set) var sparklines: [String: [Double]] = [:]
-    /// One `usage_history` per provider per this long, at most. A cold
-    /// scan is expensive daemon-side and nothing in the row moves faster.
-    static let sparklineInterval: TimeInterval = 600
-    @ObservationIgnored private var sparklineFetchedAt: [String: Date] = [:]
-
-    func sparkline(for provider: String) -> [Double]? {
-        guard let values = sparklines[provider], UsageSparkline.hasSignal(values) else { return nil }
-        return values
-    }
-
-    /// `usage_graph_days` as the range the sparkline can draw: the little
-    /// row graph has room for a week or a month of 5 pt bars, so a
-    /// configured quarter or year reads its closest month rather than
-    /// clipping mid-bar.
-    var sparklineRange: UsageHistoryRange {
-        let days = settingsDocument?.int("usage_graph_days") ?? 7
-        return days <= 7 ? .week : .month
-    }
-
-    /// The days a row's sparkline draws: as many as the range it was asked
-    /// for, so a month's history is a month of bars, not its last week.
-    nonisolated static func sparklineValues(_ history: UsageHistory, range: UsageHistoryRange) -> [Double] {
-        UsageSparkline.tokensPerDay(history, count: range.days)
-    }
-
-    /// How long after the panel opens its sparklines are asked for. The
-    /// daemon answers one client's commands in order, so a burst of
-    /// `usage_history` sent on open queued ahead of the Approve the panel
-    /// was opened to click.
-    static let sparklineDelay: TimeInterval = 1.5
-    /// `sparklineDelay`, shortened by the tests.
-    @ObservationIgnored var sparklineWait = PanelStore.sparklineDelay
-    @ObservationIgnored var sparklineSleep: @MainActor (TimeInterval) async throws -> Void = {
-        try await Task.sleep(for: .seconds($0))
-    }
-    @ObservationIgnored private(set) var sparklineWork: Task<Void, Never>?
-    /// `usage_history` for one provider — the core's in production; tests
-    /// stage it.
-    @ObservationIgnored var fetchUsageHistory: @MainActor (_ provider: String, _ range: UsageHistoryRange) async throws -> UsageHistory
-
-    /// The sparklines are fetched a beat after the panel opens, if it is
-    /// still open then.
-    private func scheduleSparklines() {
-        sparklineWork?.cancel()
-        let wait = sparklineWait
-        let sleep = sparklineSleep
-        sparklineWork = Task { [weak self] in
-            try? await sleep(wait)
-            guard !Task.isCancelled, let self, self.isOpen else { return }
-            self.sparklineWork = nil
-            self.refreshSparklines()
-        }
-    }
-
-    /// Whether the sparklines are worth asking for now: never while an
-    /// ask is open, since every `usage_history` waits in line ahead of its
-    /// answer.
-    nonisolated static func wantsSparklines(live: Bool, asksOpen: Bool) -> Bool { live && !asksOpen }
-
-    /// Asks the daemon for `usage_graph_days` of history — week or month,
-    /// see `sparklineRange` — for every provider the panel shows, unless
-    /// it asked recently or an ask is open. Failures are silent: a row
-    /// without a sparkline simply has none. `force` is for the
-    /// `usage_history_ready` event, which means the rows just changed.
-    func refreshSparklines(force: Bool = false) {
-        guard Self.wantsSparklines(live: core.isLive, asksOpen: !askRows.isEmpty) else { return }
-        let now = Date()
-        let range = sparklineRange
-        for provider in usage {
-            let id = provider.id
-            if !force, let at = sparklineFetchedAt[id], now.timeIntervalSince(at) < Self.sparklineInterval { continue }
-            sparklineFetchedAt[id] = now
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    let history = try await self.fetchUsageHistory(id, range)
-                    let values = Self.sparklineValues(history, range: range)
-                    if UsageSparkline.hasSignal(values) {
-                        self.sparklines[id] = values
-                    } else if !history.partial {
-                        self.sparklines.removeValue(forKey: id)
-                    }
-                    // A partial answer is worth drawing, but it should not
-                    // hold the slot for the next ten minutes.
-                    if history.partial { self.sparklineFetchedAt[id] = nil }
-                } catch {
-                    self.sparklineFetchedAt[id] = nil     // try again next time the panel opens
-                }
-            }
-        }
     }
 
     /// The two windows a usage row draws: the leading window — the

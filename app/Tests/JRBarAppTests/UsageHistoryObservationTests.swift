@@ -202,29 +202,7 @@ struct UsageHistoryObservationTests {
         #expect(retained?.totalTokens == reads * 100)
     }
 
-    @Test("an unfinished empty history keeps the panel's last sparkline until completion")
-    func pendingSparklineRetainsItsReading() async throws {
-        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-sparkline-observation-fixture.sock")
-        core.handle(.connected)
-        let provider = CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 40)])
-        core.apply(.state(CoreState(usage: CoreUsage(providers: [provider]))))
-        let defaults = try #require(UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.history.observation")))
-        let panel = PanelStore(core: core, draftsDefaults: defaults, screenBarShown: false)
-        var calls = 0
-        var current = history(100)
-        panel.fetchUsageHistory = { _, _ in calls += 1; return current }
-        panel.refreshSparklines(force: true)
-        try await until { panel.sparkline(for: "claude") != nil }
-        let previous = panel.sparkline(for: "claude")
-        current = history(0, partial: true)
-        panel.refreshSparklines(force: true)
-        try await until { calls == 2 }
-        for _ in 0..<10 { await Task.yield() }
-        #expect(panel.sparkline(for: "claude") == previous)
-        current = history(0)
-        panel.refreshSparklines(force: true)
-        try await until { calls == 3 && panel.sparkline(for: "claude") == nil }
-    }
+
 }
 
 @MainActor

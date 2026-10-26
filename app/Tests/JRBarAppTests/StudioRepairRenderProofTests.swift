@@ -42,14 +42,7 @@ struct StudioRepairRenderProofTests {
             importSession: { _ in "unused" }, disconnect: { "unused" })
         connection.profiles = [profile]
         connection.selected = profile
-        let settings = SettingsStore(core: CoreModel(socketPath: "/tmp/jrbar-unused-render.sock"))
-        settings.menuBarProviders = .init(order: ["codex", "claude", "factory"], hidden: ["factory"])
         for dark in [false, true] {
-            let picker = MenuBarProviderPicker(store: settings).padding(16)
-                .frame(width: 440, height: 210).background(Color(nsColor: .windowBackgroundColor))
-            let choices = try SettingsRenderProofTests.snapshot(picker, size: CGSize(width: 440, height: 210), dark: dark)
-            let choicesPNG = try #require(choices.representation(using: .png, properties: [:]))
-            try choicesPNG.write(to: directory.appendingPathComponent("provider-choices-\(dark).png"))
             let output = EffectLiveOutput(lights: lights, connected: true).padding(16)
                 .frame(width: 330, height: 160).background(Color(nsColor: .windowBackgroundColor))
             let bitmap = try SettingsRenderProofTests.snapshot(output, size: CGSize(width: 330, height: 160), dark: dark)

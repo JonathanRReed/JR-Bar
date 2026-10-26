@@ -147,42 +147,6 @@ struct LightingPage: View {
     }
 }
 
-/// What Lighting keeps behind its Advanced disclosure: the pulse floors,
-/// Auto-dim and the ambient cues.
-struct LightingAdvanced: View {
-    @Bindable var store: SettingsStore
-
-    var body: some View {
-        SettingGroup("Pulse range") {
-            SettingLabel(title: "Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness.")
-                .settingRowStyle()
-            ForEach(SettingsKey.fadeModes, id: \.self) { mode in
-                FadeRow(store: store, mode: mode)
-            }
-        }
-
-        AutoDimSection(store: store)
-
-        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb and low power. Effect Studio › Moments lists every cue the lights can play.") {
-            SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
-                          path: "rainstick_idle_enabled")
-            SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
-                          path: "rainstick_night_enabled")
-                .disabled(!(store.values.bool("rainstick_idle_enabled") ?? false))
-            SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
-                LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
-                    .frame(width: 168)
-                    .opacity((store.values.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
-                    .accessibilityLabel("Rainstick idle preview")
-            }
-            SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
-                          path: "milestone_odometer_enabled")
-            MilestoneStepsField(store: store)
-                .disabled(!(store.values.bool("milestone_odometer_enabled") ?? false))
-        }
-    }
-}
-
 /// Scene packs on the Lighting page: try one on the strip before it
 /// takes over, then use it — Hue Sync lets you look at an area before
 /// switching to it. The pack's tour (`preview_scene_pack`) plays one step

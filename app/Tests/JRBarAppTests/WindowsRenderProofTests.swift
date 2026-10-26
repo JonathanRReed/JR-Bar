@@ -216,12 +216,6 @@ struct WindowsRenderProofTests {
                                  screenBarShown: true)
         offline.now = Self.now
         offline.isOpen = true
-        for store in [quiet, working, heavy] {
-            store.fetchUsageHistory = { provider, _ in
-                Self.week(provider == "claude" ? 4_000_000 : 1_500_000)
-            }
-            store.refreshSparklines(force: true)
-        }
         await drainMainQueue()
         for (name, store) in [("quiet", quiet), ("working", working), ("asking", asking),
                               ("usage", heavy), ("offline", offline)] {
@@ -272,8 +266,6 @@ struct WindowsRenderProofTests {
             "codex:inkling": SessionUsage(provider: "codex", model: "gpt-5.1-codex",
                                           contextTokens: 178_000, contextWindow: 200_000),
         ]), asked: ["claude:menubar", "codex:inkling"])
-        store.fetchUsageHistory = { provider, _ in Self.week(provider == "claude" ? 4_000_000 : 1_500_000) }
-        store.refreshSparklines(force: true)
         await drainMainQueue()
         try Self.write("panel-live", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
         #expect(store.headerCounts == "2 working")

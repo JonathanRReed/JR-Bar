@@ -133,10 +133,9 @@ struct SettingsRenderProofTests {
             let presence = SettingsPageContainer(store: fixture.settings, page: .alerts)
             let presenceImage = try Self.snapshot(presence, size: CGSize(width: 560, height: 7000), dark: dark)
             try Self.write(presenceImage, named: "lifecycle-presence-\(dark ? "dark" : "light")")
-            let device = SettingsStore.DeviceEntry(index: 0, id: "fixture", name: "Fixture device", kind: "pro")
-            let controls = Form {
-                DeviceLightSettings(store: fixture.settings, device: device)
-            }.formStyle(.grouped)
+            let studio = EffectStudioStore(core: fixture.core,
+                defaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.device-proof"))!, settings: fixture.settings)
+            let controls = StudioDevicesPage(store: studio)
             let deviceImage = try Self.snapshot(controls, size: CGSize(width: 560, height: 1600), dark: dark)
             try Self.write(deviceImage, named: "lifecycle-device-\(dark ? "dark" : "light")")
         }

@@ -3,91 +3,10 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-/// The panel's usage section: when its sparklines are asked for, and
-/// what each row says. The daemon is staged; nothing reaches a socket.
+/// The panel's usage helpers use staged daemon data and no socket.
 @Suite("Panel usage")
 @MainActor
 struct PanelUsageTests {
-    @MainActor
-    final class Log {
-        var calls: [String] = []
-        let waiting = TestEvents<Void>()
-        let requests = TestEvents<Void>()
-    }
-
-    private func liveCore(asks: [CoreAsk] = []) -> CoreModel {
-        let core = CoreModel()
-        core.handle(.connected)
-        core.apply(.state(CoreState(
-            sessions: [CoreSession(id: "claude:a", provider: "claude", mode: "working")], asks: asks,
-            usage: CoreUsage(providers: [CoreProviderUsage(id: "claude", windows: [
-                CoreUsageWindow(name: "5h", usedPct: 40),
-            ])]))))
-        return core
-    }
-
-    private func makeStore(_ core: CoreModel, asked: Log, clock: TestEvents<Void>? = nil) -> PanelStore {
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
-                               screenBarShown: false)
-        store.sparklineSleep = { _ in
-            if let clock {
-                asked.waiting.send(())
-                _ = try await clock.next()
-            }
-        }
-        store.fetchUsageHistory = { provider, _ in
-            asked.calls.append(provider)
-            asked.requests.send(())
-            throw CoreClientError.notConnected
-        }
-        return store
-    }
-
-    @Test("the sparklines are asked for a beat after the panel opens, not on the way to showing it")
-    func sparklinesWaitABeat() async throws {
-        let asked = Log()
-        let clock = TestEvents<Void>()
-        let store = makeStore(liveCore(), asked: asked, clock: clock)
-        store.panelDidOpen()
-        _ = try await asked.waiting.next()
-        #expect(asked.calls.isEmpty)
-        clock.send(())
-        _ = try await asked.requests.next()
-        #expect(asked.calls == ["claude"])
-        store.panelDidClose()
-    }
-
-    @Test("a panel closed within the beat asks for nothing")
-    func closedBeforeTheBeat() async throws {
-        let asked = Log()
-        let clock = TestEvents<Void>()
-        let store = makeStore(liveCore(), asked: asked, clock: clock)
-        store.panelDidOpen()
-        let pending = try #require(store.sparklineWork)
-        store.panelDidClose()
-        await pending.value
-        #expect(asked.calls.isEmpty)
-    }
-
-    @Test("no sparklines while an ask is open: every usage_history waits in line ahead of its answer")
-    func noSparklinesWithAnAsk() async throws {
-        let asked = Log()
-        let clock = TestEvents<Void>()
-        let ask = CoreAsk(session: "claude:a", kind: "permission", summary: "Run", answerable: true)
-        let store = makeStore(liveCore(asks: [ask]), asked: asked, clock: clock)
-        store.panelDidOpen()
-        let pending = try #require(store.sparklineWork)
-        clock.send(())
-        await pending.value
-        #expect(asked.calls.isEmpty)
-        store.refreshSparklines(force: true)
-        #expect(asked.calls.isEmpty, "the ready event waits for the ask too")
-        store.panelDidClose()
-        #expect(PanelStore.wantsSparklines(live: true, asksOpen: false))
-        #expect(!PanelStore.wantsSparklines(live: true, asksOpen: true))
-        #expect(!PanelStore.wantsSparklines(live: false, asksOpen: false))
-    }
-
     // MARK: What each row says
 
     private let now = BrokenUsageSources.now
@@ -143,15 +62,6 @@ struct PanelUsageTests {
         #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 52 * 60) == "Paused 52m")
         #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 0) == "Paused")
         #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 1e300).hasPrefix("Paused"))
-    }
-
-    @Test("a month's sparkline is a month of bars, and it says how many days")
-    func sparklineFollowsItsRange() {
-        let history = UsageHistory(provider: "claude", range: "30d", days: [UsageHistoryDay(date: "2026-09-01", tokensIn: 10)])
-        #expect(PanelStore.sparklineValues(history, range: .week).count == 7)
-        #expect(PanelStore.sparklineValues(history, range: .month).count == 30)
-        #expect(UsageSparklineView.summary(Array(repeating: 1, count: 30)).hasPrefix("Last 30 days"))
-        #expect(UsageSparklineView.summary(Array(repeating: 1, count: 7)).hasPrefix("Last 7 days"))
     }
 
     @Test("a stale source leads with its fix and never says it is waiting for a reading")
@@ -235,7 +145,7 @@ struct PanelUsageTests {
             CoreProviderUsage(id: "grok", state: "needs_sign_in"),
             CoreProviderUsage(id: "cursor", state: "source_not_found"),
         ]))))
-        let store = makeStore(core, asked: Log())
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.usage"))!, screenBarShown: false)
         #expect(store.usage.map(\.id) == ["claude"])
         #expect(store.quietUsage.map(\.id) == ["gemini", "grok", "cursor"])
         #expect(store.layoutContent.usageProviders == 4)

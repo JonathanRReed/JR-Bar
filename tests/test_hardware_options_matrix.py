@@ -1,4 +1,4 @@
-"""Every hardware option on the Devices page does something, or says why not.
+"""Every hardware option in Devices and Studio does something, or says why not.
 
 "Make sure all of our hardware options are working" needs a test, not a
 review. This drives the headless daemon with a scratch SidePulse Pro and a
@@ -51,17 +51,21 @@ def _comet() -> str:
 # --- which settings the Devices page writes --------------------------------------
 
 _PATH = re.compile(
-    r'(?:path: |Provided\(store, |store\.(?:string|bool|double|optionalString|set)\()"([^"]+)"'
+    r'(?:path: |Provided\((?:store|settings), |(?:store|settings)\.(?:string|bool|double|optionalString|set)\()"([^"]+)"'
 )
+
+
+def studio_device_controls() -> str:
+    source = (APP / "StudioLightPages.swift").read_text(encoding="utf-8")
+    return source[source.index("private struct StudioDeviceRows:") : source.index("enum StudioPalette")]
 
 
 def devices_page_paths() -> set[str]:
     """Every settings path the Devices page can write, from the Swift source:
-    the page's region of ``SettingsPagesA.swift`` (from its MARK to the end
-    of the file) and the Pro & Dot controls it mounts."""
+    Devices, Studio's device overrides, and their Pro and Dot controls."""
     pages_a = (APP / "SettingsPagesA.swift").read_text(encoding="utf-8")
     region = pages_a[pages_a.index("// MARK: - Devices & Screen Bar") :]
-    sources = [region]
+    sources = [region, studio_device_controls()]
     for name in ("DotRoleControls.swift", "LinkedSyncControls.swift"):
         path = APP / name
         if path.exists():
@@ -217,11 +221,9 @@ def _inert_on_a_linked_dot(rig: Rig, leaf: str, value: object) -> None:
     baseline = rig.plan()["dot"]
     rig.set(f"{DOT}.{leaf}", value)
     assert rig.plan()["dot"] == baseline, f"{leaf} reached a role-driven Dot"
-    swift = (APP / "SettingsPagesA.swift").read_text(encoding="utf-8") + (
-        APP / "LinkedSyncControls.swift"
-    ).read_text(encoding="utf-8")
-    assert LINKED_REASON in swift
-    assert ".disabled(linkedDot" in swift
+    linked = (APP / "LinkedSyncControls.swift").read_text(encoding="utf-8")
+    assert LINKED_REASON in linked
+    assert ".disabled(linked" in studio_device_controls()
 
 
 def check_led_display(rig: Rig) -> None:
