@@ -235,6 +235,13 @@ final class MenuBarUtility: Toy {
     @ObservationIgnored weak var host: (any MenuBarBoundaryHost)? {
         didSet {
             host?.onBoundaryClick = { [weak self] in self?.boundaryClicked() }
+            host?.onBoundaryWidthChange = { [weak self] in
+                guard let self, self.settings().enabled, self.settings().provider == .jrbar,
+                      let host = self.host else { return }
+                self.hider.glyphWidthChanged(to: host.boundaryGlyphLength)
+                self.installBoundary()
+                self.hider.reconcile()
+            }
             host?.hiddenItemsMenu = { [weak self] in self?.hiddenItemsMenu() }
             if running { hider.controlsReinstalled(); installBoundary() }
         }

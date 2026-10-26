@@ -56,7 +56,7 @@ struct MenuBarSpacerStandsTests {
         defer { hider.stop() }
         hider.reconcile()
         hider.reconcile()
-        #expect(host.spacers.last == (tight ? 30 : 182))
+        #expect(host.spacers.last == (tight ? 0 : 182))
         utility.reveal.onReveal()
         #expect(hider.revealed == [.hidden])
         #expect(hider.assignedLengths[.hidden] == host.boundaryGlyphLength)
@@ -65,7 +65,7 @@ struct MenuBarSpacerStandsTests {
         utility.installBoundary()
         #expect(host.spacers.last == 0, "settings writes must not reopen a revealed spacer")
         hider.hide()
-        #expect(host.spacers.last == (tight ? 30 : 182))
+        #expect(host.spacers.last == (tight ? 0 : 182))
         var forced: Set<MenuBarItemSection> = [.hidden]
         hider.forcedReveal = { forced }
         hider.reconcile()
@@ -74,7 +74,7 @@ struct MenuBarSpacerStandsTests {
         #expect(host.spacers.last == 0)
         forced = []
         hider.reconcile()
-        #expect(host.spacers.last == (tight ? 30 : 182))
+        #expect(host.spacers.last == (tight ? 0 : 182))
     }
 
     @MainActor
@@ -117,11 +117,11 @@ struct MenuBarSpacerStandsTests {
         #expect(second.spacers.last == MenuBarUtility.boundaryAffordance)
     }
 
-    @Test("the standing spacer is the length less the icon, never under the floor")
+    @Test("the standing spacer stays inside the assigned length")
     func standingSpacerRule() {
         #expect(MenuBarUtility.standingSpacer(assigned: nil, glyph: 45) == 30)
-        #expect(MenuBarUtility.standingSpacer(assigned: 45, glyph: 45) == 30)
+        #expect(MenuBarUtility.standingSpacer(assigned: 45, glyph: 45) == 0)
         #expect(MenuBarUtility.standingSpacer(assigned: 159, glyph: 45) == 114)
-        #expect(MenuBarUtility.standingSpacer(assigned: 20, glyph: 45) == 30)
+        #expect(MenuBarUtility.standingSpacer(assigned: 20, glyph: 45) == 0)
     }
 }
