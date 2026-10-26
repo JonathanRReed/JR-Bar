@@ -693,7 +693,7 @@ struct NotchCardView: View {
             Spacer(minLength: 4)
             Button { model.dismissWingHint() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold))
+                    .font(.system(size: 8, weight: .bold)) // jrbar-token-exception: glyph in a 12 pt frame
                     .foregroundStyle(style.faintColor)
                     .frame(width: 12, height: 12)
                     .notchHitArea(horizontal: 6, vertical: 6)
@@ -1020,13 +1020,6 @@ struct NotchCardView: View {
     /// measured height does not depend on how long a command is.
     private static let askDetailHeight: CGFloat = 118
 
-    /// One live session under the header: the provider's dot, its label,
-    /// and the same activity word the island would say. A click opens
-    /// the session. A waiting row carries its verbs inline instead of
-    /// the word — each drawn only where `AskVerbs` says the daemon can
-    /// deliver it, and every one sent through the shared desk — with
-    /// the question itself on a faint second line; a refused answer or
-    /// open takes that line and says why, and the ask stays open.
     @ViewState private var expandedGroups: Set<String> = []
 
     func proofExpandedGroups(_ groups: Set<String>) -> Self {
@@ -1035,18 +1028,29 @@ struct NotchCardView: View {
         return copy
     }
 
+    static func memberState(_ activity: SessionActivity) -> StateDot.State {
+        switch activity {
+        case .working: return .working
+        case .waiting: return .asking
+        case .failed: return .failed
+        case .done, .idle, .ended: return .done
+        }
+    }
+
     @ViewBuilder
     private func workingRow(_ row: NotchIslandRow) -> some View {
         if row.activity == .working && (row.workerCount > 0 || row.unlinked) {
+            let marks = Array(Set(row.members.map(\.provider))).sorted()
+            let expansion = Binding(get: { expandedGroups.contains(row.id) }, set: { expanded in
+                if expanded { expandedGroups.insert(row.id) } else { expandedGroups.remove(row.id) }
+            })
             AgentGroupRow(provider: row.provider, name: ProviderPalette.displayName(for: row.provider),
-                subtitle: row.label, state: .working, memberMarks: Array(Set(row.members.map(\.provider))).sorted(),
-                workerCount: row.workerCount, unlinked: row.unlinked,
-                expanded: Binding(get: { expandedGroups.contains(row.id) }, set: { expanded in
-                    if expanded { expandedGroups.insert(row.id) } else { expandedGroups.remove(row.id) }
-                })) {
+                subtitle: row.label, state: .working, memberMarks: marks,
+                workerCount: row.workerCount, unlinked: row.unlinked, expanded: expansion) {
                     ForEach(Array(row.members.enumerated()), id: \.element.id) { index, member in
+                        let memberState = Self.memberState(member.activity)
                         AgentMemberRow(provider: member.provider, name: member.label,
-                            state: member.activity == .working ? .working : member.activity == .waiting ? .asking : .done,
+                            state: memberState,
                             isLast: index == row.members.count - 1)
                     }
                 }
@@ -1056,6 +1060,13 @@ struct NotchCardView: View {
         }
     }
 
+    /// One live session under the header: the provider's dot, its label,
+    /// and the same activity word the island would say. A click opens
+    /// the session. A waiting row carries its verbs inline instead of
+    /// the word — each drawn only where `AskVerbs` says the daemon can
+    /// deliver it, and every one sent through the shared desk — with
+    /// the question itself on a faint second line; a refused answer or
+    /// open takes that line and says why, and the ask stays open.
     private func sessionRow(_ row: NotchIslandRow) -> some View {
         let desk = model.askDesk()
         let pending = desk?.isPending(row.id) ?? false
@@ -1919,7 +1930,7 @@ struct NotchBatteryGlyph: View {
                     .padding(2)
                 if plugged {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .heavy))
+                        .font(.system(size: 7, weight: .heavy)) // jrbar-token-exception: battery glyph in an 11 pt frame
                         .foregroundStyle(tone == nil ? style.inverseInk : AnyShapeStyle(Color.white))
                         .frame(maxWidth: .infinity)
                 }

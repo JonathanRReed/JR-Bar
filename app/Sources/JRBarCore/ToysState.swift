@@ -1408,8 +1408,9 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true
         meetingAlerts = (try? c.decodeIfPresent(Bool.self, forKey: .meetingAlerts)) ?? false
         timerLights = (try? c.decodeIfPresent(Bool.self, forKey: .timerLights)) ?? true
+        let savedHoverDelay = try? c.decodeIfPresent(Double.self, forKey: .hoverOpenDelay)
         hoverOpenDelay = Self.clampedHoverOpenDelay(
-            (try? c.decodeIfPresent(Double.self, forKey: .hoverOpenDelay)) ?? Self.defaultHoverOpenDelay)
+            savedHoverDelay == 0.12 ? Self.defaultHoverOpenDelay : savedHoverDelay ?? Self.defaultHoverOpenDelay)
         notchDisplay = (try? c.decodeIfPresent(NotchDisplay.self, forKey: .notchDisplay)) ?? .builtIn
         shelfEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .shelfEnabled)) ?? true
         shelfDragOut = (try? c.decodeIfPresent(ShelfDragOut.self, forKey: .shelfDragOut)) ?? .copy

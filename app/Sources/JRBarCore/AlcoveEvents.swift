@@ -542,6 +542,17 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         return current.map(matches) ?? false
     }
 
+    /// A person selected an ask with the keyboard. It stays at the ordinary tier.
+    public mutating func selectAsk(_ notice: AlcoveNotice, at now: Date) {
+        guard notice.kind == .ask else { return }
+        overlay = nil
+        var selected = notice
+        selected.takeover = false
+        current = selected
+        currentShownAt = now
+        if pending?.session == notice.session { pending = nil; pendingAt = nil }
+    }
+
     /// The ask escalated to the takeover tier. The capsule already
     /// showing that ask grows in place; any other face steps aside — an
     /// ask that was up keeps its place in the waiting slot, ambient news

@@ -100,12 +100,12 @@ struct NotchStateMachineTests {
         #expect(timers.live == 0)
     }
 
-    @Test("a pointer from the menu bar opens at the same 150 ms default")
+    @Test("a pointer from the menu bar waits for the 300 ms floor")
     func fromTheBar() {
         let (toy, store, timers) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.bandHover(true, fromBar: true)
-        timers.advance(by: 0.149)
+        timers.advance(by: NotchMotion.barArrivalFloor - 0.001)
         #expect(!toy.islandExpanded)
         timers.advance(by: 0.002)
         #expect(toy.islandExpanded)

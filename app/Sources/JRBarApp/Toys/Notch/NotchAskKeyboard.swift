@@ -56,14 +56,15 @@ enum NotchAskVerbPlan {
 /// are proved without a window.
 ///
 /// The one rule that matters: nothing here answers an ask by itself.
-/// Engaging the keyboard focuses nothing, so Return and Space do nothing
-/// until a person has moved onto a verb with Tab or an arrow, and Esc
+/// Space requires a focused verb. Return may approve a non-destructive ask
+/// without focus. Arrows choose a verb, Tab changes asks, and Esc
 /// only lets the keyboard go: it never denies, dismisses or approves.
 struct NotchAskFocus: Equatable, Sendable {
     /// The keys the ask face listens for.
     enum Key: Equatable, Sendable {
         case tab, backTab, left, right, up, down
-        case activate   // Return, Enter, Space
+        case activate   // Return, Enter
+        case space
         case escape
         case other
     }
@@ -98,7 +99,7 @@ struct NotchAskFocus: Equatable, Sendable {
             return move(by: 1, in: order)
         case .backTab, .left, .up:
             return move(by: -1, in: order)
-        case .activate:
+        case .activate, .space:
             // A press needs a focus a person put there.
             guard let focused, order.contains(focused) else { return .ignored }
             return .press(focused)
@@ -129,7 +130,8 @@ struct NotchAskFocus: Equatable, Sendable {
         case 124: return .right
         case 125: return .down
         case 126: return .up
-        case 36, 76, 49: return .activate
+        case 36, 76: return .activate
+        case 49: return .space
         case 53: return .escape
         default: return .other
         }

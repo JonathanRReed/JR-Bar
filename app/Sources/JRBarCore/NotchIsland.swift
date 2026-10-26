@@ -258,7 +258,7 @@ public enum NotchIsland {
             let members = group.members.compactMap { byID[$0] }
             guard let root = byID[group.rootWorkKey], members.contains(where: { SessionActivity.reduce($0) == .working }) else { continue }
             let memberIDs = Set(group.members)
-            s.rows.removeAll { memberIDs.contains($0.id) && $0.activity == .working }
+            s.rows.removeAll { memberIDs.contains($0.id) && ($0.activity == .working || $0.activity == .failed) }
             var row = NotchIslandRow(id: root.id, label: root.displayLabel, provider: group.rootProvider, activity: .working)
             if s.rows.contains(where: { $0.id == row.id }) { row.id = "group:" + group.id }
             row.workerCount = group.workerCount

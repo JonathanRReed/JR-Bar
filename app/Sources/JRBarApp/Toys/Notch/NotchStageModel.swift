@@ -72,13 +72,6 @@ final class NotchStageModel {
         if clock != noticeClock { noticeClock = clock }
     }
 
-    /// How a notice or ask face is scaled while the shape is narrower than
-    /// the width the face is laid out at (`NotchReveal.fit`).
-    var noticeFit: CGFloat {
-        guard noticeClock != nil, let shape, let width = noticeMorph?.openWidth else { return 1 }
-        return NotchReveal.fit(shapeWidth: shape.width, cardWidth: width)
-    }
-
     /// The window's per-tick report. Equal values are not re-published,
     /// so a landed spring costs nothing. `dt` is the tick's length: the
     /// content's clock moves by it toward whichever way the card is
@@ -215,7 +208,6 @@ struct NotchNoticeReveal: ViewModifier {
 /// Rows stay readable while the shape settles.
 struct NotchRowReveal: ViewModifier {
     let step: Int
-    @Environment(\.notchStage) private var stage
 
     func body(content: Content) -> some View {
         content

@@ -27,7 +27,7 @@ enum ShelfKeyboardInput {
             } else {
                 _ = tray.openKeyboardSelection()
             }
-        case .escape, .other: break
+        case .escape, .space, .other: break
         }
     }
 }

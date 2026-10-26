@@ -812,7 +812,7 @@ final class NotchToy: Toy {
     /// floored for an arrival down from the menu bar's row, which may
     /// only be reaching a menu (`NotchMotion.hoverDelays`).
     private var hoverDelays: (peek: TimeInterval, expand: TimeInterval) {
-        NotchMotion.hoverDelays(openAfter: settings.hoverOpenDelay, fromBar: false)
+        NotchMotion.hoverDelays(openAfter: settings.hoverOpenDelay, fromBar: hoverArrivedFromBar)
     }
     /// The arrival path of the current hover, latched on the enter
     /// edge: an ear or tray landing starts the longer clock, and the

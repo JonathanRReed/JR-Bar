@@ -173,8 +173,7 @@ struct NotchIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// One face giving way to another: the old one out a little quicker
-    /// than the new one comes in, so the two never share the black.
+    /// Face changes fade under Reduce Motion.
     private var swapTransition: AnyTransition {
         reduceMotion ? .opacity : .identity
     }
@@ -405,7 +404,7 @@ struct NotchIslandView: View {
     private func mediaCover(_ media: AlcoveMedia) -> some View {
         NotchCoverSwap(image: media.artworkData != nil ? toy.islandArtwork : nil) {
             Image(systemName: "music.note")
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
+                .font(.system(size: 7, weight: .semibold)) // jrbar-token-exception: glyph inside the cover thumbnail
                 .foregroundStyle(.white.opacity(0.7))
         }
         .frame(width: NotchIsland.mediaArtWidth, height: NotchIsland.mediaArtWidth)
@@ -485,8 +484,6 @@ struct NotchIslandView: View {
             .lineLimit(1)
             .truncationMode(.middle)
         }
-        // While the shape is narrower than the line, it stands as wide as the shape.
-        .scaleEffect(1)
         .padding(.horizontal, 16)
         // The line clears the notch and persistent wing strip. The
         // bottom pad keeps its copy above the Screen Bar's housing.
@@ -546,7 +543,6 @@ struct NotchIslandView: View {
                 .frame(minWidth: 26, alignment: .trailing)
         }
         .animation(reduceMotion ? nil : .smooth(duration: NotchMotion.levelFollow), value: fraction)
-        .scaleEffect(1)
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.top, toy.noticeTopPad)
@@ -581,6 +577,8 @@ struct NotchIslandView: View {
         let plan = toy.askKeyVerbs(for: notice)
         let engaged = toy.askKeyboardEngaged
         let focus = engaged ? toy.askFocus.focused : nil
+        let keyHint = pending ? "Sending response" : focus != nil ? "Press Return"
+            : live?.isDestructive == true || !plan.contains(.approve) ? "Choose a verb" : "Return to approve"
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 askMark(notice)
@@ -616,7 +614,7 @@ struct NotchIslandView: View {
                 // A held question answers here whatever the keystroke
                 // path says, so its "answer it in its window" is moot.
                 if engaged, refusal == nil {
-                    Text(pending ? "Sending response" : focus == nil ? "Return to approve" : "Press Return")
+                    Text(keyHint)
                         .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(Color.white.opacity(0.55))
                         .lineLimit(1)
@@ -675,7 +673,6 @@ struct NotchIslandView: View {
         .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .scaleEffect(1, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)
@@ -759,7 +756,6 @@ struct NotchIslandView: View {
         .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .scaleEffect(1, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)

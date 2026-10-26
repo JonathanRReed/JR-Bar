@@ -159,7 +159,8 @@ the panel is non-activating, so the terminal stays the frontmost app) and
 | --- | --- |
 | Tab / Shift-Tab | shows the next / previous ask without answering |
 | Right, Down / Left, Up | moves the ring through the displayed ask's verbs |
-| Return, Enter, Space | presses the chosen verb, or Approve when no verb is chosen and the displayed ask permits approval |
+| Return, Enter | presses the chosen verb, or Approve without focus for a non-destructive ask |
+| Space | presses the explicitly focused verb; does nothing without focus |
 | Esc | lets the keyboard go; never denies, never dismisses |
 | anything else | spent, and does nothing |
 

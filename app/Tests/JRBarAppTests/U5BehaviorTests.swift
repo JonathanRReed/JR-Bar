@@ -41,6 +41,7 @@ import Testing
         toy.askKey(.tab)
         #expect(toy.activeCapsule?.session == next.session)
         #expect(toy.capsuleQueue.current?.session == next.session)
+        #expect(toy.activeCapsule?.takeover == false)
         #expect(sent.isEmpty)
         await toy.askKey(.activate)?.value
         #expect(sent == ["codex:next|next"])

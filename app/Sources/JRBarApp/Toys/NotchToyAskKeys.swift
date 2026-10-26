@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 
 /// The ask face for a person who does not use a pointer: the keyboard and
 /// VoiceOver reach the same verbs the buttons are, through one door
@@ -27,17 +28,19 @@ extension NotchToy {
     /// Whether an ask face is up with a verb to reach: what the shortcut
     /// asks before it takes the keyboard rather than opening the card.
     var askKeyboardAvailable: Bool {
-        guard isDrawingIsland, !foldEngaged, !islandExpanded, let capsule = askCapsule else { return false }
-        return !askKeyVerbs(for: capsule).isEmpty
+        guard isDrawingIsland, !foldEngaged else { return false }
+        if let capsule = askCapsule { return !askKeyVerbs(for: capsule).isEmpty }
+        return islandExpanded && islandSummary.rows.contains { $0.activity == .waiting && $0.ask != nil && !CoreSession.isRemoteID($0.id) }
     }
 
-    /// Hand the ask face the keyboard, because a person asked. Nothing is
-    /// focused: they must move onto a verb before Return does anything.
+    /// A person hands the ask face the keyboard. No verb starts focused.
+    /// Destructive asks require choosing a verb before it can be pressed.
     @discardableResult
     func engageAskKeyboard() -> Bool {
         guard askKeyboardAvailable else { return false }
         releaseShelfKeyboard()
         releaseGlassShelfKeyboard()
+        if islandExpanded || askCapsule == nil { showNextKeyboardAsk(backwards: false, fromStart: true) }
         askFocus.clear()
         askKeyboardEngaged = true
         armAskKeyIdle()
@@ -66,7 +69,7 @@ extension NotchToy {
 
     /// A key the island's window received while the keyboard is engaged.
     /// Every key is spent here (the window is key only because a person
-    /// asked); none but a press on a focused verb does anything to the ask.
+    /// asked). Return may approve a non-destructive ask without focus.
     /// The press, if one happened, is returned for tests to await.
     @discardableResult
     func askKey(_ key: NotchAskFocus.Key) -> Task<Void, Never>? {
@@ -84,7 +87,9 @@ extension NotchToy {
             showNextKeyboardAsk(backwards: key == .backTab)
             return nil
         }
-        if key == .activate, askFocus.focused == nil, order.contains(.approve) {
+        askFocus.reconcile(with: order)
+        if key == .activate, askFocus.focused == nil, order.contains(.approve),
+           liveAsk(for: capsule)?.isDestructive != true {
             return performAskVerb(.approve)
         }
         switch askFocus.handle(key, order: order) {
@@ -98,16 +103,31 @@ extension NotchToy {
         }
     }
 
-    private func showNextKeyboardAsk(backwards: Bool) {
+    private func showNextKeyboardAsk(backwards: Bool, fromStart: Bool = false) {
         let asks = islandSummary.rows.filter { $0.activity == .waiting && $0.ask != nil && !CoreSession.isRemoteID($0.id) }
-        guard !asks.isEmpty, let current = activeCapsule?.session else { return }
-        let index = asks.firstIndex { $0.id == current } ?? 0
-        let step = backwards ? asks.count - 1 : 1
-        let row = asks[(index + step) % asks.count]
+        guard !asks.isEmpty else { return }
+        let current = fromStart ? nil : activeCapsule?.session
+        let index = asks.firstIndex { $0.id == current }
+        let next: Int
+        if let index { next = (index + (backwards ? asks.count - 1 : 1)) % asks.count }
+        else { next = backwards ? asks.count - 1 : 0 }
+        let row = asks[next]
         guard row.id != current else { return }
-        noteTakeover(CoreEvent(id: "keyboard:" + row.id, kind: "ask_opened", session: row.id,
-            label: row.label, provider: row.provider, request: row.ask?.request))
-        guard activeCapsule?.session == row.id else { return }
+        let notice = AlcoveNotice(id: "keyboard:" + row.id, kind: .ask,
+            title: ProviderPalette.displayName(for: row.provider) + " · " + row.label,
+            subtitle: row.ask?.summary ?? "Needs you", provider: row.provider,
+            session: row.id, key: "ask:" + row.id, ask: row.ask)
+        endOverlay(settle: false)
+        capsuleWork?.cancel()
+        capsuleWork = nil
+        if islandExpanded {
+            shelvedCapsule = nil
+            collapseIsland()
+        }
+        capsuleQueue.selectAsk(notice, at: capsuleClock())
+        activeCapsule = capsuleQueue.current
+        reframe(currentFace, animated: !reduceMotion())
+        speak(notice.title + ". " + askSummary(notice))
         askKeyboardEngaged = true
         askFocus.clear()
         armAskKeyIdle()

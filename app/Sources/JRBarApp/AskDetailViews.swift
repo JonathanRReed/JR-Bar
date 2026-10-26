@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import Observation
 import SwiftUI
 
@@ -77,7 +78,7 @@ struct AskDetailToggle: View {
                 HStack(spacing: 3) {
                     if labelled {
                         Text(AskDetailCopy.noun(detail).capitalizedFirst)
-                            .font(.system(size: size + 1.5, weight: .medium))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                     }
                     Image(systemName: "chevron.right")
                         .font(.system(size: size, weight: .bold))

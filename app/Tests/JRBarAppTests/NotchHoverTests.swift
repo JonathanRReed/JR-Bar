@@ -52,7 +52,7 @@ struct NotchHoverTests {
         #expect(!toy.islandExpanded, "the tell is only a tell — no card")
     }
 
-    @Test("a bar-row arrival uses the same 150 ms default")
+    @Test("a bar-row arrival keeps the longer menu-bar floor")
     func barArrivalUsesTheDefaultDelay() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
@@ -61,7 +61,7 @@ struct NotchHoverTests {
         let start = timers.now
         toy.bandHover(true, fromBar: true)
         let at = try #require(expansionTime(toy, timers: timers, from: start))
-        #expect(abs(at - NotchSettings.defaultHoverOpenDelay) < 0.001)
+        #expect(abs(at - NotchMotion.barArrivalFloor) < 0.001)
     }
 
     /// A mutable answer a closure can read — `@unchecked Sendable` so
@@ -88,9 +88,9 @@ struct NotchHoverTests {
         toy.bandHover(true, fromBar: true)
         timers.advance(by: 0.1)
         toy.setHovered(true)   // the island window's own hover, mid-pause
-        // Restarting on the crossing would postpone the 150 ms deadline.
+        // Restarting on the crossing would postpone the menu-bar deadline.
         let at = try #require(expansionTime(toy, timers: timers, from: start))
-        #expect(abs(at - NotchSettings.defaultHoverOpenDelay) < 0.001,
+        #expect(abs(at - NotchMotion.barArrivalFloor) < 0.001,
                 "the crossing keeps the original deadline")
     }
 
