@@ -75,3 +75,80 @@ Eight new regression tests in the final full run cover a blocked Dock bundle loo
 Swift log: `/tmp/jrbar-swift-final.log`. Python log: `/tmp/jrbar-python-full.log`.
 
 The installed hung app was not restarted or replaced. These are source, build and injected-test results. They do not establish a fixed installed build, a completed visual walkthrough, or an OS-level TCC acceptance pass. No new PNG proof was produced.
+
+
+## Review fixes
+
+The fix round started with a clean tree on `t3/c4325d22` at `1ea0e09d`.
+The reviewer probes are in `/tmp/jrbar-c4325d22-review-probe.log`.
+
+- Focus activity and named identifiers now travel separately from quiet policy
+  through `state.focus.observed_active` and `observed_identifiers`. The app also
+  reads authorized public Focus Status on one background worker with a two-second
+  deadline, even with Focus sync off. Neither path adds a protected database read.
+  Named identifiers reuse existing observations and expire after ten seconds.
+  When named observations are off or unavailable, the public API reports generic
+  Focus activity. Tests cover sync off, Work to Personal, and unknown observations.
+- A configured Dock folder grants its own listing and immediate entries. The
+  existing background reader, worker limit, deadline and access-denied state stay
+  in use. Automatic protected-folder probes remain blocked.
+- Shelf drag, open, share, Quick Look and other file actions await new validation
+  reads. A selection validates together within the short deadline. Removed grants
+  and removed items cannot authorize an action after suspension. A deleted file
+  produces a refusal message. Display refresh remains asynchronous.
+- Each attachment request reads current bytes on the background worker. Descriptor
+  checks compare device, inode, nanosecond modification time and size before and
+  after reading, then compare the descriptor with the current path. Old preview
+  bytes cannot answer another attachment request.
+- Dock Switcher's live signature includes the metadata version, so completed
+  icons rebuild stored cards.
+- Shelf caches completed icons and thumbnails. A placeholder can be replaced when
+  the file icon arrives. Thumbnail attempts are tracked separately, preserving
+  prompt thumbnail requests and preventing retries after a failed thumbnail.
+- An explicitly shelved local symlink resolves component by component on the
+  worker. Every redirected destination passes policy before inspection. Automatic
+  probes still reject symlinks, and a link does not grant a protected target.
+
+Code commits are `9a62cd01`, `484cd93d` and `2d4737ec`. These changes supersede the
+older descriptions above for Focus announcements, configured Dock folders,
+attachment caching and explicitly shelved symlinks.
+
+
+## Review verification
+
+The final build and focused render run passed 24 tests. The full Swift suite then
+ran serially against that build with `JRBAR_INTERACTIVE_TESTS` unset:
+
+- 116 LEDS tests.
+- 67 UI tests.
+- 1,394 Core tests.
+- 4,507 App tests.
+- Total: 6,084 tests, with the run passing.
+
+Commands from the worktree root:
+
+```sh
+env -u JRBAR_INTERACTIVE_TESTS JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR="$PWD/app/.build/c4325d22-fix-proofs" swift test --package-path app --no-parallel --filter 'ExternalFileActionTests|ShelfThumbnailOrderTests|NotchAnnouncerTests'
+env -u JRBAR_INTERACTIVE_TESTS swift test --package-path app --skip-build --no-parallel
+PYTHONPATH="$PWD/src" /Users/jonathanreed/Downloads/JR-Bar/.venv/bin/python -m pytest tests -q
+```
+
+Python passed 15,868 tests and 15 subtests, with four `fork()` deprecation warnings.
+Ruff passed across `src`, `tests`, `packaging` and `scripts`. Relative documentation
+links and `git diff --check` passed.
+
+Four PNGs in `app/.build/c4325d22-fix-proofs` were opened and inspected: the expanded
+Shelf with its resolved folder icon, then its deleted-file refusal, each in light
+and dark appearance. The first proof attempt showed the collapsed card; the final
+proofs use the expanded layout. The later documentation commit changes this record
+and the watcher doc comment, with no behavior change.
+
+Final receipts:
+
+- Swift: `/tmp/jrbar-c4325d22-fix-swift-final-all.log`.
+- Python: `/tmp/jrbar-c4325d22-fix-python-final.log`.
+- Render build and focused tests: `/tmp/jrbar-c4325d22-fix-render-final.log`.
+
+These are source, synthetic-test and rendered results. Installed-runtime behavior
+and OS-level TCC acceptance remain unverified. No helper app was installed or
+registered, and no helper app or scratch bundle remains from this round.

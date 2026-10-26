@@ -4,13 +4,9 @@ import IOBluetooth
 import Intents
 import JRBarCore
 
-/// The system announcements Alcove surfaces in the island: a Focus
-/// mode turning on or off, a Bluetooth device joining or leaving, Caps
-/// Lock, a display arriving or going. Each watcher is quiet until
-/// something actually changes — no polling, no entitlement asks — and
-/// each change becomes an `AlcoveNotice` of its own kind, so the island
-/// speaks it through the same queue as the agents' news (the HUD's pill
-/// only when the island can't).
+/// System changes shown in the island: Focus, Bluetooth, Caps Lock and displays.
+/// Watchers settle a baseline before reporting changes. Focus status is read
+/// on a bounded background worker. Changes use the same notice queue as agents.
 @MainActor
 final class NotchAnnouncements {
     /// The notch settings' vote — consulted per announcement so a
