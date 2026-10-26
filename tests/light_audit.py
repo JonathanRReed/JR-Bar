@@ -14,10 +14,9 @@ from itertools import pairwise, product
 from jrbar.animation import (
     IndexedPaint,
     PaintStep,
-    animation_duration_ms,
-    loop_duration_ms,
     read_program,
     render_step,
+    step_duration_ms,
 )
 from jrbar.colors import ColorSettings, _active_agents, program_for_snapshot
 from jrbar.effect_registry import PROVIDER_ANIMATION_EFFECTS
@@ -26,13 +25,18 @@ from jrbar.led_wasm import RawSdLedWasmController
 from jrbar.light_mix import (
     MIX_LABELS,
     _body,
-    _has_sweep,
     _share_steps,
     explain_what_plays,
     mix_catalog,
     selected_agents,
 )
-from jrbar.linked_sync import DeviceTiming, PhaseRotationUnavailable, apply_device_timing
+from jrbar.linked_sync import (
+    DeviceTiming,
+    PhaseRotationUnavailable,
+    apply_device_timing,
+    playback_loop_ms,
+    playback_span_ms,
+)
 from jrbar.models import AgentMode, AgentStatus
 
 PROVIDERS = ("codex", "claude", "devin")
@@ -180,7 +184,8 @@ class Firmware:
         errors = [p.code for p in problems if p.severity == "error"]
         if errors:
             raise ValueError(",".join(errors))
-        period = max(16, loop_duration_ms(animation) or animation_duration_ms(animation))
+        loop = playback_loop_ms(animation)
+        period = max(16, loop or sum(playback_span_ms(step) for step in animation.steps))
         # Never skip engine ticks. Start at zero and warm an entire pass.
         interval = max(1, min(16, period // 256))
         controller = self.controllers[count]
@@ -189,7 +194,7 @@ class Firmware:
         if not parsed.ok:
             raise ValueError(f"{parsed.error_name} at {parsed.line}:{parsed.column}")
         frames = controller.step_batch(0, interval, (3 * period) // interval + 2)
-        return Trace(period, interval, tuple(tuple(frame) for frame in frames), bool(loop_duration_ms(animation)))
+        return Trace(period, interval, tuple(tuple(frame) for frame in frames), loop is not None)
 
     @lru_cache(maxsize=512)
     def reassert_plan(self, program, count):
@@ -221,21 +226,6 @@ class Firmware:
     @lru_cache(maxsize=512)
     def reassert_error(self, program, count):
         return frame_error(*self.reassert_frames(program, count))
-
-    @lru_cache(maxsize=1024)
-    def mirror_metrics(self, program):
-        # The mirror now carries its source canvas. Parse and sample at two,
-        # then map each sampled pixel onto four display LEDs.
-        mirror = program
-        _animation, problems = read_program(mirror, led_count=2)
-        errors = tuple(p.code for p in problems if p.severity == "error")
-        if errors:
-            return mirror, errors, 0
-        hardware = self.trace(program, 2)
-        mirrored = self.trace(mirror, 2)
-        expanded = tuple(tuple(frame[i // 4] for i in range(8)) for frame in hardware.frames)
-        displayed = tuple(tuple(frame[i // 4] for i in range(8)) for frame in mirrored.frames)
-        return mirror, (), frame_error(expanded, displayed)
 
     @lru_cache(maxsize=1024)
     def seam_error(self, program, count):
@@ -338,17 +328,9 @@ def inspect(case, firmware):
         check("geometry", all(0 <= i < case.leds for i in indices), f"indices {indices}")
         trace = firmware.trace(program, case.leds)
         check("firmware", True, "")
-        # Eight-LED hardware and its mirror run identical bytes. Only a
-        # narrow device needs a second render and widening measurement.
-        mirror, mirror_errors, mirror_error = (firmware.mirror_metrics(program) if case.leds == 2
-                                               else (program, (), 0))
-        check("mirror_program", mirror is not None, "the hardware program cannot be widened for the Screen Bar")
-        if mirror is not None:
-            check("mirror_budget", not mirror_errors,
-                  f"widened mirror has {len(mirror.encode())} bytes: {mirror_errors}")
-            if not mirror_errors:
-                check("mirror_pixels", mirror_error <= 1,
-                      "the widened Screen Bar timeline differs from hardware at neutral gain and brightness")
+        # Pixel parity requires the Swift sampler, run on the delivered corpus
+        # by the CLI and test_swift_mirror_matches_firmware. This matrix makes
+        # no mirror-pixel claim from Python firmware samples alone.
         if case.state == "ask":
             challengers = tuple(replace(statuses((1,), mode)[0], agent_id=f"synthetic:challenger:{mode}")
                                 for mode in ("working", "failed", "done", "idle"))
@@ -392,20 +374,53 @@ def inspect(case, firmware):
             start = 0
             for index, agent in enumerate(agents):
                 size = sizes[index]
-                contiguous = played == "spatial_split" or _has_sweep(agents, settings)
+                contiguous = played == "spatial_split" or any(
+                    settings.agent_animation(a.provider) in BOUNCE for a in agents)
                 slots = (tuple(range(start, start + size)) if contiguous
                          else tuple(range(index, case.leds, len(agents))))
                 shares.append((agent, slots))
                 start += size
+        explicit = [a for a in agents if settings.agent_animation(a.provider) not in {"auto", "steady"}]
+        leader = explicit[0] if explicit else None
         for agent, slots in shares:
             motion = settings.agent_animation(agent.provider)
+            reference_settings = settings
+            if (motion == "auto" and len(agents) > 1 and leader is not None
+                    and settings.agent_animation(leader.provider) in BOUNCE
+                    and settings.animation_style("working") == "roll"):
+                motion = settings.agent_animation(leader.provider)
+                reference_settings = settings.with_agent_animation(agent.provider, motion)
+                reference_settings = reference_settings.with_agent_animation_parameters(
+                    agent.provider, settings.agent_animation_parameters(leader.provider))
             if not slots:
                 continue
             local = tuple(tuple(frame[i] for i in slots) for frame in trace.cycle())
             # A reference uses the native local renderer, never the combined
             # mapper or its four-keyframe sampler. This detects composition loss.
             try:
-                native_lines = _body(agent, settings, len(slots), compact=len(agents) > 1)
+                native_lines = _body(agent, reference_settings, len(slots), compact=len(agents) > 1)
+                if reference_settings is not settings:
+                    # Automatic fits its complete local path to the leader's
+                    # step clock, including when their shares differ in size.
+                    leader_slots = next(s for a, s in shares if a is leader)
+                    leader_lines = _body(leader, settings, len(leader_slots), compact=True)
+                    leader_animation, _ = read_program("\n".join(leader_lines), led_count=len(leader_slots))
+                    local_animation, _ = read_program("\n".join(native_lines), led_count=len(slots))
+                    if len(leader_animation.steps) != len(local_animation.steps):
+                        raise ValueError("Automatic reference has incompatible sweep steps")
+                    fitted = []
+                    for step, chosen in zip(local_animation.steps, leader_animation.steps):
+                        span = step_duration_ms(step)
+                        ratio = step_duration_ms(chosen) / span if span else 1
+                        segments = []
+                        for segment in step.segments:
+                            timing = segment.timing
+                            delay = round((timing.delay_ms or 0) * ratio)
+                            end = round(((timing.delay_ms or 0) + timing.effective_duration_ms) * ratio)
+                            segments.append(replace(segment, timing=replace(timing, duration_ms=end - delay,
+                                delay_ms=delay if timing.delay_ms is not None else None)))
+                        fitted.append(render_step(PaintStep(tuple(segments))))
+                    native_lines = fitted
                 # The packaged engine has only 2/8-LED builds. Expand local
                 # rolls into indexed paints before playing a 1/3/4-LED track
                 # on the eight-LED engine. Unused pixels remain black.
@@ -416,8 +431,8 @@ def inspect(case, firmware):
                 reference = firmware.trace(native, 2 if len(slots) == 2 else 8)
             except ValueError:
                 reference = None
+            params = reference_settings.agent_animation_parameters(agent.provider)
             if motion in TRAVEL:
-                params = settings.agent_animation_parameters(agent.provider)
                 # Multi-head and uniform profiles cannot be judged by argmax.
                 eligible = (params.get("crests", 1 if motion != "marquee" else 2) == 1
                             and params.get("background_glow", 0) < 100

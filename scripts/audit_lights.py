@@ -41,15 +41,18 @@ SOURCES = (
     "src/jrbar/colors.py", "src/jrbar/light_mix.py", "src/jrbar/motion_shapes.py",
     "src/jrbar/led_status.py", "src/jrbar/core_runtime.py", "src/jrbar/effect_registry.py",
     "src/jrbar/dot_role.py", "src/jrbar/linked_sync.py", "src/jrbar/core_projection.py",
+    "src/jrbar/presentation_compiler.py",
     "app/Sources/JRBarLEDS/LEDSSampler.swift", "app/Sources/JRBarApp/ScreenBarController.swift",
     "app/Sources/JRBarCore/CoreMessages.swift", "app/Sources/JRBarApp/AppDelegate.swift",
     "app/Sources/JRBarApp/LEDFeed.swift", "app/Sources/JRBarApp/EffectStudioLights.swift",
     "src/jrbar/resources/sdled.wasm", "tests/light_audit.py", "scripts/audit_lights.py",
+    "tests/swift_light_audit.py", "tests/fixtures/LightAuditSampler.swift",
+    "app/Sources/JRBarApp/StudioWorkspace.swift",
+    *[str(path.relative_to(REPO)) for path in sorted((REPO / "app/Sources/JRBarLEDS").glob("*.swift"))
+      if path.name != "LEDSSampler.swift"],
 )
 CAUSES = {
-    "mirror_budget": ("Dot widening exceeds the Screen Bar parser budget",
-        "app/Sources/JRBarLEDS/LEDSSampler.swift", "public func rawCodes(", "src/jrbar/core_runtime.py", "mirror_program = dot_mirror_program or mirror.program"),
-    "mirror_pixels": ("Widening changes the Dot's interpolated travel profile",
+    "mirror_pixels": ("The Swift mirror differs from delivered firmware pixels",
         "app/Sources/JRBarLEDS/LEDSSampler.swift", "public func rawCodes(", "src/jrbar/core_runtime.py", "mirror_program = dot_mirror_program or mirror.program"),
     "provider_equivalence": ("Sessions change provider colours and share geometry",
         "src/jrbar/colors.py", "def _active_agents(", "src/jrbar/light_mix.py", "if len(selected) > 1 and len({agent.provider"),
@@ -82,7 +85,12 @@ def inspect_batch(batch):
 
 
 def source_location(path, needle):
-    return f"{path}:{next(i for i, line in enumerate((REPO / path).read_text().splitlines(), 1) if needle in line)}"
+    try:
+        lines = (REPO / path).read_text().splitlines()
+    except OSError:
+        return path
+    line = next((i for i, text in enumerate(lines, 1) if needle in text), None)
+    return f"{path}:{line}" if line else path
 
 
 def provenance():
@@ -142,7 +150,7 @@ json.dump(output, sys.stdout)
     return len(selected)
 
 
-def write_report(out, results, firmware, receipt, legacy_count, integration):
+def write_report(out, results, firmware, receipt, legacy_count, integration, native_mirror):
     failed = defaultdict(list)
     checks = Counter()
     families = defaultdict(Counter)
@@ -191,7 +199,7 @@ def write_report(out, results, firmware, receipt, legacy_count, integration):
         ranked.append(row)
     document = {"schema": 1, "provenance": receipt, "cases": len(results),
                 "failed_cases": sum(bool(r.failures) for r in results), "checks": dict(checks),
-                "historical_solo_cases": legacy_count, "integration": integration,
+                "historical_solo_cases": legacy_count, "integration": integration, "native_mirror": native_mirror,
                 "reassert_actions": dict(Counter(r.reassert_action for r in results if r.reassert_action)),
                 "families": {key: dict(value) for key, value in sorted(families.items())},
                 "ranked": ranked, "failures": dict(failed),
@@ -219,7 +227,7 @@ def write_report(out, results, firmware, receipt, legacy_count, integration):
         "Three synthetic saved presets and six chosen-sweep/Automatic-follower variants. "
         "Every partition of 1 to 6 sessions across 1 to 3 providers. Provider-name permutations are excluded. "
         "Every mix, both shipping LED counts and six states. Stale means AgentStatus.stale=True with a working mode.", "",
-        "Each distinct program runs from zero for three complete encoded loops at 1 to 16 ms ticks. "
+        "Each distinct program runs from zero for three complete firmware playback loops, including 17 ms zero-span paint frames at 1 to 16 ms ticks. "
         "The first pass warms the engine; checks inspect the following passes. "
         "Sweep heads must visit adjacent local positions and return for bouncing motions. "
         "Uniform glow, multi-head profiles and one-LED shares have no unique head and skip that check. "
@@ -238,8 +246,10 @@ def write_report(out, results, firmware, receipt, legacy_count, integration):
         "The historical comparison covers default solo motions in the seven motion-preserving mixes. "
         "Custom exported presets can be supplied with --presets; installed personal presets are not read.", "",
         f"Mirror/cue/controller integration: {integration}.", "",
-        "The Screen Bar check exercises daemon mirror publication and nominal emulator pixels. "
-        "Swift display rendering, calibration, real firmware scheduling, device writes and hardware are not tested.", ""])
+        "The native mirror check compiles the production Swift sampler and compares every delivered program "
+        "with WASM output through startup and two warm cycles at neutral gain and brightness. "
+        "Two-LED firmware frames expand to eight only after sampling. "
+        "Calibration, real firmware scheduling, device writes and hardware are not tested.", ""])
     (out / "report.md").write_text("\n".join(lines))
     return document
 
@@ -290,6 +300,20 @@ def main():
             raise RuntimeError("The hardware write gate refused an audited program")
         delivered.append(dict(row, program=compiled.program))
     (args.out / "delivered-programs.json").write_text(json.dumps(delivered))
+    # This check is mandatory even when the optional daemon integration is skipped.
+    from swift_light_audit import build_sampler, mirror_failures
+
+    executable = build_sampler(args.out)
+    native_failures = mirror_failures(executable, delivered)
+    native_mirror = {"programs": len(delivered), "failures": native_failures}
+    (args.out / "native-mirror.json").write_text(json.dumps(native_mirror, indent=2) + "\n")
+    errors = {row["case"]: row["error"] for row in native_failures}
+    failed_programs = {(row["leds"], row["program"]): errors[row["case"]]
+                       for row in json.loads(bank_path.read_text()) if row["case"] in errors}
+    for result in results:
+        result.checks.add("mirror_pixels")
+        if error := failed_programs.get((result.case.leds, result.program)):
+            result.failures["mirror_pixels"] = f"Swift mirror differs from WASM by {error}/255"
     integration = "Not run (--skip-integration)"
     if not args.skip_integration:
         process = subprocess.run([sys.executable, "-m", "pytest", "tests/test_light_audit.py",
@@ -299,7 +323,7 @@ def main():
         integration = f"{'Verified' if process.returncode == 0 else 'Failed'}; see integration.txt"
     if provenance()["sha256"] != receipt["sha256"]:
         raise RuntimeError("Source changed during audit; rerun to bind the report to one source snapshot")
-    document = write_report(args.out, results, firmware, receipt, legacy_count, integration)
+    document = write_report(args.out, results, firmware, receipt, legacy_count, integration, native_mirror)
     expected = json.loads(args.baseline.read_text())["failures"] if args.baseline.exists() else {}
     if args.quick or args.presets:
         keys = {case.key for case in matrix}
@@ -309,6 +333,8 @@ def main():
     if args.record_baseline:
         if args.quick or args.presets:
             parser.error("Record the baseline only from the full standard matrix")
+        if native_failures or integration.startswith("Failed"):
+            parser.error("Refusing to record a baseline with failed native or daemon integration checks")
         if new and args.baseline.exists():
             parser.error("Refusing to record a baseline with new failures; inspect baseline-delta.json")
         args.baseline.write_text(json.dumps({"schema": 1, "head": receipt["head"],
@@ -316,7 +342,7 @@ def main():
     print(json.dumps({"cases": len(results), "failed_cases": document["failed_cases"],
                       "new": sum(map(len, new.values())), "resolved": sum(map(len, resolved.values())),
                       "report": str(args.out / "report.md")}))
-    return int((bool(new) and not args.record_baseline) or integration.startswith("Failed"))
+    return int((bool(new) and not args.record_baseline) or bool(native_failures) or integration.startswith("Failed"))
 
 
 if __name__ == "__main__":

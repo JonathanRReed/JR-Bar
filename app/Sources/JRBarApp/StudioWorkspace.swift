@@ -159,6 +159,9 @@ struct StudioWhatPlays: View {
                     Text("Last preview").foregroundStyle(JRBarTokens.Ink.attention)
                 }
                 Spacer()
+                if let cycle = lights.playbackCycle {
+                    Text(cycle).monospacedDigit().foregroundStyle(.secondary)
+                }
                 if lights.refreshing { Text("Updating").foregroundStyle(.secondary) }
             }
             if let failure = lights.playFailure {
