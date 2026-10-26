@@ -5,7 +5,7 @@ import JRBarUI
 /// The What's New window's content: the mark, the release and its one
 /// line, a row per new thing with a Try it that opens the surface it
 /// describes, and Done. Rows arrive one after another; under Reduce
-/// Motion they are simply there.
+/// Motion they are simply there. Controls follow the system accent.
 struct WhatsNewView: View {
     let entries: [WhatsNewEntry]
     /// Runs a row's Try it; a line back is the refusal to show on the row.
@@ -13,11 +13,6 @@ struct WhatsNewView: View {
     let onDone: @MainActor () -> Void
 
     static let width: CGFloat = 660
-    /// The marks' one colour: a fixed, calm blue rather than the accent.
-    /// JR-Bar keeps red for failure, and on a Mac whose accent is red
-    /// every row would read as one (the unseen dot's reasoning).
-    static let tint = JRBarTokens.Ink.accent
-
     @ViewState private var refusals: [String: String] = [:]
     @ViewState private var pending: Set<String> = []
 
@@ -39,7 +34,7 @@ struct WhatsNewView: View {
                     entryCard(lead, lead: true)
                 }
                 .padding(JRBarTokens.Space.lg)
-                .background(JRBarTokens.Ink.accentSoft, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
+                .background(JRBarTokens.Ink.group, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading,
                       spacing: JRBarTokens.Space.lg) {
@@ -58,12 +53,19 @@ struct WhatsNewView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    func proofRefusal(_ text: String, entry: String) -> Self {
+        var copy = self
+        copy._refusals = ViewState(initialValue: [entry: text])
+        return copy
+    }
+
     private func entryCard(_ entry: WhatsNewEntry, lead: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             Label(entry.title, systemImage: entry.symbol)
                 .font(lead ? JRBarTokens.TypeStyle.heading.font : JRBarTokens.TypeStyle.headline.font)
             Text(refusals[entry.id] ?? entry.detail)
-                .jrbarType(.body).foregroundStyle(JRBarTokens.Ink.secondary)
+                .foregroundStyle(refusals[entry.id] == nil ? JRBarTokens.Ink.secondary : JRBarTokens.Ink.attention)
+                .jrbarType(.body)
                 .fixedSize(horizontal: false, vertical: true)
             if let command = entry.tryIt {
                 Button("Show me") { run(command, for: entry) }
@@ -93,72 +95,5 @@ struct WhatsNewView: View {
             .trimmingCharacters(in: .whitespaces)
         guard let version, !version.isEmpty else { return "A development build" }
         return "Version \(version)"
-    }
-}
-
-/// One new thing: its mark, title and sentence, and on the right either
-/// Try it or the chord it lives on.
-struct WhatsNewRow: View {
-    let entry: WhatsNewEntry
-    let refusal: String?
-    let isRunning: Bool
-    let tryIt: (AppCommand) -> Void
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: entry.symbol)
-                .font(.system(size: JRBarTokens.TypeStyle.title3.size, weight: .medium))
-                .foregroundStyle(WhatsNewView.tint)
-                .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(WhatsNewView.tint.opacity(0.12)))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(entry.title)
-                        .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
-                    if let keys = entry.keys, entry.tryIt != nil {
-                        WhatsNewKeys(keys: keys)
-                    }
-                }
-                Text(refusal ?? entry.detail)
-                    .font(JRBarTokens.TypeStyle.callout.font)
-                    .foregroundStyle(refusal == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .animation(.easeOut(duration: 0.15), value: refusal)
-            }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 8)
-            if let command = entry.tryIt {
-                Button("Try it") { tryIt(command) }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .tint(WhatsNewView.tint)
-                    .controlSize(.small)
-                    .disabled(isRunning)
-                    .help(entry.opens ?? "Opens it now")
-                    .accessibilityLabel("Try \(entry.title)")
-                    .accessibilityHint(entry.opens ?? "")
-            } else if let keys = entry.keys {
-                WhatsNewKeys(keys: keys)
-            }
-        }
-    }
-}
-
-/// A chord as a keycap chip.
-struct WhatsNewKeys: View {
-    let keys: String
-
-    var body: some View {
-        Text(keys)
-            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.primary.opacity(0.07)))
-            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-            .accessibilityLabel("Shortcut \(keys)")
     }
 }

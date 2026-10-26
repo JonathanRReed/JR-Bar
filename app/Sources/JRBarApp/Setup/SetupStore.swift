@@ -206,7 +206,7 @@ final class SetupStore {
 
     /// First live inventory is a baseline. Later additions get a card, never Setup.
     func reconcileInstalledProviders(_ agents: [SetupAgent]) {
-        guard hasFinished else { return }
+        guard hasFinished, !agents.isEmpty, agents.allSatisfy({ $0.detected != nil }) else { return }
         let installed = agents.filter { $0.detected == true && $0.id != "t3code" }
         let ids = Set(installed.map(\.id))
         let previous = state.knownProviders.map(Set.init)

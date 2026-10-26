@@ -32,9 +32,9 @@ struct SetupState: Codable, Equatable, Sendable {
     /// only records; a later look that finds one of these gone says so
     /// once — the reset an OS update or a re-signed build can leave.
     var grantedPermissions: [String]?
-    /// The release (`WhatsNewCatalog.releaseID`) whose What's New window
-    /// was last closed. nil until one is — the launch gate's "not seen".
+    /// Installed providers from the last complete inventory.
     var knownProviders: [String]?
+    /// The release whose What's New window was last closed.
     var whatsNewSeen: String?
 
     static let currentVersion = 1

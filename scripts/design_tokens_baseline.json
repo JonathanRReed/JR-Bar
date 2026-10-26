@@ -823,11 +823,6 @@
     "radius: cornerRadius: 12": 2,
     "radius: cornerRadius: 7": 1
   },
-  "app/Sources/JRBarApp/WhatsNew/WhatsNewView.swift": {
-    "animation: duration: 0.15": 1,
-    "radius: cornerRadius: 5": 2,
-    "radius: cornerRadius: 9": 1
-  },
   "app/Sources/JRBarApp/WindowChrome.swift": {
     "font: .system(size: 11": 3,
     "font: .system(size: 11.5": 2,
