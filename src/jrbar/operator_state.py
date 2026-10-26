@@ -947,6 +947,26 @@ def _codex_usage_limit_can_close_direct_work(
     )
 
 
+def _activity_can_resume_failed_work(
+    existing: CanonicalWorkTruth | None, batch: ProviderFactBatch, fact: ProviderWorkFact,
+) -> bool:
+    """New provider activity ends failure, including a newer transcript turn."""
+    return (
+        existing is not None
+        and existing.lifecycle is WorkLifecycle.FAILED
+        and fact.lifecycle is WorkLifecycle.ACTIVE
+        and fact.next_actor is NextActor.PROVIDER
+        and batch.observation_authority is ObservationAuthority.FALLBACK_OBSERVATION
+        and batch.source_health in {SourceHealth.HEALTHY, SourceHealth.PARTIAL}
+        and batch.source_freshness is SourceFreshness.FRESH
+        and len(batch.work_facts) == 1
+        and all(request.state is ProviderRequestState.RESOLVED and request.key.work_key == fact.key
+                for request in batch.request_facts)
+        and fact.watermark.occurred_at_epoch > existing.watermark.occurred_at_epoch
+        and compare_watermarks(fact.watermark, existing.watermark) is WatermarkOrder.NEWER
+    )
+
+
 def _timing_lease_expired(
     entry: _SourceTimingState,
     clock: ClockSample,
@@ -1581,7 +1601,8 @@ def reduce_operator_state(
         and batch.observation_authority < current_source_authority
     )
     typed_terminal_exception = any(
-        _codex_usage_limit_can_close_direct_work(
+        _activity_can_resume_failed_work(previous_works.get(fact.key), batch, fact)
+        or _codex_usage_limit_can_close_direct_work(
             previous_works.get(fact.key),
             batch,
             fact,
@@ -1669,7 +1690,8 @@ def reduce_operator_state(
             if coverage is not None and (
                 compare_watermarks(fact.watermark, coverage.watermark) is not WatermarkOrder.NEWER
                 or (batch.observation_authority < coverage.authority
-                    and not _codex_usage_limit_can_close_direct_work(existing, batch, fact))
+                    and not _codex_usage_limit_can_close_direct_work(existing, batch, fact)
+                    and not _activity_can_resume_failed_work(existing, batch, fact))
             ):
                 continue
             order = (
@@ -1686,6 +1708,7 @@ def reduce_operator_state(
                 and existing.source_freshness is SourceFreshness.FRESH
                 and not existing.timing_uncertain
                 and batch.observation_authority < existing.observation_authority
+                and not _activity_can_resume_failed_work(existing, batch, fact)
                 and not _codex_usage_limit_can_close_direct_work(
                     existing,
                     batch,

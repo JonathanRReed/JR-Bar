@@ -150,20 +150,33 @@ They reconcile hook worker IDs with the session database after restart.
 An unresolved subagent alias cannot override a database session parent.
 Local lineage evidence augments observed sessions and creates no activity rows.
 
+## Provider identities
+
+Provider IDs use the explicit alias table in `src/jrbar/provider_ids.py`.
+Hooks, transcripts and T3 publish canonical IDs such as `claude`, `codex`
+and `factory`. The app uses the generated `ProviderID` table as a fallback
+for older daemons. Marks, colours and names use that same identity.
+Custom instance labels and model names do not establish a provider.
+ACP registry instances use their configured agent ID. Unknown IDs keep
+a neutral question mark.
+
 ## Failure signals
 
-A failed run keeps `lifecycle: "failed"` in the panel until cleared.
+A failed run keeps `lifecycle: "failed"` in the panel until cleared or newer
+activity resumes it. A new turn, tool activity or T3 running state clears
+the failure immediately. An ended session no longer signals failure.
 Its `failure_signal_until` is a Unix timestamp five seconds after the
 failure, or null when it has no signal. Only a fresh top-level failure
 signals. Workers, including unlinked workers, never drive failure colours,
 counts, notices, banners or sounds. Their failed marks stay inside their
 group or dim unlinked row.
 
-The notch, Screen Bar, LEDs and Stream Deck stop signalling at that
+The notch, Screen Bar, menu bar dots, LEDs and Stream Deck stop signalling at that
 deadline. `aggregate.failed` counts current failure signals, not retained
 failed rows. The failure notice names the provider and project and lasts
 five seconds. Asks still take priority. Replayed expired failures stay quiet.
-Cancellation, interruption and a delegated task stopped by capacity or
+T3 uses the failed run's own timestamp. Thread edits, settlement and held
+follow-ups cannot renew its signal. Cancellation, interruption and a delegated task stopped by capacity or
 transport errors read as `ended`, without a failure signal.
 
 T3 children without a native provider binding keep a stable T3-qualified

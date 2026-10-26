@@ -339,7 +339,7 @@ def test_subagents_are_retained_but_archived_and_deleted_threads_are_not_listed(
         ("antigravity", "antigravity"),
         ("acpRegistry_devin", "other"),
         ("acpRegistry_somethingnew", "other"),
-        ("gemini", "other"),
+        ("gemini", "gemini"),
     ),
 )
 def test_provider_drivers_map_to_the_provider_they_run(tmp_path: Path, raw: str, expected: str) -> None:
@@ -941,3 +941,35 @@ def test_settled_native_children_keep_lineage_after_the_activity_window(tmp_path
     groups = resolve_agent_groups(observed.agent_statuses(), now=now.timestamp())
     assert groups.groups[0].members == ('claude:session:native-root', 'codex:session:native-child')
     assert not groups.unlinked_workers
+
+
+def test_thread_edits_and_held_followups_do_not_renew_a_failed_run(tmp_path):
+    from jrbar.failure_policy import signals_failure
+
+    database = _v2(tmp_path)
+    _thread(database, updated_at=NOW)
+    _run(database, "thread-1", 1, "failed", requested_at=EARLIER)
+    _run(database, "thread-1", 2, "queued", held=True, requested_at=NOW)
+    connection = sqlite3.connect(database)
+    connection.execute("UPDATE orchestration_v2_projection_runs SET completed_at=? WHERE ordinal=1", (EARLIER,))
+    connection.commit()
+    connection.close()
+    observed = datetime.fromisoformat(NOW)
+    status = _only(read_t3_snapshot(base_dir=tmp_path, now=lambda: observed)).to_agent_status()
+    assert status.mode is AgentMode.BLOCKED_ERROR
+    assert status.updated_at == datetime.fromisoformat(EARLIER)
+    assert not signals_failure(status, now=observed)
+
+
+def test_t3_child_failure_then_running_clears_failed_lifecycle(tmp_path):
+    from jrbar.failure_policy import signals_failure
+
+    database = _v2(tmp_path)
+    _thread(database, "thread-parent", provider="codex")
+    _thread(database, "thread-child", provider="claudeAgent", relationship="subagent")
+    _run(database, "thread-child", 1, "failed", requested_at=EARLIER)
+    _run(database, "thread-child", 2, "running", requested_at=NOW)
+    status = next(row for row in read_t3_snapshot(base_dir=tmp_path).agent_statuses() if row.provider == "claude")
+    assert status.mode is AgentMode.WORKING
+    assert status.is_subagent
+    assert not signals_failure(status, now=datetime.fromisoformat(NOW))

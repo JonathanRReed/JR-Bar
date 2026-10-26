@@ -12673,7 +12673,8 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
                 from jrbar.light_mix import explain_what_plays
 
                 plan = explain_what_plays(projection, settings, led_count=led_count)
-                self.assertEqual({row["provider"] for row in plan["providers"]}, {"codex", "claude"}, label)
+                # This retained failure predates its five-second signal.
+                self.assertEqual({row["provider"] for row in plan["providers"]}, {"codex"}, label)
 
 
 

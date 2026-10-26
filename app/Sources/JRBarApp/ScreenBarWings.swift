@@ -937,7 +937,7 @@ struct ScreenBarWingsView: View {
     /// `tint` wins for the attention/alert tones.
     @ViewBuilder
     private func glyph(_ style: ProviderStyle, size: CGFloat, tint: Color? = nil) -> some View {
-        let ink = tint ?? style.markInk(on: .black)
+        let ink = ProviderStyle.table[style.id] == nil ? style.markInk(on: .black) : tint ?? style.markInk(on: .black)
         switch style.mark {
         case .logo(let logo):
             ProviderLogoMark(logo: logo, size: size)

@@ -130,6 +130,15 @@ public enum AgentAggregateState: String, Equatable, Sendable, CaseIterable {
         if mode.contains("done") || mode.contains("complet") || mode.contains("ready") || aggregate.ready > 0 { return .completed }
         return .idle
     }
+
+    /// Retained panel failures cannot keep a menu bar signal alive.
+    public static func from(state: CoreState, now: Double) -> AgentAggregateState {
+        if !state.asks.isEmpty || state.aggregate.needsYou > 0 { return .needsInput }
+        if state.sessions.contains(where: { $0.signalsFailure(at: now) }) { return .failed }
+        if state.aggregate.active > 0 { return .working }
+        if state.aggregate.ready > 0 { return .completed }
+        return .idle
+    }
 }
 
 extension CoreAggregate {
@@ -269,11 +278,23 @@ extension CoreSession {
 
 extension CoreSession {
     /// Failure marks remain in the panel after their five-second signal ends.
-    public func signalsFailure(at now: Double) -> Bool {
+    public var failureSignalWindow: Range<Double>? {
         guard kind == "main", parent == nil, !unlinkedWorker, !stale,
-              SessionActivity.reduce(self) == .failed else { return false }
-        guard let start = updatedAt ?? since else { return false }
+              SessionActivity.reduce(self) == .failed else { return nil }
+        guard let start = updatedAt ?? since else { return nil }
         let end = failureSignalUntil ?? start + 5
-        return start <= now && now < end
+        guard start.isFinite, end.isFinite, start < end else { return nil }
+        return start..<end
+    }
+
+    public func signalsFailure(at now: Double) -> Bool {
+        failureSignalWindow?.contains(now) == true
+    }
+
+    /// An event may arrive before its coalesced state frame. Only newer
+    /// session truth can cancel it.
+    public func supersedesFailure(at eventAt: Double?, now: Double) -> Bool {
+        guard let eventAt, let updated = updatedAt ?? since, updated >= eventAt else { return false }
+        return !signalsFailure(at: now)
     }
 }

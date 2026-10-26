@@ -247,6 +247,7 @@ public enum AlcoveEventPolicy {
         guard kinds.isOn(kind) else { return nil }
         if kind == .failed {
             guard event.notify != false, session?.isSubagent != true, session?.unlinkedWorker != true else { return nil }
+            if session?.supersedesFailure(at: event.at, now: now) == true { return nil }
             if let at = event.at, now < at || now >= at + 5 { return nil }
         }
 
@@ -528,6 +529,15 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             pendingAt = nil
         }
         return current.map(matches) ?? false
+    }
+
+    /// New activity or an ending clears this session's queued failure too.
+    public mutating func resolveFailure(session: String) -> Bool {
+        if pending?.kind == .failed, pending?.session == session {
+            pending = nil
+            pendingAt = nil
+        }
+        return current?.kind == .failed && current?.session == session
     }
 
     /// The ask escalated to the takeover tier. The capsule already

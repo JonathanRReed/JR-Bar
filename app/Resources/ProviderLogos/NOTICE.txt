@@ -26,11 +26,19 @@ simple-icons/claude.svg, googlegemini.svg, pi.svg, opencode.svg, cursor.svg
     only; the marks stay their owners' trademarks.
 
 lobehub/openai.svg, codex.svg, gemini.svg, grok.svg, xai.svg, devin.svg,
-antigravity.svg, hermesagent.svg, kiro.svg
+antigravity.svg, hermesagent.svg, kiro.svg, kimi.svg, kilocode.svg
     LobeHub Icons, @lobehub/icons-static-svg 1.95.1,
     commit 49a2130df7bfa5eb1b088261bff20a37e2967789
     https://github.com/lobehub/lobe-icons
     MIT License, Copyright (c) 2023 LobeHub
+
+factory/wordmark.svg, factory/mark.svg
+    Factory, commit 892925c655a97e7a0bc7d558236015ebb22cb214
+    https://github.com/Factory-AI/factory/blob/892925c655a97e7a0bc7d558236015ebb22cb214/docs/logo/dark.svg
+    Copyright (c) 2025-2026 Factory AI. All rights reserved.
+    The mark is the final path of the upstream wordmark, retained alongside it.
+    Used only to identify Factory sessions and usage. The trademark remains
+    Factory's property.
 
 openclaw/tray-template.svg (apps/linux/src-tauri/icons/tray-template.svg),
 openclaw/molty.svg (apps/macos/Icon.icon/Assets/molty.svg)

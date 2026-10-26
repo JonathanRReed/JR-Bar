@@ -117,9 +117,9 @@ struct ProviderStyle: Hashable, Sendable {
         // `state.usage.providers` (`provider_usage_cli.py`), so the Usage
         // Center needs a name for it that is not "Openai-api". The same
         // blossom as Codex; the colour and the name tell them apart.
-        ProviderStyle(id: "kimi", name: "Kimi Code", accentHex: ProviderPalette.hex(for: "kimi"), glyph: .text("K")),
-        ProviderStyle(id: "kilo", name: "Kilo", accentHex: ProviderPalette.hex(for: "kilo"), glyph: .symbol("bolt.horizontal.fill")),
-        ProviderStyle(id: "factory", name: "Factory", accentHex: ProviderPalette.hex(for: "factory"), glyph: .symbol("shippingbox.fill")),
+        ProviderStyle(id: "kimi", name: "Kimi Code", accentHex: ProviderPalette.hex(for: "kimi"), glyph: .logo("kimi"), fallback: .text("K")),
+        ProviderStyle(id: "kilo", name: "Kilo", accentHex: ProviderPalette.hex(for: "kilo"), glyph: .logo("kilo"), fallback: .symbol("bolt.horizontal.fill")),
+        ProviderStyle(id: "factory", name: "Factory", accentHex: ProviderPalette.hex(for: "factory"), glyph: .logo("factory"), fallback: .symbol("f.square")),
         ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: ProviderPalette.hex(for: "openai-api"), glyph: .logo("openai"),
                       fallback: .symbol("key.horizontal.fill")),
         // A usage source the daemon appends to the usage graph when its
@@ -134,7 +134,7 @@ struct ProviderStyle: Hashable, Sendable {
     ].map { ($0.id, $0) })
 
     static func style(for provider: String) -> ProviderStyle {
-        let key = provider.lowercased()
+        let key = ProviderID.canonical(provider)
         if let known = table[key] { return known }
         // Unknown providers get a neutral tile and a readable name, never a blank.
         let name = key.isEmpty ? "Agent" : key.prefix(1).uppercased() + key.dropFirst()
@@ -146,7 +146,7 @@ struct ProviderStyle: Hashable, Sendable {
     /// default unchanged when it does not.
     static func style(for provider: String, document: SettingsDocument?) -> ProviderStyle {
         let style = style(for: provider)
-        guard let hex = document?.agentColorHex(provider) else { return style }
+        guard let hex = document?.agentColorHex(style.id) else { return style }
         return ProviderStyle(id: style.id, name: style.name, accentHex: hex, glyph: style.glyph,
                              fallback: style.fallback)
     }

@@ -51,7 +51,7 @@ public enum SessionLabel {
 
     /// `claude` → `Claude`, `opencode` → `OpenCode`, an unknown id capitalised.
     public static func providerName(_ id: String) -> String {
-        switch id.lowercased() {
+        switch ProviderID.canonical(id) {
         case "claude": return "Claude"
         case "codex": return "Codex"
         case "gemini": return "Gemini"
@@ -60,6 +60,12 @@ public enum SessionLabel {
         case "antigravity": return "Antigravity"
         case "cursor": return "Cursor"
         case "devin": return "Devin"
+        case "factory": return "Factory"
+        case "kimi": return "Kimi Code"
+        case "kilo": return "Kilo"
+        case "openai-api": return "OpenAI API"
+        case "t3code": return "T3 Code"
+        case "jrbar": return "JR-Bar"
         case "grok": return "Grok"
         case "hermes": return "Hermes"
         case "kiro": return "Kiro"

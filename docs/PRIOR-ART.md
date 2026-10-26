@@ -828,3 +828,12 @@ the rebuilt wheel and the packaged notices.
 and removes the AppKit linker flag. It keeps the same OS threshold,
 Python binding and HID operations. It builds the archive's generated C
 without adding Cython to the release build environment.
+
+### Provider identity and marks, 2026-10-26
+
+Factory's emblem comes from `docs/logo/dark.svg` in
+[Factory-AI/factory at 892925c655a97e7a0bc7d558236015ebb22cb214](https://github.com/Factory-AI/factory/blob/892925c655a97e7a0bc7d558236015ebb22cb214/docs/logo/dark.svg).
+Factory retains all rights. JR-Bar uses the emblem to identify Factory,
+with the upstream wordmark and attribution retained in the provider assets.
+Kimi and Kilo use the existing LobeHub Icons source at
+`49a2130df7bfa5eb1b088261bff20a37e2967789`, under its MIT licence.

@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 public struct ProviderLogoTile: View {
@@ -13,7 +14,7 @@ public struct ProviderLogoTile: View {
 
     public init(provider: String, size: CGFloat = 20, accent: Color? = nil, dim: Bool = false,
                 surface: ProviderMarkInk.Surface? = nil) {
-        self.provider = provider
+        self.provider = ProviderID.canonical(provider)
         self.size = size
         self.accent = accent
         self.dim = dim
@@ -38,9 +39,9 @@ public struct ProviderLogoTile: View {
                     .fill(markInk)
                     .padding(size * 0.20)
             } else {
-                Image(systemName: provider == "factory" ? "shippingbox.fill" : "terminal.fill")
+                Image(systemName: "questionmark")
                     .resizable().scaledToFit()
-                    .foregroundStyle(markInk)
+                    .foregroundStyle(neutralInk.secondary)
                     .padding(size * 0.20)
             }
         }

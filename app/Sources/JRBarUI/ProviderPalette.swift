@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// Fixed provider defaults. Studio overrides belong to the daemon's
@@ -13,7 +14,7 @@ public enum ProviderPalette {
         "openai-api": "#10A37F", "jrbar": "#5E5CE6", "t3code": "#00B8D9",
     ]
 
-    public static func hex(for provider: String) -> String { hexes[provider.lowercased()] ?? "#8E8E93" }
+    public static func hex(for provider: String) -> String { hexes[ProviderID.canonical(provider)] ?? "#8E8E93" }
 
     public static func color(for provider: String) -> Color { Color(nsColor: nsColor(for: provider)) }
 
@@ -33,13 +34,13 @@ public enum ProviderPalette {
                      "cursor": "Cursor", "factory": "Factory", "devin": "Devin", "opencode": "OpenCode",
                      "kiro": "Kiro", "grok": "Grok", "openclaw": "OpenClaw", "pi": "Pi", "hermes": "Hermes",
                      "kimi": "Kimi", "kilo": "Kilo", "openai-api": "OpenAI API", "jrbar": "JR-Bar", "t3code": "T3 Code"]
-        return names[provider.lowercased()] ?? provider.capitalized
+        return names[ProviderID.canonical(provider)] ?? provider.capitalized
     }
 
     public static func logoID(for provider: String) -> String {
-        switch provider.lowercased() {
+        switch ProviderID.canonical(provider) {
         case "codex", "openai-api": "openai"
-        default: provider.lowercased()
+        default: ProviderID.canonical(provider)
         }
     }
 }

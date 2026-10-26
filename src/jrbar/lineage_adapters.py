@@ -22,16 +22,13 @@ from itertools import islice
 from pathlib import Path
 
 from .models import AgentMode, AgentStatus, ParentLink
+from .provider_ids import PROVIDER_ALIASES, canonical_provider_id
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}\Z")
 MAX_FILES = 512
 MAX_HEADER_BYTES = 64 * 1024
 
 
-# ACP registry IDs, not instance labels. Registry entries are documented at
-# https://github.com/agentclientprotocol/registry/tree/main/factory-droid
-# and https://github.com/agentclientprotocol/registry/tree/main/devin.
-_ACP_REGISTRY_PROVIDERS = {"factory-droid": "factory", "devin": "devin"}
 
 
 def t3_registry_providers(document: dict) -> dict[str, str]:
@@ -44,8 +41,8 @@ def t3_registry_providers(document: dict) -> dict[str, str]:
             continue
         config = definition.get("config")
         agent_id = config.get("agentId") if type(config) is dict else None
-        if type(agent_id) is str and agent_id in _ACP_REGISTRY_PROVIDERS:
-            result[instance] = _ACP_REGISTRY_PROVIDERS[agent_id]
+        if type(agent_id) is str and canonical_provider_id(agent_id) in PROVIDER_ALIASES:
+            result[instance] = canonical_provider_id(agent_id)
     return result
 
 
