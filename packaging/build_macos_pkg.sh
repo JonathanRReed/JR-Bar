@@ -127,16 +127,18 @@ clear_candidate_metadata() {
 # final `notarytool info` JSON to the second argument. `notarytool submit
 # --wait` crashes on macOS 27 (a stack overflow formatting its wait output,
 # seen on files of a few megabytes and up), so this uploads with --no-wait and
-# polls `info`, which does not.
+# polls `info`. Both commands can crash after Apple receives the upload.
 notarize_and_wait() {
     local file="$1" response="$2"
-    local submitted submit_errors submit_exit info id status="In Progress" waited=0
+    local submitted submit_errors submit_exit=0 info id status="In Progress" waited=0
+    local started finished history attempt info_failures=0
     local upload_flag=""
     if [ "$NOTARY_NO_S3_ACCELERATION" = "1" ]; then
         upload_flag="--no-s3-acceleration"
     fi
     submitted="$(/usr/bin/mktemp "${response}.upload-stdout.XXXXXX")"
     submit_errors="$(/usr/bin/mktemp "${response}.upload-stderr.XXXXXX")"
+    started="$("$BUILD_PYTHON" -c 'import time; print(time.time())')"
     if {
         "$XCRUN_TOOL" notarytool submit "$file" \
             --keychain-profile "$NOTARY_PROFILE" \
@@ -148,12 +150,53 @@ notarize_and_wait() {
         :
     else
         submit_exit=$?
-        echo "Notary upload failed (exit $submit_exit)." >&2
-        printf 'Upload stdout: %s\nUpload stderr: %s\n' "$submitted" "$submit_errors" >&2
-        echo "Check notarytool history before any retry; Apple may have created a submission." >&2
-        return "$submit_exit"
     fi
-    id="$("$BUILD_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$submitted")"
+    finished="$("$BUILD_PYTHON" -c 'import time; print(time.time())')"
+    id="$("$BUILD_PYTHON" -c '
+import json,sys
+value=json.load(open(sys.argv[1])).get("id")
+if not isinstance(value,str) or not value.strip() or any(c.isspace() for c in value):
+    raise SystemExit(1)
+print(value)
+' "$submitted" 2>/dev/null)" || id=""
+    if [ "$submit_exit" -ne 0 ] || [ -z "$id" ]; then
+        echo "Notary upload returned exit $submit_exit without a reliable response; checking history." >&2
+        printf 'Upload stdout: %s\nUpload stderr: %s\n' "$submitted" "$submit_errors" >&2
+        history="$(/usr/bin/mktemp "${response}.history.XXXXXX")"
+        id=""
+        for attempt in 1 2 3; do
+            if {
+                "$XCRUN_TOOL" notarytool history --keychain-profile "$NOTARY_PROFILE" \
+                    --output-format json > "$history"
+            } 2>/dev/null; then
+                id="$("$BUILD_PYTHON" -c '
+import datetime,json,pathlib,sys
+rows=json.load(open(sys.argv[1]))["history"]
+name=pathlib.Path(sys.argv[2]).name
+start,end=map(float,sys.argv[3:])
+matches=[]
+for row in rows:
+    if row.get("name") != name:
+        continue
+    created=datetime.datetime.fromisoformat(row["createdDate"].replace("Z","+00:00")).timestamp()
+    # Allow five seconds of server clock skew, but never guess between uploads.
+    if start-5 <= created <= end+5:
+        matches.append(row["id"])
+if len(matches) != 1 or not isinstance(matches[0],str) or not matches[0] or any(c.isspace() for c in matches[0]):
+    raise SystemExit(1)
+print(matches[0])
+' "$history" "$file" "$started" "$finished" 2>/dev/null)" || id=""
+            fi
+            [ -z "$id" ] || break
+            [ "$attempt" -eq 3 ] || /bin/sleep 15
+        done
+        if [ -z "$id" ]; then
+            echo "No unique upload found in notarytool history. Inspect $history before any retry; no file was resubmitted." >&2
+            [ "$submit_exit" -ne 0 ] || submit_exit=1
+            return "$submit_exit"
+        fi
+        echo "Recovered notary submission $id from history." >&2
+    fi
     info="$(/usr/bin/mktemp)"
     while [ "$status" = "In Progress" ]; do
         if [ "$waited" -ge 7200 ]; then
@@ -162,10 +205,26 @@ notarize_and_wait() {
         fi
         /bin/sleep 15
         waited=$((waited + 15))
-        if "$XCRUN_TOOL" notarytool info "$id" \
-            --keychain-profile "$NOTARY_PROFILE" \
-            --output-format json > "$info" 2>/dev/null; then
-            status="$("$BUILD_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$info" 2>/dev/null || echo "In Progress")"
+        if {
+            "$XCRUN_TOOL" notarytool info "$id" \
+                --keychain-profile "$NOTARY_PROFILE" \
+                --output-format json > "$info"
+        } 2>/dev/null && status="$("$BUILD_PYTHON" -c '
+import json,sys
+row=json.load(open(sys.argv[1]))
+if row.get("id") != sys.argv[2] or row.get("status") not in ("In Progress","Accepted","Invalid","Rejected"):
+    raise SystemExit(1)
+print(row["status"])
+' "$info" "$id" 2>/dev/null)"; then
+            info_failures=0
+        else
+            status="In Progress"
+            info_failures=$((info_failures + 1))
+            if [ "$info_failures" -ge 3 ]; then
+                echo "Cannot read notary submission $id after three attempts; resume this ID without resubmitting $file." >&2
+                /bin/rm -f "$info"
+                return 1
+            fi
         fi
     done
     /bin/cp "$info" "$response"

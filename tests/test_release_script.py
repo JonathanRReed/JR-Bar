@@ -119,6 +119,13 @@ def test_a_changelog_for_another_version_is_refused(tmp_path: Path) -> None:
     repo = _repo(tmp_path, changelog_top="## 1.2.4")
     result = _dry_run(repo, tmp_path)
     assert result.returncode == 1 and "not '## 1.2.3'" in result.stderr
+    assert not (repo / "dist").exists()
+
+
+def test_publication_paths_require_changelog_validation() -> None:
+    for name in ("publish_release.sh", "verify_macos_release.sh"):
+        text = (ROOT / "scripts" / name).read_text()
+        assert 'scripts/validate_release_version.py --require-changelog)' in text
 
 
 def test_a_dirty_tree_is_refused(tmp_path: Path) -> None:

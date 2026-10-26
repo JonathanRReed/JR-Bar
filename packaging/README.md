@@ -35,9 +35,10 @@ already owns.
 
 ## What the builder does
 
-1. Validates the version (`scripts/validate_release_version.py`: pyproject,
-   `jrbar.__version__` and a `CHANGELOG.md` heading must agree) and derives
+1. Validates the source version (`scripts/validate_release_version.py`:
+   pyproject and `jrbar.__version__` must agree) and derives
    the artifact names from `scripts/release_artifact_contract.py`.
+   Publication and tag validation also require a matching `CHANGELOG.md` heading.
 2. Makes a fresh Python 3.12 venv from the hash-locked
    `requirements/release-lock.txt` and installs the checkout into it.
 3. Prepares Sparkle (`scripts/prepare_sparkle.py`, digest-pinned
