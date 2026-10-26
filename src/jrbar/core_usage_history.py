@@ -567,7 +567,10 @@ class UsageHistoryService:
             for provider in providers:
                 if provider in HISTORY_PROVIDERS:
                     key = (provider, days)
-                    self._start_locked(key, self._entries.setdefault(key, _Entry()), now)
+                    entry = self._entries.setdefault(key, _Entry())
+                    if entry.document is not None and entry.error is None and entry.scanned_at is not None and now - entry.scanned_at < self._fresh:
+                        continue
+                    self._start_locked(key, entry, now)
 
     def is_scanning(self) -> bool:
         with self._state_lock:

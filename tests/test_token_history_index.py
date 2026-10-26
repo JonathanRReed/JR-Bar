@@ -366,7 +366,8 @@ def test_disable_closes_the_maintenance_loop(tmp_path, monkeypatch):
     monkeypatch.setattr(token_history_index, "_ENABLED", True)
     monkeypatch.setattr(token_history_index, "_INDEXES", {})
     calls, waits = [], []
-    owner = SimpleNamespace(settings=SimpleNamespace(token_history_enabled=True), _core_ready_at=1)
+    owner = SimpleNamespace(settings=SimpleNamespace(token_history_enabled=True, usage_graph_providers=("claude", "codex")),
+        last_snapshot=SimpleNamespace(statuses=(SimpleNamespace(provider="grok"),)), _core_ready_at=1)
 
     class Stop:
         stopped = False
@@ -388,6 +389,7 @@ def test_disable_closes_the_maintenance_loop(tmp_path, monkeypatch):
         stopping = stop
 
         def warm(self, providers):
+            assert tuple(providers) == ("claude", "codex", "grok")
             calls.append("warm")
 
         def close(self):

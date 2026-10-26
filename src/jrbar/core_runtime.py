@@ -2531,7 +2531,12 @@ def _usage_history_warm_later(self) -> None:
         try:
             while self.settings.token_history_enabled and not service.stopping.is_set():
                 from .core_usage_history import HISTORY_PROVIDERS
-                service.warm(HISTORY_PROVIDERS)
+
+                selected = set(self.settings.usage_graph_providers)
+                snapshot = getattr(self, "last_snapshot", None)
+                if snapshot is not None:
+                    selected.update(status.provider for status in snapshot.statuses)
+                service.warm(provider for provider in HISTORY_PROVIDERS if provider in selected)
                 if service.stopping.wait(60.0):
                     return
         except Exception as error:
