@@ -36,7 +36,7 @@ final class SetupStore {
             case .agents: return "Usage requests stay off until you turn them on."
             case .asks: return ""
             case .permissions: return "Each one unlocks a feature; grant what's useful, skip the rest."
-            case .appearance: return "What the menu bar shows, and whether the band is up."
+            case .appearance: return ""
             case .done: return "What's set, and what's still waiting on you."
             }
         }

@@ -534,44 +534,28 @@ struct SetupPermissionRow: View {
 
 // MARK: - Menu bar & Screen Bar
 
-/// The menu-bar icon picker and the band's own toggle. The style rows
-/// are `MenuBarStyleRow` itself — the same component Settings › General
-/// draws — fed `SetupIconPreview` in place of the Settings store's copy.
+/// Optional light setup, with the Screen Bar switch and a route to Studio.
 struct SetupAppearanceStep: View {
     @Bindable var store: SetupStore
 
     var body: some View {
-        SnapshotScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if store.monitorLive {
-                    let devices = store.model.connectedLights()
-                    Text(devices.isEmpty ? "No light devices connected" : devices.joined(separator: ", "))
-                        .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
+            SettingsGroup {
+                SettingsRow("Screen Bar") {
+                    Toggle("Screen Bar", isOn: $store.screenBarShown).labelsHidden().toggleStyle(.switch)
                 }
-                Text("Menu bar icon").font(JRBarTokens.TypeStyle.headline.font)
-                VStack(spacing: 0) {
-                    ForEach(Array(StatusIconStyle.allCases.enumerated()), id: \.element) { index, style in
-                        if index > 0 { Divider().opacity(0.5) }
-                        MenuBarStyleRow(style: style,
-                                        selected: store.currentIconStyle == style,
-                                        meters: store.iconPreview.meters,
-                                        overflow: store.iconPreview.overflow,
-                                        sessions: store.iconPreview.sessions,
-                                        label: store.iconPreview.label) {
-                            store.menuBarIconStyle = style.rawValue
-                        }
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-
-                Toggle(isOn: $store.screenBarShown) {
-                    Text("Show the Screen Bar")
+                SettingsNavigationRow("Studio") {
+                    _ = Task { await AppCommandRouter.shared.perform(.window(.effects)) }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 8)
+            if store.monitorLive {
+                let devices = store.model.connectedLights()
+                Text(devices.isEmpty ? "No light devices connected" : devices.joined(separator: ", "))
+                    .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
+            }
+            Spacer()
         }
+        .padding(.horizontal, JRBarTokens.Space.xxl)
     }
 }
 
