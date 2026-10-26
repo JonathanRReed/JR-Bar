@@ -627,14 +627,15 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         program = c._single_agent_program(settings.mode_color("ask"), state,
             settings=settings, led_count=led_count, brightness=brightness)
         return MixPlan(state, program, mode, "ask", "An ask needs you.")
-    if mode == "classic":
-        state = c._representative_state(agents)
-        program = c._display_state_program(settings, state, led_count=led_count,
-            brightness=brightness, idle_color=settings.mode_color(c.MODE_IDLE),
-            working_color=settings.mode_color(c.MODE_WORKING), done_color=settings.mode_color(c.MODE_DONE),
-            ask_color=settings.mode_color(c.MODE_ASK), error_color=settings.rendered_error_color(),
-            done_celebrate=settings.done_celebration_enabled, **c._fade_kwargs_for_all_modes(settings))
-        return MixPlan(state, program, mode, "classic", "Status Only shows the current state.")
+    if mode in {"classic", "color_blend"}:
+        if mode == "classic":
+            state = c._representative_state(agents)
+            color = (settings.rendered_error_color() if state is LedDisplayState.FAILED
+                     else settings.mode_color(c._STATE_TO_MODE_KEY[state]))
+        else:
+            color = c.weighted_blend([(agent.color, float(agent.weight)) for agent in selected])
+        return MixPlan(state, apply_brightness(color, brightness), mode, mode,
+                       f"{MIX_LABELS[mode]} holds still. Asks still blink.")
     warnings = _provider_parameter_warnings(selected, settings)
     if len(selected) > 1 and len({agent.provider for agent in selected}) == 1:
         color = c.weighted_blend([(agent.color, float(agent.weight)) for agent in selected])

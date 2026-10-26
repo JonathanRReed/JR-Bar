@@ -53,6 +53,7 @@ def _solo_program(motion: str, *, cycle_seconds: float = 2.2, led_count: int = 8
     )
     settings = (
         colors_module.ColorSettings.defaults()
+        .with_blend_mode("round_robin")
         .with_cycle_speed(cycle_seconds)
         .with_agent_animation("claude", motion)
     )

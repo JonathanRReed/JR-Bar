@@ -295,6 +295,18 @@ def _compose_presentation_program(
         from .colors import readable_identity_hex
 
         normalized_color = readable_identity_hex(normalized_color)
+    # Solo hardware and Screen Bar displays use this path instead of the mix planner.
+    calm_mode = getattr(color_settings, "mix_mode", None)
+    calm_states = {
+        GlanceSemantic.ACTIVE: "working",
+        GlanceSemantic.FRESH_COMPLETION: "done",
+        GlanceSemantic.REST: "idle",
+    }
+    if calm_mode in {"classic", "color_blend"} and resolved.semantic in calm_states:
+        if calm_mode == "classic":
+            normalized_color = color_settings.mode_color(calm_states[resolved.semantic])
+        return _static_program(resolved, dsl=normalized_color)
+
     intensities = _glyph_intensities(
         resolved.semantic,
         led_count=led_count,
@@ -549,11 +561,11 @@ def _chosen_motion_lines(
 
 
 def solo_working_program(provider: str, color_settings, *, led_count: int = 8) -> str:
-    """What one ``provider`` agent working alone plays, as the Pro would be
-    sent it (brightness aside): its chosen motion, or the Relay for
-    Automatic. The Settings swatches preview this instead of a sketch."""
+    """Preview the chosen provider motion independently of the current Mix."""
     from .colors import readable_identity_hex
 
+    # Choosing a Calm mix must not freeze the animation picker previews.
+    color_settings = color_settings.with_blend_mode("round_robin")
     preferences = AccessibilityDisplayPreferences()
     resolved = resolve_glance(
         GlanceInputs(

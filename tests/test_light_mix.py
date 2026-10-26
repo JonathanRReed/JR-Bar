@@ -82,9 +82,8 @@ def test_mix_animation_cue_grid(firmware, mix, family, cue, providers):
     state = statuses(providers)
     plan = plan_agent_mix(_active_agents(state, settings), settings, led_count=count)
     explanation = explain_what_plays(state, settings, led_count=count, ambient=cue_for(cue, count))
-    expected = family if providers == 1 and mix != "classic" else mix
-    # Independent geometry/budget expectations for the custom presets.
-    expected = family if providers == 1 and mix != "classic" else mix
+    expected = family if providers == 1 and mix not in {"classic", "color_blend"} else mix
+    # Calm mixes intentionally override solo motion; other mixes retain it.
     if providers > 1:
         if (mix == "relay" and count == 2) or (mix in {"weave", "tide"} and providers > count):
             expected = "alternate"
@@ -181,7 +180,7 @@ def test_ember_renewal_and_reassert_do_not_freeze_the_firmware(tmp_path, monkeyp
     raw = RawSdLedWasmController(8)
     assert raw.parse(cue.nominal_program, 0).ok
     assert len({tuple(frame) for frame in raw.step_batch(49_000, 80, 40)}) > 1
-    settings = ColorSettings.defaults().with_agent_animation("codex", "breathe")
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "breathe")
     _state, base = program_for_snapshot(statuses(1), colors=settings)
     controller = AgentLedController(device_path=tmp_path)
     firmware = RawSdLedWasmController(8)
@@ -236,7 +235,7 @@ def test_a_solo_provider_does_not_take_the_mix_tempo():
     settings = settings.with_speed_override("round_robin", 8.0)
     solo = statuses(1)
     programs = {program_for_snapshot(solo, colors=settings.with_blend_mode(mix))[1]
-                for mix in BLEND_MODE_CHOICES if mix != "classic"}
+                for mix in BLEND_MODE_CHOICES if mix not in {"classic", "color_blend"}}
     assert len(programs) == 1
 
 
@@ -271,7 +270,7 @@ def test_two_sessions_of_one_provider_blend_identities_and_keep_its_animation():
 
     rows = (statuses(1)[0], replace(statuses(1)[0], agent_id="codex:second"))
     for animation in ("auto", "kitt", "breathe"):
-        settings = ColorSettings.defaults().with_agent_animation("codex", animation)
+        settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", animation)
         agents = _active_agents(rows, settings)
         assert agents[0].color != agents[1].color
         blended = weighted_blend([(agent.color, float(agent.weight)) for agent in agents])
@@ -286,3 +285,46 @@ def test_one_led_kitt_shares_name_the_compact_form():
         explanation = explain_what_plays(statuses(2), settings, led_count=2)
         assert explanation["played"] == mode
         assert any("one-LED share" in warning for warning in explanation["warnings"])
+
+
+@pytest.mark.parametrize("mix", ("classic", "color_blend"))
+@pytest.mark.parametrize("providers", (0, 1, 3))
+@pytest.mark.parametrize("mode", (AgentMode.IDLE_READY, AgentMode.WORKING, AgentMode.COMPLETED))
+def test_calm_mixes_hold_still_in_the_firmware(firmware, mix, providers, mode):
+    # Owner decision: Calm overrides solo animations, including completion flourishes.
+    settings = settings_for(mix, "kitt")
+    rows = statuses(providers, mode)
+    state, program = program_for_snapshot(rows, colors=settings, led_count=firmware.led_count)
+    explanation = explain_what_plays(rows, settings, led_count=firmware.led_count)
+    assert explanation["program"] == program
+    firmware.reset(0)
+    assert firmware.parse(program, 0).ok
+    frames = firmware.step_batch(0, 40, 250)
+    assert any(sum(pixel) for pixel in frames[0])
+    assert all(frame == frames[0] for frame in frames)
+
+
+@pytest.mark.parametrize("mix", ("classic", "color_blend"))
+def test_calm_asks_still_blink_and_failures_stay_visible(firmware, mix):
+    settings = settings_for(mix, "kitt")
+    ask = replace(statuses(2)[1], mode=AgentMode.WAITING_FOR_INPUT, event_name="PermissionRequest")
+    rows = (*statuses(1), ask)
+    explanation = explain_what_plays(rows, settings, led_count=firmware.led_count, ambient=cue_for("celebration", firmware.led_count))
+    assert explanation["played"] == "ask"
+    assert explanation["cue"] is None
+    firmware.reset(0)
+    assert firmware.parse(explanation["program"], 0).ok
+    frames = firmware.step_batch(0, 40, 250)
+    assert any(frame != frames[0] for frame in frames[1:])
+    failure = replace(ask, mode=AgentMode.BLOCKED_ERROR, event_name="failure")
+    state, program = program_for_snapshot((failure,), colors=settings, led_count=firmware.led_count)
+    assert state is LedDisplayState.FAILED
+    if mix == "classic":
+        assert program == settings.rendered_error_color()
+    with_ask = explain_what_plays((*statuses(1), failure, ask), settings, led_count=firmware.led_count)
+    assert with_ask["played"] == "ask"
+    firmware.reset(0)
+    assert firmware.parse(program, 0).ok
+    frames = firmware.step_batch(0, 40, 250)
+    assert all(any(sum(pixel) for pixel in frame) for frame in frames)
+    assert all(frame == frames[0] for frame in frames)

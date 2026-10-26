@@ -47,7 +47,7 @@ def test_provider_glow_overrides_the_global_working_floor(effect_id):
 
     status = AgentStatus(provider="codex", agent_id="synthetic", display_name="Codex",
                          mode=AgentMode.WORKING, updated_at=datetime(2026, 10, 1, tzinfo=timezone.utc), event_name="test")
-    settings = (ColorSettings.defaults().with_agent_animation("codex", effect_id)
+    settings = (ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", effect_id)
                 .with_agent_color("codex", "#0088FF").with_fade_floor("working", 0.4))
     programs = [program_for_snapshot((status,), colors=settings.with_agent_animation_parameters(
         "codex", {"background_glow": level}), led_count=8)[1] for level in (0, 20)]

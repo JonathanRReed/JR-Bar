@@ -88,8 +88,8 @@ private struct StudioMixCard: View {
                                 dotSize: 6, spacing: 5, paused: !connected)
                     .frame(maxWidth: .infinity)
                     .accessibilityLabel("\(mix.name) daemon preview")
-                if mix.id == "classic" {
-                    Text("State colours and their rhythm; no provider animations").jrbarType(.caption).foregroundStyle(.secondary)
+                if mix.id == "classic" || mix.id == "color_blend" {
+                    Text("Holds still. Asks still blink.").jrbarType(.caption).foregroundStyle(.secondary)
                 }
                 if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")

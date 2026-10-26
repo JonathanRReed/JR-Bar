@@ -50,7 +50,7 @@ CYCLE_TOO_LARGE = {"scanner", "pendulum", "flicker", "stack", "twinkle", "drift"
 
 
 def expected_played(mix, animation, variant, providers, count):
-    if mix == "classic":
+    if mix in {"classic", "color_blend"}:
         return mix
     # The low Gradient preset requests 300 ms, below the standing speed
     # safety gate. A solo uses Chase; a share/cycle explicitly falls back.
@@ -97,7 +97,7 @@ def test_all_mix_animation_parameter_provider_combinations(raw_firmware, mix, an
     plan = plan_agent_mix(_active_agents(rows, settings), settings, led_count=count)
     expected = expected_played(mix, animation, variant, providers, count)
     assert plan.played == expected, (plan.played, plan.warnings)
-    if expected != (animation if providers == 1 and mix != "classic" else mix):
+    if expected != (animation if providers == 1 and mix not in {"classic", "color_blend"} else mix):
         assert any("cannot play exactly" in warning for warning in plan.warnings)
     if providers > 1 and plan.played == "cycle":
         from jrbar.animation import animation_duration_ms, read_program

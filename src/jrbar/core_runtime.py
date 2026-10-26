@@ -2183,9 +2183,7 @@ def _cmd_list_finish_looks(self, args):
 
 @command("preview_provider_motion", main_thread=False)
 def _cmd_preview_provider_motion(self, args):
-    """What one provider's agent working alone plays right now: the same
-    composition the Pro is sent, from the live settings -- its chosen motion
-    at its own tempo, or the Relay for Automatic."""
+    """Preview the provider's chosen motion at its own tempo, independently of Mix."""
     from .presentation_policy import solo_working_program
 
     provider = str(args.get("provider") or "").strip()

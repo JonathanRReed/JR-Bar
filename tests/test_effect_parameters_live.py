@@ -306,7 +306,7 @@ def test_a_provider_assignment_with_parameters_reaches_the_live_light() -> None:
 
     saved = []
     host = SimpleNamespace(
-        settings=AgentMonitorSettings(),
+        settings=AgentMonitorSettings(colors=colors_module.ColorSettings.defaults().with_blend_mode("round_robin")),
         _core_settings_save_lock=threading.Lock(),
         _core_legacy=lambda: SimpleNamespace(save_settings=saved.append),
         _core_publish_settings=lambda: None,

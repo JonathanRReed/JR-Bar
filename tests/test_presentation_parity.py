@@ -666,7 +666,7 @@ def test_solo_live_program_is_the_studio_preview(cycle_seconds: float) -> None:
         relay_epoch=100.0,
         preferences=preferences,
     )
-    base = colors_module.ColorSettings.defaults().with_cycle_speed(cycle_seconds)
+    base = colors_module.ColorSettings.defaults().with_blend_mode("round_robin").with_cycle_speed(cycle_seconds)
     for motion in colors_module.PROVIDER_ANIMATION_CHOICES:
         if motion == colors_module.PROVIDER_ANIMATION_AUTO:
             continue

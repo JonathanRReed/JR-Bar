@@ -52,7 +52,7 @@ def _compose(color_settings=None, provider="codex"):
 
 def test_solo_agent_honors_the_provider_animation__and_2_more() -> None:
     # --- scenario: solo_agent_honors_the_provider_animation
-    base = ColorSettings.defaults()
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
     chase = _compose(color_settings=base)
     breathe = _compose(base.with_agent_animation("codex", "breathe"))
     blink = _compose(base.with_agent_animation("codex", "blink"))
@@ -76,7 +76,7 @@ def test_solo_agent_honors_the_provider_animation__and_2_more() -> None:
     assert other.dsl == chase.dsl
 
     # --- scenario: urgent_semantics_ignore_the_override
-    base = ColorSettings.defaults().with_agent_animation("codex", "steady")
+    base = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "steady")
     resolved = resolve_glance(
         GlanceInputs(
             actionable_episode_key="attention:req-1",
@@ -110,7 +110,7 @@ def test_solo_agent_honors_the_provider_animation__and_2_more() -> None:
     fails closed to the static glyph is a dead menu entry."""
     from jrbar.colors import PROVIDER_ANIMATION_CHOICES
 
-    base = ColorSettings.defaults()
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
     programs = {}
     for style in PROVIDER_ANIMATION_CHOICES:
         if style == "auto":
@@ -130,7 +130,7 @@ def test_multi_agent_segments_support_the_new_rhythms__and_1_more() -> None:
     from jrbar.colors import _motion_segments
     from jrbar.led_status import LedDisplayState
 
-    base = ColorSettings.defaults()
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
 
     def segments(style):
         return _motion_segments(
@@ -179,7 +179,7 @@ def test_multi_agent_segments_support_the_new_rhythms__and_1_more() -> None:
     from jrbar.colors import PROVIDER_ANIMATION_CHOICES
     from jrbar.firmware_validation import validate_firmware_program
 
-    base = ColorSettings.defaults()
+    base = ColorSettings.defaults().with_blend_mode("round_robin")
     moving = tuple(
         style
         for style in PROVIDER_ANIMATION_CHOICES
@@ -208,3 +208,46 @@ def test_multi_agent_segments_support_the_new_rhythms__and_1_more() -> None:
             )
             assert result.accepted, (style, led_count, result.reason)
 
+
+
+def test_calm_solo_presentation_is_steady_and_keeps_attention_and_failure_cues():
+    from dataclasses import replace
+
+    from jrbar.led_wasm import RawSdLedWasmController
+    from jrbar.presentation_policy import FiniteCue, GlanceSemantic
+
+    for mix in ("classic", "color_blend"):
+        settings = ColorSettings.defaults().with_blend_mode(mix).with_agent_animation("codex", "kitt")
+        for count in (2, 8):
+            active = _active_glance()
+            for semantic in (GlanceSemantic.ACTIVE, GlanceSemantic.REST, GlanceSemantic.FRESH_COMPLETION):
+                resolved = replace(active, semantic=semantic)
+                result = compose_presentation_program(resolved, presentation_time=100, led_count=count,
+                    color=settings.agent_color("codex"), preferences=PREFS, provider="codex", color_settings=settings)
+                assert result.motion is MotionClass.STATIC
+                assert result.next_visual_change_at is None
+                firmware = RawSdLedWasmController(count)
+                assert firmware.parse(result.dsl, 0).ok
+                frames = firmware.step_batch(0, 40, 250)
+                assert all(frame == frames[0] for frame in frames)
+            for semantic in (GlanceSemantic.ATTENTION, GlanceSemantic.FRESH_FAILURE):
+                resolved = replace(active, semantic=semantic,
+                    cue=FiniteCue("synthetic", semantic, repetitions=2, duration_seconds=1.8))
+                result = compose_presentation_program(resolved, presentation_time=100, led_count=count,
+                    color=settings.mode_color("ask"), preferences=PREFS, color_settings=settings)
+                assert result.motion is MotionClass.FINITE
+                firmware = RawSdLedWasmController(count)
+                assert firmware.parse(result.dsl, 0).ok
+                frames = firmware.step_batch(0, 40, 100)
+                assert any(frame != frames[0] for frame in frames[1:])
+
+
+def test_calm_mix_does_not_freeze_the_provider_animation_picker():
+    from jrbar.presentation_policy import solo_working_program
+
+    for mix in ("classic", "color_blend"):
+        settings = ColorSettings.defaults().with_blend_mode(mix).with_agent_animation("codex", "kitt")
+        original = settings.to_dict()
+        for count in (2, 8):
+            assert "repeat" in solo_working_program("codex", settings, led_count=count)
+        assert settings.to_dict() == original

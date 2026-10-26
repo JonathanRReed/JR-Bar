@@ -5994,9 +5994,8 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
 
-    def test_classic_blend_mode_matches_legacy_programs(self) -> None:
-        """Classic mode reproduces program_for_display_state exactly, with
-        and without the gentler default fade."""
+    def test_classic_holds_ordinary_states_and_preserves_alerts(self) -> None:
+        """Status Only holds ordinary colours; asks and failures retain their alerts."""
         # --- scenario: urgency_weight_orders_blocked_above_idle
         self.assertGreater(urgency_weight(AgentMode.BLOCKED_ERROR), urgency_weight(AgentMode.WAITING_FOR_INPUT))
         self.assertGreater(urgency_weight(AgentMode.WAITING_FOR_INPUT), urgency_weight(AgentMode.WORKING))
@@ -6030,7 +6029,7 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertIn(settings.rendered_error_color(), program)
         self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
-        # --- scenario: classic_blend_mode_matches_program_for_display_state_exactly
+        # Owner decision: Calm overrides ordinary motion and completion flourishes.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
         fade_kwargs = {
             "idle_floor": colors_module.DEFAULT_FADE_FLOOR,
@@ -6057,13 +6056,11 @@ class ColorSettingsTests(unittest.TestCase):
                     **fade_kwargs,
                 )
                 self.assertEqual(state, expected_state)
+                if expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+                    expected = settings.mode_color(colors_module._STATE_TO_MODE_KEY[expected_state])
                 self.assertEqual(program, expected)
 
-        # --- scenario: classic_blend_mode_matches_default_off_to_full_pulse_when_fade_disabled
-        # Confirms the underlying primitive (program_for_display_state) is
-        # still exactly today's original off-to-full pulse when floor=0/
-        # ceiling=1 -- i.e. the gentler default lives in ColorSettings, not
-        # baked irreversibly into the renderer.
+        # Fade ranges still affect asks, while ordinary Calm states hold still.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
         for key in colors_module.FADE_MODE_KEYS:
             settings = settings.with_fade_floor(key, 0.0).with_fade_ceiling(key, 1.0)
@@ -6076,6 +6073,8 @@ class ColorSettingsTests(unittest.TestCase):
         ):
             state, program = program_for_snapshot((_status("codex", mode),), led_count=8, colors=settings)
             expected = program_for_display_state(expected_state, led_count=8, brightness=255)
+            if expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+                expected = settings.mode_color(colors_module._STATE_TO_MODE_KEY[expected_state])
             self.assertEqual(program, expected)
 
     def test_spatial_and_blend_modes_assign_leds(self) -> None:
@@ -6121,11 +6120,8 @@ class ColorSettingsTests(unittest.TestCase):
                 (_identity_color(statuses, "claude"), float(urgency_weight(AgentMode.WORKING))),
             ]
         )
-        # WORKING pulses between its fade floor/ceiling of the blended color,
-        # not the raw blended color at full brightness.
-        _, ceiling = settings.fade_range(colors_module.MODE_WORKING)
-        expected = colors_module.scale_hex_brightness(blended, ceiling)
-        self.assertIn(expected, program)
+        # Smooth holds the weighted provider colour without an animation.
+        self.assertEqual(program, blended)
 
         # --- scenario: cycle_mode_lists_every_active_agent_color
         # Claude is Waiting for Input here (an Ask state), so with the
@@ -6580,26 +6576,26 @@ class DoneCelebrationTests(unittest.TestCase):
 
     def test_done_celebration_flag_scoping(self) -> None:
         statuses = (_status("codex", AgentMode.COMPLETED),)
-        celebrating = ColorSettings.defaults().with_done_celebration_enabled(True)
-        plain = ColorSettings.defaults().with_done_celebration_enabled(False)
+        celebrating = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_done_celebration_enabled(True)
+        plain = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_done_celebration_enabled(False)
         _, program_with = program_for_snapshot(statuses, led_count=8, colors=celebrating)
         _, program_without = program_for_snapshot(statuses, led_count=8, colors=plain)
         self.assertNotIn("repeat", program_with)
         self.assertGreater(len(program_with.splitlines()), 1)
         self.assertEqual(program_without.splitlines(), ["off"])
 
-        # Classic keeps the base Done celebration.
+        # Calm deliberately suppresses ordinary completion flourishes.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC)
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         self.assertNotIn("repeat", program)
-        self.assertGreater(len(program.splitlines()), 1)
+        self.assertEqual(program, settings.mode_color(colors_module.MODE_DONE))
 
-        # The no-active-agents fallback honors it too.
+        # The no-active-agents fallback is also steady in Calm.
         _, program = program_for_snapshot(
             (), led_count=8, colors=ColorSettings.defaults(), fallback_mode=AgentMode.COMPLETED
         )
         self.assertNotIn("repeat", program)
-        self.assertGreater(len(program.splitlines()), 1)
+        self.assertEqual(program, ColorSettings.defaults().mode_color(colors_module.MODE_DONE))
 
         # Round-Robin/Relay/Spatial/Cycle wrap a Done agent's segment in a
         # shared "repeat" loop with other active agents -- a one-shot
@@ -6746,18 +6742,18 @@ class AnimationStyleTests(unittest.TestCase):
         self.assertEqual(restored.animation_style(colors_module.MODE_IDLE), ANIMATION_STYLE_PULSE)
 
     def test_animation_styles_produce_their_named_shapes(self) -> None:
-        settings = ColorSettings.defaults().with_mode_animation(colors_module.MODE_ASK, ANIMATION_STYLE_SOLID)
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_mode_animation(colors_module.MODE_ASK, ANIMATION_STYLE_SOLID)
         _, program = program_for_snapshot((_status("codex", AgentMode.BLOCKED_ERROR),), led_count=8, colors=settings)
         self.assertNotIn("pulse", program)
         self.assertNotIn("repeat", program)
 
-        settings = ColorSettings.defaults().with_mode_animation(colors_module.MODE_WORKING, ANIMATION_STYLE_BLINK)
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_mode_animation(colors_module.MODE_WORKING, ANIMATION_STYLE_BLINK)
         _, program = program_for_snapshot((_status("codex", AgentMode.WORKING),), led_count=8, colors=settings)
         lines = [line for line in program.splitlines() if line.strip()]
         self.assertEqual(sum(1 for line in lines if "none" in line), 2)
         self.assertIn("repeat", program)
 
-        settings = ColorSettings.defaults().with_mode_animation(colors_module.MODE_IDLE, ANIMATION_STYLE_ROLL)
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_mode_animation(colors_module.MODE_IDLE, ANIMATION_STYLE_ROLL)
         _, program = program_for_snapshot((_status("codex", AgentMode.IDLE_READY),), led_count=8, colors=settings)
         # The roll style is a per-position profile carried by `roll`, so what
         # marks it is eight colours on one line, not eight `index:` segments.

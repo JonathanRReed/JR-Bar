@@ -1,7 +1,8 @@
-"""Golden solo bytes captured from 59acbc0a, before L1's mix changes.
+"""Reviewed solo bytes from 59acbc0a with the owner's Calm change.
 
-To recapture, run this file with PYTHONPATH pointing to that commit's src.
-The fixture contains only hashes of deterministic synthetic programs.
+Classic and Smooth now hold ordinary states. Ask and failure hashes stay
+byte-for-byte equal to the original fixture. Only the approved ordinary
+states may be recaptured with this file's generator.
 """
 import hashlib
 import json
@@ -34,7 +35,7 @@ def solo_bytes(animation, mode, count, blend):
 @pytest.mark.parametrize("count", (2, 8))
 @pytest.mark.parametrize("mode", tuple(mode.value for mode in AgentMode))
 @pytest.mark.parametrize("animation", PROVIDER_ANIMATION_CHOICES)
-def test_every_solo_animation_and_state_matches_base(animation, mode, count, blend):
+def test_every_solo_animation_and_state_matches_reviewed_contract(animation, mode, count, blend):
     baseline = json.loads(FIXTURE.read_text())
     assert baseline["revision"] == "59acbc0a"
     key = f"{animation}/{mode}/{count}/{blend}"
@@ -44,7 +45,8 @@ def test_every_solo_animation_and_state_matches_base(animation, mode, count, ble
 @pytest.mark.parametrize("animation", PROVIDER_ANIMATION_CHOICES)
 @pytest.mark.parametrize("count", (2, 8))
 def test_hover_preview_uses_the_live_solo_program(animation, count):
-    settings = ColorSettings.defaults().with_agent_animation("codex", animation)
+    # Animated mixes keep solo/hover equivalence; Calm deliberately holds still.
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", animation)
     status = AgentStatus(provider="codex", agent_id="codex:synthetic", display_name="Synthetic",
         mode=AgentMode.WORKING, updated_at=NOW, event_name="synthetic")
     preview = provider_motion_preview_program("codex", settings.agent_color("codex"), settings,
@@ -56,4 +58,12 @@ if __name__ == "__main__":
     rows = {f"{animation}/{mode.value}/{count}/{blend}": solo_bytes(animation, mode.value, count, blend)
         for animation in PROVIDER_ANIMATION_CHOICES for mode in AgentMode
         for count in (2, 8) for blend in ("color_blend", "classic")}
-    FIXTURE.write_text(json.dumps({"revision": "59acbc0a", "sha256": rows}, indent=2) + "\n")
+    baseline = json.loads(FIXTURE.read_text())
+    for key, digest in rows.items():
+        if key.split("/")[1] in {"waiting_for_input", "blocked_error"}:
+            assert digest == baseline["sha256"][key], f"Unapproved attention change: {key}"
+    FIXTURE.write_text(json.dumps({
+        "revision": "59acbc0a",
+        "calm_contract": "2026-10-26: ordinary classic and color_blend hold still; ask and failure bytes are unchanged.",
+        "sha256": rows,
+    }, indent=2) + "\n")
