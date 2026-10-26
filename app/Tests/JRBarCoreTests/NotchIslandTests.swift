@@ -177,6 +177,37 @@ struct NotchIslandTests {
 
     // MARK: Layout
 
+    @Test("card rows retain group roles, elapsed clocks, and individual asks")
+    func groupRowFacts() throws {
+        let root = CoreSession(id: "claude:lead", provider: "claude", label: "Plan", cwd: "/tmp/sample/project",
+                               mode: "working", since: 100)
+        let worker = CoreSession(id: "codex:worker", provider: "codex", label: "Checks", mode: "working", since: 200)
+        let asking = CoreSession(id: "codex:ask", provider: "codex", mode: "waiting", since: 250,
+                                 ask: CoreAsk(summary: "Run checks?", answerable: true))
+        let group = CoreAgentGroup(id: "fixture", rootWorkKey: root.id, rootProvider: root.provider,
+                                   members: [root.id, worker.id, asking.id], lineageEvidence: [])
+        let summary = NotchIsland.summarize([root, worker, asking], groups: [group])
+        let row = try #require(summary.rows.first { $0.workerCount == 2 })
+        #expect(row.since == 100)
+        #expect(row.project == "project")
+        #expect(row.members.map(\.id) == [root.id, worker.id])
+        #expect(row.members.map(\.role) == ["Lead", "Worker"])
+        #expect(row.members.map(\.since) == [100, 200])
+        #expect(summary.rows.contains { $0.id == asking.id && $0.ask != nil })
+    }
+
+    @Test("the card keeps both quota windows and the last successful reading time")
+    func meterKeepsProviderReading() throws {
+        let provider = CoreProviderUsage(id: "claude", windows: [
+            CoreUsageWindow(name: "5h", usedPct: 50, resetsAt: 300),
+            CoreUsageWindow(name: "7d", usedPct: 60, resetsAt: 600),
+        ], state: "stale", observedAt: 400, readAt: 100)
+        let meter = try #require(NotchIsland.meters(CoreUsage(providers: [provider])).first)
+        #expect(meter.usage == provider)
+        #expect(meter.usage?.readingAt == 100)
+        #expect(meter.stale)
+    }
+
     @Test("the slot is the gap between the menu-bar areas")
     func slotMath() {
         let left = CGRect(x: 0, y: 0, width: 663, height: 32)

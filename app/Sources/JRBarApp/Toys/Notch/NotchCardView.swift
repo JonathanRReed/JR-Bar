@@ -554,6 +554,7 @@ struct NotchCardView: View {
     var stillTurn: CGFloat?
     /// And under Reduce Motion (the environment value cannot be set).
     var stillReduced = false
+    var proofNow: Date?
     /// The custom-timer popover — `ViewState`, not `@State`: the
     /// Command Line Tools ship no `SwiftUIMacros` plugin.
     @ViewState private var timerEntryShown = false
@@ -635,7 +636,13 @@ struct NotchCardView: View {
             // is never taller than the page it shows.
             Group {
                 switch model.page {
-                case .now: nowPage(steps)
+                case .now:
+                    if let proofNow { nowPage(steps, now: proofNow) }
+                    else {
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            nowPage(steps, now: context.date)
+                        }
+                    }
                 case .shelf: shelfPage(steps)
                 }
             }
@@ -661,6 +668,7 @@ struct NotchCardView: View {
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
         .environment(\.cardPopoverHold, model.popoverHold)
+        .environment(\.colorScheme, style == .island ? .dark : scheme)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
             guard model.tray.shelfEnabled() else { return false }
@@ -886,12 +894,12 @@ struct NotchCardView: View {
     /// Each run is its own block, so the card reads in three glances,
     /// not one list.
     @ViewBuilder
-    private func nowPage(_ steps: NotchCardRevealSteps) -> some View {
+    private func nowPage(_ steps: NotchCardRevealSteps, now: Date) -> some View {
         if !model.rows.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
                         id: \.element.id) { index, row in
-                    revealRow(steps.sessions + index, workingRow(row))
+                    revealRow(steps.sessions + index, workingRow(row, now: now))
                 }
                 if model.rows.count > NotchIsland.rowLimit {
                     revealRow(steps.more, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
@@ -903,8 +911,11 @@ struct NotchCardView: View {
         }
         if !model.meters.isEmpty || model.privacyLine != nil {
             VStack(alignment: .leading, spacing: 7) {
+                if !model.meters.isEmpty {
+                    UsageGaugeHeader(windowNames: usageWindowNames)
+                }
                 ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(steps.meters + index, meterRow(meter))
+                    revealRow(steps.meters + index, meterRow(meter, now: now))
                 }
                 if let privacy = model.privacyLine {
                     revealRow(steps.privacy, privacyRow(privacy))
@@ -1038,36 +1049,31 @@ struct NotchCardView: View {
     }
 
     @ViewBuilder
-    private func workingRow(_ row: NotchIslandRow) -> some View {
-        if row.activity == .working && (row.workerCount > 0 || row.unlinked) {
+    private func workingRow(_ row: NotchIslandRow, now: Date) -> some View {
+        if (row.unlinked && row.activity != .waiting) || (row.activity == .working && row.workerCount > 0) {
             let marks = Array(Set(row.members.map(\.provider))).sorted()
             let expansion = Binding(get: { expandedGroups.contains(row.id) }, set: { expanded in
                 if expanded { expandedGroups.insert(row.id) } else { expandedGroups.remove(row.id) }
             })
             AgentGroupRow(provider: row.provider, name: ProviderPalette.displayName(for: row.provider),
-                subtitle: row.label, state: .working, memberMarks: marks,
+                project: row.project, subtitle: row.label, elapsed: elapsed(row, now: now), state: Self.memberState(row.activity), memberMarks: marks,
                 workerCount: row.workerCount, unlinked: row.unlinked, expanded: expansion) {
                     ForEach(Array(row.members.enumerated()), id: \.element.id) { index, member in
                         let memberState = Self.memberState(member.activity)
                         AgentMemberRow(provider: member.provider, name: member.label,
-                            state: memberState,
+                            role: member.role, elapsed: elapsed(member, now: now), state: memberState,
                             isLast: index == row.members.count - 1)
                     }
                 }
                 .environment(\.colorScheme, style == .island ? .dark : scheme)
         } else {
-            sessionRow(row)
+            sessionRow(row, now: now)
         }
     }
 
-    /// One live session under the header: the provider's dot, its label,
-    /// and the same activity word the island would say. A click opens
-    /// the session. A waiting row carries its verbs inline instead of
-    /// the word — each drawn only where `AskVerbs` says the daemon can
-    /// deliver it, and every one sent through the shared desk — with
-    /// the question itself on a faint second line; a refused answer or
-    /// open takes that line and says why, and the ask stays open.
-    private func sessionRow(_ row: NotchIslandRow) -> some View {
+    /// A session's provider, task, elapsed time and state. Waiting rows
+    /// keep their individual answer controls and refusal messages.
+    private func sessionRow(_ row: NotchIslandRow, now: Date) -> some View {
         let desk = model.askDesk()
         let pending = desk?.isPending(row.id) ?? false
         let openRefusal = model.openRefusals[row.id]
@@ -1087,13 +1093,17 @@ struct NotchCardView: View {
         let answering = answerable && ask.map(AskVerbs.approves) == true
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
-                StateDot(row.activity == .waiting ? .asking : row.activity == .failed ? .failed : .working)
-                    .frame(width: 7)
-                Text(row.label)
-                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .medium))
-                    .foregroundStyle(style == .island ? .white.opacity(0.9) : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                ProviderLogoTile(provider: row.provider)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("\(ProviderPalette.displayName(for: row.provider)) · \(row.label)")
+                        .font(JRBarTokens.TypeStyle.headline.font)
+                        .foregroundStyle(style.titleColor)
+                        .lineLimit(1).truncationMode(.tail)
+                    if let project = row.project {
+                        Text(project).font(JRBarTokens.TypeStyle.caption.font)
+                            .foregroundStyle(style.subColor).lineLimit(1)
+                    }
+                }
                 if isDemo { DemoAskBadge() }
                 Spacer(minLength: 4)
                 if row.activity == .waiting, ask?.isDestructive == true {
@@ -1131,11 +1141,16 @@ struct NotchCardView: View {
                     Text(decidedLine)
                         .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                         .foregroundStyle(style.subColor)
-                } else {
+                } else if row.activity != .working {
                     Text(row.activity.word)
                         .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                         .foregroundStyle(row.activity.wordColor)
                 }
+                if let elapsed = elapsed(row, now: now) {
+                    Text(elapsed).font(JRBarTokens.TypeStyle.callout.font)
+                        .foregroundStyle(style.subColor).monospacedDigit()
+                }
+                StateDot(Self.memberState(row.activity))
             }
             if let refusal {
                 Text(refusal)
@@ -1175,7 +1190,7 @@ struct NotchCardView: View {
                         .padding(.leading, 15)
                 }
             }
-            if row.activity == .waiting, refusal == nil, let stale = ask?.staleLine(now: Date()) {
+            if row.activity == .waiting, refusal == nil, let stale = ask?.staleLine(now: now) {
                 // A long-unanswered ask is still an ask; it says how long.
                 Text(stale)
                     .font(JRBarTokens.TypeStyle.caption.font)
@@ -1241,60 +1256,46 @@ struct NotchCardView: View {
         }
     }
 
-    /// One quota meter: provider, window, a continuous bar, the percent
-    /// — with the reset countdown the ear's drain arc only hints at (a
-    /// broken source's fix once the reset is past), and the status
-    /// feed's incident mark when the vendor is having a day.
-    private func meterRow(_ meter: NotchIslandMeter) -> some View {
-        let accent = ProviderStyle.style(for: meter.provider).accent
-        return HStack(spacing: 7) {
-            Text(ProviderStyle.style(for: meter.provider).name)
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
-                .foregroundStyle(style.titleColor.opacity(0.88))
-                .lineLimit(1)
-            Text(meter.window)
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
-                .foregroundStyle(style.subColor)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(Capsule(style: .continuous).fill(style.chipFaint))
-            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date(), fix: meter.fix) {
-                Text(countdown)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .monospacedDigit()
-                    .foregroundStyle(style.faintColor)
-                    .lineLimit(1)
-            }
+    private func elapsed(_ row: NotchIslandRow, now: Date) -> String? {
+        PanelStore.elapsed(since: row.since.map { Date(timeIntervalSince1970: $0) }, now: now)
+    }
+
+    private func usage(_ meter: NotchIslandMeter) -> CoreProviderUsage {
+        meter.usage ?? CoreProviderUsage(id: meter.provider,
+            windows: [CoreUsageWindow(name: meter.window, usedPct: meter.percent, resetsAt: meter.resetsAt)],
+            state: meter.stale ? "stale" : "ready")
+    }
+
+    private var usageWindowNames: [String] {
+        UsageGaugeRow.orderedWindowNames(model.meters.flatMap { usage($0).windows.map(\.name) })
+    }
+
+    private func meterRow(_ meter: NotchIslandMeter, now: Date) -> some View {
+        let provider = usage(meter)
+        return HStack(spacing: JRBarTokens.Space.xs) {
+            UsageGaugeRow(provider: provider,
+                name: provider.instanceLabel ?? ProviderPalette.displayName(for: meter.provider),
+                now: now.timeIntervalSince1970, style: .compact, windowNames: usageWindowNames)
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
-                    .foregroundStyle(.orange)
+                    .font(JRBarTokens.TypeStyle.caption.font)
+                    .foregroundStyle(JRBarTokens.Ink.attention)
                     .help("The provider's status feed reports an incident")
             }
-            Spacer(minLength: 4)
-            NotchLevelBar(fraction: (meter.percent ?? 0) / 100, tint: accent,
-                          track: style.chipFill, height: 5,
-                          dimmed: meter.percent == nil, glows: style == .island)
-                .frame(width: 64)
-            Text(meter.percentText)
-                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(style.subColor)
-                .frame(width: 34, alignment: .trailing)
         }
-        .contentShape(Rectangle())
+        .environment(\.colorScheme, style == .island ? .dark : scheme)
         .contextMenu {
-            // A timer set to the window's own reset — "tell me when I
-            // can go again" without watching a countdown.
-            if let resetsAt = meter.resetsAt,
-               Date(timeIntervalSince1970: resetsAt).timeIntervalSinceNow <= ShelfTimerModel.maxDuration {
-                Button("Remind Me When \(meter.window) Resets") {
-                    model.timers.add(label: "\(ProviderStyle.style(for: meter.provider).name) \(meter.window) reset",
-                                     until: Date(timeIntervalSince1970: resetsAt))
+            ForEach(provider.windows, id: \.id) { window in
+                if let resetsAt = window.resetsAt,
+                   resetsAt > now.timeIntervalSince1970,
+                   resetsAt - now.timeIntervalSince1970 <= ShelfTimerModel.maxDuration {
+                    Button("Remind Me When \(window.name) Resets") {
+                        model.timers.add(label: "\(ProviderPalette.displayName(for: meter.provider)) \(window.name) reset",
+                                         until: Date(timeIntervalSince1970: resetsAt))
+                    }
                 }
             }
         }
-        .accessibilityElement(children: .combine)
     }
 
 }
