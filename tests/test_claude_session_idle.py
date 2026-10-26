@@ -246,7 +246,7 @@ def test_a_broken_activity_loader_changes_nothing(tmp_path: Path) -> None:
     assert result.idled_sessions == 0 and sent == []
 
 
-def test_the_synthetic_interrupt_reduces_to_an_idle_claude_session_through_the_real_hook_path(
+def test_the_synthetic_interrupt_ends_the_claude_turn_through_the_real_hook_path(
     tmp_path: Path,
 ) -> None:
     from jrbar.collector import LiveAgentMonitor
@@ -286,4 +286,4 @@ def test_the_synthetic_interrupt_reduces_to_an_idle_claude_session_through_the_r
     )
 
     row = next(status for status in monitor.snapshot().statuses if status.session_id == SESSION)
-    assert row.mode is AgentMode.IDLE_READY
+    assert row.mode is AgentMode.ENDED_UNCONFIRMED
