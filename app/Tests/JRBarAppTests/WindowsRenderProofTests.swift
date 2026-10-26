@@ -38,7 +38,7 @@ struct WindowsRenderProofTests {
             .frame(minHeight: size.height)
             .environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.renderSnapshot, true)
-            let rep = try ProofRender.render(framed, size: size, dark: dark)
+            let rep = try SettingsRenderProofTests.snapshot(framed, size: size, dark: dark, growToFit: true)
             let png = try #require(rep.representation(using: .png, properties: [:]))
             try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
         }

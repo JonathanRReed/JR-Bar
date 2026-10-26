@@ -527,13 +527,20 @@ struct UtilitySurfacesRenderProofTests {
         }
         .frame(width: canvas.width, height: canvas.height)
         .environment(\.colorScheme, dark ? .dark : .light)
+        .environment(\.controlActiveState, .key)
+        .tint(.blue).accentColor(.blue)
         let hosting = NSHostingView(rootView: staged)
         hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         hosting.frame = CGRect(origin: .zero, size: canvas)
-        let proofWindow = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
+        let proofWindow = UtilityProofWindow(contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: canvas), styleMask: [.borderless],
                                    backing: .buffered, defer: false)
+        proofWindow.isReleasedWhenClosed = false
         proofWindow.appearance = hosting.appearance
         proofWindow.contentView = hosting
+        defer { proofWindow.contentView = nil; proofWindow.close() }
+        try WindowPresenter.renderProofKey(proofWindow)
+        if !proofWindow.isKeyWindow { FoundationRenderProofTests.runUntilKey(proofWindow) }
+        #expect(proofWindow.isKeyWindow)
         hosting.layoutSubtreeIfNeeded()
         let scale: CGFloat = 2
         let bitmap = try #require(NSBitmapImageRep(
@@ -548,6 +555,12 @@ struct UtilitySurfacesRenderProofTests {
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
     }
+}
+
+@MainActor
+private final class UtilityProofWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }
 
 /// A desktop-like backdrop: the wash a glass panel floats over.
