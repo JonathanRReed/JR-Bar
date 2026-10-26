@@ -2852,11 +2852,17 @@ its Settings thumbnail and its Effect Studio preview
 
 Automatic follows the chosen providers' existing step grid when their step
 durations match, keeping their native periods, curves and pauses intact.
+When following Knight Rider, Scanner or Pendulum, Automatic draws that
+sweep across its own LED share and fits the complete passes to the chosen
+steps. It never samples a travelling path only at the turnarounds, which
+would skip LEDs between them. Its sweep uses the chosen beam and background
+parameters. Solo programs do not change.
 Simultaneous shares with incompatible step boundaries can use four linear
 keyframes only when their chosen Studio periods are equal. Automatic follows
-the chosen period. Each share is checked against its native timeline every
-20 ms over one native or Studio cycle, whichever is longer, and at native
-boundaries, both at startup and while looping. A maximum error of 24/255 per
+the chosen period. For that simplification, each share is checked against
+its native timeline every 20 ms over one native or Studio cycle, whichever
+is longer, and at native boundaries, both at startup and while looping.
+A maximum error of 24/255 per
 channel is allowed. `what_plays` names each simplified animation and any
 change from its native cycle to the Studio period. Above that limit, or with
 different Studio periods, the animations take turns through the reported

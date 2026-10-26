@@ -391,6 +391,32 @@ def _keyframe_shares(agents, settings, slots, count, warnings):
     return program
 
 
+def _follow_sweep(agent, leader, settings, share, spans):
+    """Draw the complete follower path before fitting it to the leader's clock."""
+    motion = settings.agent_animation(leader.provider)
+    following = settings.with_agent_animation(agent.provider, motion)
+    following = following.with_agent_animation_parameters(
+        agent.provider, settings.agent_animation_parameters(leader.provider))
+    steps = _share_steps(_body(agent, following, len(share), compact=True), share)
+    if len(steps) != len(spans):
+        raise CannotFit("Automatic's sweep cannot follow the chosen step grid")
+    result = []
+    for step, span in zip(steps, spans):
+        native = step_duration_ms(step)
+        scale = span / native if native else 1
+        segments = []
+        for segment in step.segments:
+            timing = segment.timing
+            start = timing.delay_ms or 0
+            delay = round(start * scale)
+            duration = round((start + timing.effective_duration_ms) * scale) - delay
+            segments.append(replace(segment, timing=replace(timing,
+                duration_ms=duration,
+                delay_ms=delay if timing.delay_ms is not None else None)))
+        result.append(PaintStep(tuple(segments)))
+    return result
+
+
 def _shares(agents, settings, count, mode, warnings=None):
     if len(agents) > count:
         raise CannotFit(f"{len(agents)} providers need more than {count} LED shares")
@@ -435,6 +461,11 @@ def _shares(agents, settings, count, mode, warnings=None):
             # renderer rounding and the slower two-LED scanner cadence.
             for index, (agent, share) in enumerate(zip(agents, slots)):
                 if settings.agent_animation(agent.provider) != "auto":
+                    continue
+                leader = agents[explicit[0]]
+                if (settings.agent_animation(leader.provider) in {"kitt", "scanner", "pendulum"}
+                        and settings.animation_style("working") == "roll"):
+                    tracks[index] = _follow_sweep(agent, leader, settings, share, chosen_spans)
                     continue
                 local = _share_steps(_body(agent, settings, len(share), compact=True),
                     tuple(range(len(share))))
