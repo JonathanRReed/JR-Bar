@@ -93,6 +93,7 @@ public struct UsageGaugeRow: View {
     private let tileAccent: Color?
     public let style: Style
     public let windowNames: [String]
+    public let suppressDisconnectedStatus: Bool
     public let snapshotReceivedAt: Double?
     public let locale: Locale
     public let timeZone: TimeZone
@@ -105,7 +106,7 @@ public struct UsageGaugeRow: View {
 
     public init(provider: CoreProviderUsage, name: String, now: Double, connected: Bool = true,
                 accent: Color? = nil, style: Style = .detail, windowNames: [String]? = nil,
-                snapshotReceivedAt: Double? = nil, locale: Locale = .current, timeZone: TimeZone = .current,
+                snapshotReceivedAt: Double? = nil, suppressDisconnectedStatus: Bool = false, locale: Locale = .current, timeZone: TimeZone = .current,
                 pace: [String: Double] = [:], fix: String? = nil,
                 onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil) {
         self.provider = provider
@@ -117,6 +118,7 @@ public struct UsageGaugeRow: View {
         self.style = style
         self.windowNames = Self.orderedWindowNames(windowNames ?? provider.windows.map(\.name))
         self.snapshotReceivedAt = snapshotReceivedAt
+        self.suppressDisconnectedStatus = suppressDisconnectedStatus
         self.locale = locale
         self.timeZone = timeZone
         self.pace = pace
@@ -139,7 +141,7 @@ public struct UsageGaugeRow: View {
         !connected || provider.isStale || ["missing_recent", "source_idle", "failing"].contains(provider.availability)
     }
     private var status: String? {
-        if !connected { return "Disconnected" }
+        if !connected && !suppressDisconnectedStatus { return "Disconnected" }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
         if !provider.quotaSource { return "Sessions only" }
@@ -183,32 +185,46 @@ public struct UsageGaugeRow: View {
 
     private var compact: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ViewThatFits(in: .horizontal) {
+            if provider.availability == "not_found" {
                 HStack(spacing: 10) {
-                    ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                    identity.frame(minWidth: 60, idealWidth: 60, maxWidth: .infinity)
-                    if showsWindows {
-                        ForEach(windowNames, id: \.self) { column($0, compact: true) }
+                    ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: true)
+                    Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
+                    Text(status ?? "Not found on this Mac").font(JRBarTokens.TypeStyle.caption.font)
+                        .foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail)
+                        .help(status ?? "Not found on this Mac")
+                    Spacer(minLength: 0)
+                    if let onAction, let title = provider.action, !title.isEmpty {
+                        Button(title, action: onAction).controlSize(.small)
                     }
                 }
-                VStack(alignment: .leading, spacing: 8) {
+            } else {
+                ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
-                        identity
+                        identity.frame(minWidth: 60, idealWidth: 60, maxWidth: .infinity)
+                        if showsWindows {
+                            ForEach(windowNames, id: \.self) { column($0, compact: true) }
+                        }
                     }
-                    if showsWindows {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.columnWidth, maximum: Self.columnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
-                            ForEach(windowNames, id: \.self) { name in
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
-                                    column(name, compact: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                            identity
+                        }
+                        if showsWindows {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.columnWidth, maximum: Self.columnWidth), spacing: 10)], alignment: .trailing, spacing: 8) {
+                                ForEach(windowNames, id: \.self) { name in
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        Text(name).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
+                                        column(name, compact: true)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                actions.padding(.leading, 30)
             }
-            actions.padding(.leading, 30)
         }
         .padding(.vertical, 7).padding(.horizontal, 12)
         .frame(minHeight: 44)

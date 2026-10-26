@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 @testable import JRBarCore
 import SwiftUI
+import JRBarUI
 import Testing
 @testable import JRBarApp
 
@@ -30,17 +31,23 @@ struct PanelPulseTests {
         store.reduceMotion = false
         // Counted against what is running already: another suite's view
         // may still be alive in this process.
-        let baseline = PanelPulses.running
+        let baseline = StateDot.activePulses
         store.isOpen = true
         let (window, hosting) = Self.host(store)
         hosting.layoutSubtreeIfNeeded()
-        #expect(PanelPulses.running == baseline, "nothing moves while the panel is still arriving")
+        #expect(StateDot.activePulses == baseline, "nothing moves while the panel is still arriving")
         store.animationsArmed = true
         hosting.layoutSubtreeIfNeeded()
-        #expect(PanelPulses.running > baseline, "an arrived panel's waiting row pulses")
+        #expect(StateDot.activePulses > baseline, "an arrived panel's waiting row pulses")
+        store.reduceMotion = true
+        hosting.layoutSubtreeIfNeeded()
+        #expect(StateDot.activePulses == baseline, "Reduce Motion removes the breathing views")
+        store.reduceMotion = false
+        hosting.layoutSubtreeIfNeeded()
+        #expect(StateDot.activePulses > baseline)
         store.panelDidClose()
         hosting.layoutSubtreeIfNeeded()
-        #expect(PanelPulses.running == baseline, "closing takes every pulse away with its view")
+        #expect(StateDot.activePulses == baseline, "closing takes every pulse away with its view")
         window.contentView = NSView()
     }
 

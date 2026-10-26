@@ -1,7 +1,7 @@
 import AppKit
 import Carbon
 
-/// One of JR-Bar's summon keys — the panel's ⌃⌥J (Settings › General,
+/// One of JR-Bar's summon keys — the panel's ⌥⌘J (Settings › General,
 /// "Summon the panel") and the shelf's ⌃⌥D — held in the app's one
 /// `HotkeyCenter`. Carbon's `RegisterEventHotKey`, behind the center,
 /// is the one system service that delivers a key to an accessory app
@@ -19,8 +19,11 @@ final class PanelHotkey {
     /// The registry ids — also the keys their chords persist under.
     nonisolated static let panelID = "panel"
     nonisolated static let shelfID = "shelf"
+    nonisolated static let studioID = "studio"
+    nonisolated static let studioDefault = HotkeyChord(keyCode: UInt32(kVK_ANSI_L),
+                                                       modifiers: UInt32(cmdKey | optionKey))
     nonisolated static let panelDefault = HotkeyChord(keyCode: UInt32(kVK_ANSI_J),
-                                                      modifiers: UInt32(controlKey | optionKey))
+                                                      modifiers: UInt32(cmdKey | optionKey))
     nonisolated static let shelfDefault = HotkeyChord(keyCode: UInt32(kVK_ANSI_D),
                                                       modifiers: UInt32(controlKey | optionKey))
 
@@ -54,11 +57,12 @@ final class PanelHotkey {
     /// modifiers are the default a rebind replaces.
     convenience init(signature: OSType = OSType(0x6A726272),
                      keyCode: UInt32 = UInt32(kVK_ANSI_J),
-                     modifiers: UInt32 = UInt32(controlKey | optionKey)) {
+                     modifiers: UInt32? = nil) {
         let isShelf = signature == OSType(0x6A726273)
+        let defaultModifiers = isShelf ? Self.shelfDefault.modifiers : Self.panelDefault.modifiers
+        let chord = HotkeyChord(keyCode: keyCode, modifiers: modifiers ?? defaultModifiers)
         self.init(id: isShelf ? Self.shelfID : Self.panelID,
-                  title: isShelf ? "Open the shelf" : "Show the panel",
-                  defaultChord: HotkeyChord(keyCode: keyCode, modifiers: modifiers))
+                  title: isShelf ? "Open the shelf" : "Show the panel", defaultChord: chord)
     }
 
     /// The chord a registration would use now.
