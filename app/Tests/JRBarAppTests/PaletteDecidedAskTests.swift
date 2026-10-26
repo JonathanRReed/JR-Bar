@@ -50,7 +50,7 @@ struct PaletteDecidedAskTests {
             #expect(answerVerbs(shown).isEmpty, "no answer verb for \(ask.summary ?? "")")
             #expect(shown.accessibilityNote == Fixture.words)
             #expect(shown.action(for: .secondary) == nil, "⌘↩ answers nothing")
-            #expect(shown.primary?.title == "Open Session", "Return still only opens")
+            #expect(shown.primary?.title == "Open session", "Return still only opens")
         }
     }
 
@@ -58,19 +58,19 @@ struct PaletteDecidedAskTests {
     func decidedTag() {
         let shown = item(Fixture.decidedAsk())
         #expect(shown.tags.first == PaletteTag(text: "Answered"))
-        #expect(!shown.tags.contains { $0.text == "Needs You" })
+        #expect(!shown.tags.contains { $0.text == "Needs you" })
         #expect(shown.tags.contains(PaletteTag(text: "Destructive", tone: .alert)), "the risk mark stays")
         #expect(shown.section == .needsYou, "what counts as waiting on the person is not changed here")
         #expect(shown.urgent)
     }
 
-    @Test("an undecided answerable ask keeps Approve, Deny and Always Allow, and its Needs You tag")
+    @Test("an undecided answerable ask keeps Approve, Deny and Always Allow, and its Needs you tag")
     func undecidedIsUnchanged() {
         let shown = item(Fixture.openAsk())
         #expect(shown.action(for: .secondary)?.id == "approve")
         #expect(shown.action(for: .command("d"))?.id == "deny")
         #expect(shown.actions.contains { $0.id == "always" })
-        #expect(shown.tags.first == PaletteTag(text: "Needs You", tone: .attention))
+        #expect(shown.tags.first == PaletteTag(text: "Needs you", tone: .attention))
         #expect(shown.accessibilityNote == nil)
         let plain = item(Fixture.openAsk(always: false))
         #expect(!plain.actions.contains { $0.id == "always" })
@@ -85,7 +85,7 @@ struct PaletteDecidedAskTests {
         #expect(shown.actions.filter { $0.id.hasPrefix("answer.") }.map(\.title) == ["Answer “Postgres”", "Answer “SQLite”"])
         #expect(shown.action(for: .command("d"))?.id == "deny")
         #expect(shown.accessibilityNote == nil)
-        #expect(shown.tags.first == PaletteTag(text: "Needs You", tone: .attention))
+        #expect(shown.tags.first == PaletteTag(text: "Needs you", tone: .attention))
     }
 
     @Test("an ask that cannot be answered from here keeps its words and offers no verb")
@@ -94,7 +94,7 @@ struct PaletteDecidedAskTests {
         let shown = item(sealed)
         #expect(answerVerbs(shown).isEmpty)
         #expect(shown.accessibilityNote == "Answer it in the session's own window")
-        #expect(shown.tags.first == PaletteTag(text: "Needs You", tone: .attention))
+        #expect(shown.tags.first == PaletteTag(text: "Needs you", tone: .attention))
     }
 
     @Test("a peer's ask says it runs elsewhere, whatever its decision says")

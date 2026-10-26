@@ -129,9 +129,9 @@ enum PaletteArguments {
         let rest = minutes % 60
         func unit(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
         switch (hours, rest) {
-        case (0, _): return unit(rest, "Minute")
-        case (_, 0): return unit(hours, "Hour")
-        default: return "\(unit(hours, "Hour")) \(unit(rest, "Minute"))"
+        case (0, _): return unit(rest, "minute")
+        case (_, 0): return unit(hours, "hour")
+        default: return "\(unit(hours, "hour")) \(unit(rest, "minute"))"
         }
     }
 }

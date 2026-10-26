@@ -312,7 +312,7 @@ struct DisclosureChevron: View {
             .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: 22, height: 22)
             .background(Circle().fill(Color.primary.opacity(hovering ? 0.12 : 0.06)))
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(JRBarTokens.Motion.quick.animation, value: hovering)
             .accessibilityHidden(true)
     }
 }
@@ -575,8 +575,7 @@ extension SettingGroup where Header == EmptyView {
 struct SettingRowStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .padding(.vertical, JRBarTokens.Space.sm)
-            .padding(.horizontal, JRBarTokens.Space.md)
+            .settingsRowInsets()
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

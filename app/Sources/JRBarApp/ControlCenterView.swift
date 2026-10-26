@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -441,9 +442,9 @@ struct KeyCap: View {
                 .opacity(glowOpacity * 0.75)
                 .padding(-3)
             // The cap.
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous)
                 .fill(LinearGradient(colors: [Color(white: 0.16), Color(white: 0.10)], startPoint: .top, endPoint: .bottom))
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous)
                 .strokeBorder(lit ? Color.white.opacity(0.9) : (targeted ? Color.accentColor : color.opacity(glowOpacity * 0.9 + 0.12)),
                               lineWidth: lit || targeted ? 2 : 1)
             content.padding(10)
@@ -451,7 +452,7 @@ struct KeyCap: View {
         }
         .frame(width: PadIllustration.keySize.width, height: PadIllustration.keySize.height)
         .scaleEffect(pressed ? 0.97 : (targeted ? 1.03 : 1))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous))
         .onHover { store.hoveredSlot = $0 ? slot.index : (store.hoveredSlot == slot.index ? nil : store.hoveredSlot) }
         .onTapGesture {
             guard slot.navigable else { return }
@@ -511,19 +512,19 @@ struct KeyCap: View {
                             if let age = askAge { DeckAskAgeRing(age: age) }
                         }
                 } else {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: JRBarTokens.Radius.tile, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                         .frame(width: 22, height: 22)
                 }
                 Spacer()
                 Text("\(slot.index + 1)")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.3))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.6))
                     .padding(.trailing, (hovered || slot.pinned) && !slot.isEmpty ? 22 : 0)
             }
             Spacer(minLength: 2)
             Text(slot.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(JRBarTokens.TypeStyle.callout.font.weight(.semibold))
                 .foregroundStyle(dim ? Color.white.opacity(0.45) : Color.white.opacity(0.92))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -538,7 +539,7 @@ struct KeyCap: View {
                         .foregroundStyle(Color.white.opacity(dim ? 0.4 : 0.7))
                 }
             }
-            .font(.system(size: 10.5, weight: .medium))
+            .font(JRBarTokens.TypeStyle.caption.font.weight(.medium))
             .lineLimit(1)
         }
     }
@@ -660,7 +661,7 @@ struct DialControl: View {
             .frame(width: 62, height: 62)
             .shadow(color: glowColor, radius: 8)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Dial").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.white.opacity(0.85))
+                Text("Dial").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold)).foregroundStyle(Color.white.opacity(0.85))
                 ForEach(inputs) { input in
                     HStack(spacing: 4) {
                         Image(systemName: dialSymbol(input))
@@ -669,7 +670,7 @@ struct DialControl: View {
                         Text(input.mappingLabel ?? "Not configured")
                             .lineLimit(1)
                     }
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.medium))
                     .foregroundStyle(inputInk(input))
                     .help("\(input.label): \(input.mappingLabel ?? "Choose its action in the pickers below the pad.")")
                 }
@@ -677,8 +678,8 @@ struct DialControl: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(cardFill))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous).fill(cardFill))
+        .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         .animation(.easeOut(duration: 0.2), value: lit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
@@ -704,9 +705,9 @@ struct JoystickControl: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous)
                 .fill(LinearGradient(colors: [Color(white: 0.14), Color(white: 0.09)], startPoint: .top, endPoint: .bottom))
-            RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
             ForEach(0..<4, id: \.self) { n in
                 let control = sector(n)
                 let on = control.map { store.isLit($0.index) } ?? false
@@ -742,7 +743,7 @@ struct BankPager: View {
         let banks = store.banks
         HStack(spacing: 14) {
             Button { store.bank(delta: -1) } label: {
-                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "chevron.left").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
             }
             .buttonStyle(.plain)
             .foregroundStyle(banks.hasMultiple ? Color.secondary : Color.secondary.opacity(0.3))
@@ -758,7 +759,7 @@ struct BankPager: View {
             }
             .animation(.easeOut(duration: 0.15), value: banks.index)
             Button { store.bank(delta: 1) } label: {
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "chevron.right").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
             }
             .buttonStyle(.plain)
             .foregroundStyle(banks.hasMultiple ? Color.secondary : Color.secondary.opacity(0.3))
@@ -771,7 +772,7 @@ struct BankPager: View {
                 .contentTransition(.numericText())
             if !store.scopes.isEmpty {
                 Button { store.cycleScope(delta: -1) } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.left").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -786,7 +787,7 @@ struct BankPager: View {
                 .help("The provider scope the board shows: a hardware layer or a scope key selects it")
             if !store.scopes.isEmpty {
                 Button { store.cycleScope(delta: 1) } label: {
-                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.right").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -922,7 +923,7 @@ struct SessionDragRow: View {
             }
             if let key = boundKey {
                 Text("\(key + 1)")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 18, height: 18)
                     .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -933,7 +934,7 @@ struct SessionDragRow: View {
                     .foregroundStyle(.tertiary)
             }
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 10, weight: .semibold))
+                .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .opacity(hovered ? 1 : 0.35)
         }
@@ -946,7 +947,7 @@ struct SessionDragRow: View {
         .draggable(session.id) {
             HStack(spacing: 8) {
                 ProviderTile(style: style, size: 20)
-                Text(session.displayLabel).font(.system(size: 12, weight: .medium))
+                Text(session.displayLabel).font(JRBarTokens.TypeStyle.callout.font.weight(.medium))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)

@@ -92,7 +92,7 @@ struct PanelComposition {
     static func usageHeight(_ usage: CoreProviderUsage) -> CGFloat {
         if usage.availability == "not_found" { return rowHeight }
         let action = usage.action?.isEmpty == false
-        return action || usage.availability == "failing" ? 72 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 58 : 44)
+        return action || usage.availability == "failing" ? 88 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 64 : 56)
     }
 }
 
@@ -102,6 +102,12 @@ struct PanelAgentsSection: View {
 
     private var hasEarlier: Bool { !store.earlierPanelAgents.isEmpty || store.hiddenCount > 0 }
 
+    private var emptyLabel: String {
+        if !store.isLive { return "Agents appear when the monitor connects" }
+        if !store.trimmedFindQuery.isEmpty { return "No matching agents" }
+        return store.visibleAskRows.isEmpty ? "Start an agent to see its session" : "No other recent sessions"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             panelSectionTitle("Agents", trailing: store.findSummary)
@@ -109,7 +115,7 @@ struct PanelAgentsSection: View {
                 SnapshotScrollView {
                     VStack(spacing: 0) {
                         if store.currentPanelAgents.isEmpty && (!store.earlierExpanded || store.earlierPanelAgents.isEmpty) {
-                            Text(!store.isLive ? "Agents appear when the monitor connects" : (store.trimmedFindQuery.isEmpty ? "No agents to show" : "No matching agents"))
+                            Text(emptyLabel)
                                 .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
                                 .frame(maxWidth: .infinity, minHeight: PanelComposition.rowHeight)
                         }
@@ -294,13 +300,14 @@ struct PanelProviderSection: View {
             let providers = store.panelEditProviders
             let start = min(editPage * composition.usageLimit, max(0, providers.count - 1))
             ForEach(Array(providers.dropFirst(start).prefix(composition.usageLimit)), id: \.identity) { row in
+                let name = row.label == row.id ? ProviderPalette.displayName(for: row.id) : row.label
                 HStack(spacing: JRBarTokens.Space.sm) {
                     Image(systemName: "line.3.horizontal").foregroundStyle(JRBarTokens.Ink.tertiary)
                         .onDrag { draggedProvider = row.id; return NSItemProvider(object: row.id as NSString) }
-                        .accessibilityLabel("Reorder \(row.label)")
+                        .accessibilityLabel("Reorder \(name)")
                     ProviderLogoTile(provider: row.id, dim: !row.enabled)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(row.label).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
+                        Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
                         if !row.enabled {
                             Text("Track is off in Settings › Providers").font(JRBarTokens.TypeStyle.caption.font)
                                 .foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(2)
@@ -308,10 +315,10 @@ struct PanelProviderSection: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    eye(store.providerList.showsInMenuBar(row.id), label: "\(row.label) in menu bar", width: 58) {
+                    eye(store.providerList.showsInMenuBar(row.id), label: "\(name) in menu bar", width: 58) {
                         try? await store.providerList.setMenuBarVisible(row.id, !store.providerList.showsInMenuBar(row.id))
                     }
-                    eye(store.providerList.showsInPanel(row), label: "\(row.label) in panel", width: 48) {
+                    eye(store.providerList.showsInPanel(row), label: "\(name) in panel", width: 48) {
                         try? await store.providerList.setPanelVisible(row, !store.providerList.showsInPanel(row))
                     }
                 }

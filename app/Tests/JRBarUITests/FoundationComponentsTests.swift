@@ -10,6 +10,17 @@ struct FoundationComponentsTests {
     let locale = Locale(identifier: "en_US")
     let zone = TimeZone(secondsFromGMT: 0)!
 
+    @Test @MainActor func settingsGroupsInsetBareRowsWithoutPaddingStandardRowsTwice() {
+        func height(_ view: some View) -> CGFloat {
+            NSHostingView(rootView: view.frame(width: 320).fixedSize(horizontal: false, vertical: true)).fittingSize.height
+        }
+        let row = SettingsRow("Update channel") { Text("Stable") }
+        let bare = HStack { Text("Update channel"); Spacer(); Text("Stable") }
+        #expect(height(SettingsGroup { bare }) >= height(row))
+        #expect(abs(height(SettingsGroup { row }) - height(row)) < 1)
+        #expect(abs(height(SettingsGroup { bare.settingsRowInsets() }) - height(row)) < 1)
+    }
+
     @Test @MainActor func tokensMatchApprovedDefaults() {
         #expect(JRBarTokens.TypeStyle.allCases.map(\.size) == [26, 22, 17, 15, 13, 13, 12, 11, 11])
         #expect(JRBarTokens.TypeStyle.allCases.map(\.lineHeight) == [32, 28, 22, 20, 18, 18, 16, 14, 14])

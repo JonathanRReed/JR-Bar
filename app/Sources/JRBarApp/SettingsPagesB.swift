@@ -1116,19 +1116,18 @@ struct AlertsProfileRow: View {
 
     var body: some View {
         Provided(store, AlertsProfile.keys[0], AlertsProfile.keys[1], AlertsProfile.keys[2], AlertsProfile.keys[3], recordsControl: false) {
-            Picker(selection: selection) {
-                ForEach(AlertsProfile.allCases, id: \.rawValue) { profile in
-                    Text(profile.title).tag(profile.rawValue)
+            SettingRow("Alerts profile", subtitle: current?.summary ?? "Your own mix of the switches below.") {
+                Picker("Alerts profile", selection: selection) {
+                    ForEach(AlertsProfile.allCases, id: \.rawValue) { profile in
+                        Text(profile.title).tag(profile.rawValue)
+                    }
+                    if current == nil {
+                        Text("Custom").tag(Self.custom)
+                    }
                 }
-                if current == nil {
-                    Text("Custom").tag(Self.custom)
-                }
-            } label: {
-                SettingLabel(title: "Alerts profile", subtitle: current?.summary
-                    ?? "Your own mix of the switches below.")
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+                .accessibilityIdentifier("alerts_profile")
             }
-            .pickerStyle(.menu)
-            .accessibilityIdentifier("alerts_profile")
         }
     }
 }

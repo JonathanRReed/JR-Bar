@@ -48,7 +48,7 @@ enum AgentPaletteRows {
     static let revealChord = PaletteShortcut.commandShift("f")
     static let clearChord = PaletteShortcut(.delete, .command)
 
-    /// Asks become urgent rows (Needs You); every other session is a
+    /// Asks become urgent rows (Needs you); every other session is a
     /// row under Sessions. `rows` arrive in the panel's order — asks
     /// longest-waiting first — and keep it.
     @MainActor
@@ -75,14 +75,14 @@ enum AgentPaletteRows {
     /// destructive command.
     @MainActor
     static func askItem(row: SessionRow, ask: CoreAsk, now: Date, verbs: AgentPaletteVerbs) -> PaletteItem {
-        var actions = [PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
+        var actions = [PaletteAction(id: "open", title: "Open session", symbol: "macwindow") {
             verbs.open(row)
             return nil
         }]
         if !row.isRemote, ask.session?.isEmpty == false, AskVerbs.chooses(ask) {
             actions += choiceActions(ask: ask, verbs: verbs)
             actions += pathActions(row: row, verbs: verbs)
-            actions.append(PaletteAction(id: "snooze", title: "Snooze 1 Hour", symbol: "moon.zzz") {
+            actions.append(PaletteAction(id: "snooze", title: "Snooze 1 hour", symbol: "moon.zzz") {
                 verbs.snooze(row, 3600)
                 return nil
             })
@@ -97,7 +97,7 @@ enum AgentPaletteRows {
             actions.append(PaletteAction(
                 id: "reply", title: "Reply…", symbol: "text.bubble", shortcut: approveChord,
                 input: PaletteInput(
-                    prompt: "Reply to \(row.label)…", submitTitle: "Send Reply",
+                    prompt: "Reply to \(row.label)…", submitTitle: "Send reply",
                     initial: { verbs.replyDraft(ask) },
                     onChange: { verbs.setReplyDraft(ask, $0) },
                     submit: { words in
@@ -132,7 +132,7 @@ enum AgentPaletteRows {
         }
         actions += pathActions(row: row, verbs: verbs)
         if !row.isRemote {
-            actions.append(PaletteAction(id: "snooze", title: "Snooze 1 Hour", symbol: "moon.zzz") {
+            actions.append(PaletteAction(id: "snooze", title: "Snooze 1 hour", symbol: "moon.zzz") {
                 verbs.snooze(row, 3600)
                 return nil
             })
@@ -146,10 +146,10 @@ enum AgentPaletteRows {
     @MainActor
     private static func askRow(row: SessionRow, ask: CoreAsk, now: Date, actions: [PaletteAction]) -> PaletteItem {
         // An ask JR-Bar already answered is not asking the person for
-        // anything: the tag says so (it stays in the Needs You section,
+        // anything: the tag says so (it stays in the Needs you section,
         // which is the panel's own count and is not changed here).
         let decided = !row.isRemote ? ask.decidedLine : nil
-        let first = decided == nil ? PaletteTag(text: "Needs You", tone: .attention) : PaletteTag(text: "Answered")
+        let first = decided == nil ? PaletteTag(text: "Needs you", tone: .attention) : PaletteTag(text: "Answered")
         var tags = [first]
         if ask.isDestructive { tags.append(PaletteTag(text: "Destructive", tone: .alert)) }
         if let age = PanelStore.elapsed(since: ask.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since,
@@ -245,7 +245,7 @@ enum AgentPaletteRows {
     /// A session. Return opens it; the rest are the panel row's menu.
     @MainActor
     static func sessionItem(row: SessionRow, now: Date, verbs: AgentPaletteVerbs) -> PaletteItem {
-        var actions = [PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
+        var actions = [PaletteAction(id: "open", title: "Open session", symbol: "macwindow") {
             verbs.open(row)
             return nil
         }]
@@ -257,7 +257,7 @@ enum AgentPaletteRows {
                     return nil
                 })
             } else {
-                actions.append(PaletteAction(id: "snooze", title: "Snooze 1 Hour", symbol: "moon.zzz") {
+                actions.append(PaletteAction(id: "snooze", title: "Snooze 1 hour", symbol: "moon.zzz") {
                     verbs.snooze(row, 3600)
                     return nil
                 })
@@ -304,7 +304,7 @@ enum AgentPaletteRows {
     /// runs it, and its toast is the HUD.
     @MainActor
     static func snoozeFor(row: SessionRow, verbs: AgentPaletteVerbs) -> PaletteAction {
-        PaletteAction(id: "snoozeFor", title: "Snooze For…", symbol: "timer",
+        PaletteAction(id: "snoozeFor", title: "Snooze for…", symbol: "timer",
                       input: PaletteInput(
                         prompt: "Snooze \(row.label) for… 45m, 2h, 1:30", submitTitle: "Snooze",
                         accepts: { PaletteArguments.duration($0) != nil },
@@ -318,7 +318,7 @@ enum AgentPaletteRows {
     private static func pathActions(row: SessionRow, verbs: AgentPaletteVerbs) -> [PaletteAction] {
         guard row.cwd?.isEmpty == false else { return [] }
         return [
-            PaletteAction(id: "copyPath", title: "Copy Path", symbol: "doc.on.doc",
+            PaletteAction(id: "copyPath", title: "Copy path", symbol: "doc.on.doc",
                           shortcut: copyPathChord) {
                 verbs.copyPath(row)
                 return nil
@@ -432,7 +432,7 @@ enum QuietPaletteRows {
 
     /// The panel's presets — 30 minutes, an hour, four, until 08:00 —
     /// each running the remembered mode on Return, with every other
-    /// mode one ⌘K away; plus End Quiet while a quiet this palette or
+    /// mode one ⌘K away; plus End quiet while a quiet this palette or
     /// the panel set is running (a schedule's or Focus's is not ours to
     /// end).
     @MainActor
@@ -450,12 +450,12 @@ enum QuietPaletteRows {
         var items: [PaletteItem] = []
         if let quietLabel, quietIsOurs {
             items.append(PaletteItem(
-                id: "quiet.end", title: "End Quiet", subtitle: quietLabel,
+                id: "quiet.end", title: "End quiet", subtitle: quietLabel,
                 keywords: ["resume", "unmute", "wake"],
                 icon: .symbol("sun.max.fill", .yellow),
                 tags: [PaletteTag(text: PanelStore.quietWord(mode), tone: .accent)],
                 kind: "Quiet", section: .quiet,
-                actions: [PaletteAction(id: "end", title: "End Quiet", symbol: "sun.max") {
+                actions: [PaletteAction(id: "end", title: "End quiet", symbol: "sun.max") {
                     verbs.end()
                     return nil
                 }]))
@@ -652,18 +652,18 @@ enum WhyLightPaletteRows {
         guard let explanation else { return [] }
         var actions: [PaletteAction] = []
         if let session = explanation.session, !session.isEmpty {
-            actions.append(PaletteAction(id: "open", title: "Open Session", symbol: "macwindow") {
+            actions.append(PaletteAction(id: "open", title: "Open session", symbol: "macwindow") {
                 verbs.openSession(session)
                 return nil
             })
         }
-        actions.append(PaletteAction(id: "copy", title: "Copy Explanation", symbol: "doc.on.doc",
+        actions.append(PaletteAction(id: "copy", title: "Copy explanation", symbol: "doc.on.doc",
                                      shortcut: .commandShift("c")) {
             verbs.copy(text(of: explanation))
             return "Copied why this light"
         })
         return [PaletteItem(
-            id: "lights.why", title: "Why This Light", subtitle: explanation.headline,
+            id: "lights.why", title: "Why this light", subtitle: explanation.headline,
             keywords: ["why", "explain", "led", "colour", "color", "strip", explanation.motion],
             icon: .symbol("questionmark.bubble.fill", tint(for: explanation.kind)),
             kind: "Lights", section: .lights, actions: actions)]
@@ -747,16 +747,16 @@ enum ControlCenterPaletteRows {
     static func title(of toggle: SystemToggle) -> String {
         switch toggle {
         case .keepAwake: return "Keep Awake"
-        case .darkMode: return "Dark Mode"
-        case .desktopIcons: return "Desktop Icons"
-        case .hiddenFiles: return "Hidden Files"
-        case .mute: return "Mute Sound"
-        case .screenSaver: return "Start Screen Saver"
-        case .lock: return "Lock Screen"
-        case .dockAutoHide: return "Dock Auto-Hide"
-        case .micMute: return "Mute Microphone"
-        case .eject: return "Eject Disks"
-        case .sleep: return "Sleep Now"
+        case .darkMode: return "Dark mode"
+        case .desktopIcons: return "Desktop icons"
+        case .hiddenFiles: return "Hidden files"
+        case .mute: return "Mute sound"
+        case .screenSaver: return "Start screen saver"
+        case .lock: return "Lock screen"
+        case .dockAutoHide: return "Dock auto-hide"
+        case .micMute: return "Mute microphone"
+        case .eject: return "Eject disks"
+        case .sleep: return "Sleep now"
         }
     }
 
@@ -846,14 +846,14 @@ struct AquariumPaletteVerbs {
 }
 
 enum AquariumPaletteRows {
-    /// Feed the Tank while there is a fish to feed — the game's own
+    /// Feed the tank while there is a fish to feed — the game's own
     /// daily cap still decides what counts — and the tank's switch.
     @MainActor
     static func items(fishCount: Int, isOn: Bool, verbs: AquariumPaletteVerbs) -> [PaletteItem] {
         var items: [PaletteItem] = []
         if fishCount > 0 {
             items.append(PaletteItem(
-                id: "aquarium.feed", title: "Feed the Tank",
+                id: "aquarium.feed", title: "Feed the tank",
                 subtitle: "A pellet for \(fishCount == 1 ? "the one fish" : "each of \(fishCount) fish")",
                 keywords: ["aquarium", "fish", "food", "pellet"],
                 icon: .symbol("fish.fill", .teal), kind: "Aquarium", section: .toys,
@@ -898,7 +898,7 @@ enum ConfettiPaletteRows {
             keywords: ["celebrate", "party", "tada", "burst", "popper"],
             icon: .symbol("party.popper.fill", .pink), kind: "Toy", section: .toys,
             actions: [
-                PaletteAction(id: "fire", title: "Fire Confetti", symbol: "party.popper") {
+                PaletteAction(id: "fire", title: "Fire confetti", symbol: "party.popper") {
                     verbs.fire()
                     return nil
                 },
@@ -969,7 +969,7 @@ enum WindowPaletteRows {
                             keywords: ["whats new", "release notes", "changelog", "new features", "tour"],
                             run: verbs.whatsNew))
         items.append(PaletteItem(
-            id: "open.updates", title: "Check for Updates…", icon: .symbol("arrow.down.circle.fill", .blue),
+            id: "open.updates", title: "Check for updates…", icon: .symbol("arrow.down.circle.fill", .blue),
             kind: "Command", section: .open,
             actions: [PaletteAction(id: "check", title: "Check", symbol: "arrow.down.circle") {
                 verbs.checkForUpdates()
@@ -988,7 +988,7 @@ enum WindowPaletteRows {
                 icon: .symbol(page.symbol, settingsTint(page)),
                 tags: page == .general ? [PaletteTag(text: PaletteShortcut.command(",").display)] : [],
                 kind: "Settings", section: .settings,
-                actions: [PaletteAction(id: "open", title: "Open Settings", symbol: "gearshape") {
+                actions: [PaletteAction(id: "open", title: "Open settings", symbol: "gearshape") {
                     open(page)
                     return nil
                 }])

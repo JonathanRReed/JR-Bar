@@ -18,7 +18,7 @@ struct PaletteSection: Hashable, Sendable {
     let order: Int
 
     /// Open asks — always first, because they are costing you time.
-    static let needsYou = PaletteSection(id: "needsYou", title: "Needs You", order: 0)
+    static let needsYou = PaletteSection(id: "needsYou", title: "Needs you", order: 0)
     /// The rows you pinned, in the order you pinned them.
     static let favorites = PaletteSection(id: "favorites", title: "Favorites", order: 1)
     /// The frecency pick: what you run most, lately.
@@ -26,13 +26,13 @@ struct PaletteSection: Hashable, Sendable {
     /// A query's ranked matches.
     static let results = PaletteSection(id: "results", title: "Results", order: 2)
     static let sessions = PaletteSection(id: "sessions", title: "Sessions", order: 10)
-    static let menuBar = PaletteSection(id: "menuBar", title: "Menu Bar", order: 20)
+    static let menuBar = PaletteSection(id: "menuBar", title: "Menu bar", order: 20)
     static let quiet = PaletteSection(id: "quiet", title: "Quiet", order: 30)
     static let lights = PaletteSection(id: "lights", title: "Lights", order: 40)
     static let controlCenter = PaletteSection(id: "controlCenter", title: "Creator Micro", order: 50)
     static let usage = PaletteSection(id: "usage", title: "Usage", order: 55)
-    static let automation = PaletteSection(id: "automation", title: "Profiles & Rules", order: 60)
-    /// Feed the Tank, the tank itself, Confetti.
+    static let automation = PaletteSection(id: "automation", title: "Profiles & rules", order: 60)
+    /// Feed the tank, the tank itself, Confetti.
     static let toys = PaletteSection(id: "toys", title: "Toys", order: 70)
     static let open = PaletteSection(id: "open", title: "Open", order: 80)
     static let settings = PaletteSection(id: "settings", title: "Settings", order: 90)
@@ -163,7 +163,7 @@ struct PaletteShortcut: Hashable, Sendable {
 struct PaletteInput {
     /// The field's placeholder while it waits: "Reply to fix-ci…".
     let prompt: String
-    /// Return's name in the footer: "Send Reply".
+    /// Return's name in the footer: "Send reply".
     let submitTitle: String
     /// What the field starts with, read when the verb opens — a draft
     /// some other surface kept — so a builder never reads it under the
@@ -241,13 +241,13 @@ struct PaletteItem: Identifiable {
     var keywords: [String] = []
     var icon: PaletteIcon
     var tags: [PaletteTag] = []
-    /// The row's kind, drawn quietly on the right ("Menu Bar App",
+    /// The row's kind, drawn quietly on the right ("Menu bar App",
     /// "Session", "Command").
     var kind: String
     var section: PaletteSection
     /// In order: the first is Return, the second ⌘Return.
     var actions: [PaletteAction]
-    /// An open ask: listed under Needs You, ahead of the suggestions.
+    /// An open ask: listed under Needs you, ahead of the suggestions.
     var urgent = false
     /// A row that is only a menu (Brightness): Return opens the action
     /// panel instead of running a verb nobody chose.

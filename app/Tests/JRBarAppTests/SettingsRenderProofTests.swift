@@ -178,17 +178,32 @@ struct SettingsRenderProofTests {
     /// Draws `view` in an offscreen window at `size` under the given
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
-    static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {
+    static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false) throws -> NSBitmapImageRep {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
-            .frame(width: size.width, height: size.height))
-        let window = NSWindow(contentRect: NSRect(origin: CGPoint(x: -20000, y: -20000), size: size),
+            .environment(\.controlActiveState, .key)
+            .tint(.blue).accentColor(.blue)
+            .frame(width: size.width, height: growToFit ? nil : size.height))
+        let window = SettingsKeyProofWindow(contentRect: NSRect(origin: CGPoint(x: -20000, y: -20000), size: size),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = appearance
         window.isReleasedWhenClosed = false
         window.contentView = hosting
         hosting.frame = NSRect(origin: .zero, size: size)
+        defer { window.contentView = nil; window.close() }
+        var captureSize = size
+        if growToFit {
+            hosting.layoutSubtreeIfNeeded()
+            captureSize.height = max(size.height, ceil(hosting.fittingSize.height))
+            window.setContentSize(captureSize)
+            hosting.frame = NSRect(origin: .zero, size: captureSize)
+        }
+        if enabled {
+            try WindowPresenter.renderProofKey(window)
+            if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
+            #expect(window.isKeyWindow)
+        }
         for _ in 0..<6 {
             hosting.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
@@ -196,10 +211,10 @@ struct SettingsRenderProofTests {
         }
         let scale: CGFloat = 2
         let rep = try #require(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+            bitmapDataPlanes: nil, pixelsWide: Int(captureSize.width * scale), pixelsHigh: Int(captureSize.height * scale),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        rep.size = size
+        rep.size = captureSize
         let context = try #require(NSGraphicsContext(bitmapImageRep: rep))
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
@@ -207,8 +222,6 @@ struct SettingsRenderProofTests {
             hosting.cacheDisplay(in: hosting.bounds, to: rep)
         }
         NSGraphicsContext.restoreGraphicsState()
-        window.contentView = nil
-        window.close()
         return rep
     }
 
@@ -873,12 +886,40 @@ extension SettingsRenderProofTests {
         CATransaction.flush()
         #expect(window.isKeyWindow, "The page is captured as a native key window")
         let frame = try #require(window.contentView?.superview)
-        let bitmap = try #require(frame.bitmapImageRepForCachingDisplay(in: frame.bounds))
-        appearance.performAsCurrentDrawingAppearance {
-            frame.cacheDisplay(in: frame.bounds, to: bitmap)
+        func capture(_ suffix: String = "") throws {
+            let bitmap = try #require(frame.bitmapImageRepForCachingDisplay(in: frame.bounds))
+            appearance.performAsCurrentDrawingAppearance {
+                frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            }
+            let data = try #require(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: Self.directory.appendingPathComponent("\(name)\(suffix)-\(dark ? "dark" : "light").png"))
         }
-        let data = try #require(bitmap.representation(using: .png, properties: [:]))
-        try data.write(to: Self.directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+        try capture()
+        if ProcessInfo.processInfo.environment["JRBAR_POLISH_SWEEP"] == "1" {
+            func scrollViews(in view: NSView) -> [NSScrollView] {
+                (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+            }
+            for scroll in scrollViews(in: host) where scroll.bounds.width > size.width / 2 {
+                guard let document = scroll.documentView else { continue }
+                let viewport = scroll.contentView.bounds.height
+                let end = max(0, document.bounds.height - viewport)
+                guard viewport > 40, end > 1 else { continue }
+                let step = viewport - 40
+                let count = min(40, Int(ceil(end / step)))
+                for index in 1...count {
+                    scroll.contentView.scroll(to: NSPoint(x: 0, y: min(end, CGFloat(index) * step)))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                    for _ in 0..<4 {
+                        host.layoutSubtreeIfNeeded()
+                        window.displayIfNeeded()
+                        await drainMainQueue()
+                    }
+                    #expect(window.isKeyWindow)
+                    try capture("-scroll-\(index)")
+                }
+                scroll.contentView.scroll(to: .zero)
+            }
+        }
     }
 }
 

@@ -82,7 +82,10 @@ draw no old numbers.
   control size. Supply a native switch with `.toggleStyle(.switch)`.
   `SettingsNavigationRow(_:subtitle:action:)` adds a chevron and hover fill.
   Place rows in `SettingsGroup { ... }` for radius 12, group fill, edge
-  and separators inset 12 pt. Controls retain their own accessible labels.
+  and separators inset 12 pt at both ends. The group supplies each row's
+  insets, including bare pickers and custom rows. Use `.settingsRowInsets()`
+  on custom rows so they keep the same padding outside a group without
+  doubling it inside one. Controls retain their own accessible labels.
 - `AgentGroupRow(provider:name:project:subtitle:elapsed:state:memberMarks:
   workerCount:unlinked:expanded:members:)` takes proven members and an
   expansion binding. Project is secondary; subtitle is the task; elapsed

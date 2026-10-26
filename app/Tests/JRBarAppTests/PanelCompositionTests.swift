@@ -12,6 +12,21 @@ import Testing
 struct PanelCompositionTests {
     static let time: Double = 1_790_000_000
 
+    @Test func usageRowsKeepTheirVerticalInsets() {
+        let readings = [Self.usage(), Self.usage("codex", availability: "failing", action: "Sign in…"),
+                        Self.usage("cursor", availability: "missing_recent")]
+        for reading in readings {
+            for width: CGFloat in [320, 372] {
+                let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
+                                        now: Self.time, style: .compact, windowNames: ["5h", "7d"],
+                                        snapshotReceivedAt: Self.time, onAction: {},
+                                        onRetry: reading.availability == "failing" ? {} : nil)
+                let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
+                #expect(host.fittingSize.height <= PanelComposition.usageHeight(reading))
+            }
+        }
+    }
+
     static func session(_ id: String, provider: String = "claude", mode: String = "working",
                         since: Double = time - 120, group: String? = nil, worker: Bool = false,
                         unlinked: Bool = false, workers: Int = 0, ask: CoreAsk? = nil) -> CoreSession {

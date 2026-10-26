@@ -252,7 +252,7 @@ struct PaletteView: View {
                         onRun(item.id, primary.id)
                     }
                 } else if item.opensActions {
-                    PaletteFooterButton(title: "Show Actions", caps: PaletteShortcut.primary.keycaps,
+                    PaletteFooterButton(title: "Show actions", caps: PaletteShortcut.primary.keycaps,
                                  action: onToggleActions)
                 }
                 // The second verb earns the footer too — an ask's
@@ -266,7 +266,7 @@ struct PaletteView: View {
                 footerRule
             }
             if input == nil {
-                PaletteFooterButton(title: model.actionsOpen ? "Close Actions" : "Actions",
+                PaletteFooterButton(title: model.actionsOpen ? "Close actions" : "Actions",
                                     caps: PaletteShortcut.actionPanel.keycaps,
                                     action: onToggleActions)
                     .disabled(model.selected?.actions.isEmpty ?? true)
@@ -293,7 +293,7 @@ struct PaletteRowView: View {
     let item: PaletteItem
     let selected: Bool
     /// The header the row stands under: a tag that only repeats it
-    /// ("Needs You" under Needs You) is left off; under Results it shows.
+    /// ("Needs you" under Needs you) is left off; under Results it shows.
     var sectionTitle: String?
 
     /// The tags worth drawing under `sectionTitle`.

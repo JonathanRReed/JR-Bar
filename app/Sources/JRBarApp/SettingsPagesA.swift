@@ -64,13 +64,13 @@ struct GeneralAdvanced: View {
             }
         }
         SettingGroup("Release channel") {
-            Picker(selection: $store.updateChannel) {
-                Text("Stable").tag("stable")
-                Text("Beta").tag("beta")
-            } label: {
-                SettingLabel(title: "Update channel", subtitle: "Stable or beta builds. Kept on this Mac.")
+            SettingRow("Update channel", subtitle: "Stable or beta builds. Kept on this Mac.") {
+                Picker("Update channel", selection: $store.updateChannel) {
+                    Text("Stable").tag("stable")
+                    Text("Beta").tag("beta")
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
             }
-            .pickerStyle(.menu)
         }
         AdvancedPage(store: store)
         DiagnosticsCopyGroup(store: store)
