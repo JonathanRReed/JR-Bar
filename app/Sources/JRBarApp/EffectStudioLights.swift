@@ -1,5 +1,6 @@
 import Foundation
 import JRBarCore
+import JRBarLEDS
 import Observation
 
 struct StudioMix: Decodable, Identifiable, Hashable {
@@ -38,7 +39,7 @@ struct StudioLightPlan: Decodable, Hashable {
         let cueReason: String?
 
         @MainActor var playbackWarnings: [String] {
-            warnings.map(StudioWarning.plain) + [StudioFleetPreview.motionNotice(played: played, program: program, ledCount: ledCount)].compactMap { $0 }
+            StudioFleetPreview.playbackWarnings(warnings, program: program, ledCount: ledCount) + [StudioFleetPreview.motionNotice(played: played, program: program, ledCount: ledCount)].compactMap { $0 }
         }
 
         enum CodingKeys: String, CodingKey {
@@ -60,6 +61,16 @@ struct StudioFleetPreview: Decodable, Hashable {
         case ledCount = "led_count"
     }
 
+    static func playbackWarnings(_ warnings: [String], program: String, ledCount: Int) -> [String] {
+        var result = warnings.map(StudioWarning.plain)
+        if warnings.contains(where: { $0.contains("cadence_clamped") }),
+           let parsed = try? LEDSProgram.parse(program, ledCount: ledCount),
+           let duration = LEDSSampler(program: parsed, ledCount: ledCount).cycleDuration {
+            result.append(String(format: "Playing a %.2f s cycle.", duration))
+        }
+        return result
+    }
+
     @MainActor var motionNotice: String? { Self.motionNotice(played: played, program: program, ledCount: ledCount) }
 
     @MainActor static func motionNotice(played: String, program: String, ledCount: Int) -> String? {
@@ -70,7 +81,7 @@ struct StudioFleetPreview: Decodable, Hashable {
     }
 
     @MainActor var playbackWarnings: [String] {
-        warnings.map(StudioWarning.plain) + [motionNotice].compactMap { $0 }
+        Self.playbackWarnings(warnings, program: program, ledCount: ledCount) + [motionNotice].compactMap { $0 }
     }
 }
 

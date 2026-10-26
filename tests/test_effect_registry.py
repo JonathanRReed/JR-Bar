@@ -167,3 +167,18 @@ def test_unrepresentable_numeric_parameters_fail_with_registry_errors() -> None:
     parameter = EffectParameter("speed", "number", 1, "Speed multiplier.")
     with pytest.raises(EffectRegistryError, match="finite"):
         parameter.normalize(enormous)
+
+
+@pytest.mark.parametrize("motion, minimum", [
+    ("chase", 1.0), ("scanner", 1.0), ("comet", 1.0),
+    ("flicker", 1.7), ("twinkle", 1.7), ("bloom", 1.0),
+])
+def test_offered_minimum_duration_keeps_shared_native_timing(motion, minimum):
+    from light_audit import Case, Firmware, catalogue, inspect
+
+    duration = next(p for p in get_effect(motion).parameter_metadata if p.name == "duration_seconds")
+    assert duration.minimum == minimum
+    variant = next(v for v in catalogue() if v.name == motion + ".low")
+    for counts in ((1, 1), (2, 2), (3, 1), (2, 1, 1)):
+        result = inspect(Case(variant, "round_robin", counts, 8, "working"), Firmware())
+        assert "share_fidelity" not in result.failures, (motion, counts, result.failures)
