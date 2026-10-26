@@ -19,11 +19,13 @@ import Testing
 
     @Test func tabChangesAsksAndReturnAnswersTheDisplayedRequest() async {
         let first = CoreAsk(session: "claude:first", openedAt: 1, summary: "Run tests?", answerable: true, request: "first")
-        let next = CoreAsk(session: "codex:next", openedAt: 2, summary: "Run checks?", answerable: true, request: "next")
+        let remote = CoreAsk(session: "remote:fixture:ask", openedAt: 2, summary: "Remote question", answerable: false, request: "remote")
+        let next = CoreAsk(session: "codex:next", openedAt: 3, summary: "Run checks?", answerable: true, request: "next")
         let state = CoreState(sessions: [
             CoreSession(id: "claude:first", provider: "claude", label: "Sample A", ask: first),
             CoreSession(id: "codex:next", provider: "codex", label: "Sample B", ask: next),
-        ], asks: [first, next])
+            CoreSession(id: "remote:fixture:ask", provider: "claude", label: "Remote sample", ask: remote),
+        ], asks: [first, remote, next])
         let (toy, owner, _) = NotchSurfaceRenderProofTests.makeToy(state: state)
         defer { withExtendedLifetime(owner) {} }
         var sent: [String] = []

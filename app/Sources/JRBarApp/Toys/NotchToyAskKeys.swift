@@ -99,7 +99,7 @@ extension NotchToy {
     }
 
     private func showNextKeyboardAsk(backwards: Bool) {
-        let asks = islandSummary.rows.filter { $0.activity == .waiting && $0.ask != nil }
+        let asks = islandSummary.rows.filter { $0.activity == .waiting && $0.ask != nil && !CoreSession.isRemoteID($0.id) }
         guard !asks.isEmpty, let current = activeCapsule?.session else { return }
         let index = asks.firstIndex { $0.id == current } ?? 0
         let step = backwards ? asks.count - 1 : 1
