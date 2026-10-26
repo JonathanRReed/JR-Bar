@@ -1,143 +1,103 @@
 import AppKit
 import Charts
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
-/// The Usage Center: one card per provider with its quota windows as
-/// rings, the forecast line, a Swift Charts history and the cost estimate.
+/// Provider selection survives closing the window; facts stay in the daemon.
 struct UsageCenterView: View {
     @Bindable var store: UsageCenterStore
+    @AppStorage("usageCenter.provider") private var selection = "overview"
+    @AppStorage("usageCenter.showCost") private var showCost = true
 
     var body: some View {
-        Group {
-            if !store.isLive, store.providers.isEmpty {
-                WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                 text: "Your usage will appear when JR-Bar reconnects.",
-                                 tint: .orange)
-            } else if store.providers.isEmpty {
-                WindowEmptyState(symbol: "chart.xyaxis.line", title: "No usage yet",
-                                 text: "No provider has reported a quota window. Metering is turned on from Settings › Agents & Usage.",
-                                 actionTitle: "Open Usage settings…", action: { store.openUsageSettings() })
-            } else {
-                ScrollViewReader { proxy in
-                    SnapshotScrollView {
-                        LazyVStack(spacing: 16) {
-                            if !store.isLive {
-                                Label("Monitor not connected. These are the last readings; they may be out of date.",
-                                      systemImage: "bolt.horizontal.circle")
-                                    .font(.callout)
-                                    .foregroundStyle(.orange)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .windowCard(padding: 14)
-                            }
-                            if store.resetSaveFailure != nil {
-                                ResetSaveNotice { store.loadResetStatus(retry: true) }
-                            }
-                            statusLine
-                            if store.providers.count > 1 {
-                                CombinedUsageCard(providers: store.providers, store: store)
-                            }
-                            // Keyed by identity: two accounts of one provider
-                            // (a hub account beside the local one) share `id`,
-                            // and a ForEach keyed by `id` drew the first twice.
-                            ForEach(store.providers, id: \.identity) { provider in
-                                ProviderUsageCard(provider: provider, store: store)
-                                    .id(provider.identity)
-                            }
-                        }
-                        .padding(WindowMetrics.margin)
-                    }
-                    // The panel's per-provider drill: scroll the card into
-                    // view and flash it. `focusPulses` is the trigger so a
-                    // repeat click on the same provider still scrolls; the
-                    // focus is consumed so a later plain open does not
-                    // re-scroll to it.
-                    .onChange(of: store.focusPulses) {
-                        guard let target = store.focusProvider else { return }
-                        store.focusProvider = nil
-                        // `focusProvider` is already an identity (see
-                        // UsageCenterStore.focus) so a duplicate provider
-                        // id scrolls to a real card either way.
-                        if store.reduceMotion {
-                            proxy.scrollTo(target)
-                        } else {
-                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(target) }
-                        }
-                    }
-                    // A focus set before the window existed (panel drill
-                    // opening the Usage Center for the first time) still
-                    // scrolls, once the cards are laid out.
-                    .onAppear {
-                        guard let target = store.focusProvider else { return }
-                        store.focusProvider = nil
-                        DispatchQueue.main.async { proxy.scrollTo(target) }
+        HStack(spacing: 0) {
+            List(selection: Binding(get: { visibleSelection }, set: { selection = $0 })) {
+                Label("Overview", systemImage: "tablecells").tag("overview")
+                Section("Providers") {
+                    ForEach(store.providers, id: \.identity) { provider in
+                        HStack(spacing: JRBarTokens.Space.sm) {
+                            ProviderLogoTile(provider: provider.id)
+                            Text(store.providerTitle(provider))
+                        }.tag(provider.identity)
                     }
                 }
             }
+            .listStyle(.sidebar)
+            .frame(width: 180)
+            Divider()
+            SnapshotScrollView {
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
+                    if store.providers.isEmpty {
+                        WindowEmptyState(symbol: store.isLive ? "chart.xyaxis.line" : "bolt.horizontal.circle",
+                            title: store.isLive ? "No usage yet" : "Monitor not connected",
+                            text: store.isLive ? "Installed providers appear when the monitor reports them." : "Your usage will appear when JR-Bar reconnects.",
+                            actionTitle: "Open Providers", action: store.openUsageSettings)
+                    } else {
+                        if !store.isLive { StatusBanner("Monitor not connected", detail: "Showing the last readings.") }
+                        if store.resetSaveFailure != nil { ResetSaveNotice { store.loadResetStatus(retry: true) } }
+                        if visibleSelection == "overview" {
+                            UsageOverviewTable(store: store, showCost: showCost) { selection = $0 }
+                        } else if let provider = store.providers.first(where: { $0.identity == visibleSelection }) {
+                            UsageProviderDetail(provider: provider, store: store, showCost: showCost)
+                        }
+                    }
+                }
+                .padding(JRBarTokens.Space.xxl)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 640, minHeight: 440)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .font(JRBarTokens.TypeStyle.body.font)
+        .frame(minWidth: 800, minHeight: 480)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("Range", selection: $store.range) {
                     ForEach(UsageHistoryRange.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .help("Graph range: 7d ⌘⌥1, 30d ⌘⌥2, 90d ⌘⌥3, 365d ⌘⌥4")
-                .disabled(!store.isLive)
+                }.pickerStyle(.segmented).disabled(!store.isLive)
             }
-            ToolbarItem(placement: .automatic) {
-                Picker("Metric", selection: $store.metric) {
-                    ForEach(UsageCenterStore.Metric.allCases) { Text($0.label).tag($0) }
+            ToolbarItem {
+                Toggle("Estimated cost", isOn: $showCost)
+            }
+            if visibleSelection != "overview", showCost {
+                ToolbarItem {
+                    Picker("Chart", selection: $store.metric) {
+                        ForEach(UsageCenterStore.Metric.allCases) { Text($0.label).tag($0) }
+                    }.pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
-                .help("Graph tokens (⌘⌥T) or estimated cost (⌘⌥C)")
-                .disabled(!store.isLive)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    store.refresh()
-                } label: {
-                    if store.refreshing {
-                        DelayedWait { Label("Refresh", systemImage: "arrow.clockwise") }
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
+                Button { store.refresh() } label: {
+                    if store.refreshing { DelayedWait { Label("Refresh", systemImage: "arrow.clockwise") } }
+                    else { Label("Refresh", systemImage: "arrow.clockwise") }
                 }
                 .disabled(!store.isLive || store.refreshing)
-                .help("Ask the monitor to re-read every provider (⌘R)")
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-        .background(UsageCenterShortcutReader { command in
-            command.handle(on: store)
-        })
+        .background(UsageCenterShortcutReader { $0.handle(on: store) })
         .safeAreaInset(edge: .bottom) {
             if let notice = store.notice {
                 UsageCenterNoticeView(notice: notice, copy: store.copyNotice, dismiss: store.dismissNotice)
-                    .padding(.horizontal, WindowMetrics.margin)
-                    .padding(.bottom, 12)
+                    .padding(JRBarTokens.Space.md)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: store.notice == nil)
+        .onAppear { consumeFocus() }
+        .onChange(of: store.focusPulses) { consumeFocus() }
+        .onChange(of: store.providers.map(\.identity)) { consumeFocus() }
     }
 
-    private var statusLine: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 9, weight: .semibold))
-            if let at = store.refreshedAt, let elapsed = PanelStore.elapsed(since: at, now: store.now) {
-                Text("Quota checked \(elapsed) ago")
-            } else {
-                Text("No quota reading yet")
-            }
-            Spacer()
-            Text("Costs are estimates from list prices, not invoices")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
-        .padding(.horizontal, 4)
+    private var visibleSelection: String {
+        guard selection != "overview" else { return selection }
+        let identity = UsageCenterStore.identity(for: selection, in: store.providers)
+        return store.providers.contains(where: { $0.identity == identity }) ? identity : "overview"
+    }
+
+    private func consumeFocus() {
+        guard let target = store.focusProvider else { return }
+        let identity = UsageCenterStore.identity(for: target, in: store.providers)
+        guard store.providers.contains(where: { $0.identity == identity }) else { return }
+        selection = identity
+        store.focusProvider = nil
     }
 }
 
@@ -231,7 +191,7 @@ struct ProviderUsageCard: View {
             }
             if let readings = readingsLine {
                 Text(readings)
-                    .font(.caption2)
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
@@ -275,7 +235,7 @@ struct ProviderUsageCard: View {
     /// consents with a working revoke. All of it is the daemon's own
     /// `list_providers`/`provider_consent`/`provider_action` truth.
     @ViewBuilder
-    private func connectionSection(_ row: ProviderRow) -> some View {
+    func connectionSection(_ row: ProviderRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let consent = row.usageConsent {
                 UsageConsentSwitch(row: row, consent: consent, store: store)
@@ -302,7 +262,7 @@ struct ProviderUsageCard: View {
                 }
                 if row.importedCredential {
                     Text("imported session")
-                        .font(.caption2)
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(.tertiary)
                         .help("This credential came from a consented browser import; revoking the consent removes it while it is still the imported value.")
                 }
@@ -314,13 +274,13 @@ struct ProviderUsageCard: View {
                 ForEach(Array(row.consents.enumerated()), id: \.offset) { _, consent in
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.shield")
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(.secondary)
                         Text("\(consent.browser) · \(consent.profile)")
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(.secondary)
                         Text(consent.fields.joined(separator: ", "))
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(.tertiary)
                         Spacer()
                         Button("Revoke") { store.revokeConsent(providerID: provider.id, consent: consent) }
@@ -340,7 +300,7 @@ struct ProviderUsageCard: View {
                     Text(style.name).font(.title3.weight(.semibold))
                     if showsInstanceBadge, let instance = provider.instance {
                         Text(UsageSourceNotes.instanceBadge(instance))
-                            .font(.caption2.weight(.semibold))
+                            .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.primary.opacity(0.08), in: Capsule())
@@ -348,7 +308,7 @@ struct ProviderUsageCard: View {
                     }
                     if let badge = stateBadge {
                         Text(badge.text)
-                            .font(.caption2.weight(.semibold))
+                            .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(badge.color.opacity(0.15), in: Capsule())
@@ -356,7 +316,7 @@ struct ProviderUsageCard: View {
                     }
                     if let incident = provider.incident, !incident.isEmpty {
                         Text("Incident")
-                            .font(.caption2.weight(.semibold))
+                            .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.orange.opacity(0.15), in: Capsule())
@@ -374,7 +334,7 @@ struct ProviderUsageCard: View {
             if let primary {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text((provider.isDerived && !primary.isUnknown ? "~" : "") + primary.percentText)
-                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                        .font(.system(size: JRBarTokens.TypeStyle.title.size, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(UsageColors.level(primary.usedPct, accent: style.accent))
                         .contentTransition(.numericText())
@@ -387,7 +347,7 @@ struct ProviderUsageCard: View {
                     // the 5h convention would have led with (S6.4).
                     if let constrained = provider.constrained, primary.id != conventional?.id {
                         Text("Watching it — \(constrained.explanation)")
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -523,7 +483,7 @@ struct ProviderUsageCard: View {
             }
             .fixedSize(horizontal: false, vertical: true)
             Text("Click a quota for details")
-                .font(.caption2)
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.secondary)
                 .fixedSize()
         }
@@ -565,7 +525,7 @@ struct ProviderUsageCard: View {
                     .foregroundStyle(forecast.isCritical ? .primary : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(forecastSource(forecast, showsBudget: budget != nil))
-                    .font(.caption2)
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let budget {
@@ -597,7 +557,7 @@ struct ProviderUsageCard: View {
         if !burners.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Burning the \(window.shortName) window here")
-                    .font(.caption2.weight(.semibold))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                     .foregroundStyle(.tertiary)
                     .padding(.top, 4)
                 ForEach(burners) { burner in
@@ -616,7 +576,7 @@ struct ProviderUsageCard: View {
                         }
                         .frame(width: 70, height: 4)
                         Text("\(Int((burner.share * 100).rounded()))% · \(UsageFormat.tokens(burner.tokens))")
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .monospacedDigit()
                             .foregroundStyle(Color.secondary)
                     }
@@ -792,7 +752,7 @@ struct ProviderUsageCard: View {
                 }
             }
             Text(Self.pricingDisclosure(history))
-                .font(.caption2)
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -838,7 +798,7 @@ struct SignedOutRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "terminal")
-                .font(.system(size: 22, weight: .light))
+                .font(.system(size: JRBarTokens.TypeStyle.title1.size, weight: .light))
                 .foregroundStyle(.secondary)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 6) {
@@ -963,7 +923,7 @@ struct CombinedUsageCard: View {
                     .truncationMode(.tail)
                 if let tag = UsageSourceNotes.rowTag(provider.instance) {
                     Text(tag)
-                        .font(.caption2)
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -992,7 +952,7 @@ struct CombinedUsageCard: View {
                 }
                 Spacer(minLength: 4)
                 Text(UsageCenterStore.resetText(leading, of: provider, now: store.now) ?? "")
-                    .font(.caption2)
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -1023,7 +983,7 @@ struct CombinedWindowGauge: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(window.shortName)
-                .font(.caption2.weight(.medium))
+                .font(JRBarTokens.TypeStyle.caption.font.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 40, alignment: .trailing)
@@ -1190,7 +1150,7 @@ struct UsageConsentSwitch: View {
             .toggleStyle(.checkbox)
             .help(consent.detail)
             Text(consent.detail)
-                .font(.caption2)
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1411,7 +1371,7 @@ struct QuotaRing: View {
                         .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
                 }
                 Text(window.percentText)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(window.isUnknown ? Color.secondary : Color.primary)
                     .contentTransition(.numericText())
@@ -1423,23 +1383,23 @@ struct QuotaRing: View {
                 .fixedSize()
             if let cadence = UsageWindowLabel.cadence(id: window.key, name: window.name) {
                 Text(cadence)
-                    .font(.caption2)
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(.secondary)
                     .fixedSize()
             }
             Text(reset ?? "no reset time")
-                .font(.caption2)
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             if window.isUnknown {
-                Text("no reading").font(.caption2).foregroundStyle(.secondary)
+                Text("no reading").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
             } else if let rate = forecast.rateText {
                 Text(rate)
-                    .font(.caption2)
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
                     .monospacedDigit()
             } else if forecast.verdict == .exhausted {
-                Text("used up").font(.caption2).foregroundStyle(.red)
+                Text("used up").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.red)
             }
         }
         .frame(width: 96)
@@ -1541,7 +1501,7 @@ struct UsageChart: View {
                 }
             }
         }
-        .font(.caption2)
+        .font(JRBarTokens.TypeStyle.caption.font)
         .monospacedDigit()
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -1647,14 +1607,14 @@ struct UsageChart: View {
                     AxisMarks(values: [tick]) { _ in
                         AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
                         AxisValueLabel(format: hourly ? .dateTime.weekday(.abbreviated).hour() : .dateTime.month(.abbreviated).day())
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(Color.secondary)
                     }
                 } else {
                     AxisMarks(values: .stride(by: tickUnit, count: tickStride, calendar: calendar)) { _ in
                         AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
                         AxisValueLabel(format: showHours ? .dateTime.weekday(.abbreviated).hour() : (hourly ? .dateTime.weekday(.abbreviated) : .dateTime.month(.abbreviated).day()))
-                            .font(.caption2)
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(Color.secondary)
                     }
                 }
@@ -1665,7 +1625,7 @@ struct UsageChart: View {
                     AxisValueLabel {
                         if let number = value.as(Double.self) {
                             Text(metric == .tokens ? UsageFormat.tokens(Int(number)) : UsageFormat.cost(number, currency: history.pricing?.currency ?? "USD"))
-                                .font(.caption2)
+                                .font(JRBarTokens.TypeStyle.caption.font)
                                 .monospacedDigit()
                                 .foregroundStyle(Color.secondary)
                         }
@@ -1719,13 +1679,13 @@ struct UsageModelBreakdown: View {
                     }
                     .frame(height: 5)
                     Text("\(Int((row.share * 100).rounded()))%")
-                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                        .font(JRBarTokens.TypeStyle.caption.font).monospacedDigit().foregroundStyle(.secondary)
                         .frame(width: 34, alignment: .trailing)
                     Text(UsageFormat.tokens(row.model.tokens))
-                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                        .font(JRBarTokens.TypeStyle.caption.font).monospacedDigit().foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .trailing)
                     Text(row.model.priced ? (row.model.estimated ? "≈ " : "") + UsageFormat.cost(row.model.costUsd, currency: history.pricing?.currency ?? "USD") : "no price")
-                        .font(.caption2).monospacedDigit().foregroundStyle(row.model.priced ? .secondary : .tertiary)
+                        .font(JRBarTokens.TypeStyle.caption.font).monospacedDigit().foregroundStyle(row.model.priced ? .secondary : .tertiary)
                         .frame(width: 64, alignment: .trailing)
                 }
                 .help("\(row.model.displayName) (\(row.model.model)): \(UsageFormat.tokens(row.model.tokens)) tokens in \(row.model.records) records"
@@ -1734,7 +1694,7 @@ struct UsageModelBreakdown: View {
             }
             if rows.count > Self.shown {
                 Text("and \(rows.count - Self.shown) more")
-                    .font(.caption2).foregroundStyle(.tertiary)
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
             }
         }
         .padding(.top, 4)
@@ -1772,14 +1732,14 @@ struct UsagePunchCardView: View {
                 Text("When you burn it").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 if let window, !outlined.isEmpty {
                     Text("· outlined: the current \(window.shortName) window")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                 }
             }
             Grid(alignment: .center, horizontalSpacing: 2, verticalSpacing: 2) {
                 ForEach(0..<7, id: \.self) { weekday in
                     GridRow {
                         Text(card.weekdayLabels[weekday])
-                            .font(.system(size: 8)).foregroundStyle(.tertiary)
+                            .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                             .frame(width: 26, alignment: .trailing)
                         ForEach(0..<24, id: \.self) { hour in
                             let intensity = card.intensity(weekday, hour)
@@ -1802,7 +1762,7 @@ struct UsagePunchCardView: View {
                     Text("").frame(width: 26)
                     ForEach(0..<24, id: \.self) { hour in
                         Text(hour % 6 == 0 ? "\(hour)" : "")
-                            .font(.system(size: 7)).foregroundStyle(.quaternary)
+                            .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.quaternary)
                             .frame(width: Self.dot)
                     }
                 }
@@ -1832,7 +1792,7 @@ struct UsageDailyTable: View {
                     Text("Total")
                     Text("Cost")
                 }
-                .font(.caption2.weight(.semibold))
+                .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 ForEach(history.activeDaysNewestFirst) { day in
                     GridRow {
@@ -1904,7 +1864,7 @@ struct NoLocalRecordsHint: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "tray")
-                .font(.system(size: 15, weight: .light))
+                .font(.system(size: JRBarTokens.TypeStyle.title3.size, weight: .light))
                 .foregroundStyle(style.accent.opacity(0.8))
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
