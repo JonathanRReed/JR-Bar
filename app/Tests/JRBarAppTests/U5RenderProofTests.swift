@@ -303,7 +303,7 @@ enum U5Proof {
         hosting.frame = NSRect(origin: .zero, size: size)
         settle(hosting, window: window)
         CATransaction.flush()
-        #expect(window.isKeyWindow, "Render proof must be key: initially=\(initiallyKey), active=\(NSApp.isActive), visible=\(window.isVisible)")
+        #expect(window.isKeyWindow, "Render proof must be key: initially=\(initiallyKey), active=\(NSApp.isActive), visible=\(window.isVisible), policy=\(NSApp.activationPolicy().rawValue), processPolicy=\(NSRunningApplication.current.activationPolicy.rawValue), bundle=\(Bundle.main.bundleIdentifier ?? "none")")
         let capturedView = title == nil ? hosting : (hosting.superview ?? hosting)
         let bitmap = try #require(capturedView.bitmapImageRepForCachingDisplay(in: capturedView.bounds))
         capturedView.cacheDisplay(in: capturedView.bounds, to: bitmap)
