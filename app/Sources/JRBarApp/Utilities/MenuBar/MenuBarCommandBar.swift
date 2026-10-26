@@ -475,7 +475,7 @@ extension MenuBarCommand {
             : .symbol(symbol, tint)
         let kindWord: String
         switch kind {
-        case .app: kindWord = "Menu Bar App"
+        case .app: kindWord = "Menu bar app"
         case .command: kindWord = "Menu Bar"
         case .profile: kindWord = "Profile"
         case .rule: kindWord = "Rule"

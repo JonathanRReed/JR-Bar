@@ -94,7 +94,7 @@ import SwiftUI
         let (store, _) = make()
         #expect(store.step == .welcome)
         #expect(!store.canGoBack)
-        #expect(store.nextTitle == "Get Started")
+        #expect(store.nextTitle == "Get started")
         store.goNext()
         #expect(store.step == .agents)
         store.goNext()

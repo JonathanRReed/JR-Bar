@@ -271,7 +271,7 @@ final class SetupStore {
     /// The primary button's word: Get Started → Next → Finish.
     var nextTitle: String {
         switch step {
-        case .welcome: return "Get Started"
+        case .welcome: return "Get started"
         case .done: return "Finish"
         default: return "Continue"
         }

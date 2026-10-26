@@ -179,7 +179,7 @@ struct MenuBarActionsTests {
         let app = rows.first { $0.title == "Hid" }
         #expect(app?.section == .menuBar)
         #expect(app?.tags == [PaletteTag(text: "Hidden")])
-        #expect(app?.kind == "Menu Bar App")
+        #expect(app?.kind == "Menu bar app")
         #expect(rows.first { $0.id == "menubar.rule.r" }?.section == .automation)
         #expect(rows.first { $0.id == "menubar.rule.r" }?.tags == [PaletteTag(text: "Off")])
         // A verb's confirmation is the HUD's line.
