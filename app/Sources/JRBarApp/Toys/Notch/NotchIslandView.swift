@@ -80,10 +80,7 @@ struct NotchIslandView: View {
         // Every face decision funnels through `NotchMotion.faceTransition`
         // — the fades normally, the quiet crossfade under Reduce
         // Motion — so the accessibility path is one pinned fact.
-        .animation(NotchMotion.faceTransition(reduceMotion: reduceMotion) == .crossfade
-                   ? .easeInOut(duration: NotchMotion.reduceMotionFade)
-                   : .easeOut(duration: NotchMotion.swapFadeIn),
-                   value: face)
+        .animation(reduceMotion ? JRBarTokens.Motion.reduced.animation : nil, value: face)
         .modifier(NotchStageFrame(stage: toy.stage))
         .overlay {
             if let path = toy.shoulderInputPath {
@@ -107,14 +104,14 @@ struct NotchIslandView: View {
                 lastNotice = shown
                 guard !noticeShown else { return }
                 withAnimation(reduceMotion
-                              ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                              ? .easeInOut(duration: JRBarTokens.Motion.reduced.duration)
                               : .easeOut(duration: NotchMotion.noticeFadeIn)) {
                     noticeShown = true
                 }
             } else {
                 // The dismissal reverses the entrance, a touch quicker.
                 withAnimation(reduceMotion
-                              ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                              ? .easeInOut(duration: JRBarTokens.Motion.reduced.duration)
                               : .easeIn(duration: NotchMotion.noticeFadeOut)) {
                     noticeShown = false
                 }
@@ -179,12 +176,7 @@ struct NotchIslandView: View {
     /// One face giving way to another: the old one out a little quicker
     /// than the new one comes in, so the two never share the black.
     private var swapTransition: AnyTransition {
-        // Reduce Motion: the plain crossfade on the face animation's own
-        // curve.
-        guard NotchMotion.faceTransition(reduceMotion: reduceMotion) == .morph else { return .opacity }
-        return .asymmetric(
-            insertion: .opacity.animation(.easeOut(duration: NotchMotion.swapFadeIn)),
-            removal: .opacity.animation(.easeIn(duration: NotchMotion.swapFadeOut)))
+        reduceMotion ? .opacity : .identity
     }
 
     /// Plain black — the black the notch's bezel already reads as — so
@@ -250,8 +242,8 @@ struct NotchIslandView: View {
             // points (the toy's `islandHoverPeek` reframe), and the
             // marks swell inside it. A passing cursor earns only this.
             .scaleEffect(toy.islandHoverPeek ? NotchMotion.hoverContentScale : 1)
-            .animation(reduceMotion ? .easeInOut(duration: NotchMotion.reduceMotionFade)
-                                    : NotchMotion.hoverMarks.animation,
+            .animation(reduceMotion ? .easeInOut(duration: JRBarTokens.Motion.reduced.duration)
+                                    : JRBarTokens.Motion.quick.animation,
                        value: toy.islandHoverPeek)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
@@ -325,7 +317,7 @@ struct NotchIslandView: View {
                 NotchDot(color: ProviderStyle.style(for: provider).accent)
             }
             Text("\(summary.working)")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white.opacity(0.92))
         }
@@ -337,7 +329,7 @@ struct NotchIslandView: View {
         HStack(spacing: 3) {
             NotchDot(color: color)
             Text("\(count)")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(color)
         }
@@ -397,7 +389,7 @@ struct NotchIslandView: View {
             if summary.failed > 0 { NotchDot(color: .red) }
             if summary.working + summary.waiting + summary.failed > 0 {
                 Text("\(summary.working + summary.waiting + summary.failed)")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.85))
             } else {
@@ -413,7 +405,7 @@ struct NotchIslandView: View {
     private func mediaCover(_ media: AlcoveMedia) -> some View {
         NotchCoverSwap(image: media.artworkData != nil ? toy.islandArtwork : nil) {
             Image(systemName: "music.note")
-                .font(.system(size: 7, weight: .semibold))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.7))
         }
         .frame(width: NotchIsland.mediaArtWidth, height: NotchIsland.mediaArtWidth)
@@ -489,12 +481,12 @@ struct NotchIslandView: View {
                     Self.noticeLine(notice)
                 }
             }
-            .font(.system(size: 11.5))
+            .font(JRBarTokens.TypeStyle.caption.font)
             .lineLimit(1)
             .truncationMode(.middle)
         }
         // While the shape is narrower than the line, it stands as wide as the shape.
-        .scaleEffect(toy.stage.noticeFit)
+        .scaleEffect(1)
         .padding(.horizontal, 16)
         // The line clears the notch and persistent wing strip. The
         // bottom pad keeps its copy above the Screen Bar's housing.
@@ -535,7 +527,7 @@ struct NotchIslandView: View {
             // The glyph's own waves light with the level where the
             // symbol has them — the system HUD's speaker, in white.
             Image(systemName: notice.symbol, variableValue: notice.muted ? nil : fraction)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .semibold))
                 .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red) : AnyShapeStyle(Color.white.opacity(0.9)))
                 .frame(width: 20)
             NotchLevelBar(fraction: fraction, tint: notice.muted ? .red : .white,
@@ -544,7 +536,7 @@ struct NotchIslandView: View {
             // (the ⌘-drag timer's minutes) reads those.
             Text(notice.muted ? "Muted"
                  : notice.subtitle.isEmpty ? "\(Int((fraction * 100).rounded()))" : notice.subtitle)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(notice.muted ? AnyShapeStyle(Color.red.opacity(0.9))
                                               : AnyShapeStyle(Color.white.opacity(0.75)))
@@ -554,7 +546,7 @@ struct NotchIslandView: View {
                 .frame(minWidth: 26, alignment: .trailing)
         }
         .animation(reduceMotion ? nil : .smooth(duration: NotchMotion.levelFollow), value: fraction)
-        .scaleEffect(toy.stage.noticeFit)
+        .scaleEffect(1)
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.top, toy.noticeTopPad)
@@ -593,7 +585,7 @@ struct NotchIslandView: View {
             HStack(spacing: 7) {
                 askMark(notice)
                 Text(notice.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.95))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -611,7 +603,7 @@ struct NotchIslandView: View {
             .frame(height: NotchIslandLayout.askTitleLine)
             NotchAskCopy.line(toy.askSummary(notice), preview: live?.previewLine,
                               destructive: live?.isDestructive == true)
-                .font(.system(size: 11))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(lines)
                 .truncationMode(.tail)
@@ -624,14 +616,14 @@ struct NotchIslandView: View {
                 // A held question answers here whatever the keystroke
                 // path says, so its "answer it in its window" is moot.
                 if engaged, refusal == nil {
-                    Text(pending ? "Sending response" : focus == nil ? "Tab to choose" : "Press Return")
-                        .font(.system(size: 9.5))
+                    Text(pending ? "Sending response" : focus == nil ? "Return to approve" : "Press Return")
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(Color.white.opacity(0.55))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 } else if let line = refusal ?? (live.map(AskVerbs.chooses) == true ? nil : verbs.note) {
                     Text(line)
-                        .font(.system(size: 9.5))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(refusal != nil
                                          ? AnyShapeStyle(Color.orange)
                                          : AnyShapeStyle(Color.white.opacity(0.4)))
@@ -683,7 +675,7 @@ struct NotchIslandView: View {
         .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .scaleEffect(toy.stage.noticeFit, anchor: .top)
+        .scaleEffect(1, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)
@@ -725,7 +717,7 @@ struct NotchIslandView: View {
                 NotchGlyph(symbol: notice.symbol, tint: noticeTint(notice), size: 11)
                     .frame(width: NotchIslandLayout.askTitleLine)
                 Text(notice.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.95))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -739,7 +731,7 @@ struct NotchIslandView: View {
             }
             .frame(height: NotchIslandLayout.askTitleLine)
             Text(notice.subtitle)
-                .font(.system(size: 11))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -767,7 +759,7 @@ struct NotchIslandView: View {
         .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .scaleEffect(toy.stage.noticeFit, anchor: .top)
+        .scaleEffect(1, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)
@@ -865,7 +857,7 @@ struct NotchWaitChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(tint.mix(with: .white, by: 0.25))
             .padding(.horizontal, 6)

@@ -14,7 +14,7 @@ struct AlcoveEventsTests {
                        label: String? = nil, provider: String? = nil, detail: String? = nil,
                        lane: String? = nil) -> CoreEvent {
         CoreEvent(id: id, kind: kind, session: session, label: label,
-                  provider: provider, detail: detail, lane: lane)
+                  provider: provider, detail: detail, lane: lane, duration: kind == "completed" ? 180 : nil)
     }
 
     private func notice(_ kind: AlcoveNoticeKind, key: String = "ask:s1", id: String = "e1") -> AlcoveNotice {

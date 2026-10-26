@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -558,6 +559,7 @@ struct NotchCardView: View {
     @ViewState private var timerEntryShown = false
     @ViewState private var timerEntryName = ""
     @ViewState private var timerEntryMinutes = 10
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Narrow enough to read as the notch's own drop-down, wide enough
@@ -604,7 +606,7 @@ struct NotchCardView: View {
     }
 
     private var pageAnimation: Animation {
-        reduceMotion ? .easeOut(duration: NotchMotion.reduceMotionFade) : NotchMotion.pageTurn.animation
+        JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion)
     }
 
     /// One row's place in the reveal: on the island it reads the shape's
@@ -682,16 +684,16 @@ struct NotchCardView: View {
     private var wingHintRow: some View {
         HStack(spacing: 6) {
             Image(systemName: "hand.draw")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                 .foregroundStyle(style.faintColor)
             Text("Flick an ear outward to hide it · swipe the bar sideways to bring it back")
-                .font(.system(size: 10))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(style.faintColor)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Button { model.dismissWingHint() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold))
                     .foregroundStyle(style.faintColor)
                     .frame(width: 12, height: 12)
                     .notchHitArea(horizontal: 6, vertical: 6)
@@ -729,7 +731,7 @@ struct NotchCardView: View {
             VStack(alignment: .leading, spacing: pinned ? -2 : 1) {
                 HStack(spacing: 4) {
                     Text(model.focus.label)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
                         .foregroundStyle(style.titleColor)
                         .lineLimit(1)
                     if pinned {
@@ -741,13 +743,13 @@ struct NotchCardView: View {
                 // the light's reason sit, for a few seconds.
                 if let refusal = model.focus.clickSession.flatMap({ model.openRefusals[$0] }) {
                     Text(refusal)
-                        .font(.system(size: 11))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(.orange)
                         .lineLimit(1)
                         .help(refusal)
                 } else {
                     focusLine
-                        .font(.system(size: 11))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .lineLimit(1)
                 }
             }
@@ -799,7 +801,7 @@ struct NotchCardView: View {
                 // accent "Open" read as a warning.
                 Button { model.onOpenSession?() } label: {
                     Text("Open")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                         .foregroundStyle(style.titleColor)
                         .fixedSize()
                         .padding(.horizontal, 10)
@@ -837,7 +839,7 @@ struct NotchCardView: View {
     /// while what it opens is open.
     private func headerMark(_ symbol: String, lit: Bool = false) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
             .foregroundStyle(lit ? style.titleColor : style.subColor)
             .frame(width: 22, height: 22)
             .background(Circle().fill(lit ? style.chipFill : style.chipFaint))
@@ -849,13 +851,13 @@ struct NotchCardView: View {
     private var timerEntry: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Custom timer")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
             TextField("Label (optional)", text: $timerEntryName)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
+                .font(JRBarTokens.TypeStyle.caption.font)
             Stepper(value: $timerEntryMinutes, in: 1...720, step: 1) {
                 Text("\(timerEntryMinutes) min")
-                    .font(.system(size: 11))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .monospacedDigit()
             }
             HStack {
@@ -889,11 +891,11 @@ struct NotchCardView: View {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(model.rows.prefix(NotchIsland.rowLimit).enumerated()),
                         id: \.element.id) { index, row in
-                    revealRow(steps.sessions + index, sessionRow(row))
+                    revealRow(steps.sessions + index, workingRow(row))
                 }
                 if model.rows.count > NotchIsland.rowLimit {
                     revealRow(steps.more, Text("+\(model.rows.count - NotchIsland.rowLimit) more")
-                        .font(.system(size: 10.5))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(style.faintColor)
                         .padding(.leading, 15))
                 }
@@ -960,9 +962,9 @@ struct NotchCardView: View {
                 Button { model.onOpenOverview?() } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "square.grid.2x2")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                         Text("Agent Overview")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                     }
                     .foregroundStyle(style.subColor)
                     .padding(.horizontal, 10)
@@ -980,7 +982,7 @@ struct NotchCardView: View {
         let selected = model.page == page
         return Button { model.show(page) } label: {
             Text(title)
-                .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? style.titleColor : style.faintColor)
                 .padding(.horizontal, 10)
                 .frame(height: 18)
@@ -1005,7 +1007,7 @@ struct NotchCardView: View {
             }
             .frame(width: 13, alignment: .leading)
             Text(line)
-                .font(.system(size: 11))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(style.subColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1025,6 +1027,35 @@ struct NotchCardView: View {
     /// deliver it, and every one sent through the shared desk — with
     /// the question itself on a faint second line; a refused answer or
     /// open takes that line and says why, and the ask stays open.
+    @ViewState private var expandedGroups: Set<String> = []
+
+    func proofExpandedGroups(_ groups: Set<String>) -> Self {
+        var copy = self
+        copy._expandedGroups = ViewState(initialValue: groups)
+        return copy
+    }
+
+    @ViewBuilder
+    private func workingRow(_ row: NotchIslandRow) -> some View {
+        if row.activity == .working && (row.workerCount > 0 || row.unlinked) {
+            AgentGroupRow(provider: row.provider, name: ProviderPalette.displayName(for: row.provider),
+                subtitle: row.label, state: .working, memberMarks: Array(Set(row.members.map(\.provider))).sorted(),
+                workerCount: row.workerCount, unlinked: row.unlinked,
+                expanded: Binding(get: { expandedGroups.contains(row.id) }, set: { expanded in
+                    if expanded { expandedGroups.insert(row.id) } else { expandedGroups.remove(row.id) }
+                })) {
+                    ForEach(Array(row.members.enumerated()), id: \.element.id) { index, member in
+                        AgentMemberRow(provider: member.provider, name: member.label,
+                            state: member.activity == .working ? .working : member.activity == .waiting ? .asking : .done,
+                            isLast: index == row.members.count - 1)
+                    }
+                }
+                .environment(\.colorScheme, style == .island ? .dark : scheme)
+        } else {
+            sessionRow(row)
+        }
+    }
+
     private func sessionRow(_ row: NotchIslandRow) -> some View {
         let desk = model.askDesk()
         let pending = desk?.isPending(row.id) ?? false
@@ -1045,10 +1076,10 @@ struct NotchCardView: View {
         let answering = answerable && ask.map(AskVerbs.approves) == true
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
-                NotchDot(color: isDemo ? DemoAskLook.tint : ProviderStyle.style(for: row.provider).accent, size: 6)
+                StateDot(row.activity == .waiting ? .asking : row.activity == .failed ? .failed : .working)
                     .frame(width: 7)
                 Text(row.label)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .medium))
                     .foregroundStyle(style == .island ? .white.opacity(0.9) : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1087,17 +1118,17 @@ struct NotchCardView: View {
                     // person, so no loud "Waiting on you" beside a card
                     // that draws no verb.
                     Text(decidedLine)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                         .foregroundStyle(style.subColor)
                 } else {
                     Text(row.activity.word)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                         .foregroundStyle(row.activity.wordColor)
                 }
             }
             if let refusal {
                 Text(refusal)
-                    .font(.system(size: 10.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(openRefusal == nil && desk?.note(for: row.id)?.refused == false
                                      ? AnyShapeStyle(style.faintColor) : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
@@ -1107,7 +1138,7 @@ struct NotchCardView: View {
             } else if let summary {
                 NotchAskCopy.line(summary, preview: row.activity == .waiting ? ask?.previewLine : nil,
                                   destructive: ask?.isDestructive == true, style: style, size: 10)
-                    .font(.system(size: 10.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1136,7 +1167,7 @@ struct NotchCardView: View {
             if row.activity == .waiting, refusal == nil, let stale = ask?.staleLine(now: Date()) {
                 // A long-unanswered ask is still an ask; it says how long.
                 Text(stale)
-                    .font(.system(size: 10.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1207,25 +1238,25 @@ struct NotchCardView: View {
         let accent = ProviderStyle.style(for: meter.provider).accent
         return HStack(spacing: 7) {
             Text(ProviderStyle.style(for: meter.provider).name)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                 .foregroundStyle(style.titleColor.opacity(0.88))
                 .lineLimit(1)
             Text(meter.window)
-                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
                 .foregroundStyle(style.subColor)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule(style: .continuous).fill(style.chipFaint))
             if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date(), fix: meter.fix) {
                 Text(countdown)
-                    .font(.system(size: 10))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .monospacedDigit()
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
             }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                     .foregroundStyle(.orange)
                     .help("The provider's status feed reports an incident")
             }
@@ -1235,7 +1266,7 @@ struct NotchCardView: View {
                           dimmed: meter.percent == nil, glows: style == .island)
                 .frame(width: 64)
             Text(meter.percentText)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(style.subColor)
                 .frame(width: 34, alignment: .trailing)
@@ -1285,14 +1316,14 @@ private struct ShelfMediaRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         NotchTrackLine(key: media.title) {
                             Text(media.title)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
                                 .foregroundStyle(style.titleColor)
                                 .lineLimit(1)
                         }
                         if let byline = Self.byline(media) {
                             NotchTrackLine(key: byline) {
                                 Text(byline)
-                                    .font(.system(size: 11.5))
+                                    .font(JRBarTokens.TypeStyle.caption.font)
                                     .foregroundStyle(style.subColor)
                                     .lineLimit(1)
                             }
@@ -1309,7 +1340,7 @@ private struct ShelfMediaRow: View {
                                 }
                             }
                             Text(utility.sourceName ?? "Now playing")
-                                .font(.system(size: 10))
+                                .font(JRBarTokens.TypeStyle.caption.font)
                                 .foregroundStyle(style.faintColor)
                                 .lineLimit(1)
                         }
@@ -1325,7 +1356,7 @@ private struct ShelfMediaRow: View {
                         let shown = utility.elapsedShown(at: context.date)
                         HStack(spacing: 8) {
                             Text(Self.clock(shown))
-                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
                                 .frame(width: 30, alignment: .leading)
@@ -1340,7 +1371,7 @@ private struct ShelfMediaRow: View {
                                           }, onCancel: { utility.cancelScrub() })
                                 .id(utility.mediaTrack)
                             Text("−" + Self.clock(duration - shown))
-                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(style.faintColor)
                                 .frame(width: 34, alignment: .trailing)
@@ -1357,7 +1388,7 @@ private struct ShelfMediaRow: View {
                     // CoreAudio path the level HUD reads.
                     HStack(spacing: 8) {
                         Image(systemName: volume <= 0 ? "speaker.slash.fill" : "speaker.fill")
-                            .font(.system(size: 9))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(style.faintColor)
                             .frame(width: 30, alignment: .leading)
                         NotchScrubber(value: volume, range: 0...1, step: 0.05,
@@ -1373,7 +1404,7 @@ private struct ShelfMediaRow: View {
                     // names itself and can hand the sound elsewhere.
                     HStack(spacing: 8) {
                         Text(utility.currentOutput?.name ?? "Sound output")
-                            .font(.system(size: 10))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(style.faintColor)
                             .lineLimit(1)
                         Spacer(minLength: 4)
@@ -1401,7 +1432,7 @@ private struct ShelfMediaRow: View {
             transportButton("backward.fill", size: 11, label: "Previous track") { utility.send(.previousTrack) }
             Button { utility.send(.togglePlayPause) } label: {
                 Image(systemName: media.playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .semibold))
                     .foregroundStyle(style.titleColor)
                     .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                     .frame(width: 32, height: 32)
@@ -1423,9 +1454,9 @@ private struct ShelfMediaRow: View {
         Button { utility.agreeToLyrics() } label: {
             HStack(spacing: 5) {
                 Image(systemName: "quote.bubble")
-                    .font(.system(size: 9))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                 Text("Show synced lyrics — looks the song up on LRCLIB")
-                    .font(.system(size: 10))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .lineLimit(1)
             }
             .foregroundStyle(style.faintColor)
@@ -1609,14 +1640,14 @@ struct LyricLines: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let line = lyrics.line(at: at) {
                     Text(line)
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                         .foregroundStyle(style.subColor)
                         .overlay {
                             if live, let progress = position.progress {
                                 // The sweep: the same text, brighter,
                                 // revealed left to right as the line plays.
                                 Text(line)
-                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                                     .foregroundStyle(style.titleColor)
                                     .mask(alignment: .leading) {
                                         GeometryReader { geo in
@@ -1630,7 +1661,7 @@ struct LyricLines: View {
                 }
                 if let next = position.next {
                     Text(next)
-                        .font(.system(size: 10.5))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(style.faintColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1685,7 +1716,7 @@ private struct ShelfTogglesRow: View {
             }
             if let caption = toggles.caption {
                 Text(caption)
-                    .font(.system(size: 10))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.faintColor)
                     .lineLimit(2)
             }
@@ -1709,13 +1740,13 @@ private struct ShelfTogglesRow: View {
             // as one phrase — the longest gives up a few percent instead.
             VStack(spacing: 5) {
                 Image(systemName: toggle.symbol)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.callout.size, weight: .semibold))
                     .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
                     .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))
                 Text(title)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                     .foregroundStyle(on ? style.titleColor : style.faintColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -1779,7 +1810,7 @@ struct NotchOutputPicker: View {
             // A 10 pt glyph on a 22 pt target: the frame keeps the row's
             // height, the shape reaches past it so the click lands.
             Image(systemName: current?.symbol ?? "hifispeaker")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                 .foregroundStyle(style.subColor)
                 .frame(width: 22, height: 14, alignment: .trailing)
                 .contentShape(Rectangle().inset(by: -4))
@@ -1857,7 +1888,7 @@ private struct ShelfBatteryRow: View {
                                   plugged: power.onAC, style: style)
                 Text(AlcovePower.batteryLine(power, adapterWatts: adapterWatts, working: working,
                                              heldAwake: heldAwake()))
-                    .font(.system(size: 11.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.subColor)
                     .lineLimit(1)
             }
@@ -1888,7 +1919,7 @@ struct NotchBatteryGlyph: View {
                     .padding(2)
                 if plugged {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 7, weight: .heavy))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .heavy))
                         .foregroundStyle(tone == nil ? style.inverseInk : AnyShapeStyle(Color.white))
                         .frame(maxWidth: .infinity)
                 }
@@ -1956,7 +1987,7 @@ struct ShelfTrayRow: View {
             if tray.canUndoClear {
                 Button { tray.undoClear() } label: {
                     Label("Undo Clear Shelf", systemImage: "arrow.uturn.backward")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                         .foregroundStyle(style.subColor)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
@@ -1967,7 +1998,7 @@ struct ShelfTrayRow: View {
             }
             if let notice = tray.evictionNotice {
                 Text(notice)
-                    .font(.system(size: 9.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1982,7 +2013,7 @@ struct ShelfTrayRow: View {
             }
             if let notice = tray.actionNotice {
                 Text(notice)
-                    .font(.system(size: 9.5))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(style.titleColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -2002,10 +2033,10 @@ struct ShelfTrayRow: View {
         Button { tray.paste() } label: {
             VStack(spacing: 4) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: JRBarTokens.TypeStyle.title3.size, weight: .medium))
                     .frame(height: 28)
                 Text("Paste")
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
             }
             .foregroundStyle(style.subColor)
             .frame(width: Self.tileWidth, height: Self.tileHeight)
@@ -2153,7 +2184,7 @@ struct ShelfTrayRow: View {
         VStack(spacing: 4) {
             if item.missing {
                 Image(systemName: "doc.questionmark")
-                    .font(.system(size: 16))
+                    .font(JRBarTokens.TypeStyle.title3.font)
                     .frame(width: 28, height: 28)
             } else {
                 // The file's own face — its Quick Look thumbnail once one
@@ -2166,7 +2197,7 @@ struct ShelfTrayRow: View {
                     .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
             }
             Text(item.missing ? "\(item.name) (moved)" : item.name)
-                .font(.system(size: 9.5))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: Self.tileWidth - 10)
@@ -2235,7 +2266,7 @@ private struct ShelfStackChip: View {
             }
             .frame(width: 44, height: 28)
             Text("\(tray.stackName(stack)) · \(stack.items.count)")
-                .font(.system(size: 9.5))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: ShelfTrayRow.tileWidth - 10)
@@ -2282,7 +2313,7 @@ private struct ShelfStackChip: View {
     private var grid: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(tray.stackName(stack))
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 56),
                                          spacing: 6)],
                       spacing: 6) {
@@ -2292,7 +2323,7 @@ private struct ShelfStackChip: View {
                             .resizable()
                             .frame(width: 24, height: 24)
                         Text(item.name)
-                            .font(.system(size: 8))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -2374,7 +2405,7 @@ struct ShelfTimersRow: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { viewportWidth = $0 }
             .accessibilityHint("Scroll horizontally for more timers")
             Image(systemName: "arrow.left.and.right")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium))
                 .foregroundStyle(style.faintColor)
                 .frame(width: 14)
                 .opacity(hasOverflow ? 1 : 0)
@@ -2408,17 +2439,17 @@ struct ShelfTimersRow: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: overdue ? "checkmark.circle.fill" : (entry.paused ? "pause.circle.fill" : "timer"))
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                         .foregroundStyle(overdue ? AnyShapeStyle(Color.green)
                                          : entry.paused ? AnyShapeStyle(style.subColor)
                                          : AnyShapeStyle(Color.orange))
                     VStack(alignment: .leading, spacing: 0) {
                         Text(overdue ? "Done" : remainingText(entry, now: now))
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                             .lineLimit(1)
                         Text(entry.label)
-                            .font(.system(size: 9))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(style.faintColor)
                             .lineLimit(1)
                             .frame(maxWidth: 76, alignment: .leading)
@@ -2439,7 +2470,7 @@ struct ShelfTimersRow: View {
                 ForEach(ShelfTimerModel.extensions, id: \.self) { seconds in
                     Button("+\(Int(seconds / 60))") { timers.extend(entry, by: seconds) }
                         .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold, design: .rounded))
                         .padding(.horizontal, 6)
                         .frame(height: 20)
                         .background(Capsule(style: .continuous).fill(style.chipFill))
@@ -2507,7 +2538,7 @@ struct ShelfCalendarRow: View {
             EmptyView()
         case .idle:
             Label("Nothing in the next 24 hours", systemImage: "calendar")
-                .font(.system(size: 11))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(style.faintColor)
         case .events(let events):
             VStack(alignment: .leading, spacing: 5) {
@@ -2531,7 +2562,7 @@ struct ShelfCalendarRow: View {
                     .foregroundStyle(lead ? style.titleColor : style.subColor)
                     .lineLimit(1)
                 Text(Self.span(event))
-                    .font(.system(size: 10))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .monospacedDigit()
                     .foregroundStyle(style.faintColor)
                     .lineLimit(1)
@@ -2582,7 +2613,7 @@ struct ShelfRemindersRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Label("No reminders due", systemImage: "checklist")
-                        .font(.system(size: 11))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(style.faintColor)
                     Spacer(minLength: 4)
                     addButton(line: false)
@@ -2600,7 +2631,7 @@ struct ShelfRemindersRow: View {
                     Spacer(minLength: 4)
                     if items.count > ShelfRemindersModel.rowLimit {
                         Text("+\(items.count - ShelfRemindersModel.rowLimit) more")
-                            .font(.system(size: 10))
+                            .font(JRBarTokens.TypeStyle.caption.font)
                             .foregroundStyle(style.faintColor)
                     }
                 }
@@ -2614,7 +2645,7 @@ struct ShelfRemindersRow: View {
     private var writeNotice: some View {
         if let notice = reminders.writeNotice {
             Text(notice)
-                .font(.system(size: 10))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(Color.orange)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2637,7 +2668,7 @@ struct ShelfRemindersRow: View {
                     .background(Circle().fill(line ? Color.clear : style.chipFaint))
                 if line {
                     Text("New reminder")
-                        .font(.system(size: 11.5))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(style.faintColor)
                 }
             }
@@ -2649,18 +2680,18 @@ struct ShelfRemindersRow: View {
         .popover(isPresented: WindowPresenter.presentation($adding), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("New reminder")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                 TextField("Call Sam tomorrow at 3pm", text: $draft)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .onSubmit(save)
                 Text(Self.preview(draft))
-                    .font(.system(size: 10))
+                    .font(JRBarTokens.TypeStyle.caption.font)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let notice = reminders.writeNotice {
                     Text(notice)
-                        .font(.system(size: 10))
+                        .font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -2708,14 +2739,14 @@ struct ShelfRemindersRow: View {
             .help("Mark done")
             .accessibilityLabel("Mark \(entry.title) done")
             Text(entry.title)
-                .font(.system(size: 11.5))
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .foregroundStyle(style.titleColor)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if let due = entry.due {
                 Text(due < Date() ? "Overdue"
                     : due.formatted(date: .omitted, time: .shortened))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(due < Date() ? Color.orange : style.faintColor)
             }
@@ -2783,11 +2814,11 @@ private struct ShelfMirrorRow: View {
             if busy {
                 ProgressView().controlSize(.small).accessibilityHidden(true)
             } else {
-                Image(systemName: "camera.fill").font(.system(size: 16))
+                Image(systemName: "camera.fill").font(JRBarTokens.TypeStyle.title3.font)
                     .accessibilityHidden(true)
             }
-            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(style.titleColor)
-            Text(detail).font(.system(size: 10)).foregroundStyle(style.faintColor)
+            Text(title).font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .medium)).foregroundStyle(style.titleColor)
+            Text(detail).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(style.faintColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) { actions() }
@@ -2829,10 +2860,10 @@ struct NotchVerbButton: View {
             HStack(spacing: 4) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: 11, weight: prominent ? .semibold : .medium))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: prominent ? .semibold : .medium))
                     .lineLimit(1)
             }
             .opacity(busy && prominent ? 0 : 1)
@@ -2931,11 +2962,11 @@ struct NotchHoldSchedule: TimelineSchedule {
 /// that does not fit is cut, never the question.
 enum NotchAskCopy {
     static func line(_ summary: String, preview: String?, destructive: Bool,
-                     style: NotchCardStyle = .island, size: CGFloat = 10.5) -> Text {
+                     style: NotchCardStyle = .island, size: CGFloat = JRBarTokens.TypeStyle.caption.size) -> Text {
         guard let preview else { return Text(summary) }
         let dot = Text(verbatim: " · ").foregroundStyle(style.faintColor)
         let run = Text(preview)
-            .font(.system(size: size, design: .monospaced))
+            .font(.system(size: max(JRBarTokens.TypeStyle.caption.size, size), design: .monospaced))
             .foregroundStyle(destructive ? AnyShapeStyle(Color.red.opacity(0.9)) : AnyShapeStyle(style.subColor))
         return Text("\(Text(summary))\(dot)\(run)")
     }
@@ -2973,7 +3004,7 @@ struct NotchAskChoices: View {
                                    send: { Task { await desk.sendPicks(for: ask) } })
             } label: {
                 Text(AskChoiceLayout.menuTitle(choices, picks: picks))
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

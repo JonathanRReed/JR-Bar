@@ -237,6 +237,7 @@ public enum AlcoveEventPolicy {
         default: return nil
         }
         guard kinds.isOn(kind) else { return nil }
+        if kind == .completed, !(event.duration.map { $0.isFinite && $0 > 120 } ?? false) { return nil }
 
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }

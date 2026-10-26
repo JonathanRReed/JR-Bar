@@ -191,22 +191,10 @@ struct NotchStageFrame: ViewModifier {
     }
 }
 
-/// The card's sheet: it comes out of the notch in focus and settles
-/// into place as the shape grows, and goes back the same way on the
-/// fold. Opacity, a blur that clears, a scale from the top, a short lift;
-/// all four are `NotchReveal.sheet` of the content's clock, which starts
-/// with the shape and leaves ahead of it.
+/// Content keeps its final size and opacity from the first frame.
+/// The moving shape clips and reveals it.
 struct NotchSheetReveal: ViewModifier {
-    @Environment(\.notchStage) private var stage
-
-    func body(content: Content) -> some View {
-        let sheet = stage?.sheet ?? .settled
-        content
-            .opacity(sheet.opacity)
-            .blur(radius: sheet.blur)
-            .scaleEffect(min(sheet.scale, stage?.contentFit ?? 1), anchor: .top)
-            .offset(y: sheet.lift)
-    }
+    func body(content: Content) -> some View { content }
 }
 
 /// A notice's face coming out of the notch with the shape: opacity, a
@@ -220,28 +208,17 @@ struct NotchNoticeReveal: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        let sheet = stage.noticeSheet(shown: shown)
-        if reduceMotion {
-            // A quiet crossfade: no blur, no travel.
-            content.opacity(sheet.opacity)
-        } else {
-            content
-                .opacity(sheet.opacity)
-                .blur(radius: sheet.blur)
-                .offset(y: sheet.lift)
-        }
+        if reduceMotion { content.opacity(shown ? 1 : 0) } else { content }
     }
 }
 
-/// One row's place in the cascade: `NotchReveal.row` of the shape's
-/// travel, on top of the sheet's. Opacity only; the blur and the scale
-/// are the sheet's, once, not a dozen passes in the busiest frames.
+/// Rows stay readable while the shape settles.
 struct NotchRowReveal: ViewModifier {
     let step: Int
     @Environment(\.notchStage) private var stage
 
     func body(content: Content) -> some View {
-        content.opacity(stage.map { Double($0.row(step: step)) } ?? 1)
+        content
     }
 }
 

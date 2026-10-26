@@ -52,24 +52,16 @@ struct NotchHoverTests {
         #expect(!toy.islandExpanded, "the tell is only a tell — no card")
     }
 
-    @Test("a bar-row arrival waits the third-of-a-second floor")
-    func barArrivalUsesSlowFloor() async throws {
+    @Test("a bar-row arrival uses the same 150 ms default")
+    func barArrivalUsesTheDefaultDelay() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         let timers = ManualTimers()
         toy.hoverTimer = { timers.arm($0, $1) }
         let start = timers.now
         toy.bandHover(true, fromBar: true)
-        #expect(!toy.islandHoverPeek, "the breath waits out the intent delay")
-        // Measured, not slept: a 0.2 s sleep that overslept the floor
-        // under a busy suite saw the card already up. The grow's
-        // asyncAfter can land late but never early.
         let at = try #require(expansionTime(toy, timers: timers, from: start))
-        #expect(at > 0.26, "the menu-bar floor held (grew at \(at))")
-        // The breath only lands while the card is down, and a grow does
-        // not clear it — still up now means it came first, inside the
-        // bar's floor.
-        #expect(toy.islandHoverPeek, "the breath landed inside the bar's floor")
+        #expect(abs(at - NotchSettings.defaultHoverOpenDelay) < 0.001)
     }
 
     /// A mutable answer a closure can read — `@unchecked Sendable` so
@@ -96,10 +88,10 @@ struct NotchHoverTests {
         toy.bandHover(true, fromBar: true)
         timers.advance(by: 0.1)
         toy.setHovered(true)   // the island window's own hover, mid-pause
-        // A crossing that restarted the clock would fire at ≈0.22 s;
-        // the kept bar floor lands at ≈0.30 s from arrival.
+        // Restarting on the crossing would postpone the 150 ms deadline.
         let at = try #require(expansionTime(toy, timers: timers, from: start))
-        #expect(at > 0.26, "the crossing must not restart the clock (grew at \(at))")
+        #expect(abs(at - NotchSettings.defaultHoverOpenDelay) < 0.001,
+                "the crossing keeps the original deadline")
     }
 
     @Test("leaving the island window onto the tray is not a leave")

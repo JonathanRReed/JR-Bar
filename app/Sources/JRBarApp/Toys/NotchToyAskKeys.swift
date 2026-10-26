@@ -5,12 +5,8 @@ import JRBarCore
 /// VoiceOver reach the same verbs the buttons are, through one door
 /// (`performAskVerb`).
 ///
-/// Hover never takes typing from the terminal. A person asks for the keyboard (the "Show the waiting ask"
-/// shortcut, `engageAskKeyboard`), and only then does the island take
-/// keys: Tab and the arrows move a ring over the verbs, Return or Space
-/// presses the one the ring is on, Esc lets go. No key answers an ask by
-/// itself: engaging focuses nothing, Esc never denies, and an ask that
-/// goes away takes the keyboard with it (`NotchAskFocus`).
+/// A person engages the keyboard. Return approves the displayed ask, Tab
+/// changes asks, arrows choose verbs, and Escape gives typing back.
 extension NotchToy {
     /// How long an engaged keyboard waits for a key before it lets go, so
     /// a person who walked away never leaves the island holding typing.
@@ -84,6 +80,13 @@ extension NotchToy {
             return nil
         }
         armAskKeyIdle()
+        if key == .tab || key == .backTab {
+            showNextKeyboardAsk(backwards: key == .backTab)
+            return nil
+        }
+        if key == .activate, askFocus.focused == nil, order.contains(.approve) {
+            return performAskVerb(.approve)
+        }
         switch askFocus.handle(key, order: order) {
         case .moved, .ignored:
             return nil
@@ -93,6 +96,22 @@ extension NotchToy {
         case .press(let verb):
             return performAskVerb(verb)
         }
+    }
+
+    private func showNextKeyboardAsk(backwards: Bool) {
+        let asks = islandSummary.rows.filter { $0.activity == .waiting && $0.ask != nil }
+        guard !asks.isEmpty, let current = activeCapsule?.session else { return }
+        let index = asks.firstIndex { $0.id == current } ?? 0
+        let step = backwards ? asks.count - 1 : 1
+        let row = asks[(index + step) % asks.count]
+        guard row.id != current else { return }
+        noteTakeover(CoreEvent(id: "keyboard:" + row.id, kind: "ask_opened", session: row.id,
+            label: row.label, provider: row.provider, request: row.ask?.request))
+        guard activeCapsule?.session == row.id else { return }
+        askKeyboardEngaged = true
+        askFocus.clear()
+        armAskKeyIdle()
+        island?.takeKeyboard()
     }
 
     /// The one door every way of pressing a verb goes through: the
