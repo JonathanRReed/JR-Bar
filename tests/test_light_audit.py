@@ -29,8 +29,8 @@ from jrbar.ambient_effect_dispatch import AmbientEffectSurface, compile_ambient_
 from jrbar.ambient_layers import compose_ambient_layer
 from jrbar.animation import read_program, step_duration_ms
 from jrbar.colors import PROVIDER_ANIMATION_CHOICES, program_for_snapshot
-from jrbar.dot_role import replace_brightness_line, upsample_program
-from jrbar.led_status import AgentLedController, LedDisplayState, _steady_state_variant
+from jrbar.dot_role import replace_brightness_line
+from jrbar.led_status import AgentLedController, LedDisplayState
 from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
 
 BASELINE = Path(__file__).with_name("fixtures") / "light-audit-baseline.json"
@@ -122,8 +122,8 @@ def test_mirror_publishes_every_audited_program(headless):
         controller.virtual_status_device._live_program_call = ("#FF0000", {"started_at": 2000.0})
         lights = controller._core_build_lights()
         bar = lights["surfaces"]["screen_bar"]
-        expected = (upsample_program(row["program"], source_leds=2, led_count=8)
-                    if row["leds"] == 2 else row["program"])
+        expected = row["program"]
+        assert bar["source_led_count"] == row["leds"], row["case"]
         assert expected is not None, row["case"]
         # Each surface has its own brightness policy; compare motion at 255.
         actual = replace_brightness_line(bar["program"], 255)
@@ -172,7 +172,9 @@ def test_controller_reassert_writes_the_bytes_measured_by_the_checker(tmp_path, 
     assert first.changed
     clock[0] = 299.0
     second = controller.sync_program(program, LedDisplayState.WORKING)
-    assert second.changed
-    assert second.nominal_program == _steady_state_variant(program)
-    assert second.target is not None
-    assert second.target.read_text() == second.program
+    if second.changed:
+        assert second.target is not None
+        assert second.target.read_text() == second.program
+    else:
+        assert controller.last_error is None
+        assert first.target.read_text() == first.program

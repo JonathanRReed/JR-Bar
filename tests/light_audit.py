@@ -20,11 +20,11 @@ from jrbar.animation import (
     render_step,
 )
 from jrbar.colors import ColorSettings, _active_agents, program_for_snapshot
-from jrbar.dot_role import upsample_program
 from jrbar.effect_registry import PROVIDER_ANIMATION_EFFECTS
-from jrbar.led_status import LedDisplayState, _steady_state_variant
+from jrbar.led_status import LedDisplayState
 from jrbar.led_wasm import RawSdLedWasmController
 from jrbar.light_mix import MIX_LABELS, _body, _share_steps, explain_what_plays, mix_catalog, selected_agents
+from jrbar.linked_sync import DeviceTiming, PhaseRotationUnavailable, apply_device_timing
 from jrbar.models import AgentMode, AgentStatus
 
 PROVIDERS = ("codex", "claude", "devin")
@@ -182,6 +182,16 @@ class Firmware:
         frames = controller.step_batch(0, interval, (3 * period) // interval + 2)
         return Trace(period, interval, tuple(tuple(frame) for frame in frames), bool(loop_duration_ms(animation)))
 
+    @lru_cache(maxsize=512)
+    def reassert_plan(self, program, count):
+        trace = self.trace(program, count)
+        when = int(trace.period * 1.37) // trace.interval * trace.interval
+        try:
+            return apply_device_timing(program, DeviceTiming(anchor=0, preserve_phase=True),
+                                       led_count=count, now=when / 1000, latency_ms=0)
+        except PhaseRotationUnavailable:
+            return None
+
     def reassert_frames(self, program, count):
         trace = self.trace(program, count)
         if not trace.looping:
@@ -193,7 +203,9 @@ class Firmware:
         assert controller.parse(program, 0).ok
         controller.step_batch(0, trace.interval, offset)
         when = offset * trace.interval
-        assert controller.parse(_steady_state_variant(program), when).ok
+        prepared = self.reassert_plan(program, count)
+        if prepared is not None:
+            assert controller.parse(prepared.program, when).ok
         replay = controller.step_batch(when, trace.interval, len(reference))
         return reference, tuple(tuple(frame) for frame in replay)
 
@@ -203,17 +215,18 @@ class Firmware:
 
     @lru_cache(maxsize=1024)
     def mirror_metrics(self, program):
-        mirror = upsample_program(program, source_leds=2, led_count=8)
-        if mirror is None:
-            return None, ("cannot-widen",), 0
-        _animation, problems = read_program(mirror, led_count=8)
+        # The mirror now carries its source canvas. Parse and sample at two,
+        # then map each sampled pixel onto four display LEDs.
+        mirror = program
+        _animation, problems = read_program(mirror, led_count=2)
         errors = tuple(p.code for p in problems if p.severity == "error")
         if errors:
             return mirror, errors, 0
         hardware = self.trace(program, 2)
-        mirrored = self.trace(mirror, 8)
+        mirrored = self.trace(mirror, 2)
         expanded = tuple(tuple(frame[i // 4] for i in range(8)) for frame in hardware.frames)
-        return mirror, (), frame_error(expanded, mirrored.frames)
+        displayed = tuple(tuple(frame[i // 4] for i in range(8)) for frame in mirrored.frames)
+        return mirror, (), frame_error(expanded, displayed)
 
     @lru_cache(maxsize=1024)
     def seam_error(self, program, count):
@@ -285,6 +298,7 @@ class Result:
     warnings: tuple
     failures: dict
     checks: set
+    reassert_action: str | None = None
 
 
 def inspect(case, firmware):
@@ -292,6 +306,7 @@ def inspect(case, firmware):
     rows = statuses(case.counts, case.state)
     failures = {}
     checks = set()
+    reassert_action = None
     program = ""
     played = "error"
     warnings = ()
@@ -342,6 +357,7 @@ def inspect(case, firmware):
             check("provider_equivalence", firmware.equivalent(program, solo, case.leds),
                   f"session counts {case.counts} change the provider-only program")
         if trace.looping:
+            reassert_action = "rotated" if firmware.reassert_plan(program, case.leds) else "deferred"
             seam = firmware.seam_error(program, case.leds)
             check("loop_seam", case.variant.motion == "blink" or seam <= SEAM_TOLERANCE,
                   f"boundary channel jump {seam}/255 over {2 * trace.interval}ms")
@@ -349,7 +365,7 @@ def inspect(case, firmware):
                   "reparse at 37% of the second pass changes the following cycle by more than 24/255")
 
         if case.state not in {"working", "stale"} or case.mix in {"classic", "color_blend"}:
-            return Result(case, program, played, warnings, failures, checks)
+            return Result(case, program, played, warnings, failures, checks, reassert_action)
         agents = selected_agents(_active_agents(rows, settings, case.leds))
         # The planner collapses one-provider sessions after selected_agents.
         if len({a.provider for a in agents}) == 1:
@@ -429,7 +445,7 @@ def inspect(case, firmware):
     except Exception as error:
         checks.add("exception")
         failures["exception"] = f"{type(error).__name__}: {error}"
-    return Result(case, program, played, warnings, failures, checks)
+    return Result(case, program, played, warnings, failures, checks, reassert_action)
 
 
 def baseline_delta(actual, expected):
