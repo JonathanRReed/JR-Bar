@@ -353,7 +353,7 @@ def main():
         command.append("--census")
     with (root / "stdout.log").open("w") as out, (root / "importtime.log").open("w") as err:
         result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=args.seconds + 180, check=False)
-    if not (root / "report.json").exists():
+    if result.returncode != 0 or not (root / "report.json").exists():
         raise SystemExit(f"probe failed ({result.returncode}); inspect {root}")
     print((root / "report.json").read_text())
 
