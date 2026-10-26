@@ -2138,7 +2138,7 @@ class AgentLedController:
                 self._reassert_cadence_at = now
                 return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         self.last_attempt_monotonic = now
-        from .linked_sync import DeviceTiming, PhaseRotationUnavailable, fits_budget, rotate_program
+        from .linked_sync import DeviceTiming, PhaseRotationUnavailable
 
         to_write = program
         running_nominal = nominal
@@ -2147,7 +2147,8 @@ class AgentLedController:
             # Dropping an approach here would change the period on every lap.
             to_write = self.last_program or program
             running_nominal = self.last_nominal_program or nominal
-            timing = DeviceTiming(anchor=self.last_applied_monotonic, preserve_phase=True)
+            timing = DeviceTiming(anchor=self.last_applied_monotonic, preserve_phase=True,
+                                  nominal_program=running_nominal)
         extra = {} if timing is None else {"timing": timing}
         from .device_writer import take_receipt
 
@@ -2181,14 +2182,7 @@ class AgentLedController:
         receipt = take_receipt()
         applied_at = receipt.applied_at if receipt is not None else time.monotonic()
         if receipt is not None and timing is not None and getattr(timing, "preserve_phase", False):
-            rotated_nominal = rotate_program(
-                running_nominal, receipt.timed.phase_ms,
-                led_count=led_count_for_target(written_target),
-            )
-            # Nominal and delivered programs have the same timing. A nominal
-            # cut can cost more bytes; use the delivered text if it cannot fit.
-            running_nominal = (rotated_nominal if rotated_nominal and fits_budget(rotated_nominal)
-                               else receipt.program)
+            running_nominal = receipt.timed.nominal_program
             to_write = receipt.program
         if receipt is not None:
             to_write = receipt.program

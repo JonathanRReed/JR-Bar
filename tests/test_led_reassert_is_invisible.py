@@ -59,12 +59,13 @@ def test_reassert_preserves_phase_across_repeated_device_writes(tmp_path, monkey
             engine.step_batch(previous, 16, (elapsed - previous) // 16)
         clock[0] = 100.0 + elapsed / 1000
         update = controller.sync_program(program, LedDisplayState.IDLE)
-        assert update.changed
-        assert update.timed.rotation == "exact"
-        assert update.target.read_text() == update.program
-        assert controller.last_program == update.program
-        assert controller.last_applied_monotonic == clock[0]
-        assert restarted.parse(update.program, elapsed).ok
+        assert update.error is None
+        if update.changed:
+            assert update.timed.rotation == "exact"
+            assert update.target.read_text() == update.program
+            assert controller.last_program == update.program
+            assert controller.last_applied_monotonic == clock[0]
+            assert restarted.parse(update.program, elapsed).ok
         expected = continuous.step_batch(elapsed, 16, 100)
         actual = restarted.step_batch(elapsed, 16, 100)
         error = max(abs(a - b) for x, y in zip(expected, actual)
@@ -182,3 +183,26 @@ def test_a_done_agent_rests_dark_beside_a_working_one() -> None:
     # Only the WORKING agent's pulses may get bright; a steady-held done
     # peak lit half the strip before this rule.
     assert len(bright_leds) <= 4, (bright_leds, max_seen)
+
+
+def test_calibrated_reassert_never_publishes_drive_bytes_as_nominal(tmp_path, monkeypatch):
+    from jrbar.animation import read_program
+    from jrbar.linked_sync import fits_budget, playback_loop_ms
+
+    clock = [100.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    controller = AgentLedController(device_path=tmp_path, channel_gains=(1, 0.38, 1))
+    program = '#164880 #040E1A #040E1A #040E1A #040E1A #040E1A #040E1A #040E1A 300ms cosine\nroll-right 2200ms linear\n#160C09 #160C09 #160C09 #160C09 #160C09 #160C09 #160C09 #6C3C2C 300ms cosine\nroll-left 2200ms linear\n#2E4258 #090D12 #090D12 #090D12 #090D12 #090D12 #090D12 #090D12 300ms cosine\nroll-right 2200ms linear\nrepeat'
+    first = controller.sync_program(program, LedDisplayState.IDLE)
+    assert first.changed
+    lap = playback_loop_ms(read_program(first.program)[0])
+    clock[0] += (int(241000 / lap) + 1.37) * lap / 1000
+    update = controller.sync_program(program, LedDisplayState.IDLE)
+    if update.changed:
+        assert update.nominal_program != update.program
+        assert fits_budget(update.nominal_program)
+        assert update.nominal_program == update.timed.nominal_program
+    else:
+        assert first.target.read_text() == first.program
+        assert controller.last_nominal_program == first.nominal_program
+    assert controller.last_error is None

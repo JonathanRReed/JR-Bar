@@ -989,6 +989,7 @@ class DeviceTiming:
     trim_ms: float = 0.0
     latency_ms: float | None = None
     preserve_phase: bool = False
+    nominal_program: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1008,6 +1009,7 @@ class TimedProgram:
     #: the real lap. Whole milliseconds leave it up to half a millisecond a
     #: lap off ``rate``, and the closed loop has to know that to predict.
     effective_rate: float | None = None
+    nominal_program: str | None = None
 
 
 def apply_device_timing(
@@ -1042,6 +1044,13 @@ def apply_device_timing(
         # of playing the whole cue after the strip has stopped.
         elapsed = (predicted - timing.anchor) * 1000.0 + float(timing.trim_ms)
         wanted = min(elapsed, total - 1.0) if elapsed > 0.0 and total > 1 else 0.0
+    paired: dict[str, str] = {}
+    nominal = timing.nominal_program if timing.preserve_phase else None
+    if nominal is not None:
+        nominal_animation, nominal_problems = read_program(nominal, led_count=led_count)
+        nominal_lap = playback_loop_ms(nominal_animation) if nominal_animation is not None else None
+        if errors_only(nominal_problems) or nominal_lap != lap:
+            raise PhaseRotationUnavailable("The nominal and delivered timelines differ.")
     candidates: list[tuple[str, float, str]] = []
     if wanted:
         # The finest cut first, then cheaper ones -- the last spends no
@@ -1051,11 +1060,18 @@ def apply_device_timing(
         for extra in (MAX_SLICE_EXTRA_LINES, 2, 0):
             rotated = rotate_program(program, wanted, led_count=led_count, max_extra_lines=extra)
             if rotated is not None:
+                if nominal is not None:
+                    nominal_cut = rotate_program(nominal, wanted, led_count=led_count, max_extra_lines=extra)
+                    if nominal_cut is None or not fits_budget(nominal_cut):
+                        continue
+                    paired[rotated] = nominal_cut
                 candidates.append((rotated, wanted, "exact"))
                 if timing.preserve_phase and fits_budget(rotated):
                     break
     else:
         candidates.append((program, 0.0, "exact"))
+        if nominal is not None:
+            paired[program] = nominal
     if lap and not timing.preserve_phase:
         snapped = snap_rotation(program, wanted, led_count=led_count)
         if snapped is not None:
@@ -1068,7 +1084,12 @@ def apply_device_timing(
             written, _problems = read_program(timed, led_count=led_count)
             written_lap = playback_loop_ms(written) if written is not None else None
             effective = written_lap / lap if lap and written_lap else rate
-            return TimedProgram(timed, used, predicted, rate, lap, how, effective)
+            nominal_cut = paired.get(text)
+            if nominal_cut is not None:
+                nominal_cut = retime_program(nominal_cut, rate, led_count=led_count)
+                if nominal_cut is None or not fits_budget(nominal_cut):
+                    continue
+            return TimedProgram(timed, used, predicted, rate, lap, how, effective, nominal_cut)
         if fits_budget(text) and how == "unrotated":
             return TimedProgram(text, 0.0, predicted, 1.0, lap, how, 1.0)
     if timing.preserve_phase:
