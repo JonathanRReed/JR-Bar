@@ -114,7 +114,7 @@ def pending_changed():
 for line in stream:
     request = json.loads(line)
     name, args = request.get('name'), request.get('args', {})
-    if name in ('clear_completed', 'undo_clear', 'quiet', 'quiet_lease', 'scene_lease', 'list_effects', 'list_assignments', 'set_assignment', 'set_setting', 'clear_assignment', 'what_plays', 'preview_fleet', 'preview_program'):
+    if name in ('clear_completed', 'undo_clear', 'quiet', 'quiet_lease', 'scene_lease', 'list_effects', 'list_assignments', 'set_assignment', 'set_setting', 'clear_assignment', 'what_plays', 'preview_fleet', 'preview_program', 'export_effect_pack', 'import_effect_pack', 'remove_effect_pack'):
         pending.append(request)
         pending_changed()
     elif name == 'fixture_wait_pending':

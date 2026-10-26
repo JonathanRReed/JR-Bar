@@ -62,6 +62,11 @@ private struct StudioProviderRow: View {
                 .frame(width: 180)
             }
             if let effect {
+                HStack {
+                    Button("Edit as effect…") { store.editProviderEffect(effect, parameters: parameters) }
+                    Button("Reset to defaults") { _ = store.saveProvider(provider, effect: effect, parameters: effect.defaultParameters) }
+                        .disabled(store.providerSaving.contains(provider))
+                }
                 ForEach(effect.parameters.filter { $0.name != "color" && $0.name != "repeat" && $0.name != "pass_mode" }) { parameter in
                     EffectParameterRow(parameter: parameter, value: parameters[parameter.name] ?? parameter.defaultValue,
                                        effectID: effect.id) { value in

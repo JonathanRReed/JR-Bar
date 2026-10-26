@@ -81,18 +81,19 @@ private struct StudioMixCard: View {
                 HStack {
                     Text(mix.name).jrbarType(.headline)
                     Spacer(minLength: 0)
-                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(JRBarTokens.Ink.accent) }
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint) }
                 }
                 LEDStripPreview(program: preview?.program ?? "off", ledCount: 8, style: .dots,
                                 dotSize: 6, spacing: 5, paused: !connected)
                     .frame(maxWidth: .infinity)
                     .accessibilityLabel("\(mix.name) daemon preview")
+                if mix.id == "classic" {
+                    Text("State colours and their rhythm; no provider animations").jrbarType(.caption).foregroundStyle(.secondary)
+                }
                 if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.attention).lineLimit(2)
                         .help(preview?.playbackWarnings.joined(separator: " ") ?? warning)
-                } else if mix.id == "classic", preview?.played == "classic" {
-                    Text("Shows no animation").jrbarType(.caption).foregroundStyle(.secondary)
                 } else if preview == nil {
                     Text("Preview unavailable").jrbarType(.caption).foregroundStyle(.secondary)
                 }
@@ -102,7 +103,7 @@ private struct StudioMixCard: View {
             .background(selected ? JRBarTokens.Ink.accentSoft : JRBarTokens.Ink.content,
                         in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
             .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group)
-                .strokeBorder(selected ? JRBarTokens.Ink.accent : JRBarTokens.Ink.separator, lineWidth: selected ? 2 : 1))
+                .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(JRBarTokens.Ink.separator), lineWidth: selected ? 2 : 1))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])

@@ -68,17 +68,52 @@ struct StudioScenesPage: View {
     var body: some View {
         SnapshotScrollView {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
-                SettingsGroup {
-                    SettingsRow("Active scene") {
-                        Picker("Active scene", selection: Binding(get: { store.selectedScene }, set: { _ = store.setActiveScene($0) })) {
-                            ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }
-                        }.labelsHidden().disabled(store.sceneChanging)
-                    }
-                }
-                ForEach(store.scenePacks) { ScenePackRow(pack: $0, store: store) }
-                Button("Import scene pack…") { store.importScenePack() }
+                sceneControls
+                missingPack
+                scenePacks
+                importButton
             }.padding(JRBarTokens.Space.lg)
         }
+    }
+    private var importButton: some View {
+        let action: () -> Void = store.importScenePack
+        return Button("Import scene pack…", action: action)
+    }
+
+    private var scenePacks: some View {
+        let packs: [ScenePackSummary] = store.scenePacks
+        return ForEach(packs) { pack in ScenePackRow(pack: pack, store: store) }
+    }
+
+    private var sceneControls: some View {
+        SettingsGroup {
+            SettingsRow("Saved scene") { scenePicker }
+            if store.activeSceneIsAutomatic {
+                let name = EffectScene(rawValue: store.activeScene)?.label ?? store.activeScene
+                SettingsRow("Playing now: \(name)") {
+                    Button("Keep") { _ = store.setActiveScene(store.activeScene) }
+                        .disabled(store.sceneChanging)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var missingPack: some View {
+        if let activeID = store.activeScenePackID,
+           !store.scenePacks.contains(where: { $0.id == activeID }) {
+            SettingsGroup {
+                SettingsRow("Pack unavailable: \(activeID)") {
+                    Button("Use built-in scenes") { _ = store.setActiveScenePack(nil) }
+                        .disabled(store.scenePackChanging)
+                }
+            }
+        }
+    }
+
+    private var scenePicker: some View {
+        Picker("Saved scene", selection: Binding(get: { store.selectedScene }, set: { _ = store.setActiveScene($0) })) {
+            ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }
+        }.labelsHidden().disabled(store.sceneChanging)
     }
 }
 

@@ -7,6 +7,10 @@ import SwiftUI
 struct EffectStudioView: View {
     @Bindable var store: EffectStudioStore
 
+    private var notice: String? {
+        store.lastError ?? store.lightsStudio.settings.lastError ?? store.status ?? store.lightsStudio.settings.status
+    }
+
     var body: some View {
         StudioWorkspace(store: store)
         .frame(minWidth: 960, minHeight: 640)
@@ -14,11 +18,11 @@ struct EffectStudioView: View {
         .environment(\.ledPreviewsHeld, store.covered)
         .toolbar { if store.mode == .effects { effectsToolbar } }
         .overlay(alignment: .bottom) {
-            if let text = store.lastError ?? store.lightsStudio.settings.lastError ?? store.status {
+            if let text = notice {
                 WindowStatusCapsule(text: text, isError: store.lastError != nil || store.lightsStudio.settings.lastError != nil)
             }
         }
-        .animation(JRBarTokens.Motion.panelEntrance.animation(reduceMotion: store.reduceMotion), value: (store.lastError ?? store.lightsStudio.settings.lastError ?? store.status) == nil)
+        .animation(JRBarTokens.Motion.panelEntrance.animation(reduceMotion: store.reduceMotion), value: notice == nil)
         .sheet(isPresented: WindowPresenter.presentation($store.assigning)) {
             AssignSheet(store: store)
         }
@@ -80,13 +84,7 @@ struct EffectStudioView: View {
                     EffectLibraryPane(store: store)
                         .frame(minWidth: 230, idealWidth: 260, maxWidth: 300, maxHeight: .infinity)
                     Divider()
-                    Group {
-                        if store.selected?.catalog == "provider_animation" {
-                            Button("Open Providers") { store.mode = .providers }
-                        } else {
-                            EffectInspectorPane(store: store)
-                        }
-                    }
+                    EffectInspectorPane(store: store)
                     .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(1)
                 }
@@ -154,7 +152,7 @@ struct EffectLibraryPane: View {
                 } label: {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                         .symbolVariant(store.filter == .all ? .none : .fill)
-                        .foregroundStyle(store.filter == .all ? .secondary : Color.accentColor)
+                        .foregroundStyle(store.filter == .all ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -216,7 +214,7 @@ struct EffectLibraryPane: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 3)
                             .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
-                                .fill(store.selectedID == effect.id ? Color.accentColor.opacity(0.18) : .clear))
+                                .fill(store.selectedID == effect.id ? AnyShapeStyle(.tint.opacity(0.18)) : AnyShapeStyle(Color.clear)))
                     }
                 }
             }
@@ -272,7 +270,7 @@ struct EffectLibraryRow: View {
                 HStack(spacing: 5) {
                     Text(effect.label).lineLimit(1)
                     if !uses.isEmpty {
-                        Image(systemName: "checkmark.circle.fill").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(Color.accentColor)
+                        Image(systemName: "checkmark.circle.fill").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tint)
                             .help(store.usageSummary(of: effect) ?? "Used by an assignment")
                             .accessibilityLabel("Used by \(uses.count) assignment\(uses.count == 1 ? "" : "s")")
                     }
@@ -760,6 +758,11 @@ struct EffectAssignmentsPane: View {
     @Bindable var store: EffectStudioStore
 
     var body: some View {
+        SnapshotScrollView { content }
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Active scene").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -847,7 +850,7 @@ struct EffectAssignmentsPane: View {
                 Divider()
             }
             if let document = store.assignments, !document.assignments.isEmpty {
-                List {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(document.byScope, id: \.scope) { group in
                         Section {
                             ForEach(group.assignments) { assignment in
@@ -859,15 +862,14 @@ struct EffectAssignmentsPane: View {
                                     _ = store.remove(assignment)
                                 } select: {
                                     store.selectedID = assignment.effectID
+                                    store.mode = .effects
                                 }
                             }
                         } header: {
                             Text(group.scope == .global ? "Everywhere" : group.scope.label)
                         }
                     }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
+                }.padding(12)
             } else {
                 WindowEmptyState(symbol: "list.bullet.rectangle", title: "No assignments",
                                  text: "Everything follows the monitor's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
@@ -885,7 +887,6 @@ struct EffectAssignmentsPane: View {
             .controlSize(.small)
             .padding(10)
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 }
 
@@ -916,7 +917,7 @@ struct ScenePackRow: View {
                             .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.accentColor))
+                            .background(Capsule().fill(.tint))
                     }
                 }
                 Text(pack.scenes.isEmpty ? "No scenes listed" : pack.scenes.joined(separator: ", "))
@@ -1106,17 +1107,17 @@ struct AssignmentRow: View {
 
     /// A `none` record is an explicit suppress: the scope is hidden, not
     /// "assigned to an effect called none".
-    private var suppressed: Bool { assignment.effectID == "none" && effect == nil }
+    private var suppressed: Bool { assignment.effectID == "none" }
 
     var body: some View {
         HStack(spacing: 8) {
-            LEDStripPreview(program: effect?.preview?.program ?? "off", ledCount: effect?.preview?.ledCount ?? 8,
+            LEDStripPreview(program: suppressed ? "off" : effect?.preview?.program ?? "off", ledCount: effect?.preview?.ledCount ?? 8,
                             style: .band, dotSize: 6, paused: !selected, showsBackground: false)
                 .frame(width: 40)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text(suppressed ? "None — hide this scope" : (effect?.label ?? assignment.effectID))
+                    Text(suppressed ? "Hidden in this scope" : (effect?.label ?? "Effect unavailable: \(assignment.effectID)"))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if !assignment.parameters.isEmpty, let effect, assignment.parameters != effect.defaultParameters {
                         Text("· tuned").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
@@ -1137,11 +1138,12 @@ struct AssignmentRow: View {
             .accessibilityLabel(changing ? "Updating assignment" : "Remove")
         }
         .contentShape(Rectangle())
-        .onTapGesture(perform: select)
+        .onTapGesture { if effect != nil && !suppressed { select() } }
         .onHover { hovering = $0 }
         .padding(.vertical, 1)
         .contextMenu {
             Button("Show “\(effect?.label ?? assignment.effectID)”", action: select)
+                .disabled(effect == nil || suppressed)
             Divider()
             Button(suppressed ? "Stop suppressing this scope" : "Remove assignment", role: .destructive, action: remove)
                 .disabled(changing)

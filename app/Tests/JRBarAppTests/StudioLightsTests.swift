@@ -65,7 +65,7 @@ struct StudioLightsTests {
         for (mode, name) in [("classic", "Status Only"), ("color_blend", "Smooth")] {
             let moving = StudioFleetPreview(program: source, label: "Two providers", played: mode,
                                             reason: "Current state", warnings: [], ledCount: 8)
-            #expect(moving.playbackWarnings == ["\(name) still moves the working light."])
+            #expect(moving.playbackWarnings == ["\(name) still moves the state light."])
             let still = StudioFleetPreview(program: "#0088FF", label: "Two providers", played: mode,
                                            reason: "Current state", warnings: [], ledCount: 8)
             #expect(still.playbackWarnings.isEmpty)
@@ -199,6 +199,12 @@ struct StudioLightsTests {
             lights.requestPreview = { _, _ in preview() }
             await lights.refreshPreviews()
             let action = try #require(lights.playPreview())
+            let screenRender = try await fixture.request()
+            #expect(screenRender["name"] == "preview_fleet")
+            #expect(screenRender["args"]?["device"] == "virtual:status-bar")
+            #expect(screenRender["args"]?["blend_mode"] == nil)
+            try await fixture.release(result: ["program": "#FF8800", "label": "Screen Bar override", "played": "alternate",
+                                              "reason": "Screen Bar uses Alternate.", "warnings": [], "led_count": 8])
             let render = try await fixture.request()
             #expect(render["name"] == "preview_fleet")
             #expect(render["args"]?["device"] == "synthetic-dot")
@@ -209,7 +215,7 @@ struct StudioLightsTests {
             let screen = try await fixture.request()
             #expect(screen["name"] == "preview_program")
             #expect(screen["args"]?["surface"] == "screen_bar")
-            #expect(screen["args"]?["program"] == "#0088FF")
+            #expect(screen["args"]?["program"] == "#FF8800")
             try await fixture.release(result: [:])
             let dot = try await fixture.request()
             #expect(dot["args"]?["surface"] == "synthetic-dot")
@@ -217,6 +223,7 @@ struct StudioLightsTests {
             try await fixture.release(result: [:])
             await action.value
             #expect(!lights.playing && lights.playFailure == nil)
+            #expect(lights.auditions["Screen Bar"]?.reason == "Screen Bar uses Alternate.")
             #expect(lights.auditions["Test Dot"]?.warnings == ["Split does not fit."])
             await fixture.stop()
         } catch { await fixture.stop(); throw error }

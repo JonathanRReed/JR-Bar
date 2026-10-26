@@ -5,6 +5,7 @@ import SwiftUI
 struct StudioWorkspace: View {
     @Bindable var store: EffectStudioStore
     private var lights: EffectStudioLights { store.lightsStudio }
+    @Environment(\.renderSnapshot) private var snapshot
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,11 +25,14 @@ struct StudioWorkspace: View {
         }
         .jrbarType(.body)
         .task(id: lights.previewKey) {
+            guard !snapshot else { return }
             await lights.refreshPlan()
             await lights.refreshPreviews()
             await lights.refreshSupportingPreviews()
         }
-        .task(id: store.core.lights?.surfaces) { await lights.refreshPlan() }
+        .task(id: store.core.lights?.surfaces) {
+            if !snapshot { await lights.refreshPlan() }
+        }
     }
 
     private var sidebar: some View {
@@ -58,6 +62,13 @@ struct StudioWorkspace: View {
         case .providers: StudioProvidersPage(store: store)
         case .moments: StudioCuesPage(store: store)
         case .colours: StudioStateColours(settings: lights.settings)
+        case .profiles:
+            SnapshotScrollView {
+                CalibrationProfilesSection(store: lights.settings)
+                    .environment(\.settingGroupsInline, true)
+                    .padding(JRBarTokens.Space.lg)
+            }
+        case .assignments: EffectAssignmentsPane(store: store)
         case .scenes: StudioScenesPage(store: store)
         case .devices: StudioDevicesPage(store: store)
         case .effects: storeView.effectsRoom
@@ -164,7 +175,7 @@ struct StudioWhatPlays: View {
                     ForEach(plan.devices) { device in
                         Text("\(lights.deviceName(device.device)): \(device.reason)")
                         if let cue = device.cueReason { Text(cue).foregroundStyle(.secondary) }
-                        warnings(device.warnings)
+                        warnings(device.playbackWarnings)
                     }
                     if plan.devices.isEmpty { Text("No light devices are configured.").foregroundStyle(.secondary) }
                 } else { Text("Waiting for the daemon's light plan.").foregroundStyle(.secondary) }
@@ -173,11 +184,10 @@ struct StudioWhatPlays: View {
                 Text(preview.label).jrbarType(.caption).foregroundStyle(.secondary)
                 warnings(preview.playbackWarnings)
             } else { Text("Waiting for the daemon's preview.").foregroundStyle(.secondary) }
-            if lights.scenario == .live, let notice = lights.selectedPreview?.motionNotice { warnings([notice]) }
             if lights.scenario != .live {
                 ForEach(lights.plan?.devices.filter { !$0.warnings.isEmpty } ?? []) { device in
                     Text("Live \(lights.deviceName(device.device)): \(device.reason)").jrbarType(.caption)
-                    warnings(device.warnings)
+                    warnings(device.playbackWarnings)
                 }
             }
         }

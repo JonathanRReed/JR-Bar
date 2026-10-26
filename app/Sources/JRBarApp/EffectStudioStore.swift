@@ -341,7 +341,7 @@ final class EffectStudioStore {
         cancelRender()
         renders.removeAll()
         renderOrder.removeAll()
-        if selectedID == nil || catalog?.effect(selectedID ?? "") == nil || (mode == .effects && selected?.catalog == "provider_animation") {
+        if selectedID == nil || catalog?.effect(selectedID ?? "") == nil {
             selectedID = catalog?.effects.first { $0.catalog != "provider_animation" }?.id ?? catalog?.effects.first?.id
         }
         pruneForRemovedEffects()
@@ -398,10 +398,6 @@ final class EffectStudioStore {
 
     var groups: [(title: String, effects: [EffectDefinition])] {
         Self.libraryGroups(from: catalog, matching: search, filter: filter) { !usage(of: $0).isEmpty }
-            .compactMap { group in
-                let effects = group.effects.filter { $0.catalog != "provider_animation" }
-                return effects.isEmpty ? nil : (group.title, effects)
-            }
     }
 
     /// The catalog's meaning-groups with the filter applied and each
@@ -442,6 +438,13 @@ final class EffectStudioStore {
         var current = edits[effect.id] ?? [:]
         current[parameter.name] = parameter.normalize(value)
         edits[effect.id] = current
+        scheduleRender(effect)
+    }
+
+    func editProviderEffect(_ effect: EffectDefinition, parameters: [String: JSONValue]) {
+        edits[effect.id] = effect.normalizedParameters(parameters)
+        selectedID = effect.id
+        mode = .effects
         scheduleRender(effect)
     }
 
@@ -671,13 +674,15 @@ final class EffectStudioStore {
 
     /// The light pages and the existing effect and program editors.
     enum Mode: String, CaseIterable, Identifiable {
-        case providers, mix, moments, colours, scenes, devices, effects, program
+        case providers, mix, moments, colours, profiles, scenes, devices, effects, assignments, program
         var id: String { rawValue }
         var label: String {
             switch self {
             case .providers: return "Providers"
             case .mix: return "Mix"
             case .colours: return "State colours"
+            case .profiles: return "Profiles"
+            case .assignments: return "Assignments"
             case .scenes: return "Scenes"
             case .devices: return "Devices"
             case .effects: return "Library"
@@ -690,6 +695,8 @@ final class EffectStudioStore {
             case .providers: return "person.2"
             case .mix: return "slider.horizontal.3"
             case .colours: return "paintpalette"
+            case .profiles: return "slider.horizontal.3"
+            case .assignments: return "arrow.triangle.branch"
             case .scenes: return "moon"
             case .devices: return "light.beacon.max"
             case .effects: return "sparkles.rectangle.stack"
@@ -1260,7 +1267,8 @@ final class EffectStudioStore {
 
     /// Removes an installed effect pack via `remove_effect_pack`; the
     /// reply carries the fresh catalog like the import does.
-    func removePack(_ pack: EffectPack) {
+    @discardableResult
+    func removePack(_ pack: EffectPack) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1355,13 +1363,14 @@ final class EffectStudioStore {
     /// is copied under the new name with these values, and the pack goes
     /// back in (`update` when Yours already exists). Two exports, not one,
     /// so a source whose row id Yours already uses cannot collide.
-    func saveAsEffect(_ effect: EffectDefinition, name: String) {
+    @discardableResult
+    func saveAsEffect(_ effect: EffectDefinition, name: String) -> Task<Void, Never>? {
         let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty, !yoursBusy else { return }
+        guard !label.isEmpty, !yoursBusy else { return nil }
         let values = values(for: effect)
         let yours = catalog?.pack(EffectStudioYours.packID)
         yoursBusy = true
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.yoursBusy = false }
             let scratch = FileManager.default.temporaryDirectory

@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Devices & Lighting › Advanced › Calibration profiles: the daemon's Day, Night and
+/// Studio › Profiles: the daemon's Day, Night and
 /// Travel slots, and the Focus rules that apply one when that Focus
 /// starts. A profile is a snapshot of every device's brightness, channel
 /// gains and resting glow; applying it restores brightness and gains —
@@ -14,7 +14,7 @@ struct CalibrationProfilesSection: View {
     private var saved: [String] { LightProfiles.savedSlots(in: store.document) }
 
     var body: some View {
-        SettingGroup("Calibration profiles", note: "Save the way the strip, the Dot and the Screen Bar look right now, and bring it back later — or let a Focus bring it back when it starts.") {
+        SettingGroup("Calibration profiles", note: "Save the current brightness, gains and resting glow. Apply them here or when a Focus starts.") {
             Provided(store, "calibration_profiles") {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(SettingsKey.calibrationProfileSlots, id: \.self) { slot in
@@ -106,18 +106,18 @@ struct CalibrationProfilesSection: View {
         }
     }
 
-    private func save(_ slot: String) {
+    func save(_ slot: String) {
         store.set("calibration_profiles.\(slot)", LightProfiles.snapshot(of: store.document))
         store.show(status: "Saved the current look as \(slot)")
     }
 
-    private func apply(_ slot: String) {
+    func apply(_ slot: String) {
         let writes = LightProfiles.applyWrites(slot: slot, to: store.document)
         for write in writes { store.set(write.path, write.value) }
         store.show(status: writes.isEmpty ? "\(slot) is already in use" : "Applied \(slot)")
     }
 
-    private func delete(_ slot: String) {
+    func delete(_ slot: String) {
         store.set("calibration_profiles.\(slot)", .null)
         // A rule pointing at a deleted slot would apply nothing; drop it.
         let rules = store.document.object("focus_profile_rules") ?? [:]

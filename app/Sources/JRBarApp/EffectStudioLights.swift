@@ -37,6 +37,10 @@ struct StudioLightPlan: Decodable, Hashable {
         let program: String
         let cueReason: String?
 
+        @MainActor var playbackWarnings: [String] {
+            warnings.map(StudioWarning.plain) + [StudioFleetPreview.motionNotice(played: played, program: program, ledCount: ledCount)].compactMap { $0 }
+        }
+
         enum CodingKeys: String, CodingKey {
             case device, played, reason, warnings, program
             case ledCount = "led_count", requestedMix = "requested_mix", cueReason = "cue_reason"
@@ -56,15 +60,17 @@ struct StudioFleetPreview: Decodable, Hashable {
         case ledCount = "led_count"
     }
 
-    @MainActor var motionNotice: String? {
+    @MainActor var motionNotice: String? { Self.motionNotice(played: played, program: program, ledCount: ledCount) }
+
+    @MainActor static func motionNotice(played: String, program: String, ledCount: Int) -> String? {
         let names = ["classic": "Status Only", "color_blend": "Smooth"]
         guard let name = names[played],
               let sampler = LEDPreviewSamplers.sampler(for: program, ledCount: ledCount), !sampler.isStatic else { return nil }
-        return "\(name) still moves the working light."
+        return "\(name) still moves the state light."
     }
 
     @MainActor var playbackWarnings: [String] {
-        warnings + [motionNotice].compactMap { $0 }
+        warnings.map(StudioWarning.plain) + [motionNotice].compactMap { $0 }
     }
 }
 
@@ -237,7 +243,7 @@ final class EffectStudioLights {
 
     @discardableResult
     func playPreview() -> Task<Void, Never>? {
-        guard core.isLive, scenario != .live, failure == nil, !refreshing, !playing, let program else { return nil }
+        guard core.isLive, scenario != .live, failure == nil, !refreshing, !playing, program != nil else { return nil }
         let devices = playOnDevices ? core.devices.filter { $0.isPresent && ($0.kind == "pro" || $0.kind == "dot") } : []
         let scenario = self.scenario
         let sourceKey = previewKey
@@ -250,7 +256,13 @@ final class EffectStudioLights {
             guard let self else { return }
             defer { if revision == self.playRevision { self.playing = false; self.playTask = nil } }
             do {
-                var programs = [("screen_bar", self.screenProgram ?? program)]
+                let screen = try await self.core.request("preview_fleet", args: [
+                    "scenario": .string(scenario.rawValue), "device": .string("virtual:status-bar"),
+                    "led_count": .number(8),
+                ], as: StudioFleetPreview.self)
+                guard revision == self.playRevision, sourceKey == self.previewKey, !Task.isCancelled else { return }
+                self.auditions["Screen Bar"] = screen
+                var programs = [("screen_bar", screen.program)]
                 for device in devices {
                     let preview = try await self.core.request("preview_fleet", args: [
                         "scenario": .string(scenario.rawValue), "device": .string(device.id),
