@@ -101,7 +101,9 @@ def test_failed_notary_upload_preserves_private_diagnostics_without_retry(tmp_pa
                  f'notarize_and_wait fixture.zip "{response}"\necho SUCCESS\n')
     assert result.returncode == exit_code
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    assert len(calls) == 1 and calls[0][:2] == ["notarytool", "submit"]
+    assert calls[0][:2] == ["notarytool", "submit"]
+    assert len(calls) == 4
+    assert all(call[:2] == ["notarytool", "history"] for call in calls[1:])
     assert not response.exists()
     output = result.stdout + result.stderr
     assert "SUCCESS" not in output
@@ -146,7 +148,7 @@ def test_notary_signal_diagnostic_stays_private(tmp_path):
     result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
                  f'notarize_and_wait fixture.zip "{response}"\necho SUCCESS\n')
     assert result.returncode == 143
-    assert calls.read_text() == "submit\n"
+    assert calls.read_text() == "submit\n" * 4
     assert not response.exists()
     public_output = result.stdout + result.stderr
     assert "SUCCESS" not in public_output
@@ -260,3 +262,76 @@ def test_post_notary_metadata_is_removed_without_changing_signed_files(tmp_path,
         assert "ARCHIVE_READY" in result.stdout
         assert observed == [["stapler", "staple", str(app)], ["xattr", "-cr", str(app)],
                             ["stapler", "validate", str(app)]]
+
+
+@pytest.mark.parametrize("upload", ["crash", "empty", "malformed", "missing_id"])
+@pytest.mark.parametrize("verdict", ["Accepted", "Invalid"])
+def test_notary_recovers_uploaded_submission_without_resubmitting(tmp_path, upload, verdict):
+    tool, log = fake_notary(tmp_path, upload=upload, verdict=verdict, info_failures=2)
+    response = tmp_path / "reply.json"
+    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
+                 f'notarize_and_wait fixture.zip "{response}"\n')
+    assert result.returncode == 0, result.stderr
+    assert json.loads(response.read_text()) == {"id": "recovered", "status": verdict}
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [call[1] for call in calls] == ["submit", "history", "info", "info", "info"]
+    assert all(call[2] == "recovered" for call in calls if call[1] == "info")
+    assert "SECRET_TRANSPORT_CANARY" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("history", ["old", "wrong_name", "ambiguous", "future", "empty"])
+def test_notary_refuses_unrelated_or_ambiguous_history(tmp_path, history):
+    tool, log = fake_notary(tmp_path, history=history)
+    response = tmp_path / "reply.json"
+    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
+                 f'notarize_and_wait fixture.zip "{response}"\n')
+    assert result.returncode != 0
+    assert not response.exists()
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [call[1] for call in calls] == ["submit", "history", "history", "history"]
+
+
+def test_notary_stops_after_three_consecutive_info_failures(tmp_path):
+    tool, log = fake_notary(tmp_path, info_failures=10)
+    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
+                 f'notarize_and_wait fixture.zip "{tmp_path / "reply.json"}"\n')
+    assert result.returncode != 0
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [call[1] for call in calls] == ["submit", "history", "info", "info", "info"]
+    assert "recovered" in result.stderr
+    assert "SECRET_TRANSPORT_CANARY" not in result.stdout + result.stderr
+
+
+def fake_notary(tmp_path, *, upload="crash", history="match", verdict="Accepted", info_failures=0):
+    tool = tmp_path / "xcrun"
+    log = tmp_path / "calls.jsonl"
+    tool.write_text(
+        f"#!{sys.executable}\n"
+        "import datetime,json,os,signal,sys\n"
+        f"log={str(log)!r}\n"
+        "with open(log,'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "action=sys.argv[2]\n"
+        f"upload={upload!r}; history={history!r}\n"
+        "if action=='submit':\n"
+        " print('SECRET_TRANSPORT_CANARY',file=sys.stderr)\n"
+        " if upload=='crash': os.kill(os.getpid(),signal.SIGBUS)\n"
+        " if upload=='malformed': print('{')\n"
+        " if upload=='missing_id': print('{}')\n"
+        " sys.exit(0)\n"
+        "if action=='history':\n"
+        " now=datetime.datetime.now(datetime.timezone.utc)\n"
+        " if history=='old': now-=datetime.timedelta(days=1)\n"
+        " if history=='future': now+=datetime.timedelta(days=1)\n"
+        " row={'id':'recovered','name':'fixture.zip','createdDate':now.isoformat(),'status':'In Progress'}\n"
+        " if history=='wrong_name': row['name']='other.zip'\n"
+        " rows=[row]\n"
+        " if history=='empty': rows=[]\n"
+        " if history=='ambiguous': rows.append(dict(row,id='other'))\n"
+        " print(json.dumps({'history':rows})); sys.exit(0)\n"
+        "calls=[json.loads(line) for line in open(log)]\n"
+        "attempt=sum(call[1]=='info' for call in calls)\n"
+        f"if attempt <= {info_failures}: os.kill(os.getpid(),signal.SIGBUS)\n"
+        f"print(json.dumps({{'id':'recovered','status':{verdict!r}}}))\n"
+    )
+    tool.chmod(0o755)
+    return tool, log
