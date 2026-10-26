@@ -107,7 +107,7 @@ struct ProviderMarkTests {
         // Claude's accent reads on a dark tile: the ink is the accent itself.
         let claude = ProviderStyle.style(for: "claude").nsAccent
         #expect(ProviderMarkInk.ink(for: claude, on: .darkPlate) === claude)
-        // Grok's grey does not: it is lifted, and stays a grey.
+        // Grok's approved grey stays readable and neutral.
         let grok = Self.rgb(ProviderMarkInk.ink(for: ProviderStyle.style(for: "grok").nsAccent, on: .darkPlate))
         #expect(grok.red > 0.45 && abs(grok.red - grok.blue) < 0.03)
         // Cursor's yellow is deepened on a light tile and keeps its hue.
@@ -148,10 +148,11 @@ struct ProviderMarkTests {
     }
 
     @MainActor @Test func aTileDrawsItsMarkInTheLiftedInk() throws {
-        // Grok on a dark tile: the mark is drawn in the lifted grey, not in
-        // the accent that vanished there.
-        let accent = ProviderStyle.style(for: "grok").nsAccent
-        let rep = try Self.render(ProviderTile(style: .style(for: "grok"), size: 32)
+        // A deliberately dim fixture keeps this a test of contrast repair
+        // when the default provider palette changes.
+        let style = ProviderStyle(id: "grok", name: "Grok", accentHex: "#636366", glyph: .logo("grok"))
+        let accent = style.nsAccent
+        let rep = try Self.render(ProviderTile(style: style, size: 32)
             .background(Color(nsColor: NSColor(srgbRed: 44 / 255, green: 44 / 255, blue: 44 / 255, alpha: 1)))
             .environment(\.colorScheme, .dark))
         let lifted = try Self.swatchRed(ProviderMarkInk.ink(for: accent, on: .darkPlate))
