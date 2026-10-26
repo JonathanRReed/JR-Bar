@@ -159,8 +159,10 @@ def test_legacy_celebrations_layer_briefly_while_an_agent_works(monkeypatch, cue
 
 
 @pytest.mark.parametrize("animation", ("auto", "kitt", "breathe", "chase"))
-def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkeypatch, animation):
+def test_one_at_a_time_turns_stay_four_seconds_across_reassert_attempts(tmp_path, monkeypatch, animation):
     from itertools import groupby
+
+    from jrbar.linked_sync import DeviceTiming, PhaseRotationUnavailable, apply_device_timing
 
     clock = [1000.0]
     monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
@@ -171,15 +173,28 @@ def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkey
     raw = RawSdLedWasmController(8)
     for second in (0, 240, 480):
         clock[0] = 1000.0 + second
+        previous = controller.last_program
+        nominal = controller.last_nominal_program
+        anchor = controller.last_applied_monotonic
         write = controller.sync_snapshot(statuses(2), settings)
-        assert write.changed
-        assert raw.parse(write.nominal_program, second * 1000).ok
+        assert write.error is None
+        if not write.changed:
+            # A full program may defer a reassert rather than lose phase.
+            assert second > 0
+            assert controller.last_program == previous
+            assert controller.last_applied_monotonic == anchor
+            with pytest.raises(PhaseRotationUnavailable):
+                apply_device_timing(previous, DeviceTiming(anchor=anchor, preserve_phase=True,
+                    nominal_program=nominal), led_count=8, now=clock[0], latency_ms=0)
+        assert write.target.read_text() == controller.last_program
+        nominal = controller.last_nominal_program
+        assert raw.parse(nominal, second * 1000).ok
         frames = raw.step_batch(second * 1000, 20, 1250)
         owners = [sum(b for r, g, b in frame) > sum(r for r, g, b in frame) for frame in frames]
         turns = [len(tuple(turn)) * 20 for _, turn in groupby(owners)]
         assert len(turns) >= 6
         assert all(abs(turn - 4000) <= 100 for turn in turns[2:-1]), turns
-        assert _steady_state_variant(write.nominal_program) == write.nominal_program
+        assert _steady_state_variant(nominal) == nominal
 
 
 def test_a_new_turn_in_the_same_ember_band_gets_a_new_layer(monkeypatch):

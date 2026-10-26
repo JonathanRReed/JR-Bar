@@ -2906,6 +2906,15 @@ its Settings thumbnail and its Effect Studio preview
 | `devices.N.dot_travel_style` | `wipe` \| `crossfade` | `wipe` | How a travelling motion plays on a two-LED device: LED 0 rises, LED 1 rises, LED 0 falls, LED 1 falls; or the older soft crossfade. A Dot plays it while it draws its own display: unlinked, or linked with the `status` role. |
 | `lid_*_animation.shape` | a lid shape or null | null | A lid look drawn per device (the Iris looks); `program` then holds its eight-LED form. |
 
+Provider turns fade into an animation's seed for at least 400 ms instead of painting
+the next provider's colour immediately. Pulses fade to a dark starting frame
+so they cannot return to the previous provider's colour. Blink retains its
+steps after the entry fade. One at a Time includes the entry within each
+four-second hold, counting the firmware's 17 ms zero-duration paint frames.
+Library effects keep their native motion after the entry fade. Alternate
+and Relay already crossfade their provider entries. These transitions use
+the same firmware budget and reported fallback rules as the animation.
+
 Automatic follows the chosen providers' existing step grid when their step
 durations match, keeping their native periods, curves and pauses intact.
 When following Knight Rider, Scanner or Pendulum, Automatic draws that
