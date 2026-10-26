@@ -22,6 +22,8 @@ Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
   and transparency values follow macOS. Increase Contrast also follows
   macOS; passing true forces it for a proof. Settings groups use an opaque
   content plate with Reduce Transparency.
+  Existing previews can read `EnvironmentValues.jrbarReduceMotion`; nil
+  means follow macOS.
 - `ProviderPalette` owns provider defaults, display names and logo IDs.
   Studio overrides still come from `colors.agent_colors` in the daemon's
   document. Pass an overridden accent when available.

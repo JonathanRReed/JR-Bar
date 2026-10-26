@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import QuartzCore
 import SwiftUI
 
@@ -72,7 +73,9 @@ struct LEDStripPreview: View {
     /// previews does not breathe in lockstep.
     var phase: TimeInterval = 0
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.jrbarReduceMotion) private var motionOverride
+    private var reduceMotion: Bool { motionOverride ?? systemReduceMotion }
     @Environment(\.ledPreviewsHeld) private var held
     @Environment(\.renderSnapshot) private var snapshot
 
@@ -616,7 +619,7 @@ struct ProviderMotionPreview: View {
         Group {
             if let live {
                 LEDStripPreview(program: live, style: .band, dotSize: 6, showsBackground: true,
-                                cornerRadius: 6, phase: phase)
+                                cornerRadius: JRBarTokens.Radius.tile, phase: phase)
             } else {
                 Text("Preview unavailable")
                     .font(.caption)

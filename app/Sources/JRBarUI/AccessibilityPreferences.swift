@@ -16,7 +16,7 @@ extension EnvironmentValues {
         get { self[ContrastInk.self] }
         set { self[ContrastInk.self] = newValue }
     }
-    var jrbarReduceMotion: Bool? {
+    public var jrbarReduceMotion: Bool? {
         get { self[ReduceMotionOverride.self] }
         set { self[ReduceMotionOverride.self] = newValue }
     }
