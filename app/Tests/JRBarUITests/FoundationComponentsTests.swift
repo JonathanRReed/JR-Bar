@@ -140,6 +140,15 @@ struct FoundationComponentsTests {
         #expect(plainHost.fittingSize.height == routedHost.fittingSize.height)
     }
 
+    @Test @MainActor func aGoneProviderFitsOneCompactRow() {
+        var provider = CoreProviderUsage(id: "kiro", windows: [CoreUsageWindow(name: "5h", usedPct: 77)], action: "Hide")
+        provider.availability = "not_found"
+        provider.statusText = "Not found on this Mac"
+        let row = UsageGaugeRow(provider: provider, name: "Kiro", now: now, style: .compact, onAction: {})
+        let host = NSHostingView(rootView: row.frame(width: 320).fixedSize(horizontal: false, vertical: true))
+        #expect(host.fittingSize.height == 44)
+    }
+
     @Test func marksClearTheApprovedContentAndGlassPlates() {
         let surfaces: [(ProviderMarkInk.Surface, ProviderMarkInk.RGB)] = [
             (.darkPlate, ProviderMarkInk.darkSurface), (.lightPlate, ProviderMarkInk.lightSurface),
