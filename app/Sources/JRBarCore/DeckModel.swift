@@ -408,7 +408,7 @@ public enum DeckControls {
         case "reveal_current_ask": return "Reveal current ask"
         case "open_agent_browser": return "Agent Browser"
         case "open_usage": return "Usage Center"
-        case "open_control_center": return "Control Center"
+        case "open_control_center": return "Creator Micro"
         case "next_bank": return "Next bank"
         case "previous_bank": return "Previous bank"
         case "next_scope": return "Next board scope"
