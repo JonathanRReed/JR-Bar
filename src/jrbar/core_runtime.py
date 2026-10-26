@@ -222,6 +222,7 @@ def split_path(path: str) -> list[str | int]:
 
 
 def get_path(root: Any, path: str) -> tuple[Any, bool]:
+    path = "colors.blend_mode" if path == "colors.mix_mode" else path
     node = root
     for part in split_path(path):
         if isinstance(part, int):
@@ -236,6 +237,7 @@ def get_path(root: Any, path: str) -> tuple[Any, bool]:
 
 
 def set_path(root: Any, path: str, value: Any) -> bool:
+    path = "colors.blend_mode" if path == "colors.mix_mode" else path
     parts = split_path(path)
     if not parts:
         return False
@@ -3605,6 +3607,13 @@ def _cmd_preview_fleet(self, args):
     return core_lights.preview_fleet(self, args)
 
 
+@command("what_plays", main_thread=False)
+def _cmd_what_plays(self, args):
+    from . import core_lights
+
+    return core_lights.what_plays(self, args)
+
+
 @command("list_light_log")
 def _cmd_list_light_log(self, args):
     from . import core_lights
@@ -5500,6 +5509,10 @@ def build_headless_controller_class() -> type:
                 for device_id, deadline in self._core_finite_cue_end.items()
                 if deadline <= now
             ]
+            screen_layer_end = getattr(self, "_ambient_screen_bar_layer_until", None)
+            if screen_layer_end is not None and screen_layer_end <= now:
+                self._ambient_screen_bar_layer_until = None
+                done.append(legacy.VIRTUAL_DEVICE_ID)
             for device_id in done:
                 self._core_finite_cue_end.pop(device_id, None)
                 controller = self.agent_led_controllers_by_device.get(device_id)
@@ -5806,6 +5819,11 @@ def build_headless_controller_class() -> type:
                             )
                         else:
                             self._core_finite_cue_end.pop(request.device.device_id, None)
+
+                    controller = self.agent_led_controllers_by_device.get(request.device.device_id)
+                    layer_end = getattr(controller, "ambient_layer_until", None)
+                    if layer_end is not None:
+                        self._core_finite_cue_end[request.device.device_id] = layer_end
 
                     if led_count_for_target(request.device.target) != 2 and write.program:
                         # The strip's latest program is what a linked Dot

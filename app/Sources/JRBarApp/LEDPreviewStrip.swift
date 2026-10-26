@@ -597,17 +597,10 @@ struct LEDStage: View {
     }
 }
 
-/// A provider's working light as the monitor plays it for one agent
-/// working alone (`preview_provider_motion`): its chosen motion at its own
-/// tempo, or the Relay for Automatic -- the same program the Pro is sent,
-/// so the swatch can no longer show one motion while the strip plays
-/// another. The local sketch stands in until the monitor answers and when
-/// it is not running.
+/// The daemon's solo working program. Unavailable until it answers.
 struct ProviderMotionPreview: View {
     let core: CoreModel
     let provider: String
-    /// `LightingPreviewPrograms.working`, for a monitor that is away.
-    let sketch: String
     var phase: TimeInterval = 0
     @ViewState private var rendered: (key: String, program: String)?
 
@@ -620,8 +613,16 @@ struct ProviderMotionPreview: View {
 
     var body: some View {
         let live = rendered.flatMap { $0.key == key ? $0.program : nil }
-        LEDStripPreview(program: live ?? sketch, style: .band, dotSize: 6, showsBackground: true,
-                        cornerRadius: 6, phase: phase)
+        Group {
+            if let live {
+                LEDStripPreview(program: live, style: .band, dotSize: 6, showsBackground: true,
+                                cornerRadius: 6, phase: phase)
+            } else {
+                Text("Preview unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
             .task(id: key) {
                 let key = self.key
                 guard core.isLive,
@@ -634,19 +635,24 @@ struct ProviderMotionPreview: View {
     }
 }
 
-/// The finish the lights play (`list_finish_looks`): the shipped bloom,
-/// Land or Ripple, in the done colour, as the monitor draws it; the local
-/// sketch of the bloom stands in while it is away.
+/// The daemon's selected finish. Unavailable until it answers.
 struct FinishLookPreview: View {
     let core: CoreModel
-    let sketch: String
     @ViewState private var rendered: (key: String, program: String)?
 
     private var key: String { "\(core.isLive)|\(core.settings?.generation ?? 0)" }
 
     var body: some View {
         let live = rendered.flatMap { $0.key == key ? $0.program : nil }
-        LEDStripPreview(program: live ?? sketch, style: .dots, dotSize: 9, spacing: 6)
+        Group {
+            if let live {
+                LEDStripPreview(program: live, style: .dots, dotSize: 9, spacing: 6)
+            } else {
+                Text("Preview unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
             .task(id: key) {
                 let key = self.key
                 guard core.isLive,
@@ -657,44 +663,9 @@ struct FinishLookPreview: View {
     }
 }
 
-/// Builds the small programs the Lighting page previews when the monitor
-/// is not there to draw them: a provider's working animation under the
-/// chosen blend mode and cycle speed, and the done celebration in a
-/// colour. The daemon's own renders (`ProviderMotionPreview`,
-/// `FinishLookPreview`) replace them whenever it answers.
+/// Local state and demonstration programs. Provider and fleet previews
+/// always come from the daemon.
 enum LightingPreviewPrograms {
-    static func working(colorHex: String, blendMode: String, cycleSeconds: Double, ledCount: Int = 8) -> String {
-        let hex = normalized(colorHex)
-        let ms = max(300, Int(cycleSeconds * 1000))
-        let floor = scaled(hex, 0.10)
-        let n = max(2, ledCount)
-        switch blendMode {
-        case "relay":
-            // Spotlight: one agent flares along the strip.
-            let step = max(40, ms / n)
-            let segments = (0..<n).map { "\($0):\(hex) \(ms)ms pulse \($0 * step)ms" }.joined(separator: "; ")
-            return "\(floor)\n\(segments)\nrepeat"
-        case "spatial_split":
-            // Split: this agent owns the left half, breathing.
-            let mine = (0..<(n / 2)).map { "\($0):\(hex) \(ms)ms pulse 0ms" }.joined(separator: "; ")
-            let rest = (n / 2..<n).map { "\($0):\(scaled(hex, 0.18))" }.joined(separator: "; ")
-            return "\(rest)\n\(mine)\nrepeat"
-        case "color_blend":
-            // Smooth: a gradient of the colour rolling by.
-            let shades = (0..<n).map { i in mixed(hex, scaled(hex, 0.25), Double(i) / Double(n - 1)) }.joined(separator: " ")
-            return "\(shades)\nroll \(max(600, ms * 2))ms linear\nrepeat"
-        case "cycle":
-            // One at a time: the whole strip is this agent, then hands over.
-            return "\(hex) \(ms / 2)ms cosine\n\(hex) \(ms)ms none\n\(scaled(hex, 0.05)) \(ms / 2)ms cosine\n\(scaled(hex, 0.05)) \(ms)ms none\nrepeat"
-        case "classic":
-            // Status only: a steady colour.
-            return hex
-        default:
-            // Everyone: a swell, every LED together.
-            return "\(floor)\n\(hex) \(ms)ms pulse\nrepeat"
-        }
-    }
-
     /// One STATE's own rhythm in its own colour: the light language's five
     /// motions (`colors.STATE_MOTION`), so the Lighting page's state rows
     /// preview what the strip actually plays rather than a flat swatch.
@@ -734,65 +705,6 @@ enum LightingPreviewPrograms {
         let n = max(2, ledCount)
         let ripple = (0..<n).map { "\($0):\(hex) 70ms none \($0 * 45)ms" }.joined(separator: "; ")
         return "off 90ms cosine\n\(ripple)\noff 70ms none\n\(hex) 280ms cosine\n\(mixed(hex, "#FFFFFF", 0.18)) 240ms cosine\n\(hex) 200ms cosine\n\(hex) 1400ms none\noff 900ms cosine"
-    }
-
-    /// A busy desk under `blendMode`: two agents working in their own
-    /// colours and a third just done — the monitor's own `fleet` preview
-    /// scenario, the decision a blend mode is really about, which a
-    /// single-agent swatch cannot show. A local sketch of
-    /// `colors.BLEND_MODE_DESCRIPTIONS` for a monitor without
-    /// `preview_fleet`; the daemon's render is the authority. There is no
-    /// ask in it on purpose: an ask takes the whole strip under every
-    /// blend, so it says nothing about the blend.
-    static func fleet(blendMode: String, working: (String, String), doneHex: String,
-                      workingStateHex: String = "#00E5FF", cycleSeconds: Double, ledCount: Int = 8) -> String {
-        let a = normalized(working.0), b = normalized(working.1), done = normalized(doneHex)
-        let ms = max(600, Int(cycleSeconds * 1000))
-        let n = max(2, ledCount)
-        func block(_ range: Range<Int>, _ hex: String, _ timing: String) -> String {
-            range.map { "\($0):\(hex)\(timing)" }.joined(separator: " ")
-        }
-        switch blendMode {
-        case "round_robin":
-            // Everyone: alternating LEDs, each agent in its own colour;
-            // the working two breathe, the finished one holds.
-            let colors = (0..<n).map { [a, b, done][$0 % 3] }
-            let floor = colors.enumerated().map { $0.offset % 3 == 2 ? $0.element : scaled($0.element, 0.15) }.joined(separator: " ")
-            let swell = colors.enumerated().filter { $0.offset % 3 != 2 }
-                .map { "\($0.offset):\($0.element) \(ms)ms pulse" }.joined(separator: "; ")
-            return "\(floor)\n\(swell)\nrepeat"
-        case "spatial_split":
-            // Split: a section each; the working sections beat while the
-            // finished one holds.
-            let third = max(1, n / 3)
-            let base = (0..<n).map { index in
-                index < third ? scaled(a, 0.4) : index < 2 * third ? scaled(b, 0.4) : done
-            }.joined(separator: " ")
-            let beat = (0..<(2 * third)).map { "\($0):\($0 < third ? a : b) \(ms)ms pulse" }.joined(separator: "; ")
-            return "\(base)\n\(beat)\nrepeat"
-        case "relay":
-            // Spotlight: every section rests dim and one flares at a time.
-            let third = max(1, n / 3)
-            let sections: [(Range<Int>, String)] = [(0..<third, a), (third..<(2 * third), b), ((2 * third)..<n, done)]
-            let dim = sections.flatMap { range, hex in range.map { _ in scaled(hex, 0.2) } }.joined(separator: " ")
-            let flares = sections.map { range, hex in block(range, hex, "") + " \(ms)ms pulse" }
-            return ([dim] + flares + ["repeat"]).joined(separator: "\n")
-        case "cycle":
-            // One at a time: the whole strip is each agent in turn.
-            let lines = [a, b, done].flatMap { hex in ["\(hex) \(ms / 3)ms cosine", "\(hex) \(ms)ms none"] }
-            return (lines + ["repeat"]).joined(separator: "\n")
-        case "classic":
-            // Status only: one colour for the desk's state, agents unnamed:
-            // something is working.
-            return state("working", colorHex: workingStateHex)
-        default:
-            // Smooth: the three colours blended into one gradient, drifting.
-            let stops = (0..<n).map { index -> String in
-                let t = Double(index) / Double(n - 1)
-                return t < 0.5 ? mixed(a, b, t * 2) : mixed(b, done, (t - 0.5) * 2)
-            }
-            return "\(stops.joined(separator: " "))\nroll \(max(1200, ms * 3))ms linear\nrepeat"
-        }
     }
 
     /// Rainstick idle, sped up so it can be seen: the daemon's drip is

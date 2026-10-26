@@ -195,3 +195,34 @@ def test_ambient_fleet_uses_one_band_and_one_completion_for_cross_provider_group
                                     state, fleet, reduce_motion=False)
     assert len(completions) == 1
     assert completions[0].fleet_identity == ambient._opaque_work_identity(root_key, 'fleet')
+
+
+@pytest.mark.parametrize("raw_snapshot", [False, True])
+@pytest.mark.parametrize("parent_working", [False, True])
+def test_everyone_gives_a_t3_group_one_share_beside_a_solo_codex(raw_snapshot, parent_working):
+    from jrbar.colors import program_for_snapshot
+    from jrbar.led_wasm import RawSdLedWasmController
+    from jrbar.light_mix import explain_what_plays
+
+    root = status("claude:session:synthetic-parent",
+                  mode=AgentMode.WORKING if parent_working else AgentMode.IDLE_READY)
+    workers = tuple(status(key, links=[ParentLink(key, root.agent_id, "t3code", NOW)])
+                    for key in ("codex:session:synthetic-worker", "factory:session:synthetic-worker"))
+    solo = status("codex:session:synthetic-solo")
+    unlinked = status("factory:agent:synthetic-unlinked", session_id="missing")
+    rows = (root, *workers, solo, unlinked)
+    colors = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
+    projection = project_attention(snapshot(rows), AgentMonitorSettings())
+    assert len(active_agent_groups(projection)) == 2
+    assert {row.agent_id for row in projection.light_rows} == {root.agent_id, solo.agent_id}
+    result = explain_what_plays(rows if raw_snapshot else projection, colors, led_count=8)
+    assert [(row["provider"], row["animation"]) for row in result["providers"]] == [
+        ("codex", "kitt"), ("claude", "auto"),
+    ]
+    assert result["played"] == "round_robin"
+    assert result["warnings"] == []
+    expected_rows = (replace(root, mode=AgentMode.WORKING), solo)
+    assert result["program"] == program_for_snapshot(expected_rows, colors=colors)[1]
+    firmware = RawSdLedWasmController(8)
+    assert firmware.parse(result["program"], 0).ok
+    assert len({tuple(frame) for frame in firmware.step_batch(0, 40, 120)}) > 4

@@ -1495,21 +1495,25 @@ def notification_blink_program(color: str, brightness: float = 255) -> str:
     )
 
 
-def _steady_state_variant(program: str) -> str:
-    """The program without its one-shot approach frame, for reasserts.
-
-    A reassert refreshes device state without any visual change intended,
-    but the firmware restarts a program from its first line -- and the
-    first paint line is a bright transition snapshot, so every reassert
-    flashed one LED like an ask. The repeating body carries its own phase
-    delays and is the steady state the device is already showing.
-    """
+def _steady_state_variant(program: str, *, single_track: bool = False) -> str:
+    """Drop marked approaches, or a known single track's classic settle."""
     lines = program.splitlines()
     body_start = 1 if lines and lines[0].startswith("brightness ") else 0
     content = lines[body_start:]
     if len(content) >= 3 and content[-1].strip().startswith("repeat"):
-        trimmed = lines[:body_start] + content[1:]
-        return "\n".join(trimmed)
+        if content[0].strip() == "// approach":
+            return "\n".join(lines[:body_start] + content[2:])
+        # Classic arrival/settle producers predate the marker. A short
+        # cosine paint before a pulse or a roll is their approach frame.
+        # A breath with two cosine halves has no disposable first half.
+        first = content[0].split()
+        short_settle = (len(first) >= 3 and first[-1] == "cosine"
+                        and first[-2].endswith("ms")
+                        and first[-2][:-2].isdigit()
+                        and int(first[-2][:-2]) <= 250)
+        if single_track and short_settle and (content[1].startswith("roll-") or " pulse" in content[1]
+                or (len(content) >= 4 and "cosine" in content[1] and "cosine" in content[2])):
+            return "\n".join(lines[:body_start] + content[1:])
     return program
 
 
@@ -1748,6 +1752,7 @@ class AgentLedController:
         *,
         fallback_mode: AgentMode = AgentMode.IDLE_READY,
         relay_elapsed_seconds: float = 0.0,
+        ambient=None,
     ) -> LedStatusWrite:
         """Multi-agent-aware sibling of ``sync_mode``.
 
@@ -1783,6 +1788,10 @@ class AgentLedController:
         # written -- a gain change alone (with statuses/colors unchanged)
         # still produces a different string here and correctly triggers a
         # rewrite, with no separate "did gains change" tracking needed.
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            return self.sync_program(program, state, ambient=ambient,
+                single_track=self._single_provider(statuses, colors))
+        self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
         # Dedupe on the INPUTS, never the rendered text. Relay bakes a
@@ -1807,6 +1816,8 @@ class AgentLedController:
             program,
             dedupe_token=("snapshot", identity) if identity is not None else None,
             nominal=nominal,
+            single_track=self._single_provider(statuses, colors),
+            cadence_token=("program", nominal),
         )
 
     def sync_projection(
@@ -1816,6 +1827,7 @@ class AgentLedController:
         *,
         active_signal=None,
         relay_elapsed_seconds: float = 0.0,
+        ambient=None,
     ) -> LedStatusWrite:
         """Projection-aware renderer used by every live controller surface."""
         from .colors import program_for_projection
@@ -1832,6 +1844,10 @@ class AgentLedController:
             relay_elapsed_seconds=relay_elapsed_seconds,
             include_attention_arrival=arrival_fresh,
         )
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            return self.sync_program(program, state, ambient=ambient,
+                single_track=self._single_provider(projection, colors))
+        self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
         identity = self._phase_free_identity(
@@ -1851,7 +1867,18 @@ class AgentLedController:
             program,
             dedupe_token=("projection", identity) if identity is not None else None,
             nominal=nominal,
+            single_track=self._single_provider(projection, colors),
+            cadence_token=("program", nominal),
         )
+
+    @staticmethod
+    def _single_provider(state, colors):
+        from .colors import _active_agents, projection_mix_agents
+        from .light_mix import selected_agents
+
+        agents = (projection_mix_agents(state, colors, 8) if hasattr(state, "light_rows")
+                  else _active_agents(tuple(state), colors))
+        return len({agent.provider for agent in selected_agents(agents)}) <= 1
 
     def sync_program(
         self,
@@ -1861,8 +1888,10 @@ class AgentLedController:
         dedupe_token: object | None = None,
         force: bool = False,
         trim_on_reassert: bool = True,
+        single_track: bool = False,
         timing: object | None = None,
         hold_visible: bool = True,
+        ambient=None,
     ) -> LedStatusWrite:
         """Writes a pre-rendered program through the same gain/dedup/retry
         path sync_snapshot uses -- for displays that aren't derived from
@@ -1878,6 +1907,19 @@ class AgentLedController:
         ``trim_on_reassert=False`` because its program is already derived
         from the strip's running one, and ``timing`` for the write boundary
         to rotate and retime it (``linked_sync.DeviceTiming``)."""
+        self.ambient_layer_until = None
+        cadence_token = ("program", program)
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            from .ambient_layers import compose_ambient_layer
+
+            layered = compose_ambient_layer(program, state, ambient)
+            if layered != program:
+                cue_identity = ambient.dedupe_token
+                if ambient.output.family.value == "turn_length_ember":
+                    cue_identity = ("ember", ambient.nominal_program)
+                dedupe_token = (dedupe_token, cue_identity, layered)
+                self.ambient_layer_until = ambient.next_visual_change_at
+                program = layered
         nominal = program
         program = self._for_strip(program, state if hold_visible else None)
         return self._write_deduped_program(
@@ -1887,6 +1929,8 @@ class AgentLedController:
             nominal=nominal,
             force=force,
             trim_on_reassert=trim_on_reassert,
+            single_track=single_track,
+            cadence_token=cadence_token,
             timing=timing,
         )
 
@@ -2022,6 +2066,8 @@ class AgentLedController:
         nominal: str | None = None,
         force: bool = False,
         trim_on_reassert: bool = True,
+        single_track: bool = False,
+        cadence_token: object | None = None,
         timing: object | None = None,
     ) -> LedStatusWrite:
         now = time.monotonic()
@@ -2031,6 +2077,10 @@ class AgentLedController:
             if dedupe_token is not None
             else ("program", program)
         )
+
+        cadence_token = identity if cadence_token is None else cadence_token
+        cadence_changed = cadence_token != getattr(self, "_reassert_cadence_token", None)
+        cadence_at = getattr(self, "_reassert_cadence_at", now)
 
         if getattr(self, "pending_reboot_repaint", False):
             # Set by the background keepalive poke after it saw the
@@ -2047,7 +2097,7 @@ class AgentLedController:
             not force
             and identity == self.last_program_identity
             and self.last_error is None
-            and now - self.last_attempt_monotonic < self.reassert_after_seconds
+            and now - cadence_at < self.reassert_after_seconds
         ):
             return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         if (
@@ -2082,11 +2132,12 @@ class AgentLedController:
                 # A second writer twice inside ten minutes: stop fighting
                 # it (and wearing the flash); the device card says so.
                 self.last_attempt_monotonic = now
+                self._reassert_cadence_at = now
                 return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         self.last_attempt_monotonic = now
         trim = reassert and trim_on_reassert
-        to_write = _steady_state_variant(program) if trim else program
-        running_nominal = _steady_state_variant(nominal) if trim else nominal
+        to_write = _steady_state_variant(program, single_track=single_track) if trim else program
+        running_nominal = _steady_state_variant(nominal, single_track=single_track) if trim else nominal
         extra = {} if timing is None else {"timing": timing}
         from .device_writer import take_receipt
 
@@ -2113,6 +2164,10 @@ class AgentLedController:
                 error=self.last_error,
             )
         receipt = take_receipt()
+        # Cue apply/restore writes do not move the base's reassert clock.
+        if force or cadence_changed or now - cadence_at >= self.reassert_after_seconds:
+            self._reassert_cadence_at = now
+        self._reassert_cadence_token = cadence_token
 
         self.last_state = state
         # Report what is RUNNING, not what was asked for: on a reassert the

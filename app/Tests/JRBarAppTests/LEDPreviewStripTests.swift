@@ -158,9 +158,6 @@ struct LEDPreviewStripTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let programs: [(String, String)] = [
             ("sweep", Self.sweep),
-            ("working", LightingPreviewPrograms.working(colorHex: "#FF7A1A", blendMode: "relay", cycleSeconds: 1.6)),
-            ("fleet", LightingPreviewPrograms.fleet(blendMode: "smooth", working: ("#FF7A1A", "#4C8DFF"),
-                                                     doneHex: "#00FF66", cycleSeconds: 2)),
             ("error", LightingPreviewPrograms.state("error", colorHex: "#FF3B30")),
             ("refused", "this is not a program"),
         ]

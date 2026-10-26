@@ -90,7 +90,7 @@ def test_a_switched_off_cue_never_reaches_the_dispatch(monkeypatch: pytest.Monke
 
 
 def test_the_lights_document_names_the_cue_on_each_surface(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jrbar import ambient_effect_runtime as runtime
+    from jrbar import ambient_effect_consumer as consumer
     from jrbar.ambient_effect_dispatch import AmbientEffectSurface
     from jrbar.core_lights import augment_lights_cues
 
@@ -99,9 +99,9 @@ def test_the_lights_document_names_the_cue_on_each_surface(monkeypatch: pytest.M
         AmbientEffectSurface.SIDEPULSE_DOT: SimpleNamespace(family=AmbientEffectFamily.DOT_BINARY_HEARTBEAT),
     }
     monkeypatch.setattr(
-        runtime,
-        "active_ambient_surface_output",
-        lambda controller, surface: (staged[surface], 0.0) if surface in staged else None,
+        consumer,
+        "active_ambient_presentation",
+        lambda controller, surface, **kwargs: SimpleNamespace(output=staged[surface]) if surface in staged else None,
     )
     document = {"surfaces": {"screen_bar": {"program": "x"}, "hardware": {"program": "y"}, "dot": {"program": "z"}}}
     augment_lights_cues(SimpleNamespace(), document)
@@ -276,6 +276,96 @@ def test_a_device_blend_mode_writes_through_set_setting(daemon) -> None:
     assert daemon.settings.device_blend_mode("pro") == "round_robin"
     core_runtime._cmd_set_setting(daemon, {"path": f"devices.{index}.blend_mode", "value": "everyone"})
     assert daemon.settings.device_blend_mode("pro") is None
+
+
+def test_global_mix_and_legacy_alias_write_the_same_setting(daemon):
+    for path, mode in (("colors.mix_mode", "weave"), ("colors.blend_mode", "tide")):
+        reply = daemon._core_dispatch("set_setting", {"path": path, "value": mode})
+        assert reply["value"] == mode
+        saved = daemon.settings.to_dict()["colors"]
+        assert saved["blend_mode"] == mode
+        assert "mix_mode" not in saved
+        published = daemon._core_documents["settings"]["document"]["colors"]
+        assert published["blend_mode"] == published["mix_mode"] == mode
+
+
+def test_what_plays_uses_the_live_mix_and_each_device_override(daemon, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from jrbar.colors import BLEND_MODE_CHOICES
+    from jrbar.settings import DeviceDisplaySetting
+    from tests.test_light_mix import statuses
+
+    daemon.current_attention_projection = None
+    daemon.last_snapshot = SimpleNamespace(statuses=statuses(2))
+    daemon.settings = replace(daemon.settings,
+        colors=daemon.settings.colors.with_blend_mode("weave"),
+        devices=(DeviceDisplaySetting(device_id="dot", name="Test", path=str(tmp_path / "PulseDot"),
+                                      blend_mode="relay"),))
+    monkeypatch.setattr(daemon, "status_bar_devices", lambda **_: _devices(tmp_path))
+    # The inventory function must not create the fixture paths twice.
+    inventory = daemon.status_bar_devices()
+    monkeypatch.setattr(daemon, "status_bar_devices", lambda **_: inventory)
+    reply = daemon._core_dispatch("what_plays", {})
+    assert {row["id"] for row in reply["mixes"]} == set(BLEND_MODE_CHOICES)
+    rows = {row["device"]: row for row in reply["devices"]}
+    assert rows["pro"]["played"] == "weave"
+    assert rows["dot"]["requested_mix"] == "relay"
+    assert rows["dot"]["played"] == "alternate"
+    assert rows["dot"]["warnings"]
+    with pytest.raises(CommandError, match="unknown device"):
+        daemon._core_dispatch("what_plays", {"device": "missing"})
+
+
+def test_hardware_layers_celebration_on_the_live_program_and_restores_it(daemon, tmp_path, monkeypatch):
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.ambient_effect_dispatch import compile_ambient_effect_dispatch
+    from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
+    from tests.test_light_mix import statuses
+
+    clock = [10.0]
+    monkeypatch.setattr(ambient_effect_runtime.time, "monotonic", lambda: clock[0])
+    daemon.current_attention_projection = None
+    daemon.settings = daemon.settings.with_colors(daemon.settings.colors.with_agent_animation("codex", "kitt"))
+    daemon._frozen_hardware_render_colors = daemon.settings.colors
+    daemon._ambient_effect_dispatch = compile_ambient_effect_dispatch(semantic_selection=route_semantic_effects((
+        SemanticEffectCandidate("synthetic:completion", SemanticEventKind.COMPLETION),)))
+    daemon._ambient_effect_dispatch_started_at = 10.0
+    device = legacy.StatusBarDevice(device_id="pro", name="Test", root=tmp_path,
+        target=tmp_path / "LEDS.LED", connected=True, display=legacy.LED_DISPLAY_AGENT)
+    controller = led_status.AgentLedController(device_path=tmp_path)
+    monkeypatch.setattr(daemon, "agent_controller_for_device", lambda _: controller)
+    monkeypatch.setattr(daemon, "reset_led_controllers_for_device", lambda _: None)
+    request = legacy.HardwareWriteRequest(device=device, mode=legacy.AgentMode.WORKING,
+        battery_snapshot=None, statuses=statuses(1), projection=None, relay_elapsed_seconds=0,
+        display_kind=legacy.LED_DISPLAY_AGENT, write_priority=legacy.RuntimeWorkPriority.COALESCIBLE,
+        coalesce_identity="test")
+    first = daemon._sync_hardware_device(request)
+    assert first.write.changed and first.agent_display_rendered
+    assert 10.0 < controller.ambient_layer_until <= 12.0
+    daemon.agent_led_controllers_by_device["pro"] = controller
+    daemon._core_hardware_anchor["pro"] = 100.0
+    monkeypatch.setattr(daemon, "status_bar_devices", lambda **_: [device])
+    lights = daemon._core_build_lights()["surfaces"]
+    assert lights["screen_bar"]["anchor"] == lights["hardware"]["anchor"] == 100.0
+    def body(program):
+        return [line for line in program.splitlines() if not line.startswith("brightness ")]
+    assert body(lights["screen_bar"]["program"]) == body(lights["hardware"]["program"])
+    clock[0] = 13.0
+    restored = daemon._sync_hardware_device(request)
+    assert restored.write.changed and restored.agent_display_rendered
+    assert controller.ambient_layer_until is None
+    assert restored.write.nominal_program != first.write.nominal_program
+    from jrbar.colors import program_for_snapshot
+
+    assert restored.write.nominal_program == program_for_snapshot(statuses(1), colors=daemon.settings.colors)[1]
+
+
+def test_an_unlinked_screen_bar_layer_repaints_at_its_deadline(daemon):
+    daemon._ambient_screen_bar_layer_until = 12.0
+    assert daemon._core_repaint_finished_cues(11.9) is False
+    assert daemon._core_repaint_finished_cues(12.0) is True
+    assert daemon._ambient_screen_bar_layer_until is None
 
 
 def test_resolve_effect_walks_the_scope_ladder_before_it_happens(
@@ -557,3 +647,33 @@ def test_list_focuses_invalid_unicode_configuration_marks_both_readings_unavaila
     assert reply["focuses"] == [] and reply["active"] == []
     assert reply["active_available"] is False
     assert reply["active_reason"] == "Active Focus mode names unavailable"
+
+
+def test_screen_bar_layer_applies_brightness_once_to_both_programs(daemon, monkeypatch):
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.ambient_effect_dispatch import compile_ambient_effect_dispatch
+    from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
+    from tests.test_light_mix import statuses
+
+    monkeypatch.setattr(legacy, "SCREEN_BAR_FEATURE_ENABLED", True)
+    monkeypatch.setattr(ambient_effect_runtime.time, "monotonic", lambda: 10.5)
+    daemon.settings = replace(daemon.settings, virtual_status_device_enabled=True,
+        colors=daemon.settings.colors.with_agent_animation("codex", "kitt"))
+    daemon._frozen_hardware_render_colors = daemon.settings.colors
+    daemon.current_attention_projection = None
+    daemon.virtual_status_device = MagicMock()
+    device = SimpleNamespace(device_id=legacy.VIRTUAL_DEVICE_ID, resting_glow=0.0, channel_gains=(1, 1, 1))
+    monkeypatch.setattr(daemon, "status_bar_devices", lambda remember=False: [device])
+    monkeypatch.setattr(daemon, "active_led_display_kind_for_device", lambda *_: legacy.LED_DISPLAY_AGENT)
+    monkeypatch.setattr(daemon, "effective_brightness_for_device", lambda _: 128)
+    daemon._ambient_effect_dispatch = compile_ambient_effect_dispatch(semantic_selection=route_semantic_effects((
+        SemanticEffectCandidate("synthetic:completion", SemanticEventKind.COMPLETION),)))
+    daemon._ambient_effect_dispatch_started_at = 10.0
+    daemon.sync_virtual_status_device(legacy.AgentMode.WORKING, None, statuses(1))
+    call = daemon.virtual_status_device.set_program.call_args
+    assert call is not None
+    assert call.args[0].splitlines()[0] == "brightness 128"
+    assert call.kwargs["static_fallback_program"].splitlines()[0] == "brightness 128"

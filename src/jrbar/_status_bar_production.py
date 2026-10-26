@@ -18,6 +18,7 @@ from .ambient_effect_consumer import (
     active_hardware_ambient_presentation,
     active_screen_bar_ambient_presentation,
 )
+from .ambient_layers import is_short_cue
 from .battery_runtime import BatteryObservation, BatteryObservationService
 from .core_state import CoreDomain, CoreStateStore, StateDelta
 from .device_projection import light_rows_for_provider, projection_for_provider
@@ -487,7 +488,9 @@ else:
                 colors = _LegacyStatusBarController.agent_render_colors(self)
             except Exception:
                 colors = self.settings.colors
-            self._frozen_hardware_render_colors = colors
+            self._frozen_hardware_render_colors = _legacy.dataclass_replace(
+                colors, render_turn_starts=dict(getattr(self, "_ambient_turn_starts", {})),
+            )
 
         def agent_render_colors(self):
             """Worker-safe immutable render input, with no AppKit access."""
@@ -504,8 +507,9 @@ else:
                 reduce_motion=bool(getattr(preferences, "reduce_motion", False)),
                 brightness=brightness,
             )
-            if ambient is None:
+            if ambient is None or is_short_cue(ambient.output):
                 return False
+            self._ambient_screen_bar_layer_until = None
             presentation = ambient.screen_bar_program
             setter(
                 _legacy.apply_brightness(presentation.dsl, brightness),
@@ -534,7 +538,7 @@ else:
                         ),
                         brightness=controller.brightness,
                     )
-                    if ambient is not None:
+                    if ambient is not None and not is_short_cue(ambient.output):
                         write = controller.sync_program(
                             ambient.program,
                             ambient.led_state,

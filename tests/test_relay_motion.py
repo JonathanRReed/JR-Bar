@@ -102,9 +102,11 @@ def test_relay_phase_index_wraps_without_losing_large_elapsed_time__and_2_more()
         relay_elapsed_seconds=0.8,
     )
 
-    assert _pulse_indices(program) == [4, 5, 6, 7, 0, 1, 2, 3]
-    delays = [int(segment.split()[-1][:-2]) for segment in _body(program)[1].split("; ")]
-    assert delays == [0, 200, 400, 600, 800, 1_000, 1_200, 1_400]
+    # The firmware carries the scanner clock. A daemon refresh does not
+    # rotate or restart it based on the number of callbacks.
+    assert "roll-right" in program and "roll-left" in program
+    assert program == program_for_snapshot(statuses, led_count=8,
+        colors=_relay_settings(), relay_elapsed_seconds=0.0)[1]
 
     # --- scenario: all_static_relay_program_is_byte_stable_across_elapsed_phases
     completed = _status("codex", AgentMode.COMPLETED)
@@ -175,8 +177,13 @@ def test_two_and_eight_led_programs_map_one_elapsed_duration_by_fraction__and_2_
         relay_elapsed_seconds=0.8,
     )
 
-    assert _pulse_indices(dot)[0] == 1
-    assert _pulse_indices(screen_bar)[0] == 4
+    from jrbar.light_mix import explain_what_plays
+
+    explanation = explain_what_plays(statuses, settings, led_count=2)
+    assert explanation["played"] == "alternate"
+    assert explanation["warnings"]
+    assert "roll-right" in screen_bar
+    assert dot == explanation["program"]
 
     # --- scenario: two_and_eight_led_phase_alignment_survives_integer_step_rounding
     assert relay_phase_index(0.299, 0.3, 2) == 1
@@ -242,18 +249,13 @@ def test_relay_program_stays_inside_firmware_bounds__and_1_more() -> None:
         parsed = controller.parse(program, epoch_ms)
         assert parsed.ok, f"{parsed.error_name} at {parsed.line}:{parsed.column}"
 
-        step_ms = 800 if led_count == 2 else 200
-        settle_ms = 96 if led_count == 2 else 40
-        visited: set[int] = set()
-        for turn in range(led_count):
-            # The midpoint of each pulse is safely away from both segment edges.
-            pixels = controller.step(epoch_ms + settle_ms + turn * step_ms + step_ms // 2)
-            intensity = [sum(pixel) for pixel in pixels]
-            brightest = {index for index, value in enumerate(intensity) if value == max(intensity)}
-            assert brightest == {turn}
-            visited.update(brightest)
-
-        assert visited == set(range(led_count))
+        frames = controller.step_batch(epoch_ms, 40, 130)
+        assert len({tuple(frame) for frame in frames}) > 1
+        if led_count == 8:
+            visited = {max(range(8), key=lambda index: sum(frame[index])) for frame in frames}
+            assert visited == set(range(8))
+        else:
+            assert all(frame[0] == frame[1] for frame in frames)
 
 
 

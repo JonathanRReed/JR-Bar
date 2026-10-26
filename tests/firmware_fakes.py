@@ -62,12 +62,17 @@ def make_zip(
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        def write_member(name, data):
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
+
         for member in PACKAGE_MEMBER_NAMES:
             if member in skip:
                 continue
-            archive.writestr((names or {}).get(member, prefix + member), contents[member])
+            write_member((names or {}).get(member, prefix + member), contents[member])
         for name, data in (extra or {}).items():
-            archive.writestr(name, data)
+            write_member(name, data)
     return buffer.getvalue()
 
 

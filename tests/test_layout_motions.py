@@ -65,7 +65,7 @@ def test_cycle_turns_render_the_chosen_rhythm_class__and_2_more() -> None:
     # A positional turn owns the whole strip: a rolled per-position profile
     # appears (eight colours on one line, then rotation).
     assert "roll-right" in gradient
-    assert len(gradient.splitlines()[2].split()) == 8 + 2
+    assert any(len(line.split()) == 8 + 2 for line in gradient.splitlines())
     for text in (plain, heartbeat, gradient):
         firmware_ok(text)
 
