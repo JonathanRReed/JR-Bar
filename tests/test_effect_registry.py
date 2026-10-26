@@ -171,7 +171,7 @@ def test_unrepresentable_numeric_parameters_fail_with_registry_errors() -> None:
 
 @pytest.mark.parametrize("motion, minimum", [
     ("chase", 1.0), ("scanner", 1.0), ("comet", 1.0),
-    ("flicker", 1.7), ("twinkle", 1.7), ("bloom", 1.0),
+    ("flicker", 1.7), ("twinkle", 1.7), ("bloom", 1.0), ("gradient", 0.5),
 ])
 def test_offered_minimum_duration_keeps_shared_native_timing(motion, minimum):
     from light_audit import Case, Firmware, catalogue, inspect
@@ -182,3 +182,15 @@ def test_offered_minimum_duration_keeps_shared_native_timing(motion, minimum):
     for counts in ((1, 1), (2, 2), (3, 1), (2, 1, 1)):
         result = inspect(Case(variant, "round_robin", counts, 8, "working"), Firmware())
         assert "share_fidelity" not in result.failures, (motion, counts, result.failures)
+
+
+@pytest.mark.parametrize("motion", [effect.identifier for effect in provider_animation_effects()])
+def test_offered_duration_never_substitutes_a_different_motion(motion):
+    from light_audit import Case, Firmware, catalogue, inspect
+
+    variant = next(v for v in catalogue() if v.name == motion + ".low")
+    firmware = Firmware()
+    for leds in (2, 8):
+        result = inspect(Case(variant, "round_robin", (1,), leds, "working"), firmware)
+        assert result.played == motion, (motion, leds, result.warnings)
+        assert not result.failures, (motion, leds, result.failures)

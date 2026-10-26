@@ -516,7 +516,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_GRADIENT: (
-        _duration(),
+        _duration(minimum=0.5),
         _choice("direction", "forward", "Direction of gradient travel.", _DIRECTIONS),
         _number(
             "hue_span_degrees",
