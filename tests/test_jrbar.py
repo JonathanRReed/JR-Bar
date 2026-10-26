@@ -12647,6 +12647,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
                     is_subagent=False,
                     updated_at=failed.updated_at,
                     source_status=failed,
+                    failure_signal_until=16.0,
                 ),
             ),
             transient_signals=(),
