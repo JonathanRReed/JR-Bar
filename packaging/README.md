@@ -144,3 +144,22 @@ item and exits).
 
 The Python wheel and sdist are `make package-python`; they are developer
 artifacts, not the app.
+
+
+### Headless HID build
+
+The upstream `hidapi==0.14.0.post4` wheel links AppKit to check the macOS
+version. Packaging rebuilds that same pinned source with
+`build_headless_hidapi.py`, using a compiler availability check instead.
+The source archive's SHA-256 must match the reviewed digest. The build
+uses its generated C and the already pinned setuptools and wheel.
+`headless-hidapi/headless-hidapi.json` records the source, builder and wheel
+hashes in the build directory.
+
+The packaged runtime verifier exercises every native adapter and imports
+the actual HID extension, even though physical device discovery remains
+disabled. Each step records loaded images and Python imports. An omitted
+step, an exception, a missing native import or a GUI image fails the gate.
+The daemon's read-only `doctor.appkit_loaded` value must also be false.
+The probe never posts input, plays sound, launches an app, sends HTTP,
+reads Keychain items or exchanges HID reports with a device.

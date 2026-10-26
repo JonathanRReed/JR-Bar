@@ -9168,6 +9168,7 @@ def build_headless_controller_class() -> type:
             from .doctor import collect_diagnostics
             from .install import hook_shim_path
             from .memory_probe import memory_report
+            from .runtime_images import appkit_loaded
 
             checks: list[dict[str, Any]] = []
             try:
@@ -9247,6 +9248,7 @@ def build_headless_controller_class() -> type:
                 "commands": list(command_names()),
                 "checks": checks,
                 "memory": memory_report(),
+                "appkit_loaded": appkit_loaded(),
                 "performance": performance,
             }
 

@@ -1,13 +1,14 @@
 """Run the frozen daemon in an isolated home for the packaging verifier."""
 from __future__ import annotations
 
-import ctypes as c
 import json
 import os
 import socket
 import sys
 import time
 from pathlib import Path
+
+from .runtime_images import loaded_images
 
 FORBIDDEN_MODULES = frozenset({"objc", "AppKit", "Cocoa", "Foundation", "WebKit", "Quartz", "EventKit", "JavaScriptCore"})
 
@@ -18,11 +19,7 @@ def forbidden_images(images):
 
 
 def inventory():
-    lib = c.CDLL("/usr/lib/libSystem.B.dylib")
-    lib._dyld_image_count.restype = c.c_uint32
-    lib._dyld_get_image_name.argtypes = [c.c_uint32]
-    lib._dyld_get_image_name.restype = c.c_char_p
-    images = [lib._dyld_get_image_name(index).decode() for index in range(lib._dyld_image_count())]
+    images = loaded_images()
     modules = sorted(sys.modules)
     return {"images": images, "modules": modules,
             "forbidden_images": forbidden_images(images),
@@ -78,8 +75,13 @@ def run(root: Path) -> int:
             if len(samples) < 4:
                 return
             timer.invalidate()
+            from ._packaging_native import exercise
+
+            steps = exercise(inventory)
             receipt = inventory()
-            receipt.update(schema=1, frozen=bool(getattr(sys, "frozen", False)), pid=os.getpid(), samples=samples,
+            receipt.update(schema=2, native_steps=steps,
+                           doctor_appkit_loaded=controller._core_doctor_document()["appkit_loaded"],
+                           frozen=bool(getattr(sys, "frozen", False)), pid=os.getpid(), samples=samples,
                            socket_ready=controller._core is not None and controller._core.socket_path == root / "core.sock"
                            and (root / "core.sock").is_socket())
             (root / "runtime.json").write_text(json.dumps(receipt, indent=2) + "\n")
