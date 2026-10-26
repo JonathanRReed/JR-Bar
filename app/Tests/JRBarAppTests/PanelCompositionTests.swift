@@ -113,6 +113,19 @@ struct PanelCompositionTests {
         #expect(store.panelUsage.count > composition.usageLimit)
     }
 
+    @Test func aShortScreenKeepsWholeUsageRowsAndTheFooter() {
+        let asks = (0..<6).map { CoreAsk(session: "claude:ask:\($0)", summary: "Sample request", answerable: true, request: "request-\($0)") }
+        let sessions = (0..<8).map { Self.session("codex:session:\($0)", provider: "codex") }
+        let readings = ["claude", "codex", "gemini", "cursor", "antigravity", "grok"].map { Self.usage($0) }
+        let store = Self.store(sessions, asks: asks, usage: readings)
+        store.screenHeight = 600
+        let composition = PanelComposition(store: store)
+        #expect(composition.totalHeight <= 588)
+        #expect(composition.usageLimit >= 1)
+        #expect(composition.asksHeight >= CGFloat(PanelLayout.askRowHeight))
+        #expect(composition.agentsHeight >= PanelComposition.rowHeight)
+    }
+
     @Test func editsSaveTheSharedOrderAndPanelVisibilityLeavesTrackOn() async throws {
         let store = Self.store(usage: [Self.usage(), Self.usage("codex")])
         let fixtures = ProviderListStoreTests()

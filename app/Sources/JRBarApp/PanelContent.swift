@@ -20,21 +20,33 @@ struct PanelComposition {
         let agents = store.currentPanelAgents + (store.earlierExpanded ? store.earlierPanelAgents : [])
         let memberCount = agents.filter { store.expandedAgentGroups.contains($0.id) }.reduce(0) { $0 + $1.members.count }
         let naturalAgents = max(Self.rowHeight, CGFloat(agents.count) * Self.rowHeight + CGFloat(memberCount) * Self.memberHeight)
-        agentsHeight = min(naturalAgents, Self.rowHeight * 5)
+        var agentHeight = min(naturalAgents, Self.rowHeight * 5)
         let asks = store.visibleAskRows + [store.demoRow].compactMap { $0 }
-        let naturalAsksHeight = asks.reduce(CGFloat.zero) { height, row in
+        let naturalAsks = asks.reduce(CGFloat.zero) { height, row in
             height + CGFloat(PanelLayout.askRowHeight) + (AskExpansion.shared.isShowing(row.ask) ? CGFloat(PanelLayout.askDetailHeight) : 0)
         }
-        asksHeight = min(naturalAsksHeight, max(CGFloat(PanelLayout.askRowHeight), CGFloat(store.screenHeight) * 0.35))
+        var askHeight = min(naturalAsks, CGFloat(store.screenHeight) * 0.35)
+        let minimumAsks = min(naturalAsks, CGFloat(PanelLayout.askRowHeight))
         let earlier = store.earlierPanelAgents.isEmpty && store.hiddenCount == 0 ? 0 : Self.sectionHeight
         let banner: CGFloat = store.coreCrashed || !store.isLive || store.providerList.failure != nil ? 70 : 0
-        let askSection = asksHeight + (asks.isEmpty ? 0 : Self.sectionHeight)
-        let agentSection = Self.sectionHeight + agentsHeight + earlier
-        let chrome = Self.rowHeight + banner + Self.footerHeight + 4
-        let fixed = chrome + askSection + agentSection + Self.sectionHeight
         let rows = store.editingProviders ? store.panelEditProviders.count : store.panelUsage.count
         let header: CGFloat = store.editingProviders || !store.panelWindowNames.isEmpty ? 20 : 0
-        let capacity = max(1, min(4, Int((CGFloat(store.screenHeight) * 0.85 - fixed - header - Self.sectionHeight) / 90)))
+        let minimumUsage = store.editingProviders ? Self.rowHeight : store.panelUsage.first.map(Self.usageHeight) ?? Self.rowHeight
+        let moreRoom: CGFloat = rows > 1 ? Self.sectionHeight : 0
+        let sectionLabels = Self.sectionHeight * 2 + (asks.isEmpty ? 0 : Self.sectionHeight)
+        let chrome = Self.rowHeight + banner + Self.footerHeight + sectionLabels + earlier + 4
+        let minimum = chrome + header + minimumUsage + moreRoom + minimumAsks + Self.rowHeight
+        let target = max(CGFloat(store.screenHeight) * 0.85, minimum)
+        let cap = min(CGFloat(store.screenHeight) - JRBarTokens.Space.md, target)
+        var excess = max(0, chrome + header + minimumUsage + moreRoom + askHeight + agentHeight - cap)
+        let agentReduction = min(excess, agentHeight - Self.rowHeight)
+        agentHeight -= agentReduction
+        excess -= agentReduction
+        askHeight -= min(excess, askHeight - minimumAsks)
+        agentsHeight = agentHeight
+        asksHeight = askHeight
+        let fixed = chrome + agentHeight + askHeight
+        let capacity = max(1, min(4, Int((cap - fixed - header - moreRoom) / 90)))
         usageLimit = capacity
         let heights = store.editingProviders
             ? CGFloat(min(rows, capacity)) * Self.rowHeight

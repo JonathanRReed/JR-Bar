@@ -14,7 +14,7 @@ struct PanelRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func panelStatesAtBothWidthsAndAppearances() async throws {
         for state in ["groups", "expanded", "seven-members", "asks", "earlier", "idle", "source-idle",
-                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion"] {
+                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen"] {
             let store = try await fixture(state)
             for width: CGFloat in [PanelView.width, 320] {
                 for dark in [false, true] {
@@ -83,6 +83,12 @@ struct PanelRenderProofTests {
         case "overflow":
             store = Fixture.store([Fixture.session("claude:active")],
                                   usage: ["claude", "codex", "gemini", "cursor", "antigravity", "grok"].map { Fixture.usage($0) })
+        case "short-screen":
+            let asks = (0..<6).map { CoreAsk(session: "claude:ask:\($0)", summary: "Sample request", answerable: true, request: "request-\($0)") }
+            let sessions = (0..<8).map { Fixture.session("codex:session:\($0)", provider: "codex") }
+            let readings = ["claude", "codex", "gemini", "cursor", "antigravity", "grok"].map { Fixture.usage($0) }
+            store = Fixture.store(sessions, asks: asks, usage: readings)
+            store.screenHeight = 600
         default:
             store = Fixture.store(usage: [Fixture.usage()])
             store.core.handle(.disconnected(reason: "fixture"))
