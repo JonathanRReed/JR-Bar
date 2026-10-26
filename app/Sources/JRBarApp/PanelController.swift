@@ -291,6 +291,15 @@ final class PanelController {
         }
     }
 
+    static func handleUndoKey(characters: String?, flags: NSEvent.ModifierFlags,
+                              typingInField: Bool, store: PanelStore) -> Bool {
+        let modifiers = flags.intersection([.command, .shift, .control, .option])
+        guard !typingInField, modifiers == .command, characters?.lowercased() == "z",
+              store.canUndoClear else { return false }
+        store.undoClear()
+        return true
+    }
+
     private func handleLocal(_ event: NSEvent) -> NSEvent? {
         switch event.type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
@@ -318,6 +327,8 @@ final class PanelController {
             // A reply field being typed into keeps its own characters, and
             // its ⌘↩ and ⌘D: they never answer some other card.
             let typingInField = panel.firstResponder is NSTextView
+            if Self.handleUndoKey(characters: event.charactersIgnoringModifiers, flags: flags,
+                                  typingInField: typingInField, store: store) { return nil }
             let armed = PanelStore.chordsArmed(isRepeat: event.isARepeat, openedAt: openedAt, now: Date())
             if flags.contains(.command), !typingInField, event.charactersIgnoringModifiers?.lowercased() == "d",
                store.denySelectedAsk(typingInField: typingInField, armed: armed) {

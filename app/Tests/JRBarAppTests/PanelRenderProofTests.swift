@@ -12,6 +12,30 @@ struct PanelRenderProofTests {
     private typealias Fixture = PanelCompositionTests
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func footerControlsAtBothWidthsAndAppearances() async throws {
+        try U5Proof.pinDefaultAccent()
+        for state in ["default", "quiet", "clearable", "undo"] {
+            let sessions = state == "clearable" ? [Fixture.session("codex:done", provider: "codex", mode: "done")] : []
+            let store = Fixture.store(sessions, usage: [Fixture.usage(), Fixture.usage("codex")])
+            if state == "quiet" {
+                store.core.apply(.state(CoreState(generation: 2, now: Fixture.time, aggregate: CoreAggregate(),
+                    usage: CoreUsage(providers: [Fixture.usage(), Fixture.usage("codex")]),
+                    focus: CoreFocus(mode: "pause", source: "override", until: Fixture.time + 1800))))
+            }
+            if state == "undo" {
+                store.undoOffer = (batch: "sample-batch", at: store.now.addingTimeInterval(4 - EventPolicy.undoWindow), cleared: 2)
+                #expect(store.undoCountdown == "0:04")
+            }
+            for width: CGFloat in [372, 320] {
+                for dark in [false, true] {
+                    let panel = PanelView(store: store, panelWidth: width).tint(.blue).accentColor(.blue)
+                    try await render(panel, name: "footer-\(state)-\(Int(width))", width: width, dark: dark)
+                }
+            }
+        }
+    }
+
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func panelStatesAtBothWidthsAndAppearances() async throws {
         for state in ["groups", "expanded", "seven-members", "asks", "earlier", "idle", "source-idle",
                       "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen", "find", "undo", "quiet-awake", "missing-root", "retry", "edit-accounts", "motion", "expanded-short-screen", "alerts"] {

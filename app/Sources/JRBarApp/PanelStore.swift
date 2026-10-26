@@ -2080,7 +2080,7 @@ final class PanelStore {
 
     /// The batch the daemon's last `clear_completed` reply named, and when
     /// it landed: while it is inside `EventPolicy.undoWindow` the footer
-    /// offers Undo beside "Clear finished".
+    /// offers Undo in place of "Clear finished".
     var undoOffer: (batch: String, at: Date, cleared: Int)? {
         didSet { undoOfferGeneration &+= 1 }
     }
@@ -2097,7 +2097,7 @@ final class PanelStore {
         return now.timeIntervalSince(undoOffer.at) < EventPolicy.undoWindow
     }
 
-    /// "Undo (4:38)": how long is left to take the clear back.
+    /// "4:38": how long is left to take the clear back.
     var undoCountdown: String? {
         guard let undoOffer, canUndoClear else { return nil }
         let left = Int((EventPolicy.undoWindow - now.timeIntervalSince(undoOffer.at)).rounded(.up))
