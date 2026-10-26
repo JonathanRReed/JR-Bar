@@ -1972,6 +1972,15 @@ final class NotchToy: Toy {
     /// steps down. `reconcile` calls it on every document; internal so
     /// tests can run it without one.
     func noteAskState() {
+        let failures = [capsuleQueue.current, capsuleQueue.pending, shelvedCapsule?.notice]
+            .compactMap { $0 }.filter { $0.kind == .failed }
+        for notice in failures {
+            guard let id = notice.session, let session = core.state?.session(withID: id),
+                  session.supersedesFailure(at: notice.expiresAt.map { $0 - 5 },
+                                            now: capsuleClock().timeIntervalSince1970) else { continue }
+            if shelvedCapsule?.notice.id == notice.id { shelvedCapsule = nil }
+            if capsuleQueue.resolveFailure(session: id) { finishCapsule() }
+        }
         if let capsule = activeCapsule, capsule.kind == .ask, !askHolds(capsule) {
             finishCapsule()
         }

@@ -1819,7 +1819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshMeters(preferred: preferred, usage: usage)
         refreshSessionDots()
         if core.isLive, let aggregate = core.state?.aggregate {
-            let failed = core.sessions.filter { SessionActivity.reduce($0) == .failed }.count
+            let failed = core.sessions.filter { $0.signalsFailure(at: Date().timeIntervalSince1970) }.count
             statusItem.labelText = StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready, failed: failed)
         } else {
             statusItem.labelText = nil
@@ -1892,7 +1892,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // A snoozed ask still owns its dot but draws it dim and still:
             // a muted mailbox pulsing amber in the strip is the snooze not
             // working from the only place it must visibly work.
-            SessionDot(id: row.id, state: Self.sessionDotState(for: row),
+            SessionDot(id: row.id, state: Self.sessionDotState(for: row, now: now),
                        accentHex: row.activity == .working ? row.style.accentHex : nil,
                        dimmed: row.isSnoozed(now: now))
         }
@@ -1901,11 +1901,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// A row's dot colour: an open ask (or a wait) is amber, a failure
     /// red, a working run its provider's accent, a fresh completion green.
-    static func sessionDotState(for row: SessionRow) -> StatusDotState {
+    static func sessionDotState(for row: SessionRow, now: Date = Date()) -> StatusDotState {
         if row.ask != nil { return .ask }
         switch row.activity {
         case .waiting: return .ask
-        case .failed: return .error
+        case .failed: return row.failureSignal?.contains(now.timeIntervalSince1970) == true ? .error : .idle
         case .working: return .working
         case .done: return .done
         case .idle, .ended: return .idle
@@ -1983,10 +1983,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private func dotState() -> StatusDotState {
         guard let core, core.isLive, let state = core.state else { return .idle }
+        return Self.meterDotState(state: state, now: Date().timeIntervalSince1970,
+                                  lastCompletionAt: lastCompletionAt?.timeIntervalSince1970)
+    }
+
+    static func meterDotState(state: CoreState, now: Double, lastCompletionAt: Double? = nil) -> StatusDotState {
         if !state.asks.isEmpty || state.mainSessions.contains(where: { $0.ask != nil }) { return .ask }
-        if core.sessions.contains(where: { SessionActivity.reduce($0) == .failed }) { return .error }
-        if state.aggregate.active > 0 || core.sessions.contains(where: { SessionActivity.reduce($0) == .working }) { return .working }
-        if let at = lastCompletionAt, Date().timeIntervalSince(at) < Self.completionDotWindow { return .done }
+        if state.sessions.contains(where: { $0.signalsFailure(at: now) }) { return .error }
+        if state.aggregate.active > 0 || state.sessions.contains(where: { SessionActivity.reduce($0) == .working }) { return .working }
+        if let at = lastCompletionAt, now - at < Self.completionDotWindow { return .done }
         return .idle
     }
 

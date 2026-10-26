@@ -215,6 +215,7 @@ public enum EventPolicy {
 
         case "failed":
             guard notify, session?.isSubagent != true, session?.unlinkedWorker != true else { return .nothing }
+            if session?.supersedesFailure(at: event.at, now: now) == true { return .nothing }
             if let at = event.at, now < at || now >= at + 5 { return .nothing }
             let project = session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
             let title = project.map { "\(providerName) · \($0) failed" } ?? "\(label) failed"

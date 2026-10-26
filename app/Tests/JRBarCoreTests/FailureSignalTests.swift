@@ -45,6 +45,29 @@ struct FailureSignalTests {
             #expect(EventPolicy.delivery(for: event, state: state, settings: nil) == .nothing)
         }
     }
+    @Test("A resumed or ended session rejects a replayed failure notice")
+    func resumedNotice() {
+        let event = CoreEvent(id: "failure", kind: "failed", session: "claude:session:root", at: 100,
+                              notify: true, provider: "claudeAgent")
+        for mode in ["working", "tool_running", "ended_unconfirmed", "completed"] {
+            let row = CoreSession(id: "claude:session:root", provider: "claude", mode: mode, updatedAt: 101)
+            #expect(EventPolicy.delivery(for: event, state: CoreState(sessions: [row]), settings: nil, now: 102) == .nothing)
+            #expect(AlcoveEventPolicy.notice(for: event, session: row, kinds: .init(), now: 102) == nil)
+        }
+        let earlier = CoreSession(id: "claude:session:root", provider: "claude", mode: "working", updatedAt: 99)
+        #expect(EventPolicy.delivery(for: event, state: CoreState(sessions: [earlier]), settings: nil, now: 102) != .nothing)
+        #expect(AlcoveEventPolicy.notice(for: event, session: earlier, kinds: .init(), now: 102) != nil)
+        let failure = AlcoveNotice(id: "failure", kind: .failed, title: "Claude", subtitle: "failed",
+                                   session: "claude:session:root", key: "failure", expiresAt: 105)
+        let ask = AlcoveNotice(id: "ask", kind: .ask, title: "Codex", subtitle: "needs you", key: "ask")
+        var queue = AlcoveCapsuleQueue()
+        _ = queue.offer(ask, at: Date(timeIntervalSince1970: 100))
+        _ = queue.offer(failure, at: Date(timeIntervalSince1970: 100))
+        let wasShown = queue.resolveFailure(session: "claude:session:root")
+        #expect(!wasShown)
+        #expect(queue.pending == nil)
+    }
+
     @Test("Failure notices interrupt ordinary news, yield to asks, and expire while queued")
     func queue() {
         let at = Date(timeIntervalSince1970: 100)

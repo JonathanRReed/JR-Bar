@@ -591,6 +591,7 @@ def _snapshot_from_operator_state(
                         status.updated_at > existing.updated_at
                         and (
                             status.priority <= existing.priority
+                            or existing.mode is AgentMode.BLOCKED_ERROR
                             or status.event_name == "Notification"
                         )
                     )
@@ -3853,7 +3854,10 @@ def _merged_status_candidates(
         if status.event_name == "LineageObserved":
             continue
         existing = merged.get(status.agent_id)
-        if existing is None or _status_merge_key(status) > _status_merge_key(existing):
+        failure_pair = existing is not None and AgentMode.BLOCKED_ERROR in {status.mode, existing.mode}
+        newer_failure_state = failure_pair and status.updated_at > existing.updated_at
+        same_failure_time = not failure_pair or status.updated_at == existing.updated_at
+        if existing is None or newer_failure_state or (same_failure_time and _status_merge_key(status) > _status_merge_key(existing)):
             merged[status.agent_id] = status
     for agent_id, links in links_by_id.items():
         newest = {}

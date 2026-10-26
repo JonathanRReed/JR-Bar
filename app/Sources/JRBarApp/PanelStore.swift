@@ -22,6 +22,7 @@ struct SessionRow: Identifiable, Equatable {
     /// in effect; the row offers Unsnooze and says when it ends.
     let snoozedUntil: Double?
     let activity: SessionActivity
+    let failureSignal: Range<Double>?
     let since: Date?
     /// The session's last word began a tool call that has not finished
     /// (`SilentSession.hasOpenToolCall`): a long build, not silence.
@@ -84,6 +85,7 @@ struct SessionRow: Identifiable, Equatable {
         answerHost = AskAnswerHost.app(of: session)
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
+        failureSignal = session.failureSignalWindow
         activityFact = Self.activityFact(session: session, activity: activity)
         agentActivity = AgentActivity.forRow(session: session, activity: activity)
         // A peer's origin is the peer's fact: "via VS Code" on a remote row
@@ -129,6 +131,7 @@ struct SessionRow: Identifiable, Equatable {
         answerHost = nil
         snoozedUntil = nil
         activity = .waiting
+        failureSignal = nil
         since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
         openToolCall = false
         workers = 0
@@ -685,7 +688,7 @@ final class PanelStore {
     var staleDetail: String? { staleUpdateText.map { "Monitor is quiet — \($0)" } }
 
     var aggregate: AgentAggregateState {
-        if core.isLive, let state = core.state { return AgentAggregateState.from(aggregate: state.aggregate) }
+        if core.isLive, let state = core.state { return AgentAggregateState.from(state: state, now: providerClock()) }
         return fallbackState
     }
 

@@ -317,7 +317,7 @@ final class EventCoordinator {
             if event.notify == false { return }
             if let at = event.at, now < at || now >= at + 5 { return }
             if let id = event.session, let session = core.state?.session(withID: id),
-               session.isSubagent || session.unlinkedWorker { return }
+               session.isSubagent || session.unlinkedWorker || session.supersedesFailure(at: event.at, now: now) { return }
         }
         if let session = event.session {
             if event.kind == "ask_opened" {

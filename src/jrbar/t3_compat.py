@@ -587,12 +587,12 @@ def _agent_state_for_thread(
         return AgentMode.WORKING, "UserPromptSubmit", None
     if status in {"interrupted", "cancelled", "canceled"} or thread.turn_state in {"interrupted", "cancelled", "canceled"}:
         return AgentMode.ENDED_UNCONFIRMED, "StopInterrupted", "T3 Code session ended"
+    if thread.turn_state in {"pending", "running"}:
+        return AgentMode.WORKING, "UserPromptSubmit", None
     if status == "error" or thread.turn_state == "error":
         return AgentMode.BLOCKED_ERROR, "StopFailure", "T3 Code session failed"
     if thread.turn_state == "completed":
         return AgentMode.COMPLETED, "Stop", "Review the completed T3 Code task"
-    if thread.turn_state in {"pending", "running"}:
-        return AgentMode.WORKING, "UserPromptSubmit", None
     if status == "stopped" and (thread.active_turn_id or thread.latest_turn_id):
         return AgentMode.ENDED_UNCONFIRMED, "StopUnconfirmed", "T3 Code did not confirm the turn outcome"
     # Ready/idle is a session transport state, not proof of a successful turn.
@@ -841,10 +841,10 @@ def _read_legacy_snapshot(
                     ),
                     has_actionable_plan=bool(row["has_actionable_proposed_plan"]),
                     last_error_present=bool(row["last_error"]),
-                    updated_at=_latest_time(
-                        row["thread_updated_at"],
-                        row["session_updated_at"],
-                        row["settled_at"],
+                    updated_at=(
+                        _latest_time(row["session_updated_at"])
+                        if row["session_status"] == "error" and row["observed_turn_state"] not in {"pending", "running"}
+                        else _latest_time(row["thread_updated_at"], row["session_updated_at"], row["settled_at"])
                     ),
                     deep_link=_deep_link(environment_id, str(row["thread_id"])),
                     turn_state=str(row["observed_turn_state"]) if row["observed_turn_state"] is not None else None,
@@ -945,9 +945,10 @@ SELECT
   (SELECT runs.status FROM orchestration_v2_projection_runs AS runs
      WHERE runs.thread_id = threads.thread_id AND {_V2_UNHELD_RUN}
      ORDER BY runs.ordinal DESC LIMIT 1) AS latest_run_status,
-  (SELECT MAX(COALESCE(runs.completed_at, runs.requested_at))
+  (SELECT COALESCE(runs.completed_at, runs.requested_at)
      FROM orchestration_v2_projection_runs AS runs
-     WHERE runs.thread_id = threads.thread_id) AS latest_run_time
+     WHERE runs.thread_id = threads.thread_id AND {_V2_UNHELD_RUN}
+     ORDER BY runs.ordinal DESC LIMIT 1) AS latest_run_time
 FROM candidate_threads AS threads
 INNER JOIN projection_projects AS projects
   ON projects.project_id = threads.project_id
@@ -1224,10 +1225,10 @@ def _read_v2_snapshot(
                     pending_user_input_count=_nonnegative_int(row["pending_user_input_count"]),
                     has_actionable_plan=bool(row["has_actionable_proposed_plan"]),
                     last_error_present=latest_status == "failed",
-                    updated_at=_latest_time(
-                        row["thread_updated_at"],
-                        row["latest_run_time"],
-                        row["settled_at"],
+                    updated_at=(
+                        _latest_time(row["latest_run_time"])
+                        if active_status is None and latest_status == "failed"
+                        else _latest_time(row["thread_updated_at"], row["latest_run_time"], row["settled_at"])
                     ),
                     deep_link=_deep_link(environment_id, str(row["thread_id"])),
                     turn_state=(
