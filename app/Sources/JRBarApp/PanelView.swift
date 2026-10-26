@@ -392,6 +392,7 @@ struct SessionRowView: View {
     /// in the list shares (`trailingWidth(for:)`).
     let trailingWidth: CGFloat
     @ViewState private var hovering = false
+    @ViewState private var contextFrame = CGRect.zero
 
     /// The trailing column: as wide as the widest state word the list
     /// shows plus its mark, and never narrower than the longest elapsed
@@ -579,7 +580,8 @@ struct SessionRowView: View {
         }
         .help(row.help(now: store.now) ?? "")
         .onHover { hovering = $0 }
-        .contextMenu { SessionContextMenu(row: row, store: store) }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contextFrame = $0 }
+        .contextMenu { SessionContextMenu(row: row, store: store, anchor: contextFrame) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spokenLabel)
         .accessibilityActions {
@@ -658,6 +660,7 @@ struct DoneBell: View {
 struct SessionContextMenu: View {
     let row: SessionRow
     @Bindable var store: PanelStore
+    let anchor: CGRect
 
     /// Which of an ask's verbs the menu offers: `AskVerbs`' rule, the one
     /// every other surface reads. An ask JR-Bar already answered offers
@@ -681,7 +684,10 @@ struct SessionContextMenu: View {
 
     var body: some View {
         if store.lightExplanation != nil {
-            Button("Why this light") { store.whyHover(true, frame: store.whyRowFrame) }
+            Button("Why this light") {
+                store.whyRowFrame = anchor
+                store.whyHover(true, frame: anchor)
+            }
             Divider()
         }
         if row.isRemote {
@@ -794,6 +800,7 @@ struct AskRow: View {
     let row: SessionRow
     @Bindable var store: PanelStore
     var detailHeight: CGFloat = CGFloat(PanelLayout.askDetailHeight)
+    @ViewState private var contextFrame = CGRect.zero
     /// The reply draft rides the store: a half-typed answer survives the
     /// panel closing and a relaunch, and a refused send keeps the text.
     private var replyText: Binding<String> {
@@ -858,11 +865,12 @@ struct AskRow: View {
         .contentShape(Rectangle())
         .onTapGesture { store.open(row) }
         .help(row.help(now: store.now) ?? "")
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contextFrame = $0 }
         .contextMenu {
             if isDemo {
                 Button("Put the Demo Away") { store.dismissDemo() }
             } else {
-                SessionContextMenu(row: row, store: store)
+                SessionContextMenu(row: row, store: store, anchor: contextFrame)
             }
         }
         .accessibilityElement(children: .contain)

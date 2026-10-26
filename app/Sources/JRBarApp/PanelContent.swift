@@ -39,8 +39,7 @@ struct PanelComposition {
         let moreRoom: CGFloat = rows > 1 ? Self.sectionHeight : 0
         let sectionLabels = Self.sectionHeight * 2 + (asks.isEmpty ? 0 : Self.sectionHeight)
         let editHint: CGFloat = store.editingProviders ? 56 : 0
-        let undoHeight = store.undoCountdown == nil ? 0 : Self.sectionHeight
-        let chrome = Self.rowHeight + banner + Self.footerHeight + undoHeight + editHint + sectionLabels + earlier + 3
+        let chrome = Self.rowHeight + banner + Self.footerHeight + editHint + sectionLabels + earlier + 3
         let minimum = chrome + header + minimumUsage + moreRoom + minimumAsks + Self.rowHeight
         let target = max(CGFloat(store.screenHeight) * 0.85, minimum)
         let cap = min(CGFloat(store.screenHeight) - JRBarTokens.Space.md, target)
@@ -154,6 +153,7 @@ struct PanelAgentView: View {
     let agent: PanelAgent
     @Bindable var store: PanelStore
     @ViewState private var hovering = false
+    @ViewState private var contextFrame = CGRect.zero
 
     private var expanded: Binding<Bool> {
         Binding(get: { store.expandedAgentGroups.contains(agent.id) }, set: { value in
@@ -170,7 +170,7 @@ struct PanelAgentView: View {
                         workerCount: 0, unlinked: true, expanded: .constant(false)) { EmptyView() }
                 }
                 .buttonStyle(.plain)
-                .contextMenu { SessionContextMenu(row: agent.row, store: store) }
+                .contextMenu { SessionContextMenu(row: agent.row, store: store, anchor: contextFrame) }
             } else if !agent.members.isEmpty || agent.workerCount > 0 {
                 AgentGroupRow(provider: agent.row.style.id, name: agent.row.style.name,
                               project: agent.row.cwdTail, subtitle: agent.row.label,
@@ -188,7 +188,7 @@ struct PanelAgentView: View {
                                     in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
                     }
                 }
-                .contextMenu { SessionContextMenu(row: agent.row, store: store) }
+                .contextMenu { SessionContextMenu(row: agent.row, store: store, anchor: contextFrame) }
             } else {
                 Button { store.open(agent.row) } label: {
                     HStack(spacing: JRBarTokens.Space.sm) {
@@ -220,7 +220,7 @@ struct PanelAgentView: View {
                 }
                 .buttonStyle(.plain)
                 .opacity(agent.unlinked ? 0.55 : 1)
-                .contextMenu { SessionContextMenu(row: agent.row, store: store) }
+                .contextMenu { SessionContextMenu(row: agent.row, store: store, anchor: contextFrame) }
             }
         }
         .background(store.selectedID == agent.row.id ? JRBarTokens.Ink.accentSoft : .clear,
@@ -228,6 +228,7 @@ struct PanelAgentView: View {
         .animation(store.reduceMotion ? nil : JRBarTokens.Motion.panelEntrance.animation, value: store.expandedAgentGroups.contains(agent.id))
         .help(agent.row.help(now: store.now) ?? "")
         .onHover { hovering = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contextFrame = $0 }
     }
 }
 
@@ -361,21 +362,62 @@ struct PanelActionsFooter: View {
     @ViewState private var devicesShown = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: JRBarTokens.Space.sm) {
-                Button { store.openEffects() } label: {
-                    HStack(spacing: JRBarTokens.Space.sm) {
-                        Text("Studio")
-                        PanelStudioMirror(store: store)
+        ViewThatFits(in: .horizontal) {
+            controls(compactUsage: false)
+            controls(compactUsage: true)
+        }
+        .font(JRBarTokens.TypeStyle.callout.font)
+        .foregroundStyle(JRBarTokens.Ink.label)
+        .buttonStyle(PanelFooterButtonStyle())
+        .controlSize(.small)
+        .frame(height: PanelComposition.footerHeight)
+        .padding(.horizontal, JRBarTokens.Space.md)
+    }
+
+    private func controls(compactUsage: Bool) -> some View {
+        HStack(spacing: JRBarTokens.Space.xs) {
+            Button("Studio") { store.openEffects() }
+                .fixedSize().help(studioHelp)
+            Button { store.openUsageCenter() } label: {
+                if compactUsage { Image(systemName: "chart.bar") }
+                else { Text("Usage Center") }
+            }
+            .fixedSize().help("Usage Center (⌘U)").accessibilityLabel("Usage Center")
+            Spacer(minLength: JRBarTokens.Space.xs)
+            HStack(spacing: JRBarTokens.Space.xs) {
+                Menu {
+                    Button("30 minutes") { store.quietFor(seconds: 30 * 60) }
+                    Button("1 hour") { store.quietFor(seconds: 60 * 60) }
+                    Button("4 hours") { store.quietFor(seconds: 4 * 60 * 60) }
+                    Button(PanelStore.morningLabel(verb: "Until", target: store.morningTarget)) {
+                        store.quietFor(seconds: PanelStore.secondsUntilMorning(from: store.now))
                     }
+                    Menu("Mode") {
+                        ForEach(PanelStore.quietModes, id: \.id) { mode in
+                            Toggle(mode.label, isOn: Binding(
+                                get: { store.quietMode == mode.id },
+                                set: { if $0 { store.quietMode = mode.id } }
+                            ))
+                        }
+                    }
+                    if store.quietIsOurs { Button("End quiet") { store.endQuiet() } }
+                } label: {
+                    Image(systemName: store.quiet == nil ? "moon" : "moon.fill")
+                        .foregroundStyle(store.quiet == nil ? JRBarTokens.Ink.label : Color.accentColor)
                 }
-                .help(studioHelp)
-                .contextMenu {
-                    Button("Why this light") { store.whyHover(true, frame: store.whyRowFrame) }
-                        .disabled(store.lightExplanation == nil)
+                .menuStyle(.button).menuIndicator(.hidden)
+                .help(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
+                .accessibilityLabel("Quiet").accessibilityValue(store.quietLabel ?? "Off")
+                if let countdown = store.undoCountdown {
+                    Button("Undo \(countdown)") { store.undoClear() }
+                        .monospacedDigit().fixedSize()
+                        .keyboardShortcut("z", modifiers: .command)
+                        .help("Undo clear (⌘Z)").accessibilityLabel("Undo clear, \(countdown) remaining")
+                } else {
+                    Button { store.clearCompleted() } label: { Image(systemName: "checkmark.circle") }
+                        .help("Clear finished").accessibilityLabel("Clear finished")
+                        .disabled(store.completedCount == 0)
                 }
-                Button("Usage Center") { store.openUsageCenter() }.help("Usage Center (⌘U)")
-                Spacer(minLength: 0)
                 Button { devicesShown.toggle() } label: { Image(systemName: "slider.horizontal.3") }
                     .help("Devices").accessibilityLabel("Devices")
                     .popover(isPresented: WindowPresenter.presentation($devicesShown)) {
@@ -385,29 +427,11 @@ struct PanelActionsFooter: View {
                     }
                 Button { store.openSettings() } label: { Image(systemName: "gearshape") }
                     .help("Settings… (⌘,)").accessibilityLabel("Settings")
-                Menu {
-                    Button("Clear finished") { store.clearCompleted() }.disabled(store.completedCount == 0)
-                    Divider()
-                    Menu("Quiet…") {
-                        Button("30 minutes") { store.quietFor(seconds: 30 * 60) }
-                        Button("1 hour") { store.quietFor(seconds: 60 * 60) }
-                        if store.quietIsOurs { Button("End quiet") { store.endQuiet() } }
-                    }
-                    Divider()
-                    PanelMoreMenuItems(store: store)
-                } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.button).menuIndicator(.hidden).help("More…").accessibilityLabel("More")
+                Menu { PanelMoreMenuItems(store: store) } label: { Image(systemName: "ellipsis") }
+                    .menuStyle(.button).menuIndicator(.hidden).help("More…").accessibilityLabel("More")
             }
-            .buttonStyle(.plain).controlSize(.small)
-            .frame(height: PanelComposition.footerHeight)
-            if let countdown = store.undoCountdown {
-                Button("Undo \(countdown)") { store.undoClear() }
-                    .buttonStyle(.plain).help("Undo clear (⌘Z)")
-                    .frame(maxWidth: .infinity, minHeight: PanelComposition.sectionHeight, alignment: .trailing)
-            }
+            .fixedSize()
         }
-        .font(JRBarTokens.TypeStyle.callout.font)
-        .padding(.horizontal, JRBarTokens.Space.md)
     }
 
     private var studioHelp: String {
@@ -446,25 +470,21 @@ struct PanelTitleBar: View {
     }
 }
 
-struct PanelStudioMirror: View {
-    @Bindable var store: PanelStore
-    var body: some View {
-        Group {
-            if let surface = store.core.lights?.hardware ?? store.core.lights?.screenBar, !surface.program.isEmpty {
-                LEDStripPreview(program: surface.program, ledCount: surface.ledCount ?? 8, dotSize: 4, spacing: 2,
-                                paused: !store.isOpen || !store.isLive || store.reduceMotion,
-                                showsBackground: false, phase: max(0, store.now.timeIntervalSince1970 - (surface.anchor ?? store.now.timeIntervalSince1970)), displayLEDCount: 8)
-            } else {
-                HStack(spacing: 2) {
-                    ForEach(0..<8) { _ in Circle().fill(JRBarTokens.Ink.tertiary).frame(width: 4, height: 4) }
-                }
+private struct PanelFooterButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @ViewState private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, JRBarTokens.Space.xs)
+            .frame(minWidth: JRBarTokens.Space.xxl, minHeight: JRBarTokens.Space.xxl)
+            .background {
+                RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
+                    .fill(isEnabled && (hovering || configuration.isPressed) ? JRBarTokens.Ink.hover : .clear)
             }
-        }
-        .frame(width: 48, height: JRBarTokens.Space.lg)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { store.whyRowFrame = $0 }
-        .onHover { store.whyHover($0, frame: store.whyRowFrame) }
-        .help(store.lightExplanation.map { "Why this light: \($0.headline)" } ?? "No light reading")
-        .accessibilityLabel("Why this light")
+            .contentShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+            .opacity(isEnabled ? 1 : 0.4)
+            .onHover { hovering = $0 }
     }
 }
 
