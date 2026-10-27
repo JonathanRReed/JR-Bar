@@ -23,6 +23,7 @@
     "font: .system(size: 12.5": 1,
     "font: .system(size: 18": 1,
     "font: .system(size: 30": 3,
+    "icon-label: Image(systemName:) button without accessibilityLabel": 3,
     "radius: cornerRadius: 18": 1,
     "radius: cornerRadius: 30": 2,
     "radius: cornerRadius: 5": 1,
@@ -47,8 +48,14 @@
   "app/Sources/JRBarApp/DotRoleControls.swift": {
     "radius: cornerRadius: 7": 2
   },
+  "app/Sources/JRBarApp/EffectStudioMoments.swift": {
+    "icon-label: Image(systemName:) button without accessibilityLabel": 2
+  },
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
     "font: .system(size: 13": 2
+  },
+  "app/Sources/JRBarApp/EffectStudioView.swift": {
+    "icon-label: Image(systemName:) button without accessibilityLabel": 2
   },
   "app/Sources/JRBarApp/HistoryView.swift": {
     "radius: cornerRadius: 7": 1
@@ -160,6 +167,9 @@
     "font: .system(size: 11": 2,
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2
+  },
+  "app/Sources/JRBarApp/SettingsProvidersPage.swift": {
+    "reason-code-words: reason.replacingOccurrences(of: \"_\"": 1
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
@@ -573,6 +583,7 @@
     "animation: duration: 0.15": 1,
     "animation: duration: 1": 1,
     "animation: duration: 20": 1,
+    "icon-label: Image(systemName:) button without accessibilityLabel": 2,
     "radius: cornerRadius: 1.6": 1,
     "radius: cornerRadius: 11": 2,
     "radius: cornerRadius: 14": 4,
@@ -627,11 +638,15 @@
     "animation: duration: 0.35": 1,
     "radius: cornerRadius: 10": 1
   },
+  "app/Sources/JRBarApp/UsageCenterView.swift": {
+    "reason-code-words: reason?.replacingOccurrences(of: \"_\"": 2
+  },
   "app/Sources/JRBarApp/Utilities/Dock/DockChrome.swift": {
     "animation: duration: 0.12": 1,
     "colour: Color(red: 0.16": 1,
     "colour: Color(red: 1.0": 2,
-    "font: .system(size: 11.5": 1
+    "font: .system(size: 11.5": 1,
+    "icon-label: Image(systemName:) button without accessibilityLabel": 1
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockEnhance.swift": {
     "animation: duration: 2.4": 1
@@ -671,6 +686,9 @@
     "font: .system(size: 12.5": 1,
     "font: .system(size: 13": 1,
     "radius: cornerRadius: 5": 2
+  },
+  "app/Sources/JRBarApp/Utilities/Dock/DockUtilityCard.swift": {
+    "icon-label: Image(systemName:) button without accessibilityLabel": 1
   },
   "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarBar.swift": {
     "animation: duration: 0.08": 1,
@@ -714,6 +732,7 @@
     "semantic-font: .font(.caption": 1
   },
   "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarUtilityCard.swift": {
+    "icon-label: Image(systemName:) button without accessibilityLabel": 5,
     "semantic-font: .font(.callout": 10,
     "semantic-font: .font(.caption": 5,
     "semantic-font: .font(.subheadline": 1

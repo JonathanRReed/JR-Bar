@@ -134,9 +134,21 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('return reply.message ?? reply.code', "error-words"),
     ('let why = reply.error?.message ?? reply.error?.code ?? "refused"', "error-words"),
     ('report(error: "Install hooks: \\(error)")', "error-words"),
+    ('return provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action', "reason-code-words"),
+    ('Button { pin() } label: {\n    Image(systemName: "pin")\n}\n.buttonStyle(.plain)', "icon-label"),
+    ('Button(action: next) { Image(systemName: "chevron.right") }.help("Next page")', "icon-label"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))
+
+
+@pytest.mark.parametrize("source", [
+    'Button { pin() } label: {\n    Image(systemName: "pin")\n}\n.accessibilityLabel("Pin key")',
+    'Button { pin() } label: { Image(systemName: "pin"); Text("Pin") }',
+    'Button { pin() } label: { Label("Pin", systemImage: "pin") }',
+])
+def test_named_icon_buttons_pass(source):
+    assert not [hit for hit in offenders(source) if hit.startswith("icon-label:")]
 
 
 def test_wording_and_notch_exceptions_are_narrow():

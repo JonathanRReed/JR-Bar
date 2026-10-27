@@ -105,3 +105,20 @@ def test_a_failing_source_with_a_sign_in_reason_and_a_last_reading_is_not_red():
     row = availability_document(snapshot, now=10, installed=True)
     assert row["availability"] == "available"
     assert row["status_text"] == "Codex needs you to sign in again."
+
+
+#: A reason code turned into words by swapping underscores or capitalising,
+#: the fallback that showed "Cli session unavailable".
+CODE_AS_WORDS = re.compile(r'reason\w*\b[^\n#]*\.(?:replace\(\s*"_"|capitalize\(\)|title\(\))')
+
+
+def test_no_daemon_text_humanises_a_reason_code():
+    offenders = [f"{path.name}:{number}" for path in sorted(SOURCE.rglob("*.py"))
+                 for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                 if CODE_AS_WORDS.search(line)]
+    assert not offenders, f"use provider_availability.status_sentence instead: {offenders}"
+
+
+def test_the_humanise_scan_catches_the_old_fallback():
+    assert CODE_AS_WORDS.search('status_text=_CAUSES.get(reason, (reason or state).replace("_", " ").capitalize())')
+    assert not CODE_AS_WORDS.search('status_text=status_sentence(reason or state, label)')
