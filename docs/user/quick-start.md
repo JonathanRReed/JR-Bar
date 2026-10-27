@@ -3,7 +3,7 @@
 JR-Bar becomes useful as soon as one provider sends it session events. No
 hardware is required.
 
-1. Open JR-Bar and choose **Settings > Agents & Usage**.
+1. Open JR-Bar and choose **Settings > Providers**.
 2. Find a provider already installed on this Mac, then click **Install** for
    its hook.
 3. Start a new prompt in that provider. The session should appear in the
@@ -11,7 +11,7 @@ hardware is required.
 4. Click the status item to open the panel. A real permission or input request
    stays pinned at the top with **Approve** and **Deny**. JR-Bar never answers
    one on its own. To see one before an agent asks, press **Try it** on the
-   last Setup step, or **Settings > Agents & Usage > Asks > Show a Demo Ask**. It is
+   last Setup step, or **Settings > Providers > Asks > Show a demo ask**. It is
    a violet card marked **DEMO** that is made inside the app: nothing is sent
    to an agent, nothing is recorded, and **Approve**, **Deny** and **Put
    Away** only take it down.

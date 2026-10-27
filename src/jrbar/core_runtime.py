@@ -2989,10 +2989,12 @@ def _require_usage_on(self, provider, instance):
     state = getattr(self, "provider_usage_state", None)
     for item in getattr(state, "snapshots", ()) or ():
         if getattr(item, "identity", None) == (provider, instance) and is_usage_off(item):
-            label = str(provider).replace("-", " ").title()
+            from .provider_ids import provider_display_name
+
+            label = provider_display_name(str(provider))
             raise CommandError(
                 "usage_off",
-                f"{label} usage is off. Turn it on in Settings > Agents & Usage first; "
+                f"{label} usage is off. Turn it on in Settings > Providers first; "
                 "nothing is read or sent until you do.",
             )
 
@@ -9360,6 +9362,37 @@ def _install_log_mirror(get_server: Callable[[], CoreServer | None]) -> None:
     legacy.log_status_bar = log_status_bar
 
 
+#: core-crash.log holds real crash output only, newest first kept.
+CRASH_LOG_LIMIT_BYTES = 256 * 1024
+_ARMED_MARKER = "--- crash capture armed "
+
+
+def open_crash_log(path: Path):
+    """The file a fatal fault's stacks go to. It holds crash output only:
+    the per-launch "armed" lines older builds wrote are dropped (they went
+    to the regular log since 0.10.1), and a crash loop keeps only the newest
+    half of ``CRASH_LOG_LIMIT_BYTES``. faulthandler needs the descriptor
+    before any crash, so the file exists, empty, until one writes to it."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        data = None
+    if data is not None:
+        kept = b"".join(line for line in data.splitlines(keepends=True)
+                        if not line.startswith(_ARMED_MARKER.encode()))
+        if len(kept) > CRASH_LOG_LIMIT_BYTES:
+            kept = kept[-CRASH_LOG_LIMIT_BYTES // 2:]
+        if kept != data:
+            try:
+                if kept.strip():
+                    path.write_bytes(kept)
+                else:
+                    path.unlink()
+            except OSError:
+                pass
+    return open(path, "a", buffering=1)
+
+
 def build_core_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jrbar core", description="Run the JR-Bar core daemon (headless).")
     parser.add_argument("--socket", default=None, help="core socket path (default: ~/.local/state/jrbar/core.sock)")
@@ -9406,18 +9439,9 @@ def run_core(argv: list[str] | None = None) -> int:
 
         from .state_paths import default_state_dir
 
-        crash_log = default_state_dir() / "core-crash.log"
-        # Crash loops would grow the file forever; keep the tail.
-        try:
-            if crash_log.stat().st_size > 1024 * 1024:
-                crash_log.write_bytes(crash_log.read_bytes()[-512 * 1024 :])
-        except OSError:
-            pass
-        crash_handle = open(crash_log, "a", buffering=1)
-        crash_handle.write(
-            f"--- crash capture armed {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} pid={os.getpid()} ---\n"
-        )
+        crash_handle = open_crash_log(default_state_dir() / "core-crash.log")
         faulthandler.enable(file=crash_handle)
+        legacy_module.log_status_bar(f"core: crash capture armed pid={os.getpid()}")
     except (ImportError, AttributeError, RuntimeError, ValueError, OSError):
         pass
 

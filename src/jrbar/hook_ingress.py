@@ -25,6 +25,7 @@ from .hook_ingress_protocol import (
     decode_hook_ingress_request,
     default_hook_ingress_socket_path,
     encode_hook_ingress_response,
+    explain_hook_ingress_refusal,
 )
 from .hook_pending import PENDING_REPLAY_HORIZON_SECONDS, nudge_pending_drains
 from .ipc import (
@@ -90,6 +91,12 @@ class HookIngressReceipt:
     request: HookIngressRequest | None = field(default=None, repr=False, compare=False)
     error_code: str | None = None
     result: object = field(default=None, repr=False, compare=False)
+    #: For a refused frame: why (a ``HOOK_FRAME_REFUSALS`` code), the
+    #: provider its header named when that is a known id, and its length.
+    #: Content free, so the rejection log can say which agent lost what.
+    refusal: str | None = None
+    refused_provider: str | None = None
+    frame_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.sequence) is not int or self.sequence <= 0:
@@ -111,7 +118,7 @@ class HookIngressReceipt:
 
     @property
     def provider(self) -> str | None:
-        return None if self.request is None else self.request.provider
+        return self.refused_provider if self.request is None else self.request.provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,7 +608,9 @@ class HookIngressService:
             self._publish(receipt)
         return disposition
 
-    def refuse_invalid(self) -> HookIngressReceipt:
+    def refuse_invalid(
+        self, refusal: str = "bad_request", *, provider: str | None = None, frame_bytes: int | None = None,
+    ) -> HookIngressReceipt:
         with self._condition:
             self._sequence += 1
             sequence = self._sequence
@@ -611,6 +620,9 @@ class HookIngressService:
             sequence,
             HookIngressOutcome.REFUSED_INVALID,
             error_code="refused_invalid",
+            refusal=refusal,
+            refused_provider=provider,
+            frame_bytes=frame_bytes,
         )
         self._publish(receipt)
         return receipt
@@ -1020,7 +1032,7 @@ class HookIngressService:
                 break
             total += len(chunk)
             if total > MAX_HOOK_INGRESS_WIRE_BYTES:
-                self.refuse_invalid()
+                self.refuse_invalid("too_large", frame_bytes=total)
                 self._send_response(
                     connection,
                     HookIngressDisposition.REFUSED_INVALID,
@@ -1036,10 +1048,12 @@ class HookIngressService:
             # rejection log.
             self._send_response(connection, HookIngressDisposition.REFUSED_INVALID)
             return None
-        request = decode_hook_ingress_request(b"".join(chunks))
+        frame = b"".join(chunks)
+        request = decode_hook_ingress_request(frame)
         parked = None
         if request is None:
-            self.refuse_invalid()
+            refusal, provider = explain_hook_ingress_refusal(frame)
+            self.refuse_invalid(refusal, provider=provider, frame_bytes=len(frame))
             disposition = HookIngressDisposition.REFUSED_INVALID
         elif request.kind == HOOK_INGRESS_KIND_STATUSLINE:
             # Claude Code's statusLine (jrbar-hook --statusline): rate
@@ -1186,6 +1200,10 @@ class HookIngressService:
             "provider": receipt.provider,
             "reason": receipt.outcome.value,
         }
+        if receipt.refusal is not None:
+            document["detail"] = receipt.refusal
+        if receipt.frame_bytes is not None:
+            document["bytes"] = receipt.frame_bytes
         append_private_text(
             self._rejection_path,
             json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n",

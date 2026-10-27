@@ -84,7 +84,7 @@ struct SettingsFixRoundTests {
         var reads = 0
         list.readRows = { reads += 1; throw CoreReplyError(code: "unavailable", message: "Synthetic failure") }
         await list.refresh()
-        #expect(list.failure == "Synthetic failure")
+        #expect(list.failure == "Synthetic failure.")
         let expected = try ProviderListStoreTests().row()
         list.readRows = { reads += 1; return [expected] }
         await SettingsProviderFailureBanner(list: list).retry()

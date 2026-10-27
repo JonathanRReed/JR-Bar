@@ -131,7 +131,7 @@ struct SessionNamingTests {
         #expect(facts.accountHelp == "synthetic-account-id")
         #expect(!facts.account.contains("synthetic-account-id"))
         provider.account?.label = "deadbeef-0000-4000-8000-000000000000"
-        #expect(UsageCenterStore.accountLine(provider, history: nil) == "Pro · Official")
+        #expect(UsageCenterStore.accountLine(provider, history: nil) == "Pro · Official reading")
     }
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

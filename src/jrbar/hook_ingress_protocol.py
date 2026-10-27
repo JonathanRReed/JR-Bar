@@ -207,25 +207,70 @@ def encode_hook_ingress_request(request: HookIngressRequest) -> bytes:
     return encoded
 
 
+#: Why a hook frame was refused, content free: a code, never the payload.
+HOOK_FRAME_REFUSALS: Final = (
+    "not_a_frame",       # no magic: something other than the shim connected
+    "short_frame",       # closed before the lengths arrived
+    "bad_lengths",       # a length out of bounds, or the frame was cut short
+    "too_large",         # past the wire limit
+    "bad_header",        # the header is not strict JSON or the text is not UTF-8
+    "bad_fields",        # a missing, extra or wrongly typed header field
+    "wrong_version",     # a shim from another protocol version
+    "orphaned_decide",   # a --decide frame whose agent has already exited
+    "bad_request",       # the fields parsed but do not make a request
+)
+
+
 def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
-    if type(payload) is not bytes or not payload.startswith(_MAGIC):
+    return _decode_hook_ingress_request(payload)[0]
+
+
+def explain_hook_ingress_refusal(payload: bytes) -> tuple[str, str | None]:
+    """Why ``decode_hook_ingress_request`` refused ``payload``, and the
+    provider when the header named a known one: ``(reason, provider)``.
+    Content free: a code from ``HOOK_FRAME_REFUSALS`` and a provider id,
+    never header or payload text."""
+    _, reason, provider = _decode_hook_ingress_request(payload)
+    return reason or "bad_request", provider
+
+
+def _known_provider(document: object) -> str | None:
+    from .provider_ids import PROVIDER_DISPLAY_NAMES
+
+    provider = document.get("provider") if type(document) is dict else None
+    return provider if type(provider) is str and provider in PROVIDER_DISPLAY_NAMES else None
+
+
+def _peek_provider(payload: bytes, header_at: int, header_size: int) -> str | None:
+    """The known provider a cut-short frame's whole header names, if any."""
+    if not 0 < header_size <= MAX_HOOK_INGRESS_HEADER_BYTES or len(payload) < header_at + header_size:
         return None
+    try:
+        return _known_provider(json.loads(payload[header_at:header_at + header_size].decode("utf-8")))
+    except (TypeError, UnicodeError, ValueError):
+        return None
+
+
+def _decode_hook_ingress_request(payload: bytes) -> tuple[HookIngressRequest | None, str | None, str | None]:
+    if type(payload) is not bytes or not payload.startswith(_MAGIC):
+        return None, "not_a_frame", None
     lengths_at = len(_MAGIC)
     header_at = lengths_at + _LENGTHS.size
     if len(payload) < header_at:
-        return None
+        return None, "short_frame", None
     try:
         header_size, body_size = _LENGTHS.unpack(payload[lengths_at:header_at])
     except struct.error:
-        return None
+        return None, "short_frame", None
+    if len(payload) > MAX_HOOK_INGRESS_WIRE_BYTES:
+        return None, "too_large", None
     if (
         header_size <= 0
         or header_size > MAX_HOOK_INGRESS_HEADER_BYTES
         or body_size > MAX_HOOK_INGRESS_PAYLOAD_BYTES
         or len(payload) != header_at + header_size + body_size
-        or len(payload) > MAX_HOOK_INGRESS_WIRE_BYTES
     ):
-        return None
+        return None, "bad_lengths", _peek_provider(payload, header_at, header_size)
     header_end = header_at + header_size
     try:
         document = json.loads(
@@ -233,33 +278,39 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
             object_pairs_hook=_strict_object,
             parse_constant=_reject_constant,
         )
-        body = payload[header_end:].decode("utf-8")
     except (TypeError, UnicodeError, ValueError):
-        return None
+        return None, "bad_header", None
+    provider = _known_provider(document)
+    try:
+        body = payload[header_end:].decode("utf-8")
+    except UnicodeError:
+        return None, "bad_header", provider
+    if type(document) is dict and type(document.get("version")) is int \
+            and document["version"] != HOOK_INGRESS_PROTOCOL_VERSION:
+        return None, "wrong_version", provider
     if (
         type(document) is not dict
         or not _HEADER_FIELDS <= frozenset(document)
         or not frozenset(document) <= _HEADER_FIELDS | _OPTIONAL_HEADER_FIELDS
         or type(document["version"]) is not int
-        or document["version"] != HOOK_INGRESS_PROTOCOL_VERSION
         or type(document["provider"]) is not str
         or type(document["log_path"]) is not str
     ):
-        return None
+        return None, "bad_fields", provider
     ppid = document.get("ppid")
     ppid_start = document.get("ppid_start")
     decide_ms = document.get("decide_ms")
     if ppid is not None and type(ppid) is not int:
-        return None
+        return None, "bad_fields", provider
     if ppid_start is not None and (
         type(ppid_start) not in (int, float) or not math.isfinite(float(ppid_start))
     ):
-        return None
+        return None, "bad_fields", provider
     if decide_ms is not None and type(decide_ms) is not int:
-        return None
+        return None, "bad_fields", provider
     kind = document.get("kind")
     if kind is not None and type(kind) is not str:
-        return None
+        return None, "bad_fields", provider
     if ppid is not None and ppid <= 1:
         # The agent had already exited and launchd adopted the hook, so
         # getppid() read 1 (or 0). The event still happened, and this is
@@ -271,7 +322,7 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
         # ppid it would look like the Python decide client and park an ask
         # that can never be answered, so it stays refused.
         if decide_ms is not None:
-            return None
+            return None, "orphaned_decide", provider
         ppid = None
         ppid_start = None
     try:
@@ -283,9 +334,9 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
             ppid_start=None if ppid_start is None else float(ppid_start),
             decide_ms=decide_ms,
             kind=kind,
-        )
+        ), None, None
     except ValueError:
-        return None
+        return None, "bad_request", provider
 
 
 def encode_hook_ingress_response(disposition: HookIngressDisposition) -> bytes:
@@ -488,6 +539,7 @@ def submit_hook_ingress_for_decision(
 
 __all__ = [
     "HOOK_DECISION_WAIT_MS",
+    "HOOK_FRAME_REFUSALS",
     "HOOK_INGRESS_KIND_STATUSLINE",
     "HOOK_INGRESS_PROTOCOL_VERSION",
     "HOOK_INGRESS_SEND_TIMEOUT_SECONDS",
@@ -510,6 +562,7 @@ __all__ = [
     "encode_hook_decision",
     "encode_hook_ingress_request",
     "encode_hook_ingress_response",
+    "explain_hook_ingress_refusal",
     "submit_hook_ingress",
     "submit_hook_ingress_for_decision",
 ]

@@ -64,7 +64,7 @@ struct EffectStudioAssignmentReplyTests {
             } else {
                 #expect(store.draft == draft)
                 #expect(!store.draftUsesParameters)
-                #expect(store.lastError == "Assignment refused: Synthetic refused")
+                #expect(store.lastError == "Assignment refused: Synthetic refused.")
             }
         }
     }

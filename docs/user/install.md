@@ -32,7 +32,7 @@ On first launch the app:
 - records the installed build so later upgrades can identify it;
 - registers itself as a login item.
 
-It does not install provider hooks by itself. Open **Settings > Agents & Usage**,
+It does not install provider hooks by itself. Open **Settings > Providers**,
 review the detected providers, and install the ones you want JR-Bar to watch.
 Later upgrades refresh only hooks the detector can prove JR-Bar manages.
 Inactive hooks remain inactive, and a custom managed log path is preserved.

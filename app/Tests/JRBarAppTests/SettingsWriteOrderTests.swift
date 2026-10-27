@@ -62,7 +62,11 @@ struct SettingsWriteOrderTests {
         let write = try #require(store.flush("global_brightness_scale"))
         await write.value
         #expect(store.values.double("global_brightness_scale") == 0.8)
-        #expect(store.lastError == "Try again")
+        #expect(store.lastError == "Couldn't save that setting. Try again.")
+        store.noteControlTitle("Brightness", for: "global_brightness_scale")
+        #expect(store.saveFailure("global_brightness_scale", "Try again.") == "Couldn't save Brightness. Try again.")
+        #expect(store.saveFailure("led.brightness", MonitorWords.reason(CoreClientError.timeout))
+            == "Couldn't save that setting. The monitor did not answer in time. Try again.")
         #expect(store.pendingWrites == 0)
     }
 

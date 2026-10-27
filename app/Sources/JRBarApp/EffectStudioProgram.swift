@@ -287,7 +287,7 @@ final class LEDSStudioModel {
                     self.playingUntil = Date().addingTimeInterval(Self.playSeconds)
                     self.onStatus?("Playing on \(name) for \(Int(Self.playSeconds)) s")
                 } else {
-                    self.onError?(reply.error?.message ?? reply.error?.code ?? "Play refused")
+                    self.onError?(reply.error?.sentence ?? "Play refused")
                 }
             } catch {
                 self.onError?("Play failed: \(EffectStudioStore.describe(error))")
@@ -358,7 +358,7 @@ final class LEDSStudioModel {
         if error?.code == "unknown_command" {
             return "This monitor can't burn INIT.LED yet — nothing was written."
         }
-        return "Burn refused: \(error?.message ?? error?.code ?? "unknown error")"
+        return "Burn refused: \(error?.sentence ?? "unknown error")"
     }
 
     // MARK: Examples

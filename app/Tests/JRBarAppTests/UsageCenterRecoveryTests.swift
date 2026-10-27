@@ -26,7 +26,7 @@ struct UsageCenterRecoveryTests {
         }
         let failed = try #require(store.setRange(.month))
         await failed.value
-        #expect(store.notice?.text == "Range not saved: Try again")
+        #expect(store.notice?.text == "Range not saved: Try again.")
         #expect(store.notice?.isFailure == true)
         #expect(expiry == nil)
         store.writeSetting = { _, _ in CoreReply(id: "fixture", ok: true) }

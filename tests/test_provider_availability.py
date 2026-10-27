@@ -45,8 +45,9 @@ def test_failed_installed_source_keeps_specific_cause_fix_and_age():
     value = replace(value, action_label="Allow Claude Keychain access")
     row = usage_document(ProviderUsageState((value,), 2000, 3000, False), now=8200,
                          detected_agents={"claude": True})["providers"][0]
-    assert row["availability"] == "failing"
-    assert row["status_text"] == "Keychain access lost after Claude renewed its sign-in"
+    # Allowing Keychain access is a person's click, not a failing source.
+    assert row["availability"] == "available"
+    assert row["status_text"] == "Keychain access lost after Claude renewed its sign-in. Allow it again."
     assert row["action"] == "Allow Claude Keychain access"
     assert row["read_at"] == 1000
     assert row["windows"][0]["used_pct"] is None

@@ -82,7 +82,7 @@ struct ProviderListStoreTests {
         list.writePresentation = { reply($0, ok: false) }
         await #expect(throws: CoreReplyError.self) { try await list.setOrder(["codex"]) }
         #expect(list.preferences.order.isEmpty)
-        #expect(list.failure == "Could not save")
+        #expect(list.failure == "Could not save.")
         #expect(!list.writingPresentation)
     }
 

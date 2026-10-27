@@ -176,8 +176,7 @@ final class ProviderUsageSwitchesModel {
     }
 
     nonisolated static func words(for error: Error) -> String {
-        if let reply = error as? CoreReplyError { return reply.message ?? reply.code }
-        return String(describing: error)
+        MonitorWords.reason(error)
     }
 }
 

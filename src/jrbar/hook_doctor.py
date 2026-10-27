@@ -8,6 +8,7 @@ payload is read or printed.
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import re
@@ -151,6 +152,59 @@ def socket_answers(path: Path, timeout: float = 0.3) -> bool:
         probe.close()
 
 
+#: The rejection log's ``detail`` codes (``hook_ingress_protocol.
+#: HOOK_FRAME_REFUSALS``) and outcomes, in plain words.
+_REFUSAL_WORDS = {
+    "not_a_frame": "something other than the hook connected",
+    "short_frame": "the hook stopped before sending a whole event",
+    "bad_lengths": "the event arrived cut short",
+    "too_large": "the event was too large",
+    "bad_header": "the event's header could not be read",
+    "bad_fields": "the event's header was missing a field",
+    "wrong_version": "the hook is from another JR-Bar version; reinstall hooks",
+    "orphaned_decide": "the agent had already exited",
+    "bad_request": "the event could not be read",
+    "refused_full": "the monitor was busy",
+    "refused_closed": "the monitor was shutting down",
+    "rejected_shutdown_timeout": "the monitor was shutting down",
+}
+
+
+def rejected_hook_frames(state_dir: Path, *, now: float | None = None) -> dict[str, Any]:
+    """Today's refused hook events from ``hook-ingress-rejections.jsonl``:
+    counts, the newest reason code and provider, and a sentence. Content
+    free: the log holds codes, ids, lengths and times, never a payload."""
+    moment = time.time() if now is None else now
+    today = time.strftime("%Y-%m-%d", time.localtime(moment))
+    count = 0
+    newest: dict[str, Any] | None = None
+    try:
+        text = (state_dir / "hook-ingress-rejections.jsonl").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+            at = calendar.timegm(time.strptime(row["recorded_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if time.strftime("%Y-%m-%d", time.localtime(at)) != today:
+            continue
+        count += 1
+        newest = {"at": at, "detail": row.get("detail") or row.get("reason"), "provider": row.get("provider")}
+    if not count or newest is None:
+        return {"today": 0, "newest_at": None, "newest_detail": None, "newest_provider": None, "sentence": None}
+    events = "1 hook event was" if count == 1 else f"{count} hook events were"
+    why = _REFUSAL_WORDS.get(str(newest["detail"]), "the event could not be read")
+    return {
+        "today": count,
+        "newest_at": round(newest["at"], 3),
+        "newest_detail": newest["detail"],
+        "newest_provider": newest["provider"] if isinstance(newest["provider"], str) else None,
+        "sentence": f"{events} refused today. The newest: {why}.",
+    }
+
+
 def hook_doctor_report(
     home: Path | None = None,
     *,
@@ -264,6 +318,7 @@ def hook_doctor_report(
         "core_socket": {"path": str(core), "answers": core.exists() and socket_answers(core)},
         "pending": pending,
         "providers": providers,
+        "rejected": rejected_hook_frames(state_dir),
     }
 
 
@@ -282,6 +337,8 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
             lines.append(f"  {item['file']}: {item['lines']} line(s)")
     else:
         lines.append("pending hook payloads: none")
+    rejected = report.get("rejected") or {}
+    lines.append(f"refused hook events: {rejected.get('sentence') or 'none today'}")
     lines.append("providers:")
     for entry in report["providers"]:
         state = "installed" if entry.get("installed") else "not installed"
@@ -301,4 +358,4 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["classify_command", "hook_doctor_report", "registered_commands", "render_hook_doctor"]
+__all__ = ["classify_command", "hook_doctor_report", "registered_commands", "rejected_hook_frames", "render_hook_doctor"]

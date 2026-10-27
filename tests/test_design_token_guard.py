@@ -118,11 +118,22 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('let count = tokens / 1_000', "token-math"),
     ('Text("Monitor offline")', "monitor-wording"),
     ('Text("The monitor is not answering")', "monitor-wording"),
+    ('statusItem.setCore(description: "disconnected · \\(reason)")', "monitor-wording"),
+    ('PaletteItem(title: "Monitor Not Connected")', "monitor-wording"),
+    ('NSAttributedString(string: "Monitor: \\(description)")', "monitor-wording"),
     ('Text("Effect Studio")', "ui-name"),
     ('Text("Blend mode")', "ui-name"),
     ('Text("42% left")', "usage-direction"),
     ('view.foregroundStyle(JRBarTokens.Ink.attention)', "quota-tone"),
     ('view.buttonStyle(PillButtonStyle(prominent: false))', "secondary-button"),
+    ('Text("Turn it on in Settings \u203a Agents & Usage")', "retired-page"),
+    ('let text = "Setup (Settings \u203a General) grants it back."', "retired-page"),
+    ('let help = "under Settings \u203a General \u203a Power."', "retired-page"),
+    ('self.show(toast: error.localizedDescription)', "error-words"),
+    ('return SetupNote(String(describing: error), isError: true)', "error-words"),
+    ('return reply.message ?? reply.code', "error-words"),
+    ('let why = reply.error?.message ?? reply.error?.code ?? "refused"', "error-words"),
+    ('report(error: "Install hooks: \\(error)")', "error-words"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))

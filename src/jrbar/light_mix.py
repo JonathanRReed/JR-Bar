@@ -25,6 +25,18 @@ from .led_status import LedDisplayState, apply_brightness
 from .provider_ids import provider_display_name
 
 
+def _motion_name(motion: str) -> str:
+    """A motion id in Studio's words ("kitt" is Knight Rider)."""
+    from .colors import PROVIDER_ANIMATION_LABELS
+
+    return PROVIDER_ANIMATION_LABELS.get(motion, motion)
+
+
+def _name_list(names: list[str]) -> str:
+    """"Claude", "Claude and Codex", "Claude, Codex and Gemini"."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
 @dataclass(frozen=True)
 class MixPlan:
     state: LedDisplayState
@@ -182,7 +194,7 @@ def _body(agent, settings, count, *, compact=False):
     cycle = settings.agent_cycle_ms(agent.provider, round(settings.effective_speed_seconds(tempo_mode) * 1000))
     motion = c.agent_motion(agent.state, cycle_ms=cycle, provider=agent.provider, settings=settings)
     if chosen != c.PROVIDER_ANIMATION_AUTO and motion != chosen:
-        raise CannotFit(f"{agent.provider}'s {chosen} is too fast to play safely")
+        raise CannotFit(f"{provider_display_name(agent.provider)}'s {_motion_name(chosen)} is too fast to play safely")
     params = settings.agent_animation_parameters(agent.provider)
     head = c.TOOL_TINT_COLORS.get(settings.render_tool_family) if settings.tint_by_tool else None
     if count == 1 and chosen == "kitt":
@@ -445,7 +457,7 @@ def _shares(agents, settings, count, mode, warnings=None):
         if len(share) == 1 and settings.agent_animation(agent.provider) not in {
             "auto", "breathe", "heartbeat", "steady", "blink", "kitt"
         }:
-            raise CannotFit(f"{agent.provider}'s animation needs more than one LED in its share")
+            raise CannotFit(f"{provider_display_name(agent.provider)}'s animation needs more than one LED in its share")
     grid = sorted({Fraction(index, len(share)) for share in slots
                    for index in range(1, len(share) + 1)})
     tracks = [_share_steps(_body(agent, settings, len(share), compact=True), share, grid)
@@ -773,16 +785,17 @@ def _provider_parameter_warnings(agents, settings):
     warnings = []
     for agent in agents:
         chosen = settings.agent_animation(agent.provider)
+        name = provider_display_name(agent.provider)
         specs = {spec.name: spec for spec in _PROVIDER_PARAMETER_METADATA.get(chosen, ())}
         for key, value in settings.agent_animation_parameters(agent.provider).items():
             spec = specs.get(key)
             if spec is None:
-                warnings.append(f"{agent.provider}'s {key} is not used by {chosen}.")
+                warnings.append(f"{name}'s {key} is not used by {_motion_name(chosen)}.")
                 continue
             try:
                 spec.normalize(value)
             except EffectRegistryError:
-                warnings.append(f"{agent.provider}'s {key} cannot play exactly; the renderer uses a safe default or bound.")
+                warnings.append(f"{name}'s {key} cannot play exactly; the renderer uses a safe default or bound.")
     return warnings
 
 
@@ -821,9 +834,12 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             actual = c.agent_motion(state, cycle_ms=c.provider_cycle_ms(agent.provider, settings),
                 provider=agent.provider, settings=settings)
             if actual != played:
-                warnings.append(f"{agent.provider}'s {played} cannot play exactly at this speed; showing {actual}.")
+                name = provider_display_name(agent.provider)
+                warnings.append(f"{name}'s {_motion_name(played)} cannot play exactly at this speed; "
+                                f"showing {_motion_name(actual)}.")
                 played = actual
-        return MixPlan(state, program, mode, played, f"{agent.provider} is the only working provider.", tuple(warnings))
+        reason = f"{provider_display_name(agent.provider)} is the only working provider."
+        return MixPlan(state, program, mode, played, reason, tuple(warnings))
     if not any(agent.state is LedDisplayState.WORKING for agent in selected):
         renderer = {
             "cycle": c._cycle_program, "spatial_split": c._spatial_split_program,
@@ -831,7 +847,7 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         }.get(mode, c._color_blend_program)
         program = renderer(selected, led_count=led_count, brightness=brightness, settings=settings)
         return MixPlan(state, program, mode, "status", "No provider is working.")
-    names = " and ".join(provider_display_name(agent.provider) for agent in selected)
+    names = _name_list([provider_display_name(agent.provider) for agent in selected])
     working = "is working" if len(selected) == 1 else "are working"
     requested = mode
     attempts = [mode]

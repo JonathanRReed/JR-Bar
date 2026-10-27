@@ -7,7 +7,7 @@ prints a stable document for scripts.
 ## Quota and usage
 
 ```sh
-jrbar usage                    # one line per window: "Claude  5h 58% left · resets 2h14m"
+jrbar usage                    # one line per window: "Claude  5h 42% used · resets in 2h 14m"
 jrbar usage --brief            # a table
 jrbar usage --json             # the usage block, with "schema": 1
 jrbar usage --provider codex   # one provider
@@ -122,7 +122,7 @@ whether a newer release is published. It never writes to the device and
 never goes to the network: the newest releases it knows are a table in the
 app, refreshed when the SidePulse project is reviewed.
 
-`jrbar firmware upgrade` updates a device the way **Settings > Devices & Lighting** does
+`jrbar firmware upgrade` updates a device the way **Settings > Devices** does
 ([what it does, step by step](firmware.md)). It prints what it will download
 and write and waits for `yes` (or `--yes`), then shows each step. This is the
 only command that fetches anything, once, from `raw.githubusercontent.com`; a

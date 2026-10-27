@@ -99,7 +99,7 @@ import Testing
     @Test("a reply refusal reads as its message, not a struct dump")
     func errorWords() {
         let busy = CoreReplyError(code: "busy", message: "The monitor is busy")
-        #expect(UsageCenterStore.describe(busy) == "The monitor is busy")
+        #expect(UsageCenterStore.describe(busy) == "The monitor is busy.")
         #expect(!UsageCenterStore.describe(CoreClientError.timeout).contains("CoreClientError"))
     }
 

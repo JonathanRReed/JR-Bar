@@ -709,7 +709,7 @@ struct EventLogView: View {
                     title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : MonitorWords.label,
                     text: store.isLive
                         ? "The journal holds the events the monitor published since it started."
-                        : "The event journal lives in the monitor. It appears when the socket is live.",
+                        : "The monitor keeps these events. They appear when it reconnects.",
                     tint: store.isLive ? .secondary : Tone.neutral.color)
             } else if store.events.isEmpty {
                 WindowEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
@@ -743,13 +743,12 @@ struct EventLogView: View {
                 .background(Color.secondary.opacity(0.14), in: .capsule)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Events: historical, read only")
-            Text("This run's journal · \(store.replay.retained) retained" +
-                 (store.replay.dropped > 0 ? " · \(store.replay.dropped) dropped" : "") +
-                 (store.replay.resyncRequired ? " · resync required" : ""))
+            Text(EventLogWords.banner(kept: store.replay.retained, dropped: store.replay.dropped,
+                                      incomplete: store.replay.resyncRequired))
                 .jrbarType(.caption).foregroundStyle(.secondary)
             Spacer()
             if store.replay.liveAttention > 0 {
-                Label("\(store.replay.liveAttention) need you now — live", systemImage: "exclamationmark.bubble")
+                Label(EventLogWords.needYou(store.replay.liveAttention), systemImage: "exclamationmark.bubble")
                     .jrbarType(.caption).fontWeight(.medium)
                     .foregroundStyle(Tone.neutral.color)
             }
@@ -889,5 +888,22 @@ struct HistoryEmptyState: View {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Nothing yet",
                              text: "Sessions that finish, fail or ask for you show up here.")
         }
+    }
+}
+
+/// The Events tab's words: what the journal holds, in counts a person reads.
+enum EventLogWords {
+    /// "Events since the monitor started · 120 kept · 3 dropped"; an
+    /// incomplete journal says so instead of "resync required".
+    static func banner(kept: Int, dropped: Int, incomplete: Bool) -> String {
+        var parts = ["Events since the monitor started", "\(kept) kept"]
+        if dropped > 0 { parts.append("\(dropped) dropped") }
+        if incomplete { parts.append("some may be missing; Refresh reloads them") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "1 needs you now", "3 need you now".
+    static func needYou(_ count: Int) -> String {
+        count == 1 ? "1 needs you now" : "\(count) need you now"
     }
 }

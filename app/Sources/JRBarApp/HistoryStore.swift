@@ -553,7 +553,7 @@ final class HistoryStore {
                     reply = undone
                 }
                 guard reply.ok else {
-                    self.say("\(verb) failed: \(reply.error?.message ?? reply.error?.code ?? "refused")", isError: true)
+                    self.say("\(verb) failed: \(reply.error?.sentence ?? "The monitor refused that.")", isError: true)
                     return
                 }
                 let countKey = action == .clear ? "cleared" : "restored"
@@ -591,11 +591,11 @@ final class HistoryStore {
         UsageTime.clock(date.timeIntervalSince1970, locale: locale)
     }
 
-    /// `m:ss` under an hour, `h:mm:ss` after; monospaced in the column.
+    /// A run's length in the panel's words: "45s" under a minute, whole
+    /// minutes after ("25m", "1h 00m"), so a list reads the same everywhere.
     static func duration(_ seconds: Double?) -> String? {
-        guard let seconds, seconds >= 0 else { return nil }
-        let total = Int(saturating: seconds.rounded())
-        if total < 3600 { return String(format: "%d:%02d", total / 60, total % 60) }
-        return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+        guard let seconds, seconds >= 0, seconds.isFinite else { return nil }
+        let rounded = seconds < 60 ? seconds.rounded(.down) : (seconds / 60).rounded() * 60
+        return UsageTime.duration(rounded)
     }
 }
