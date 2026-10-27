@@ -33,7 +33,7 @@ final class NotchCardModel {
                 // must not undo a shelf summon waiting to grow.
                 if oldValue { page = .now }
             }
-            refreshPrivacy()
+            if !pinned || !runtimeEnabled { refreshPrivacy() }
             guard runtimeEnabled else { return }
             if pinned {
                 syncSources()
@@ -48,9 +48,6 @@ final class NotchCardModel {
                 }, changed: { [weak self] in self?.syncSources() })
                 tray.revalidate()
                 tray.notePasteboard()
-                mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
-                calendar.sync(enabled: calendarEnabled())
-                reminders.sync(enabled: remindersEnabled())
                 wingHint = Self.wingHintDue()
             } else {
                 sourceObservation.stop()
