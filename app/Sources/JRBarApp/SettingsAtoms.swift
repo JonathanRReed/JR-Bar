@@ -129,14 +129,14 @@ struct SettingsGroupHeader: View {
                 SettingsIconTile(symbol: symbol, tint: tint, size: 20)
             }
             Text(title)
-                .font(.headline)
+                .jrbarType(.heading)
             if let pill {
                 StatusBadge(pill, tint: pillTint)
             }
             Spacer(minLength: SettingsMetrics.s)
             if let trailing {
                 Text(trailing)
-                    .font(.subheadline)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -158,9 +158,7 @@ struct CardSectionHeader: View {
     init(_ title: String) { self.title = title }
 
     var body: some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+        SectionHeader(title)
             .padding(.top, SettingsMetrics.m)
             .padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -491,10 +489,10 @@ struct SettingGroup<Header: View, Content: View>: View {
     }
 }
 
-extension SettingGroup where Header == Text {
+extension SettingGroup where Header == SectionHeader {
     /// A group with the standard bold title, e.g. `SettingGroup("Dimming")`.
     init(_ title: String, note: String? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self.init(note: note, anchor: title, plainTitle: title, content: content) { Text(title).font(.headline) }
+        self.init(note: note, anchor: title, plainTitle: title, content: content) { SectionHeader(title) }
     }
 }
 

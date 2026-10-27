@@ -340,8 +340,7 @@
     "animation: duration: 0.28": 1,
     "font-floor: .system(size: 9": 1,
     "font: .system(size: 9": 1,
-    "semantic-font: .font(.headline": 2,
-    "semantic-font: .font(.subheadline": 4,
+    "semantic-font: .font(.subheadline": 2,
     "semantic-font: .font(.title3": 1
   },
   "app/Sources/JRBarApp/SettingsPagesA.swift": {
@@ -994,10 +993,8 @@
     "semantic-font: .font(.subheadline": 1
   },
   "app/Sources/JRBarApp/WindowChrome.swift": {
-    "font: .system(size: 11": 2,
     "font: .system(size: 12": 1,
-    "font: .system(size: 12.5": 1,
-    "font: .system(size: 13": 1
+    "font: .system(size: 12.5": 1
   },
   "app/Sources/JRBarCore/KeepAwakeReading.swift": {
     "elapsed-unit: \\(hours) h": 1,

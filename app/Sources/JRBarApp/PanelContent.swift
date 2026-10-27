@@ -105,7 +105,7 @@ struct PanelAgentsSection: View {
     private var emptyLabel: String {
         if !store.isLive { return "Agents appear when the monitor connects" }
         if !store.trimmedFindQuery.isEmpty { return "No matching agents" }
-        return store.visibleAskRows.isEmpty ? "Start an agent to see its session" : "No other recent sessions"
+        return store.visibleAskRows.isEmpty ? "Start an agent" : "No other recent sessions"
     }
 
     var body: some View {
@@ -247,7 +247,7 @@ struct PanelProviderSection: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Usage").font(JRBarTokens.TypeStyle.section.font).foregroundStyle(JRBarTokens.Ink.secondary)
+                SectionHeader("Usage")
                 Spacer()
                 Button(store.editingProviders ? "Done" : "Edit") { store.editingProviders.toggle(); editPage = 0 }
                     .buttonStyle(.plain).font(JRBarTokens.TypeStyle.caption.font)
@@ -458,7 +458,7 @@ struct PanelTitleBar: View {
     var body: some View {
         HStack(spacing: JRBarTokens.Space.sm) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Agents").font(JRBarTokens.TypeStyle.headline.font)
+                Text("JR-Bar").font(JRBarTokens.TypeStyle.headline.font)
                 Text(store.headerCounts).font(JRBarTokens.TypeStyle.callout.font)
                     .foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)
             }
@@ -502,7 +502,7 @@ private struct PanelFooterButtonStyle: ButtonStyle {
 @MainActor
 func panelSectionTitle(_ title: String, trailing: String? = nil) -> some View {
     HStack {
-        Text(title).font(JRBarTokens.TypeStyle.section.font).foregroundStyle(JRBarTokens.Ink.secondary)
+        SectionHeader(title)
         Spacer()
         if let trailing {
             Text(trailing).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)

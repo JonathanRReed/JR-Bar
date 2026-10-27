@@ -76,7 +76,7 @@ extension View {
     }
 }
 
-/// A section's title inside a window: 13 pt semibold, with an optional
+/// A section's title inside a window, with an optional
 /// quiet count or caption on the right.
 struct WindowSectionTitle<Trailing: View>: View {
     let title: String
@@ -87,15 +87,13 @@ struct WindowSectionTitle<Trailing: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
+                    .jrbarType(.section)
                     .foregroundStyle(.secondary)
             }
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
+            SectionHeader(title)
             Spacer(minLength: 8)
             trailing()
-                .font(.system(size: 11))
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }

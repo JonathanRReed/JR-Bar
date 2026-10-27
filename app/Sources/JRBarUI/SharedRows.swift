@@ -2,6 +2,17 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
+public struct SectionHeader: View {
+    @Environment(\.jrbarInk) private var neutralInk
+    private let title: String
+    public init(_ title: String) { self.title = title }
+
+    public var body: some View {
+        Text(title).jrbarType(.section).foregroundStyle(neutralInk.secondary)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 public struct ProviderLogoTile: View {
     @Environment(\.jrbarInk) private var neutralInk
     public let provider: String

@@ -702,7 +702,7 @@ final class PanelStore {
         if aggregate.failed > 0 { parts.append("\(aggregate.failed) failed") }
         if parts.isEmpty {
             let total = state.mainSessions.count
-            return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
+            return total == 0 ? "No agents running" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
         return Self.countLine(parts: parts, headerWord: "Agents", total: state.mainSessions.count)
     }
