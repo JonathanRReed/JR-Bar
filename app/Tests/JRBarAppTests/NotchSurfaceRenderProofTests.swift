@@ -680,8 +680,7 @@ enum ProofRender {
         let hosting = NSHostingView(rootView: view
             .frame(width: size.width)
             .environment(\.colorScheme, dark ? .dark : .light)
-            .environment(\.renderSnapshot, true)
-            .environment(\.controlActiveState, .key))
+            .environment(\.renderSnapshot, true))
         hosting.appearance = appearance
         hosting.frame = CGRect(origin: .zero, size: size)
         let offscreen = NSRect(origin: CGPoint(x: -20000, y: -20000), size: size)
