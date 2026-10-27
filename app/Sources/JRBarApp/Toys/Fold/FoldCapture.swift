@@ -130,6 +130,27 @@ enum FoldCaptureMode {
     }
 }
 
+/// The fold's one colour space: the built-in panel's gamut. The capture
+/// films in it, the wallpaper stand-in draws in it and the overlay's
+/// layer is tagged with it, so the window server shows the picture
+/// exactly as it showed the desktop and nothing shifts when the overlay
+/// comes in. Display P3 on a wide-gamut panel, which every recent
+/// built-in display is, and sRGB otherwise. Both use the sRGB transfer
+/// curve, which the renderer's linear-light read relies on.
+enum FoldColour {
+    nonisolated static func spaceName(wideGamut: Bool) -> CFString {
+        wideGamut ? CGColorSpace.displayP3 : CGColorSpace.sRGB
+    }
+
+    @MainActor static func spaceName(for screen: NSScreen?) -> CFString {
+        spaceName(wideGamut: screen?.canRepresent(.p3) ?? false)
+    }
+
+    @MainActor static func space(for screen: NSScreen?) -> CGColorSpace? {
+        CGColorSpace(name: spaceName(for: screen))
+    }
+}
+
 enum FoldCaptureError: LocalizedError {
     case noStillImage
     case noBuiltinDisplay
@@ -164,10 +185,12 @@ enum FoldCaptureError: LocalizedError {
 ///   application's windows excluded, so the wallpaper (and any
 ///   unowned system surface) is what shows behind the cards.
 ///
-/// Every stream runs at 60 fps, BGRA sRGB, no audio, no cursor (cursor
-/// motion would mint frames nobody asked for), complete frames only,
-/// capped at 2560 px on the long edge — the fold defocuses the picture
-/// anyway. In the Room a timer polls the on-screen window list into
+/// Every stream runs at 60 fps, BGRA in the panel's own colour space
+/// (`FoldColour`), no audio, no cursor (cursor motion would mint frames
+/// nobody asked for), complete frames only. The Duo films the display's
+/// real backing pixels, so the first degrees of a fold are the desktop
+/// pixel for pixel; the Room keeps the display in points capped at
+/// 2560 px (`streamSize`). In the Room a timer polls the on-screen window list into
 /// `PortalDepth` cards at 4 Hz; the card layout only changes when a
 /// window does.
 ///
@@ -298,17 +321,6 @@ final class FoldCapture {
         else { throw FoldCaptureError.ownAppMissing }
         displayFrameQuartz = CGDisplayBounds(display.displayID)
 
-        let config = SCStreamConfiguration()
-        let scale = min(1, 2560.0 / Double(max(display.width, display.height)))
-        config.width = max(2, Int(Double(display.width) * scale))
-        config.height = max(2, Int(Double(display.height) * scale))
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        config.queueDepth = 4
-        config.showsCursor = false
-        config.capturesAudio = false
-        config.pixelFormat = kCVPixelFormatType_32BGRA
-        config.colorSpaceName = CGColorSpace.sRGB
-
         // The Duo's one picture keeps our own menu-bar pieces; the
         // Room's near stream is everything minus ourselves, and its far
         // wall the display with every application's windows excluded,
@@ -316,6 +328,21 @@ final class FoldCapture {
         let barWindows = dual ? [] : Self.ownBarWindows(in: content, display: display)
         let fullFilter = SCContentFilter(
             display: display, excludingApplications: [ownApp], exceptingWindows: barWindows)
+
+        let config = SCStreamConfiguration()
+        let size = Self.streamSize(points: fullFilter.contentRect.size,
+                                   pointPixelScale: Double(fullFilter.pointPixelScale), dual: dual)
+        config.width = Int(size.width)
+        config.height = Int(size.height)
+        if !dual { config.captureResolution = .best }
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.queueDepth = 4
+        config.showsCursor = false
+        config.capturesAudio = false
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        let colour = FoldColour.spaceName(for: FoldOverlayWindow.builtinScreen())
+        config.colorSpaceName = colour
+        FoldLog.log.notice("capture: \(config.width, privacy: .public)x\(config.height, privacy: .public) px in \(colour as String, privacy: .public)")
         if still {
             // One picture now, no stream: the renderer builds its blur
             // pyramid from it once, and the fold folds a held picture.
@@ -373,6 +400,25 @@ final class FoldCapture {
         fullStream = full
         farStream = far
         if dual { startLayoutPolling() }
+    }
+
+    /// The size a stream films at, from the filter's content size in
+    /// points and its point-to-pixel scale. The Duo takes the display's
+    /// backing pixels exactly, the same size as the overlay's drawable,
+    /// so the resting frame is the desktop pixel for pixel and the hinge
+    /// row stays as sharp as the desktop was. The Room keeps its earlier
+    /// size, the display in points capped at 2560 px on the long edge: it
+    /// holds two streams and five full-size textures, and it defocuses
+    /// everything it draws.
+    nonisolated static func streamSize(points: CGSize, pointPixelScale: Double, dual: Bool) -> CGSize {
+        if dual {
+            let cap = min(1, 2560 / max(1, max(points.width, points.height)))
+            return CGSize(width: max(2, (points.width * cap).rounded(.down)),
+                          height: max(2, (points.height * cap).rounded(.down)))
+        }
+        let scale = pointPixelScale.isFinite && pointPixelScale > 0 ? pointPixelScale : 1
+        return CGSize(width: max(2, (points.width * scale).rounded()),
+                      height: max(2, (points.height * scale).rounded()))
     }
 
     /// JR-Bar's own windows that live in the menu bar — the Screen Bar and

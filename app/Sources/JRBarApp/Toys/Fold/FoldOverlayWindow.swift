@@ -19,6 +19,10 @@ final class FoldOverlayWindow: NSPanel {
         super.init(contentRect: screen.frame,
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         metalView.colorPixelFormat = .bgra8Unorm
+        // The layer speaks the capture's colour space, so the window
+        // server matches the overlay to the panel exactly as it matched
+        // the desktop, and nothing shifts when the overlay comes in.
+        metalView.colorspace = FoldColour.space(for: screen)
         // Black under everything: the Duo's void and the closed-lid hold
         // are the clear itself (the renderer re-picks it per draw).
         metalView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)

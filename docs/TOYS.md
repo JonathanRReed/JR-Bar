@@ -198,8 +198,14 @@ Closing the lid folds the desktop. Two looks, picked on the card:
 
 Both fold from wherever the lid rests by default (the Duo reacts from the
 first degree), or from a set angle. Clean-room; no Lid Plane (GPL-3) or
-Bendy code; the Duo's numbers come from the public chuspeeism/iphone-duo
-study of Apple's own model (MIT).
+Bendy code. Apple has published no numbers for the Duo's transition, so
+the Duo's are estimates. The darkening and the classic blur come from
+chuspeeism/iphone-duo (MIT), an independent animation study that guessed
+them against the community's 3D model of the device, not anything Apple
+released. The blur's shape since 0.10.1 follows a third-party replay of
+the shaders on Apple's iPhone Duo product page (bravohenry's motion study)
+and a frame-by-frame review of real footage (jal-co/iphone-duo). Credits
+and commits are in [PRIOR-ART.md](PRIOR-ART.md).
 
 - **Sensor** `LidAngleSensor` (`JRBarApp/Toys/Fold/LidAngleSensor.swift`):
   IOKit HID, match usage page `0x20` (Sensor), usage `0x8A` (Orientation),
@@ -322,10 +328,21 @@ study of Apple's own model (MIT).
 - **Capture** `FoldCapture`: the Duo runs ONE stream (`dual: false`), the
   whole desktop minus JR-Bar, except JR-Bar's own menu-bar windows (the
   Screen Bar, kept through `exceptingWindows`) so the
-  whole bar folds together; no far stream and no window-list poll. The
+  whole bar folds together; no far stream and no window-list poll. It
+  films the display's real backing pixels (`contentRect ×
+  pointPixelScale`, `captureResolution = .best`): 3024×1964 on a 14-inch
+  Retina panel, the overlay's own drawable size, so the first degrees of
+  a fold are the desktop pixel for pixel (`FoldCapture.streamSize`; until
+  0.10.1 it filmed the display in points, a 1512×982 picture on that
+  panel). Every stream films in the panel's colour space, Display P3 on
+  a wide-gamut panel and sRGB otherwise (`FoldColour`); the overlay's
+  layer and the wallpaper stand-in use the same one, so nothing shifts
+  when the overlay comes in. The full-size picture costs memory only
+  while a fold is armed: about 32 MB of pyramid plus the stream's
+  buffers, released when the fold parks. The
   Room runs TWO ScreenCaptureKit streams on the
-  built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
-  no cursor, complete frames only, capped at 2560 px: a near stream
+  built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA, no audio,
+  no cursor, complete frames only, in points capped at 2560 px: a near stream
   (`excludingApplications` JR-Bar itself) for the window cards, and a
   wallpaper-only stream (the display with every application excluded,
   on the same 60 fps configuration) for the
@@ -381,8 +398,15 @@ study of Apple's own model (MIT).
   compiles once per launch, off the main thread, as soon as the toy is
   on (`FoldShaderCache`), so the first fold never waits on it.
   - **Duo** (`duoFragment`, `FoldDuoModel`): each captured frame lands
-    in an 8-level Gaussian pyramid (`MPSImageGaussianPyramid`; plain
-    mipmaps where MPS can't run). Units are screen heights in the lid's
+    in a 10-level Gaussian pyramid (`MPSImageGaussianPyramid`; plain
+    mipmaps where MPS can't run). The pyramid is sRGB-encoded
+    (`bgra8Unorm_srgb`), so MPS's filter and every read mix light rather
+    than encoded numbers: a black-and-white checker blurs to about
+    184/255, the average of its light, where blurring the numbers gave
+    135 and greyed bright detail out. The shader encodes the result back
+    and adds a fixed ±1-step triangular dither wherever the fold changed
+    the picture, so long dark ramps come out as grain, not bands; the
+    resting frame stays the desktop's own bytes and black stays black. Units are screen heights in the lid's
     side view, hinge at the origin. The seated eye sits at (2.6, 2.0)·(1.6
     − Perspective): 2.6 H toward you, 2.0 H up at the default. Each glass
     pixel, on a lid drawn at θref − Hold·(θref − θ), casts a ray from the
@@ -391,10 +415,29 @@ study of Apple's own model (MIT).
     edge-on (37.6° for the default eye) the pixel is black. `motion =
     smoothstep(δ / (fadeLength·(θref − 5°)))` has zero slope at the
     start. In the picture's own rows (e = 0 at the hinge row, 1 at the
-    far edge) blur σ = 0.10·Blur·motion·e^1.35 H, read as one pyramid
+    far edge) the blur is a **front** (`FoldDuoModel.BlurShape.front`):
+    with r = (e − 0.07)/0.93 and the travel p = δ / (fadeLength·(θref −
+    5°)) capped at 1, a row's frost is a = min(1, r·p / 0.5) and its σ =
+    0.233·Blur·(2^(8a) − 1)/255 H. The pyramid level, which is log2 σ,
+    so rises in a straight line with distance and travel. The hinge-side
+    7 % never blurs, the middle stays sharper than it used to for longer,
+    and the outer band frosts hard by a third of the close: fully frosted
+    at 0.14 H (default Blur) from 29° down off a 110° rest, against
+    0.03 H for the classic curve there. A reopen clears as a front from
+    the hinge outward: the fully frosted band retreats to the far edge,
+    which is the last to come into focus, still soft 10° from rest.
+    Under 0.82 px of blur the base is read as it is, so the first
+    degrees are the desktop itself. σ is read as one pyramid
     level through a cubic B-spline (≈ 0.82·2^L px, MPS's decimation
     offset undone; `FoldRendererTests` pins it within 6/255 of a
-    Gaussian, so no ghost copies), and darkening is
+    Gaussian, so no ghost copies). **Classic blur (hidden, for
+    comparison in 0.10.1 only):** `defaults write com.jonathanreed.jrbar
+    jrbar.foldClassicBlur -bool YES` brings back the 0.10.0 curve, σ =
+    0.10·Blur·motion·e^1.35 H, from the next fold; `defaults delete
+    com.jonathanreed.jrbar jrbar.foldClassicBlur` goes back to the front.
+    Everything else, the full-resolution capture and the linear light
+    included, is the same either way. The switch goes in the release
+    after 0.10.1. Darkening is
     min(1, 3·Shade·motion·((e − 0.2)/0.8)^1.35): the hinge-side fifth
     never darkens and the far edge is black once motion ≥ 0.5 at the
     default Shade. The end fade runs from clear at edge-on + 22° to black

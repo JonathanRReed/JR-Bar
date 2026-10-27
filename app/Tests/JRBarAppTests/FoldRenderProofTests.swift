@@ -23,6 +23,15 @@ import Testing
 @Suite("Fold render proof")
 @MainActor
 struct FoldRenderProofTests {
+    /// The shaders compile off the main thread and a main-actor renderer
+    /// never waits for them, so the suite warms the cache itself and
+    /// passes whether it runs alone or after another Fold suite.
+    init() async {
+        await withCheckedContinuation { continuation in
+            FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+    }
+
     nonisolated static let width = 1512
     nonisolated static let height = 982
     static let rest = 110.0
@@ -40,26 +49,29 @@ struct FoldRenderProofTests {
     // MARK: The desktop
 
     /// Draws the synthetic desktop (or, `wallpaperOnly`, what the Room's
-    /// far stream sees: the wallpaper alone) into a capture-shaped frame.
-    static func desktop(wallpaperOnly: Bool = false) throws -> CVPixelBuffer {
+    /// far stream sees: the wallpaper alone) into a capture-shaped frame,
+    /// `scale` pixels to the point: 2 is the Retina capture.
+    static func desktop(wallpaperOnly: Bool = false, scale: Int = 1) throws -> CVPixelBuffer {
         var maybeBuffer: CVPixelBuffer?
         let attrs: [String: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
             kCVPixelBufferMetalCompatibilityKey as String: true,
         ]
-        #expect(CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+        let pixelsWide = width * scale
+        let pixelsHigh = height * scale
+        #expect(CVPixelBufferCreate(kCFAllocatorDefault, pixelsWide, pixelsHigh, kCVPixelFormatType_32BGRA,
                                     attrs as CFDictionary, &maybeBuffer) == kCVReturnSuccess)
         let buffer = try #require(maybeBuffer)
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         let ctx = try #require(CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
+            data: CVPixelBufferGetBaseAddress(buffer), width: pixelsWide, height: pixelsHigh,
             bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info))
         // Top-left origin, like the capture.
-        ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
+        ctx.translateBy(x: 0, y: CGFloat(pixelsHigh))
+        ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
         drawWallpaper(ctx)
         guard !wallpaperOnly else { return buffer }
         drawTextWindow(ctx)
@@ -67,7 +79,33 @@ struct FoldRenderProofTests {
         fill(ctx, yellowWindow, 245, 225, 70)
         drawMenuBar(ctx)
         drawDock(ctx)
+        drawHingeText(ctx)
         return buffer
+    }
+
+    /// Two lines of synthetic text on the wallpaper just above the Dock,
+    /// where the fold should keep the desktop exactly as sharp as it was.
+    static let hingeText = CGRect(x: 180, y: 740, width: 760, height: 120)
+
+    private static func drawHingeText(_ ctx: CGContext) {
+        let graphics = NSGraphicsContext(cgContext: ctx, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let lines: [(String, CGFloat)] = [
+            ("Fold proof: thirteen-point text on a synthetic desktop", 13),
+            ("Eleven-point detail: 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ", 11),
+            ("The hinge rows should stay as sharp as the desktop was", 13),
+        ]
+        var y = hingeText.minY
+        for line in lines {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: line.1, weight: .regular),
+                .foregroundColor: NSColor(srgbRed: 0.93, green: 0.93, blue: 0.95, alpha: 1),
+            ]
+            (line.0 as NSString).draw(at: CGPoint(x: hingeText.minX, y: y), withAttributes: attrs)
+            y += 36
+        }
     }
 
     private static func fill(_ ctx: CGContext, _ rect: CGRect, _ r: Int, _ g: Int, _ b: Int) {
@@ -183,7 +221,8 @@ struct FoldRenderProofTests {
                    queue: try #require(device.makeCommandQueue()))
     }
 
-    static func makeTarget(_ device: MTLDevice) throws -> MTLTexture {
+    static func makeTarget(_ device: MTLDevice, width: Int = width,
+                           height: Int = height) throws -> MTLTexture {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         desc.usage = [.shaderRead, .renderTarget]
@@ -195,14 +234,15 @@ struct FoldRenderProofTests {
     /// overlay is out (no travel yet), else the look's overlay — the
     /// toy's own mapping for each look, from a lid resting at 110°.
     static func renderPanel(_ rig: Rig, angle: Double, blur: Double = 0.6,
-                      shade: Double = 0.67) throws -> MTLTexture {
+                            shade: Double = 0.67,
+                            shape: FoldDuoModel.BlurShape = .front) throws -> MTLTexture {
         let delta = rest - angle
         guard delta > 0.2 else { return rig.desktop }
         let renderer = rig.renderer
         if renderer.look == .duo {
             FoldDuoModel.apply(to: &renderer.params, reference: rest, theta: angle, hold: 1,
                                perspective: 0.6, blur: blur, shade: shade, fadeLength: 0.55,
-                               reduceMotion: false)
+                               reduceMotion: false, shape: shape)
         } else {
             FoldPortalModel.apply(to: &renderer.params,
                                   delta: FoldMath.deltaRadians(angle: angle, reference: rest),
@@ -273,17 +313,20 @@ struct FoldRenderProofTests {
 
     struct Pixels {
         let bytes: [UInt8]
+        var width = FoldRenderProofTests.width
+        var height = FoldRenderProofTests.height
         func rgb(_ x: Int, _ y: Int) -> (r: Double, g: Double, b: Double) {
-            let i = (y * FoldRenderProofTests.width + x) * 4
+            let i = (y * width + x) * 4
             return (Double(bytes[i + 2]), Double(bytes[i + 1]), Double(bytes[i]))
         }
     }
 
     static func pixels(_ texture: MTLTexture) -> Pixels {
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        texture.getBytes(&bytes, bytesPerRow: width * 4,
-                         from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
-        return Pixels(bytes: bytes)
+        let w = texture.width, h = texture.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        texture.getBytes(&bytes, bytesPerRow: w * 4,
+                         from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        return Pixels(bytes: bytes, width: w, height: h)
     }
 
     /// The Dock's centroid: the green only the Dock wears.
@@ -645,6 +688,281 @@ struct FoldRenderProofTests {
         try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
     }
 
+    /// What one Duo frame costs the GPU, drawn at the 14-inch panel's own
+    /// size (3024×1964, the overlay's drawable) from the 1x picture the
+    /// capture used to film and from the Retina one it films now, with
+    /// each blur: the median of five batches of 40 draws back to back at
+    /// each lid angle, after a warm-up batch. Written to `fold-duo-gpu.txt`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to measure the Duo's GPU cost"))
+    func duoGPUCost() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let panelWidth = 3024, panelHeight = 1964
+        var lines: [String] = []
+        let shapes: [FoldDuoModel.BlurShape] = [.classic, .front]
+        for scale in [1, 2] {
+            let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
+            renderer.look = .duo
+            #expect(renderer.setFullFrame(try Self.desktop(scale: scale)))
+            let out = try Self.makeTarget(renderer.device, width: panelWidth, height: panelHeight)
+            let size = CGSize(width: panelWidth, height: panelHeight)
+            let picture = "\(Self.width * scale)x\(Self.height * scale)"
+            let pyramid = renderer.duoPyramid.map { "\($0.mipmapLevelCount) levels, \($0.allocatedSize / 1_000_000) MB" } ?? "none"
+            for shape in shapes {
+                var medians: [String] = []
+                for angle in [100.0, 90, 75, 60] {
+                    FoldDuoModel.apply(to: &renderer.params, reference: Self.rest, theta: angle, hold: 1,
+                                       perspective: 0.6, blur: 0.6, shade: 0.67, fadeLength: 0.55,
+                                       reduceMotion: false, shape: shape)
+                    _ = renderer.gpuTimePerFrame(to: out, size: size, frames: 40)
+                    var times: [Double] = []
+                    for _ in 0..<5 {
+                        let time = try #require(renderer.gpuTimePerFrame(to: out, size: size, frames: 40))
+                        times.append(time * 1000)
+                    }
+                    times.sort()
+                    medians.append(String(format: "%.0f° %.3f ms", angle, times[times.count / 2]))
+                }
+                let label = shape == .front ? "front" : "classic"
+                lines.append("picture \(picture) (pyramid \(pyramid)), \(label) blur, drawn at "
+                             + "\(panelWidth)x\(panelHeight): " + medians.joined(separator: ", "))
+            }
+        }
+        let report = lines.joined(separator: "\n") + "\n"
+        print("fold proof: GPU per Duo frame\n" + report)
+        try report.write(to: dir.appendingPathComponent("fold-duo-gpu.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// The checker window as the seated eye sees it mid-fold: its mean
+    /// brightness, 0…255, over the cells (its title bar left out). Sharp,
+    /// its 20 and 250 cells average 135 in the numbers and about 184 in
+    /// light, which is where a blur that mixes light lands it.
+    static func checkerMean(_ px: Pixels) -> Double {
+        let m = Double(margin)
+        let scale = 1 / (1 + 2 * m)
+        let box = CGRect(x: checkerWindow.minX + 20, y: checkerWindow.minY + 40,
+                         width: checkerWindow.width - 40, height: checkerWindow.height - 60)
+        let x0 = Int(((box.minX - Double(width) / 2) * scale + Double(width) / 2).rounded())
+        let x1 = Int(((box.maxX - Double(width) / 2) * scale + Double(width) / 2).rounded())
+        let y0 = Int(((box.minY + m * Double(height)) * scale).rounded())
+        let y1 = Int(((box.maxY + m * Double(height)) * scale).rounded())
+        var sum = 0.0, n = 0.0
+        for y in y0..<y1 {
+            for x in x0..<x1 {
+                let c = px.rgb(x, y)
+                sum += (c.r + c.g + c.b) / 3
+                n += 1
+            }
+        }
+        return sum / max(1, n)
+    }
+
+    /// The checker window's mean brightness as the seated eye sees it, at
+    /// rest and mid-fold, with the default Shade and with Shade 0 (blur
+    /// alone). Written to `fold-duo-checker.txt`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to measure the checker window"))
+    func checkerMeasurement() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var lines: [String] = []
+        let shapes: [FoldDuoModel.BlurShape] = [.classic, .front]
+        for shape in shapes {
+            for shade in [0.67, 0] {
+                var cells: [String] = []
+                for angle in [110.0, 90, 80, 75] {
+                    let panel = try Self.renderPanel(rig, angle: angle, shade: shade, shape: shape)
+                    let seen = Self.pixels(try Self.renderObserver(rig, panel: panel, angle: angle))
+                    cells.append(String(format: "%.0f° %.1f", angle, Self.checkerMean(seen)))
+                }
+                let label = shape == .front ? "front" : "classic"
+                lines.append(String(format: "%@ blur, shade %.2f: ", label, shade) + cells.joined(separator: ", "))
+            }
+        }
+        let report = lines.joined(separator: "\n") + "\n"
+        print("fold proof: checker window mean as the eye sees it\n" + report)
+        try report.write(to: dir.appendingPathComponent("fold-duo-checker.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// The two blurs side by side: the classic 0.10.0 curve on top, the
+    /// front underneath, at the same lid angles and the default knobs.
+    /// Seated-eye and glass strips, plus full-size pairs at three angles.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the blur comparison"))
+    func blurComparison() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var eyes: [(Double, CGImage, CGImage)] = []
+        var glasses: [(Double, CGImage, CGImage)] = []
+        var eyeCaptions: [(glass: String, eye: String)] = []
+        var glassCaptions: [(glass: String, eye: String)] = []
+        for angle in [100.0, 90, 80, 75, 70, 60] {
+            let old = try Self.renderPanel(rig, angle: angle, shape: .classic)
+            let new = try Self.renderPanel(rig, angle: angle, shape: .front)
+            let oldEye = try Self.image(try Self.renderObserver(rig, panel: old, angle: angle))
+            let newEye = try Self.image(try Self.renderObserver(rig, panel: new, angle: angle))
+            eyes.append((angle, oldEye, newEye))
+            glasses.append((angle, try Self.image(old), try Self.image(new)))
+            eyeCaptions.append((glass: String(format: "old blur · seated eye, %.0f°", angle),
+                                eye: String(format: "new blur · seated eye, %.0f°", angle)))
+            glassCaptions.append((glass: String(format: "old blur · glass, %.0f°", angle),
+                                  eye: String(format: "new blur · glass, %.0f°", angle)))
+            if [90.0, 80, 75].contains(angle) {
+                let pair = try Self.pair(oldEye, newEye, left: String(format: "old blur, %.0f°", angle),
+                                         right: String(format: "new blur, %.0f°", angle))
+                try Self.writePNG(pair, to: dir.appendingPathComponent(String(format: "fold-duo-compare-%.0f.png", angle)))
+            }
+        }
+        let eyeTitle = "Duo close, seated eye: old blur (top) and new blur (bottom) at the same lid angles"
+        try Self.writePNG(try Self.makeStrip(eyes, title: eyeTitle, captions: eyeCaptions),
+                          to: dir.appendingPathComponent("fold-duo-blur-compare-eye-strip.png"))
+        let glassTitle = "Duo close, glass: old blur (top) and new blur (bottom) at the same lid angles"
+        try Self.writePNG(try Self.makeStrip(glasses, title: glassTitle, captions: glassCaptions),
+                          to: dir.appendingPathComponent("fold-duo-blur-compare-glass-strip.png"))
+    }
+
+    /// The reopen from the black hold, old blur on top and new underneath,
+    /// as the seated eye sees it: the same lid, the same motion, frames at
+    /// equal steps of time. The new one should clear from the hinge out.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the reopen comparison"))
+    func reopenComparison() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var motion = FoldMotion()
+        var ease = FoldGateEase()
+        let dt = 1.0 / 60
+        var cells: [(Double, CGImage, CGImage)] = []
+        var captions: [(glass: String, eye: String)] = []
+        let picks: Set<Int> = [30, 36, 40, 44, 48, 52, 56, 60]
+        motion.feedDirect(FoldBlackout.releaseAngle)
+        motion.tick(at: 0, dt: dt)
+        for frame in 0...90 {
+            let now = Double(frame) * dt
+            let u = min(1, Double(frame) / 60)
+            let lid = FoldBlackout.releaseAngle + (Self.rest - FoldBlackout.releaseAngle) * (u * u * (3 - 2 * u))
+            motion.feedDirect(lid)
+            let drawn = motion.tick(at: now, dt: dt) ?? lid
+            let delta = ease.tick(target: max(0, Self.rest - drawn) * .pi / 180, dt: dt)
+            guard picks.contains(frame) else { continue }
+            let glassAngle = Self.rest - delta * 180 / .pi
+            let old = try Self.renderPanel(rig, angle: glassAngle, shape: .classic)
+            let new = try Self.renderPanel(rig, angle: glassAngle, shape: .front)
+            cells.append((glassAngle, try Self.image(try Self.renderObserver(rig, panel: old, angle: lid)),
+                          try Self.image(try Self.renderObserver(rig, panel: new, angle: lid))))
+            captions.append((glass: String(format: "old blur · %.2f s · lid %.0f°", now, lid),
+                             eye: String(format: "new blur · %.2f s · lid %.0f°", now, lid)))
+        }
+        let title = "Duo reopen, seated eye: old blur (top) and new blur (bottom); "
+            + "the new one clears from the hinge out, the far edge last"
+        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions),
+                          to: dir.appendingPathComponent("fold-duo-reopen-compare-strip.png"))
+    }
+
+    /// The capture's resolution at the hinge: the same fold drawn on the
+    /// 14-inch panel (3024×1964) from the 1x picture the capture used to
+    /// film and from the Retina picture it films now, cropped to the text
+    /// above the Dock at 1:1, at rest and two degrees in.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the resolution comparison"))
+    func resolutionComparison() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let panelWidth = 3024, panelHeight = 1964
+        let crop = CGRect(x: Self.hingeText.minX * 2 - 20, y: Self.hingeText.minY * 2 - 20,
+                          width: 1100, height: Self.hingeText.height * 2 + 40)
+        var rows: [(String, CGImage)] = []
+        for angle in [109.9, 108.0] {
+            for scale in [1, 2] {
+                let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
+                renderer.look = .duo
+                #expect(renderer.setFullFrame(try Self.desktop(scale: scale)))
+                FoldDuoModel.apply(to: &renderer.params, reference: Self.rest, theta: angle, hold: 1,
+                                   perspective: 0.6, blur: 0.6, shade: 0.67, fadeLength: 0.55,
+                                   reduceMotion: false)
+                let out = try Self.makeTarget(renderer.device, width: panelWidth, height: panelHeight)
+                #expect(renderer.render(to: out, size: CGSize(width: panelWidth, height: panelHeight)))
+                let full = try Self.image(out)
+                let picture: String = scale == 1 ? "1512×982 (0.10.0)" : "3024×1964 (now)"
+                let label = String(format: "%@ picture, glass %.1f°", picture, angle)
+                rows.append((label, try #require(full.cropping(to: crop))))
+            }
+        }
+        try Self.writePNG(try Self.stack(rows, title: "Duo on the 14-inch panel at 1:1, the text above the Dock"),
+                          to: dir.appendingPathComponent("fold-duo-resolution-compare.png"))
+    }
+
+    /// Two full-size pictures side by side under their labels.
+    static func pair(_ left: CGImage, _ right: CGImage, left leftLabel: String,
+                     right rightLabel: String) throws -> CGImage {
+        let pad = 12, label = 26
+        let w = left.width + right.width + 3 * pad
+        let h = max(left.height, right.height) + label + 2 * pad
+        let ctx = try #require(CGContext(
+            data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.setFillColor(CGColor(srgbRed: 0.1, green: 0.1, blue: 0.11, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let graphics = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 18, weight: .medium),
+            .foregroundColor: NSColor(white: 0.92, alpha: 1),
+        ]
+        let top = h - pad - label
+        (leftLabel as NSString).draw(at: CGPoint(x: pad, y: top + 3), withAttributes: attrs)
+        (rightLabel as NSString).draw(at: CGPoint(x: 2 * pad + left.width, y: top + 3), withAttributes: attrs)
+        ctx.draw(left, in: CGRect(x: pad, y: top - left.height, width: left.width, height: left.height))
+        ctx.draw(right, in: CGRect(x: 2 * pad + left.width, y: top - right.height,
+                                   width: right.width, height: right.height))
+        return try #require(ctx.makeImage())
+    }
+
+    /// Pictures stacked top to bottom at 1:1, each under its label.
+    static func stack(_ rows: [(String, CGImage)], title: String) throws -> CGImage {
+        let pad = 12, label = 26, head = 34
+        let widest: Int = rows.map { $0.1.width }.max() ?? 1
+        let w = widest + 2 * pad
+        var rowsHeight = 0
+        for row in rows { rowsHeight += row.1.height + label + pad }
+        let h = head + rowsHeight + pad
+        let ctx = try #require(CGContext(
+            data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.setFillColor(CGColor(srgbRed: 0.1, green: 0.1, blue: 0.11, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let graphics = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 17, weight: .medium),
+            .foregroundColor: NSColor(white: 0.92, alpha: 1),
+        ]
+        (title as NSString).draw(at: CGPoint(x: pad, y: h - head + 8), withAttributes: attrs)
+        var top = h - head
+        for row in rows {
+            (row.0 as NSString).draw(at: CGPoint(x: pad, y: top - label + 4), withAttributes: attrs)
+            top -= label
+            ctx.draw(row.1, in: CGRect(x: pad, y: top - row.1.height, width: row.1.width, height: row.1.height))
+            top -= row.1.height + pad
+        }
+        return try #require(ctx.makeImage())
+    }
+
     /// A Settings search that lands on a row the current look hides —
     /// Frost in the Duo, Goes dark over in the Room — draws it switched
     /// off, saying which look has it.
@@ -685,7 +1003,8 @@ struct FoldRenderProofTests {
         let provider = try #require(CGDataProvider(data: Data(px.bytes) as CFData))
         let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
         return try #require(CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+            width: px.width, height: px.height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: px.width * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo(rawValue: info),
             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent))
     }
