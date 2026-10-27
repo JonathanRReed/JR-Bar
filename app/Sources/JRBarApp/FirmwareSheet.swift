@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -81,11 +82,11 @@ struct FirmwareSheetContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(InsetPanel())
             if let failure = firmware.startFailure {
-                SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color,
                                title: "The update did not start", detail: failure)
             }
             if !isLive {
-                SettingsBanner(symbol: "bolt.slash.fill", tint: .orange, title: "The monitor is not running",
+                SettingsBanner(symbol: "bolt.slash.fill", tint: Tone.neutral.color, title: MonitorWords.label,
                                detail: "Start it again, then open this sheet again.")
             }
             HStack {
@@ -149,7 +150,7 @@ struct FirmwareSheetContent: View {
             .padding(SettingsMetrics.m)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(InsetPanel())
-            SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange, title: progress.reminder,
+            SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color, title: progress.reminder,
                            detail: "Keep the Mac awake and plugged in. The LEDs stay still for about a minute, and the device restarts once.")
         }
     }
@@ -161,11 +162,11 @@ struct FirmwareSheetContent: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).fontWeight(.medium)
                 if let detail {
-                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                    Text(detail).jrbarType(.callout).foregroundStyle(.secondary)
                 }
                 if let figure {
                     Text(figure)
-                        .font(.title3.monospacedDigit())
+                        .jrbarType(.title3).monospacedDigit()
                         .padding(.top, 2)
                         .accessibilityLabel("Downloaded \(figure)")
                 }
@@ -187,7 +188,7 @@ struct FirmwareSheetContent: View {
                     Text(line).fixedSize(horizontal: false, vertical: true)
                 }
                 if let took = result.tookLine {
-                    Text(took).font(.subheadline).foregroundStyle(.secondary)
+                    Text(took).jrbarType(.callout).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -218,9 +219,9 @@ struct FirmwareSheetContent: View {
 
     private func tint(_ result: FirmwareResult) -> Color {
         switch result.kind {
-        case .succeeded: return .green
-        case .failed: return .red
-        case .unconfirmed: return .orange
+        case .succeeded: return Tone.done.color
+        case .failed: return Tone.failure.color
+        case .unconfirmed: return Tone.neutral.color
         }
     }
 
@@ -230,10 +231,10 @@ struct FirmwareSheetContent: View {
         HStack(alignment: .center, spacing: SettingsMetrics.m) {
             SettingsIconTile(symbol: symbol, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.title3.weight(.semibold))
+                Text(title).jrbarType(.title3).fontWeight(.semibold)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle {
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                    Text(subtitle).jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

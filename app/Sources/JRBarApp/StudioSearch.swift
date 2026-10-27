@@ -29,7 +29,7 @@ extension EffectStudioStore {
         case "Scene": target = (.scenes, "active_scene")
         default:
             switch entry.title {
-            case "Blend mode": target = (.mix, "colors.blend_mode")
+            case "Mix mode": target = (.mix, "colors.blend_mode")
             case "Cycle speed": target = (.moments, "colors.cycle_speed_seconds")
             case "Celebrate completions": target = (.moments, "colors.done_celebration_enabled")
             case "Celebration preview", "Finish": target = (.moments, "colors.done_celebration_style")
@@ -48,7 +48,7 @@ extension EffectStudioStore {
             case "Also glow for finished runs": target = (.devices, "dot_role_include_completions")
             default:
                 let device = settings.deviceEntries.first { entry.group != "Screen Bar" || $0.kind == "screen_bar" }
-                let paths = ["Display": "led_display", "Pin to": "provider_pin", "Asks only": "signal_policy", "Blend": "blend_mode"]
+                let paths = ["Display": "led_display", "Pin to": "provider_pin", "Asks only": "signal_policy", "Mix": "blend_mode"]
                 target = (.devices, "\(device?.prefix ?? "devices.0").\(paths[entry.title] ?? "led_display")")
             }
         }

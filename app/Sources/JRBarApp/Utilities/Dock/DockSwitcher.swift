@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import ApplicationServices
 import JRBarCore
@@ -2493,7 +2494,7 @@ struct DockSwitcherView: View {
                         .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
                         .overlay(alignment: .topTrailing) {
                             if let badge = item.badge {
-                                DockBadgePill(text: badge, size: 13).offset(x: 8, y: -6)
+                                DockBadgePill(text: badge).offset(x: 8, y: -6)
                             }
                         }
                         // A soft pool of light under the icon, so a pane
@@ -2650,7 +2651,7 @@ struct DockSwitcherView: View {
             .shadow(color: .black.opacity(0.3), radius: size > 30 ? 4 : 2, y: 1)
             .overlay(alignment: .topTrailing) {
                 if let text = item.badge {
-                    DockBadgePill(text: text, size: badge)
+                    DockBadgePill(text: text)
                         .offset(x: badge * 0.8, y: -badge * 0.6)
                 }
             }
@@ -2751,7 +2752,7 @@ struct DockKeyCap: View {
 
     var body: some View {
         Text(key)
-            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .jrbarType(.caption).fontWeight(.semibold).fontDesign(.rounded)
             .foregroundStyle(.primary)
             .padding(.horizontal, 5)
             .frame(minWidth: 19, minHeight: 19)

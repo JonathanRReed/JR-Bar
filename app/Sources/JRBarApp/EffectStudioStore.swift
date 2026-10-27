@@ -4,7 +4,7 @@ import JRBarLEDS
 import Observation
 import UniformTypeIdentifiers
 
-/// The Effect Studio's state: the daemon's catalog and assignments, the
+/// The Studio's state: the daemon's catalog and assignments, the
 /// selected effect and its edited parameters, the re-rendered previews,
 /// the hardware-preview consent, and the import/export flows.
 @MainActor

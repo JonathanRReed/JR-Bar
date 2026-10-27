@@ -30,7 +30,7 @@ struct UsageHooksSectionTests {
         let rows = UsageHookRuleRow.rows(in: Self.document)
         #expect(rows.map(\.id) == ["chime", "log"])
         #expect(rows.map(\.index) == [0, 1])
-        #expect(rows[0].scopeText == "Quota low · Claude · at or below 20% left")
+        #expect(rows[0].scopeText == "Quota low · Claude · at or above 80% used")
         #expect(rows[0].commandText == "Runs /usr/local/bin/chime --soft")
         #expect(rows[1].scopeText == "Every event")
         #expect(rows[1].commandText.hasSuffix("with the first version's arguments"))

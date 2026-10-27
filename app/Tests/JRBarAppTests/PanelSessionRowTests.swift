@@ -38,7 +38,7 @@ struct PanelSessionRowTests {
                        pinnedAsk: nil)
         }
         #expect(!row(minutesAgo: 9).isQuiet(now: now))
-        #expect(row(minutesAgo: 10).quietText(now: now) == "quiet 10m")
+        #expect(row(minutesAgo: 10).quietText(now: now) == "Quiet 10m")
         #expect(row(minutesAgo: 12).help(now: now)?.contains("with no tool running") == true)
         // A long build says nothing for an hour and is not a stuck agent.
         let building = row(minutesAgo: 60, mode: "tool_running", event: "PreToolUse")
@@ -66,7 +66,7 @@ struct PanelSessionRowTests {
         for minutes in ages {
             let silent = workingRow("silent", minutesAgo: minutes)
             let text = silent.elapsedText(now: now) ?? ""
-            #expect(text.hasPrefix("quiet "))
+            #expect(text.hasPrefix("Quiet "))
             let column = SessionRowView.trailingWidth(rows: [fresh, silent], now: now)
             #expect(column >= SessionRowView.elapsedTextWidth(text), "\"\(text)\" is cut short")
             #expect(column > plain, "the column widens once, when a row goes quiet")

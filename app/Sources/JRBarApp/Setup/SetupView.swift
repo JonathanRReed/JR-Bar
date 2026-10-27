@@ -74,9 +74,9 @@ struct SetupView: View {
                     Text(failure)
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Tone.failure.color)
                 }
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,7 +207,7 @@ struct SetupScreenBarPrimer: View {
                     .accessibilityLabel("Screen Bar preview: a breathe, then an amber beat")
             }
             Text("The thin band at the top edge of the screen is your agents' status — the colour is who, the motion is what they're doing.")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             fact {
@@ -220,15 +220,15 @@ struct SetupScreenBarPrimer: View {
                 Text("Colour names the provider — every agent keeps its own.")
             }
             fact {
-                ActivityMark(activity: .waiting, accent: .orange, reduced: reduced)
+                ActivityMark(activity: .waiting, accent: Tone.ask.color, reduced: reduced)
             } text: {
                 Text("A hard amber beat — one swell, then quiet — means it's waiting on you.")
             }
             fact {
                 HStack(spacing: 8) {
-                    ActivityMark(activity: .failed, accent: .red, reduced: reduced)
+                    ActivityMark(activity: .failed, accent: Tone.failure.color, reduced: reduced)
                     ActivityMark(activity: .working, accent: ProviderStyle.style(for: "codex").accent, reduced: reduced)
-                    ActivityMark(activity: .done, accent: .green, reduced: reduced)
+                    ActivityMark(activity: .done, accent: Tone.done.color, reduced: reduced)
                 }
             } text: {
                 Text("Red means it broke — everything else is working or done.")
@@ -251,7 +251,7 @@ struct SetupScreenBarPrimer: View {
                 .frame(width: 60, alignment: .leading)
                 .accessibilityHidden(true)
             text()
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -270,20 +270,20 @@ struct SetupAgentsStep: View {
             if !store.monitorLive {
                 Label("Waiting for the monitor. Once it connects, you can install hooks and choose which providers show usage.",
                       systemImage: "bolt.horizontal.circle")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 10)
             }
             if store.monitorLive, store.loadingUsageOffers {
                 Text("Reading usage choices…")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .jrbarType(.callout).foregroundStyle(.secondary)
                     .padding(.bottom, 10)
             }
             if store.monitorLive, let failure = store.usageOffersFailure {
                 HStack(alignment: .top, spacing: 10) {
                     Label(failure, systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Retry") { _ = Task { await store.refreshUsageOffers() } }
@@ -296,7 +296,7 @@ struct SetupAgentsStep: View {
                 .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
             if store.installedAgentRows.isEmpty {
                 Text("No providers found on this Mac.")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.tertiary)
             } else {
                 SnapshotScrollView {
@@ -323,13 +323,7 @@ struct SetupAgentRow: View {
     let agent: SetupAgent
 
     private var statusColor: Color {
-        guard store.monitorLive else { return Color(nsColor: .tertiaryLabelColor) }
-        switch agent.hookStatus {
-        case "ok": return .green
-        case "stale": return .orange
-        case "missing": return Color(nsColor: .tertiaryLabelColor)
-        default: return Color(nsColor: .quaternaryLabelColor)
-        }
+        store.monitorLive ? HookStatus(agent.hookStatus).tone.color : Tone.neutral.color
     }
 
     var body: some View {
@@ -349,14 +343,14 @@ struct SetupAgentRow: View {
                 Text(agent.name)
                 HStack(spacing: 5) {
                     Circle().fill(statusColor).frame(width: 6, height: 6)
-                    Text(store.monitorLive && agent.hookStatus == "missing" ? "Hooks not installed" : agent.statusWord(monitorLive: store.monitorLive))
-                        .font(.callout)
+                    Text(agent.statusWord(monitorLive: store.monitorLive))
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     if agent.detected == false {
                         Text("· CLI not found")
-                            .font(.caption)
+                            .jrbarType(.caption)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -365,8 +359,8 @@ struct SetupAgentRow: View {
                 // The reply's own words, where the click happened.
                 if let note = store.hookNotes[agent.id] {
                     Text(note.text)
-                        .font(.caption)
-                        .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                        .jrbarType(.caption)
+                        .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                         .lineLimit(1)
                         .transition(.opacity)
                 }
@@ -400,19 +394,19 @@ struct SetupUsageOfferView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(offer.question)
-                .font(.callout.weight(.medium))
+                .jrbarType(.callout).fontWeight(.medium)
             Text(offer.summary)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 if offer.isOn {
                     Label("On", systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.green)
+                        .jrbarType(.caption).fontWeight(.semibold)
+                        .foregroundStyle(Tone.done.color)
                     Button("Turn off") { store.turnOffUsage(for: offer.id) }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .disabled(busy || !store.monitorLive)
                         .accessibilityLabel("Turn off \(offer.name) usage")
                 } else {
@@ -426,7 +420,7 @@ struct SetupUsageOfferView: View {
                         .disabled(busy)
                     if declined {
                         Text("Off. Settings › Providers turns it on any time.")
-                            .font(.caption)
+                            .jrbarType(.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -434,8 +428,8 @@ struct SetupUsageOfferView: View {
             }
             if let note = store.usageNotes[offer.id] {
                 Text(note.text)
-                    .font(.caption)
-                    .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                    .jrbarType(.caption)
+                    .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                     .lineLimit(2)
             }
         }
@@ -462,7 +456,7 @@ struct SetupPermissionsStep: View {
                         .padding(.vertical, 12)
                     if store.activePermissions.isEmpty {
                         Text("The panel works without these grants. Enable optional features when you need them.")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .jrbarType(.callout).foregroundStyle(.secondary)
                     }
                     ForEach(Array(store.activePermissions.enumerated()), id: \.element) { index, permission in
                         if index > 0 { Divider().opacity(0.5) }
@@ -493,8 +487,8 @@ struct SetupPermissionRow: View {
 
     private var dotColor: Color {
         switch status {
-        case .granted: return .green
-        case .needed, .denied: return .orange
+        case .granted: return Tone.done.color
+        case .needed, .denied: return Tone.neutral.color
         case .unavailable, .unknown: return Color(nsColor: .tertiaryLabelColor)
         }
     }
@@ -510,11 +504,11 @@ struct SetupPermissionRow: View {
                     Text(permission.title)
                     Circle().fill(dotColor).frame(width: 6, height: 6)
                     Text(status.word)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Text(permission.enables)
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -576,21 +570,21 @@ struct SetupDoneStep: View {
                     HStack(alignment: .center, spacing: 12) {
                         Image(systemName: row.symbol)
                             .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
-                            .foregroundStyle(row.ok ? Color.green : Color.orange)
+                            .foregroundStyle(row.ok ? Tone.done.color : Tone.neutral.color)
                             .frame(width: 30, height: 30)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill((row.ok ? Color.green : Color.orange).opacity(0.14)))
+                                .fill((row.ok ? Tone.done.color : Tone.neutral.color).opacity(0.14)))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.text).font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
                             Text(row.detail)
-                                .font(.callout)
+                                .jrbarType(.callout)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: row.ok ? "checkmark.circle.fill" : "circle.dashed")
                             .font(JRBarTokens.TypeStyle.title3.font)
-                            .foregroundStyle(row.ok ? Color.green : Color.secondary)
+                            .foregroundStyle(row.ok ? Tone.done.color : Color.secondary)
                             .accessibilityLabel(row.ok ? "Done" : "Still to do")
                     }
                     .padding(.horizontal, 12)
@@ -602,7 +596,7 @@ struct SetupDoneStep: View {
             Spacer(minLength: 0)
             Label("The menu-bar icon opens the panel; asks land there with Approve and Deny.",
                   systemImage: "menubar.arrow.up.rectangle")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

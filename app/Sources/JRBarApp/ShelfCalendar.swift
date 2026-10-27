@@ -1,3 +1,4 @@
+import JRBarCore
 import AppKit
 @preconcurrency import EventKit
 
@@ -418,9 +419,7 @@ final class ShelfMeetingWatch {
 
     /// "in 2 min", "in 1 min", "now".
     nonisolated static func countdown(to start: Date, now: Date) -> String {
-        let seconds = start.timeIntervalSince(now)
-        guard seconds > 30 else { return "now" }
-        return "in \(Int((seconds / 60).rounded(.up))) min"
+        UsageTime.notchCalendarCountdown(to: start.timeIntervalSince1970, now: now)
     }
 
     /// The heads-up's second line: "10:00–10:30 · zoom.us".

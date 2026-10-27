@@ -9,17 +9,8 @@ struct UsageResetBudget: Equatable {
     let rateToReset: Double
 
     var exceedsBudget: Bool { recentRate > rateToReset }
-    var recentText: String { String(format: "≈ %.1f %%/h", recentRate) }
-    var budgetText: String {
-        var places = 1
-        var scale = 10.0
-        while rateToReset * scale < 1, places < 6 {
-            places += 1
-            scale *= 10
-        }
-        let limit = floor(rateToReset * scale) / scale
-        return String(format: "≤ %.*f %%/h", places, limit)
-    }
+    var recentText: String { UsageNumber.rate(recentRate, approximate: true) }
+    var budgetText: String { UsageNumber.rateLimit(rateToReset) }
 
     static func make(provider: CoreProviderUsage, window: CoreUsageWindow,
                      forecast: UsageForecast, isLive: Bool, now: Double) -> Self? {
@@ -61,7 +52,7 @@ struct UsageResetBudgetView: View {
     var body: some View {
         HStack(alignment: .top, spacing: JRBarTokens.Space.lg) {
             column("Recent pace", value: budget.recentText,
-                   color: budget.exceedsBudget ? JRBarTokens.Ink.attention : JRBarTokens.Ink.secondary)
+                   color: budget.exceedsBudget ? Tone.warning.color : JRBarTokens.Ink.secondary)
             column("To last until reset", value: budget.budgetText, color: .secondary)
         }
         .padding(.horizontal, JRBarTokens.Space.md)

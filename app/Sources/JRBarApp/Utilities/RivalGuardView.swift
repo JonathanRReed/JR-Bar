@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -63,7 +64,7 @@ struct RivalGuardView: View {
 
     private var tint: Color {
         switch role.policy {
-        case .ask: return .orange
+        case .ask: return Tone.neutral.color
         case .stepAside: return .secondary
         case .informOnly: return .secondary
         }

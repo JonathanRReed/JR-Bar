@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import Observation
 import SwiftUI
@@ -120,7 +121,7 @@ final class ProviderCredentialEditorModel {
 
     private static func failureWords(_ error: Error, removing: Bool, credential: String) -> String {
         if let client = error as? CoreClientError, client == .notConnected {
-            return "Monitor offline. Reconnect and try again."
+            return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
         case "unauthenticated": return "Restart JR-Bar to reconnect securely, then try again."
@@ -139,22 +140,22 @@ struct ProviderCredentialEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("\(model.providerName) \(model.credentialName)").font(.headline)
+            Text("\(model.providerName) \(model.credentialName)").jrbarType(.headline)
             Text(model.instance == "default" ? "Default account" : "Account: \(model.instance)")
-                .font(.caption).foregroundStyle(.secondary)
+                .jrbarType(.caption).foregroundStyle(.secondary)
             SecureField(model.credentialTitle, text: $model.secret)
                 .textFieldStyle(.roundedBorder)
                 .privacySensitive()
                 .accessibilityLabel("\(model.providerName) \(model.credentialName)")
                 .disabled(model.busy)
             Text("Stored in JR-Bar's Keychain. Saving a credential does not turn on usage. The usage switch controls requests to \(model.providerName).")
-                .font(.callout).foregroundStyle(.secondary)
+                .jrbarType(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if model.provider == "factory", model.account == "api-key" {
                 Link("Create a Factory API key", destination: URL(string: "https://app.factory.ai/settings/api-keys")!)
             }
             if let message = model.message {
-                Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                Text(message).jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(message)
             }
             HStack {
@@ -205,28 +206,28 @@ struct ProviderCredentialControls: View {
                     ProviderSavedCredentialControls(row: row, core: core, account: "api-key", onChanged: onChanged)
                         .padding(.top, 6)
                 }
-                .font(.callout)
+                .jrbarType(.callout)
             } else {
                 ProviderSavedCredentialControls(row: row, core: core, account: "api-key", onChanged: onChanged)
                 if row.id == "kimi" {
                     DisclosureGroup("Manual web session") {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("A saved Kimi web access token for the selected region. Renew it in Kimi when it expires.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .jrbarType(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             ProviderSavedCredentialControls(row: row, core: core, account: "web-session", onChanged: onChanged)
                         }
                         .padding(.top, 6)
                     }
-                    .font(.callout)
+                    .jrbarType(.callout)
                     if row.instance == "default" {
                         Text("A fresh Kimi CLI sign-in can also provide usage for the default China account. Run kimi to renew it.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .jrbarType(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else if row.id == "kilo", row.instance == "default" {
                     Text("An existing Kilo CLI sign-in can also provide usage for the default account.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .jrbarType(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -278,12 +279,12 @@ struct ProviderSavedCredentialControls: View {
             .controlSize(.small)
             .disabled(model.busy || !core.isLive)
             if let message = model.message, !editing {
-                Text(message).font(.caption).foregroundStyle(.secondary)
+                Text(message).jrbarType(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !core.isLive {
-                Text("Monitor offline. Reconnect to manage this credential.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("\(MonitorWords.sentence) Reconnect to manage this credential.")
+                    .jrbarType(.caption).foregroundStyle(.secondary)
             }
         }
         .onChange(of: row.credentials) { _, credentials in
@@ -368,7 +369,7 @@ final class ProviderSourceOptionsModel {
         } catch {
             guard active, generation == revision else { return false }
             if error as? CoreClientError == .notConnected {
-                message = "Monitor offline. Reconnect and try again."
+                message = "\(MonitorWords.sentence) Reconnect and try again."
             } else if (error as? CoreReplyError)?.code == "settings_changed" {
                 message = "These choices changed elsewhere. Reload providers and try again."
             } else {
@@ -410,19 +411,19 @@ struct ProviderSourceOptionsControls: View {
                     if model.cliAvailable { Text("Kimi CLI").tag("cli") }
                 }
                 Text("Use credentials issued for the selected region. CLI sign-in is limited to the default China account.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 TextField("Organization ID, optional", text: Binding(get: { model.organizationID }, set: { model.organizationID = $0 }))
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Kilo organization ID")
                 Text("Leave empty for personal usage.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
             }
             Button(model.busy ? "Saving…" : "Save source choices") { _ = Task { await model.save() } }
                 .controlSize(.small)
             if let message = model.message {
-                Text(message).font(.caption).foregroundStyle(.secondary)
+                Text(message).jrbarType(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

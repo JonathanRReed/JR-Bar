@@ -63,37 +63,6 @@ struct SettingsIconTile: View {
 /// A short state in a capsule: a dot and a few words in its tint —
 /// "Parked", "Needs Accessibility", "Live". It holds still (no clock
 /// runs for it) and truncates rather than pushing a control out.
-struct StatusPill: View {
-    let text: String
-    let tint: Color
-
-    init(_ text: String, tint: Color) {
-        self.text = text
-        self.tint = tint
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-            Text(text)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(tint.mix(with: .primary, by: 0.3))
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2.5)
-        .background(tint.opacity(0.13), in: Capsule())
-        .overlay(Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// The head of every page: its glyph grown to a header tile, the page's
-/// name and one sentence on what lives there — System Settings' pane
-/// header, first thing on the form.
 struct SettingsPageHeader: View {
     let page: SettingsStore.Page
 
@@ -102,7 +71,7 @@ struct SettingsPageHeader: View {
             SettingsIconTile(symbol: page.symbol, tint: page.tint, size: SettingsMetrics.headerTile)
             VStack(alignment: .leading, spacing: 3) {
                 Text(page.title)
-                    .font(.title3.weight(.semibold))
+                    .jrbarType(.title3).fontWeight(.semibold)
             }
             Spacer(minLength: 0)
         }
@@ -139,7 +108,7 @@ struct SettingsBanner: View {
     var detail: String? = nil
 
     var body: some View {
-        StatusBanner(title, kind: tint == .red ? .failure : .information, detail: detail)
+        StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information, detail: detail)
     }
 }
 
@@ -160,14 +129,14 @@ struct SettingsGroupHeader: View {
                 SettingsIconTile(symbol: symbol, tint: tint, size: 20)
             }
             Text(title)
-                .font(.headline)
+                .jrbarType(.heading)
             if let pill {
-                StatusPill(pill, tint: pillTint)
+                StatusBadge(pill, tint: pillTint)
             }
             Spacer(minLength: SettingsMetrics.s)
             if let trailing {
                 Text(trailing)
-                    .font(.subheadline)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -189,9 +158,7 @@ struct CardSectionHeader: View {
     init(_ title: String) { self.title = title }
 
     var body: some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+        SectionHeader(title)
             .padding(.top, SettingsMetrics.m)
             .padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -213,15 +180,7 @@ struct CardNote: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Image(systemName: symbol)
-                .foregroundStyle(tint)
-            Text(text)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.subheadline)
-        .padding(.vertical, 3)
+        StatusBanner(detail: text, kind: tint == Tone.failure.color ? .failure : .information)
     }
 }
 
@@ -317,16 +276,13 @@ struct DisclosureChevron: View {
     var hovering = false
 
     var body: some View {
-        Image(systemName: "chevron.right")
-            .font(JRBarTokens.TypeStyle.caption.font.weight(.bold))
+        Image(systemName: open ? "chevron.down" : "chevron.right")
+            .font(JRBarTokens.TypeStyle.caption.font)
             .foregroundStyle(hovering ? .primary : .secondary)
-            .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: 22, height: 22)
-            .background(Circle().fill(Color.primary.opacity(hovering ? 0.12 : 0.06)))
-            .animation(JRBarTokens.Motion.quick.animation, value: hovering)
             .accessibilityHidden(true)
     }
-}
+    }
 
 /// The recessed panel a disclosure opens onto: a hair darker than the
 /// group it sits in, with a hairline edge, in either appearance.
@@ -371,10 +327,10 @@ struct ChipToggleStyle: ToggleStyle {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: on ? "checkmark" : "plus")
-                    .font(.system(size: 9, weight: .bold))
+                    .jrbarType(.caption).fontWeight(.bold)
                 configuration.label
             }
-            .font(.subheadline.weight(.medium))
+            .jrbarType(.callout).fontWeight(.medium)
             .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
@@ -515,7 +471,7 @@ struct SettingGroup<Header: View, Content: View>: View {
                     .id(SettingsStore.groupAnchor(anchor ?? plainTitle))
             } else {
                 header()
-                    .font(.subheadline.weight(.semibold))
+                    .jrbarType(.callout).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.top, SettingsMetrics.m)
                     .padding(.bottom, 2)
@@ -533,10 +489,10 @@ struct SettingGroup<Header: View, Content: View>: View {
     }
 }
 
-extension SettingGroup where Header == Text {
+extension SettingGroup where Header == SectionHeader {
     /// A group with the standard bold title, e.g. `SettingGroup("Dimming")`.
     init(_ title: String, note: String? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self.init(note: note, anchor: title, plainTitle: title, content: content) { Text(title).font(.headline) }
+        self.init(note: note, anchor: title, plainTitle: title, content: content) { SectionHeader(title) }
     }
 }
 
@@ -642,12 +598,8 @@ struct DisclosureRow<Content: View>: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: expanded) {
-            content()
-        } label: {
-            SettingLabel(title: title, subtitle: subtitle)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        SettingsExpansionRow(title, subtitle: subtitle, isExpanded: expanded) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -675,28 +627,14 @@ struct SettingsFoldRow<Content: View>: View {
         self.content = content
     }
 
+    private var expanded: Binding<Bool> {
+        Binding(get: { store.isFoldOpen(id) }, set: { open in
+            withAnimation(reduceMotion ? nil : JRBarTokens.Motion.quick.animation) { store.setFold(id, open: open) }
+        })
+    }
+
     var body: some View {
-        let open = store.isFoldOpen(id)
-        Button {
-            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
-                store.setFold(id, open: !open)
-            }
-        } label: {
-            HStack(alignment: .center, spacing: SettingsMetrics.m) {
-                SettingLabel(title: title, subtitle: subtitle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                DisclosureChevron(open: open, hovering: hovering)
-            }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(open ? "Collapses" : "Expands")
-        if open {
-            content()
-        }
+        SettingsExpansionRow(title, subtitle: subtitle, isExpanded: expanded) { content() }
     }
 }
 

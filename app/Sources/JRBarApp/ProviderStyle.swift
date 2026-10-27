@@ -154,7 +154,7 @@ struct ProviderStyle: Hashable, Sendable {
 }
 
 /// What colour a state is, everywhere in the app. One place, because the
-/// alternative is what shipped: `Color.orange` and `Color.red` written out
+/// alternative is what shipped: `Tone.neutral.color` and `Tone.failure.color` written out
 /// at each call site, some rows colouring a failure and some not, and the
 /// hardware meanwhile painting failures in the Ask colour.
 ///
@@ -167,9 +167,9 @@ extension SessionActivity {
     var tint: Color {
         switch self {
         case .working: return .accentColor
-        case .waiting: return .orange
-        case .done: return .green
-        case .failed: return .red
+        case .waiting: return Tone.ask.color
+        case .done: return Tone.done.color
+        case .failed: return Tone.failure.color
         case .ended, .idle: return .secondary
         }
     }

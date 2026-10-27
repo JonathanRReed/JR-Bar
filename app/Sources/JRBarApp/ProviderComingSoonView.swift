@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -36,7 +37,7 @@ struct ProviderComingSoonView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                .font(.callout)
+                .jrbarType(.callout)
             }
             .id(SettingsStore.groupAnchor(Self.title))
             .padding(.top, 8)
@@ -57,7 +58,7 @@ struct ProviderComingSoonList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(ProviderComingSoonView.note)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
             TextField("Find a provider", text: $query)
                 .textFieldStyle(.roundedBorder)
@@ -65,14 +66,14 @@ struct ProviderComingSoonList: View {
                 .accessibilityLabel("Find a planned provider")
             if matches.isEmpty {
                 Text("No matching providers.")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)],
                           alignment: .leading, spacing: 8) {
                     ForEach(matches) { provider in
                         Text(provider.name)
-                            .font(.callout)
+                            .jrbarType(.callout)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)

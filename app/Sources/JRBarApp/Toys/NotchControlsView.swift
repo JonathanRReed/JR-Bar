@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -145,7 +146,7 @@ struct NotchControlsView: View {
             }
             LabeledContent {
                 Text(toy.capsuleFact)
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
             } label: {
                 SettingLabel(title: "Capsule", subtitle: "What the follower sees right now.")
@@ -529,18 +530,9 @@ struct NotchExternalProviderNote: View {
     }
 
     var body: some View {
-        HStack(spacing: SettingsMetrics.s) {
-            CardNote(Self.text(installed: installed, running: running, name: name),
-                     symbol: installed ? (running ? "checkmark.circle.fill" : "pause.circle") : "arrow.down.circle",
-                     tint: installed && running ? .green : .secondary)
-            Spacer(minLength: SettingsMetrics.s)
-            if installed {
-                Button("Open \(name)", action: open)
-                    .controlSize(.small)
-            } else {
-                Link("Get \(name)", destination: link)
-                    .font(.subheadline)
-            }
+        StatusBanner(Self.text(installed: installed, running: running, name: name)) {
+            if installed { Button("Open \(name)", action: open) }
+            else { Link("Get \(name)", destination: link) }
         }
     }
 }
@@ -583,7 +575,7 @@ struct ShelfShakeExclusionsRow: View {
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("Stop excluding \(Self.name(of: id))")
                         }
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(Capsule().fill(Color.primary.opacity(0.07)))

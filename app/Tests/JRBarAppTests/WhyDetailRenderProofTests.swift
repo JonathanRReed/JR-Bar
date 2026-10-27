@@ -34,8 +34,8 @@ struct WhyDetailRenderProofTests {
     func rowReadsTheClock() throws {
         let aged = try #require(Self.explanation(sessionListed: true))
         let frozen = try #require(Self.explanation(sessionListed: false))
-        #expect(aged.details.first { $0.label == "In this state" }?.value == "25 min")
-        #expect(frozen.details.first { $0.label == "In this state" }?.value == "4 s")
+        #expect(aged.details.first { $0.label == "In this state" }?.value == "25m")
+        #expect(frozen.details.first { $0.label == "In this state" }?.value == "4s")
     }
 
     struct Sheet: View {

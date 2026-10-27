@@ -19,7 +19,7 @@ struct StudioMixPage: View {
             SnapshotScrollView {
                 VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
                     if lights.mix == "cycle", !store.spotlightExplained {
-                        StatusBanner("Spotlight is now One at a Time", detail: "Each provider gets the whole strip for 4 seconds.") {
+                        StatusBanner("Spotlight is now One at a time", detail: "Each provider gets the whole strip for 4 seconds.") {
                             Button("Dismiss") { store.spotlightExplained = true }
                         }
                     }
@@ -145,7 +145,7 @@ private struct StudioMixCard: View {
                 }
                 if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")
-                        .jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.attention).lineLimit(2)
+                        .jrbarType(.caption).foregroundStyle(Tone.neutral.color).lineLimit(2)
                         .help(preview?.playbackWarnings.joined(separator: " ") ?? warning)
                 } else if preview == nil {
                     Text("Preview unavailable").jrbarType(.caption).foregroundStyle(.secondary)

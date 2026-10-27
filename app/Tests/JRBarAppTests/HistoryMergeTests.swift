@@ -116,8 +116,8 @@ import Testing
         let now = Date(timeIntervalSince1970: 100_000)
         #expect(WhyDetailView.age(99_990, now: now) == "now")
         #expect(WhyDetailView.age(99_700, now: now) == "5m")
-        #expect(WhyDetailView.age(92_000, now: now) == "2h")
-        #expect(WhyDetailView.age(1_000, now: now) == "1d")
+        #expect(WhyDetailView.age(92_000, now: now) == "2h 13m")
+        #expect(WhyDetailView.age(1_000, now: now) == "1d 3h")
     }
 
     @Test("revealing a session shows every row and selects it, now or once it loads")

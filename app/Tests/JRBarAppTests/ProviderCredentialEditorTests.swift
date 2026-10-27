@@ -212,7 +212,7 @@ struct ProviderCredentialEditorTests {
             save: { _ in throw CoreClientError.notConnected }, remove: {})
         model.secret = "synthetic-key"
         await model.save()
-        #expect(model.message == "Monitor offline. Reconnect and try again.")
+        #expect(model.message == "The monitor is not connected. Reconnect and try again.")
         #expect(model.secret.isEmpty)
     }
 }

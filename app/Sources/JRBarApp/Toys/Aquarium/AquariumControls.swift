@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -31,10 +32,10 @@ struct AquariumControlsView: View {
             }
 
             Text(toy.activitySummary)
-                .font(.callout)
+                .jrbarType(.callout)
                 .accessibilityLabel(toy.activitySummary)
             Text(AquariumActivityPresentation.rewardHelp)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -241,7 +242,7 @@ struct AquariumControlsView: View {
         LabeledContent {
             Picker("", selection: bind(\.idleFillMinutes)) {
                 ForEach(AquariumSettings.idleFillChoices, id: \.self) { minutes in
-                    Text(minutes == 0 ? "Off" : "After \(minutes) min").tag(minutes)
+                    Text(minutes == 0 ? "Off" : "After \(UsageTime.settingMinutes(Double(minutes)))").tag(minutes)
                 }
             }
             .labelsHidden()

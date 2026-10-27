@@ -1,4 +1,5 @@
 import JRBarTestSupport
+import JRBarUI
 import AppKit
 import CoreAudio
 import Foundation
@@ -232,7 +233,7 @@ struct UtilityParityRenderProofTests {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: SettingsMetrics.s) {
                         Text(utility.name).font(.body.weight(.semibold))
-                        StatusPill(utility.status.text, tint: utility.status.tint)
+                        StatusBadge(utility.status.text, tint: utility.status.tint)
                     }
                     Text(utility.blurb).font(.subheadline).foregroundStyle(.secondary)
                 }

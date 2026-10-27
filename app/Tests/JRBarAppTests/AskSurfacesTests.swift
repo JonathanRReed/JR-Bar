@@ -310,7 +310,7 @@ struct AskSurfacesTests {
         // The panel last closed an hour ago: its clock stopped there.
         store.now = Date().addingTimeInterval(-3_600)
         let reason = try #require(store.lightExplanation?.reason)
-        #expect(reason.hasSuffix("(permission, 2 min)"), "\(reason)")
+        #expect(reason.hasSuffix("(permission, 2m 30s)"), "\(reason)")
         #expect(store.screenBarFocus.explanation == reason, "the notch card reads the same line")
     }
 

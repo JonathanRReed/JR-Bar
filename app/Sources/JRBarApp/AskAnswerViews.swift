@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -17,7 +18,7 @@ struct AskRiskMark: View {
     var body: some View {
         Image(systemName: "exclamationmark.triangle.fill")
             .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(Color.red)
+            .foregroundStyle(Tone.failure.color)
             .help(Self.help)
             .accessibilityLabel("Destructive")
     }
@@ -40,7 +41,7 @@ struct AskHoldRing: View {
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1.5)
             Circle()
                 .trim(from: 0, to: shown)
-                .stroke(Color.orange, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                .stroke(Tone.ask.color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: size, height: size)

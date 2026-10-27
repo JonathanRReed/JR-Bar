@@ -1,3 +1,4 @@
+import JRBarUI
 import Charts
 import JRBarCore
 import SwiftUI
@@ -52,7 +53,7 @@ struct UsageGraphView: View {
                     Button("Turn on") { store.enableTokenHistory() }.disabled(!store.isLive)
                 }.padding()
             } else if !store.isLive {
-                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                    text: "The chart comes from the monitor's local transcript scan.")
             } else if let error = store.graphError, graph == nil {
                 errorState(error)
@@ -186,7 +187,7 @@ struct UsageGraphView: View {
                 if let loaded = store.graphLoadedAt {
                     ViewThatFits(in: .horizontal) {
                         Text("Updated \(loaded.formatted(date: .omitted, time: .shortened))")
-                            .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize()
+                            .jrbarType(.caption).foregroundStyle(.tertiary).fixedSize()
                         Color.clear.frame(width: 0, height: 0)
                     }
                 }
@@ -314,7 +315,7 @@ struct UsageGraphView: View {
                         .foregroundStyle(.secondary.opacity(0.45))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                         .annotation(position: .top, alignment: .leading, spacing: 1) {
-                            Text("limit").font(.system(size: 8)).foregroundStyle(.tertiary)
+                            Text("limit").jrbarType(.caption).foregroundStyle(.tertiary)
                         }
                 }
                 ForEach(points, id: \.self) { point in
@@ -357,7 +358,7 @@ struct UsageGraphView: View {
                         if let v = value.as(Double.self) {
                             if let label = Self.axisLabel(v, metric: graph.metric) {
                                 Text(label)
-                                    .font(.system(size: 9))
+                                    .jrbarType(.caption)
                                     .foregroundStyle(Color.secondary)
                             }
                         }
@@ -373,7 +374,7 @@ struct UsageGraphView: View {
                         AxisGridLine()
                         AxisValueLabel {
                             Text(graph.labels[index])
-                                .font(.system(size: 9))
+                                .jrbarType(.caption)
                                 .foregroundStyle(Color.secondary)
                         }
                     }
@@ -416,7 +417,7 @@ struct UsageGraphView: View {
                    let x = proxy.position(forX: day) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(dayLabel(day, graph: graph))
-                            .font(.system(size: 10, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                         ForEach(Array(graph.series.enumerated()), id: \.offset) { _, series in
                             UsageGraphReadoutRow(series: series, day: day, metric: graph.metric)
                         }
@@ -479,22 +480,22 @@ struct UsageGraphView: View {
                 let style = ProviderStyle.style(for: row.id)
                 HStack(spacing: 6) {
                     Circle().fill(style.accent).frame(width: 7, height: 7)
-                    Text(row.label).font(.system(size: 10, weight: .medium))
+                    Text(row.label).jrbarType(.caption).fontWeight(.medium)
                         .lineLimit(1)
                     Spacer(minLength: 2)
                     if let series = row.series {
                         Text(Self.legendValueLabel(series, metric: graph.metric))
-                            .font(.system(size: 10)).monospacedDigit()
+                            .jrbarType(.caption).monospacedDigit()
                             .foregroundStyle(.secondary)
                     } else {
                         Text(Self.noHistoryText(metric: graph.metric))
-                            .font(.system(size: 9))
+                            .jrbarType(.caption)
                             .foregroundStyle(.tertiary)
                     }
                     if graph.partialProviderIds.contains(row.id) {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.orange)
+                            .jrbarType(.caption)
+                            .foregroundStyle(Tone.neutral.color)
                             .help("Partial local history in this range")
                     }
                 }
@@ -551,7 +552,7 @@ struct UsageGraphView: View {
                 Label(Self.emptyExplanation(metric: graph.metric), systemImage: "tray")
             }
         }
-        .font(.system(size: 10))
+        .jrbarType(.caption)
         .foregroundStyle(.tertiary)
     }
 
@@ -564,7 +565,7 @@ struct UsageGraphView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             Text("The transcript scan can take a moment on first load.")
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
         }
         .delayedReveal()
@@ -575,7 +576,7 @@ struct UsageGraphView: View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 22))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Tone.neutral.color)
             Text("Couldn't load the chart")
                 .font(.system(size: 13, weight: .medium))
             Text(error)
@@ -672,7 +673,7 @@ struct UsageGraphReadoutRow: View {
                 Spacer(minLength: 6)
                 Text(label).monospacedDigit()
             }
-            .font(.system(size: 9))
+            .jrbarType(.caption)
         }
     }
 }
@@ -718,7 +719,7 @@ struct UsageHeatmapGrid: View {
                     ForEach(rows, id: \.id) { row in
                         GridRow {
                             Text(row.label)
-                                .font(.system(size: 9))
+                                .jrbarType(.caption)
                                 .foregroundStyle(row.provider.dataStatus == "available" ? .secondary : .tertiary)
                                 .frame(width: 64, alignment: .trailing)
                                 .lineLimit(1)
@@ -742,13 +743,13 @@ struct UsageHeatmapGrid: View {
                 }
             }
             HStack(spacing: 4) {
-                Text("Less").font(.system(size: 8)).foregroundStyle(.tertiary)
+                Text("Less").jrbarType(.caption).foregroundStyle(.tertiary)
                 ForEach(["#E5E7EB", "#DDD6FE", "#C4B5FD", "#A78BFA", "#7C3AED"], id: \.self) { hex in
                     RoundedRectangle(cornerRadius: 1.5).fill(Self.color(hex)).frame(width: 8, height: 8)
                 }
-                Text("More").font(.system(size: 8)).foregroundStyle(.tertiary)
+                Text("More").jrbarType(.caption).foregroundStyle(.tertiary)
                 if !heatmap.timezone.isEmpty {
-                    Text("· \(heatmap.timezone)").font(.system(size: 8)).foregroundStyle(.tertiary)
+                    Text("· \(heatmap.timezone)").jrbarType(.caption).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -803,7 +804,7 @@ struct UsageGraphFacts: View {
                                     .fontWeight(.medium)
                             }
                         }
-                        .font(.system(size: 10))
+                        .jrbarType(.caption)
                         if !heatmap.timezone.isEmpty {
                             fact("Calendar", heatmap.timezone)
                         }
@@ -849,7 +850,7 @@ struct UsageGraphFacts: View {
     private func fact(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .foregroundStyle(.tertiary)
             Text(value)
                 .font(.system(size: 11))
@@ -860,7 +861,7 @@ struct UsageGraphFacts: View {
 
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
+            .jrbarType(.caption).fontWeight(.semibold)
             .foregroundStyle(.tertiary)
             .padding(.top, 4)
     }

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -99,7 +100,7 @@ struct FirmwareRows: View {
 
     private func summary(_ card: FirmwareCardState) -> String {
         guard isLive else {
-            return firmware.status == nil ? "Monitor not connected" : "Last reported: " + card.headline
+            return firmware.status == nil ? MonitorWords.label : "Last reported: " + card.headline
         }
         switch card.display {
         case .upToDate(let version): return "\(version) · Up to date"
@@ -136,9 +137,9 @@ struct FirmwareRows: View {
 
     private func noteTint(_ card: FirmwareCardState) -> Color {
         switch card.display {
-        case .failed: return .red
-        case .unconfirmed, .cannotUpdate, .unavailable, .offline: return .orange
-        case .succeeded: return .green
+        case .failed: return Tone.failure.color
+        case .unconfirmed, .cannotUpdate, .unavailable, .offline: return Tone.neutral.color
+        case .succeeded: return Tone.done.color
         default: return .secondary
         }
     }
@@ -152,12 +153,11 @@ struct FirmwareNotesList: View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s) {
             ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
                 HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 4))
-                        .foregroundStyle(.secondary)
+                    Circle().fill(.secondary)
+                        .frame(width: JRBarTokens.Space.xs, height: JRBarTokens.Space.xs)
                         .accessibilityHidden(true)
                     Text(note)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

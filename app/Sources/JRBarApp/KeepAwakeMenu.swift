@@ -105,11 +105,7 @@ enum KeepAwakeMenu {
 
     /// The short form for a chip or a preset button: "15 m", "2 h", "1 h 30 m".
     nonisolated static func shortTitle(seconds: Int) -> String {
-        let minutes = max(1, seconds / 60)
-        let hours = minutes / 60
-        let rest = minutes % 60
-        if hours == 0 { return "\(minutes) m" }
-        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) m"
+        UsageTime.duration(Double(seconds))
     }
 
     // MARK: The list

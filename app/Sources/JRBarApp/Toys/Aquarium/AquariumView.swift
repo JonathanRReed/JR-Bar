@@ -1157,7 +1157,7 @@ struct AquariumView: View {
             let c = canvas
             let resolved = c.resolve(
                 Text(label)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.medium))
                     .foregroundStyle(.white.opacity(0.90)))
             let measured = resolved.measure(in: CGSize(width: 1000, height: 40))
             if chips.count > 128 { chips.removeAll(keepingCapacity: true) }
@@ -1171,7 +1171,7 @@ struct AquariumView: View {
             let c = canvas
             let resolved = c.resolve(
                 Text(label)
-                    .font(.caption2.weight(.semibold))
+                    .font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.97)))
             let measured = resolved.measure(in: CGSize(width: 1000, height: 40))
             if tags.count > 128 { tags.removeAll(keepingCapacity: true) }

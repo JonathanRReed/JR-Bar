@@ -257,7 +257,7 @@ import JRBarUI
     }
 }
 
-/// With `JRBAR_RENDER_PROOF=1`: Effect Studio's program editor with a 5 Hz
+/// With `JRBAR_RENDER_PROOF=1`: Studio's program editor with a 5 Hz
 /// white blink typed in, on a dark and a light stage, so the compiler note
 /// and the "What plays" text read as the person reads them. The PNGs go to
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/studio-flash-note-proof`).

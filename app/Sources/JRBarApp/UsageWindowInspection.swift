@@ -37,7 +37,7 @@ struct UsageWindowInspection {
     }
 
     var readingNotice: String? {
-        if !isLive { return "Monitor disconnected. This is the last reading." }
+        if !isLive { return "\(MonitorWords.sentence) This is the last reading." }
         if provider.isStale || ["failing", "source_idle", "missing_recent"].contains(provider.availability) {
             return "This reading is stale."
         }
@@ -55,9 +55,9 @@ struct UsageWindowInspection {
     }
 
     var verdictText: String {
-        if !hasAmount { return "No reading" }
-        if readingNotice != nil { return "Paused" }
-        return displayForecast.verdictWord()
+        if !hasAmount { return UsageStatus.noReading.word }
+        if readingNotice != nil { return UsageStatus.paused.word }
+        return displayForecast.verdictWord(now: now)
     }
 
     var explanation: String {
@@ -147,12 +147,7 @@ struct UsageWindowInspectionView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Divider()
-            Text(inspection.verdictText)
-                .font(JRBarTokens.TypeStyle.section.font)
-                .foregroundStyle(inspection.verdictColor)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(inspection.verdictColor.opacity(0.12), in: Capsule())
+            StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
             Text(inspection.explanation)
                 .font(JRBarTokens.TypeStyle.callout.font)
                 .fixedSize(horizontal: false, vertical: true)

@@ -74,7 +74,7 @@ struct UsageForecastSurfaceTests {
             #expect(reading.footnote != reading.resetFootnote)
             #expect(reading.forecastHelp.contains(reading.resetFootnote))
             #expect(inspection.verdictText.hasPrefix("Runs out "))
-            #expect(inspection.explanation.contains("At this pace"))
+            #expect(inspection.explanation.contains("at this pace"))
             #expect(inspection.projectedText == "At this pace 130% by the reset")
             #expect(inspection.budget?.exceedsBudget == true)
         case "used up":
@@ -136,7 +136,7 @@ struct UsageForecastSurfaceTests {
         provider.windows[0].forecast = CoreUsageForecast(exhaustsAt: Self.stamp + 40 * 60, pace: "ahead", ratePctPerHour: 45)
         let section = PanelProviderSection(store: panel, composition: PanelComposition(store: panel))
         let soon = section.gauge(provider).reading(for: provider.windows[0])
-        #expect(soon.footnote == "Runs out in 40 min")
+        #expect(soon.footnote == "Runs out in 40m")
         provider.windows[0].resetsAt = Self.stamp - 1
         let reset = section.gauge(provider).reading(for: provider.windows[0])
         #expect(reset.elapsed)

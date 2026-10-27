@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import Observation
@@ -124,8 +125,7 @@ enum HooksDoctor {
         var parts = ["\(entry.hookEvents) event\(entry.hookEvents == 1 ? "" : "s") hooked"]
         if let at = entry.lastEventAt {
             if at.isFinite, at > 0, at <= now.timeIntervalSince1970 {
-                let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now)
-                parts.append(ago.map { "last event \($0) ago" } ?? "last event just now")
+                parts.append("last event \(UsageTime.ago(now.timeIntervalSince1970 - at))")
             } else {
                 parts.append("event time unavailable")
             }
@@ -191,12 +191,11 @@ final class HooksDoctorModel {
     }
 
     func statusLine(live: Bool, now: Date = Date()) -> String {
-        if !live { return "Monitor offline. Recheck when it reconnects." }
+        if !live { return "\(MonitorWords.sentence) Recheck when it reconnects." }
         if loading { return "Checking hooks…" }
         if failed { return entries.isEmpty ? "Recheck failed. No report available." : "Recheck failed. Showing the last report." }
         if let checkedAt, checkedAt > 0, checkedAt <= now.timeIntervalSince1970 {
-            let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: checkedAt), now: now)
-            return ago.map { "Checked \($0) ago" } ?? "Checked just now"
+            return "Checked \(UsageTime.ago(now.timeIntervalSince1970 - checkedAt))"
         }
         return entries.isEmpty ? "No hook report yet" : "Hook report loaded"
     }
@@ -255,12 +254,12 @@ struct HooksDoctorStatusRow: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(doctor.statusLine(live: live))
-                    .font(.caption)
-                    .foregroundStyle(doctor.failed && live ? Color.orange : Color.secondary)
+                    .jrbarType(.caption)
+                    .foregroundStyle(doctor.failed && live ? Tone.failure.color : Color.secondary)
                 if let line = doctor.receiverLine(live: live) {
                     Text(line)
-                        .font(.caption)
-                        .foregroundStyle(doctor.receiverAnswers == false ? Color.orange : Color.secondary)
+                        .jrbarType(.caption)
+                        .foregroundStyle(doctor.receiverAnswers == false ? Tone.failure.color : Color.secondary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -368,7 +367,7 @@ struct ProviderUpdateLine: View {
                 if let line = ProviderUpdateWords.versionLine(installed: version, status: status,
                                                               includeInstalled: !versionShownAbove) {
                     Text(line)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(status?.updateAvailable == true ? Color.primary : Color.secondary)
                         .monospacedDigit()
                         .lineLimit(1)
@@ -395,20 +394,20 @@ struct ProviderUpdateLine: View {
             }
             if let result = ProviderUpdateWords.resultLine(status, now: Date()) {
                 Text(result)
-                    .font(.caption)
-                    .foregroundStyle(status?.phase == .failed ? Color.red : Color.secondary)
+                    .jrbarType(.caption)
+                    .foregroundStyle(status?.phase == .failed ? Tone.failure.color : Color.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let advice = status?.updateAdvice, !running, advice != status?.message {
                 Text(advice)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if provider == "gemini", status?.updateAdvice != ProviderUpdateWords.geminiAdvice {
                 Text(ProviderUpdateWords.geminiAdvice)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -15,12 +16,12 @@ struct OverviewSummaryStrip: View {
     var body: some View {
         let counts = store.stripCounts
         HStack(spacing: 6) {
-            OverviewCountPill(text: "\(counts.live) live", tint: counts.live > 0 ? .green : .secondary)
+            OverviewCountPill(text: "\(counts.live) live", tint: counts.live > 0 ? Tone.done.color : .secondary)
             if counts.attention > 0 {
-                OverviewCountPill(text: "\(counts.attention) need\(counts.attention == 1 ? "s" : "") you", tint: .orange)
+                OverviewCountPill(text: "\(counts.attention) need\(counts.attention == 1 ? "s" : "") you", tint: Tone.ask.color)
             }
             if counts.failed > 0 {
-                OverviewCountPill(text: "\(counts.failed) failed", tint: .red)
+                OverviewCountPill(text: "\(counts.failed) failed", tint: Tone.failure.color)
             }
             if counts.unreviewed > 0 {
                 OverviewCountPill(text: "\(counts.unreviewed) unreviewed", tint: .secondary)
@@ -36,7 +37,7 @@ struct OverviewSummaryStrip: View {
             if store.loading {
                 DelayedWait(size: 12)
             } else if let loadedAt = store.loadedAt {
-                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).font(.system(size: 10.5))
+                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).jrbarType(.caption)
             }
         }
         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
@@ -90,7 +91,7 @@ struct OverviewConnectionsStrip: View {
                     .lineLimit(1)
                 if let subtitle = link.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10))
+                        .jrbarType(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -114,22 +115,7 @@ struct OverviewCountPill: View {
     let tint: Color
     var quiet = false
 
-    /// Grey counts read in the primary ink, dimmer when quiet.
-    private var ink: Color {
-        guard tint == .secondary else { return tint }
-        return Color.primary.opacity(quiet ? 0.55 : 0.75)
-    }
-
     var body: some View {
-        HStack(spacing: 4) {
-            Circle().fill(tint).frame(width: 5, height: 5).opacity(quiet ? 0.6 : 1)
-            Text(text)
-                .font(.system(size: 11, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(ink)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2.5)
-        .background(Capsule().fill(tint.opacity(tint == .secondary ? 0.08 : 0.12)))
+        StatusBadge(text, tint: tint).monospacedDigit().opacity(quiet ? 0.6 : 1)
     }
 }

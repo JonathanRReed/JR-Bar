@@ -10,8 +10,8 @@ public enum CoreClientError: Error, Equatable, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .notConnected: return "core is not connected"
-        case .disconnected: return "core disconnected before replying"
+        case .notConnected: return MonitorWords.sentence
+        case .disconnected: return "\(MonitorWords.sentence) The command was interrupted."
         case .timeout: return "core did not reply in time"
         case .writeFailed(let errno): return "write failed: \(String(cString: strerror(errno)))"
         case .stopped: return "client stopped"

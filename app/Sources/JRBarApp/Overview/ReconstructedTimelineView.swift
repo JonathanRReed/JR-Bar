@@ -1,3 +1,4 @@
+import JRBarUI
 import SwiftUI
 import JRBarCore
 
@@ -66,13 +67,13 @@ struct ReconstructedTimelineView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
                     .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.orange.opacity(0.16)))
+                    .background(Circle().fill(Tone.neutral.color.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("What happened")
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Tone.neutral.color)
                     Text(Self.storyText(reconstruction.story))
                         .font(.system(size: 12))
                         .textSelection(.enabled)
@@ -82,9 +83,9 @@ struct ReconstructedTimelineView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.orange.opacity(0.08)))
+                .fill(Tone.neutral.color.opacity(0.08)))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.5))
+                .strokeBorder(Tone.neutral.color.opacity(0.22), lineWidth: 0.5))
         } else {
             Label("No failures in these rows", systemImage: "checkmark.circle.fill")
                 .font(.system(size: 11))
@@ -108,14 +109,14 @@ struct ReconstructedTimelineView: View {
                 }
                 Text("· \(reconstruction.totalLines) transcript \(reconstruction.totalLines == 1 ? "row" : "rows") read")
             }
-            .font(.system(size: 10.5))
+            .jrbarType(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 2)
         } label: {
             Text(gapSummary)
                 .font(.system(size: 11))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Tone.neutral.color)
         }
     }
 
@@ -170,15 +171,15 @@ struct ReconstructedTimelineView: View {
     /// neutral plate, and Errors turns red once there are any.
     private func chip(_ filter: KindFilter, count: Int, alarm: Bool) -> some View {
         let picked = kind == filter
-        let ink: Color = alarm ? .red : (picked ? .primary : .secondary)
+        let ink: Color = alarm ? Tone.failure.color : (picked ? .primary : .secondary)
         return Button {
             kind = filter
         } label: {
             HStack(spacing: 4) {
                 Text(filter.rawValue)
-                    .font(.system(size: 10.5, weight: picked ? .semibold : .medium))
+                    .jrbarType(.caption).fontWeight(picked ? .semibold : .medium)
                 Text("\(count)")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .jrbarType(.caption).fontWeight(.semibold).monospacedDigit()
                     .opacity(0.7)
             }
             .foregroundStyle(ink)
@@ -213,12 +214,12 @@ struct ReconstructedTimelineView: View {
                             withAnimation { proxy.scrollTo(firstError, anchor: .top) }
                         } label: {
                             Label("Jump to error", systemImage: "arrow.down.to.line")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .jrbarType(.caption).fontWeight(.medium)
                                 .padding(.horizontal, 8)
                                 .frame(height: 20)
-                                .background(Capsule().fill(Color.red.opacity(0.1)))
+                                .background(Capsule().fill(Tone.failure.color.opacity(0.1)))
                         }
-                        .buttonStyle(.plain).foregroundStyle(.red)
+                        .buttonStyle(.plain).foregroundStyle(Tone.failure.color)
                     }
                     if embedded {
                         rows(shown)
@@ -283,7 +284,7 @@ struct ReconstructedTimelineView: View {
         @ViewBuilder node: () -> Node, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .top, spacing: Self.gutter) {
             Text(clock)
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .fixedSize()
@@ -312,7 +313,7 @@ struct ReconstructedTimelineView: View {
     /// A node: the row's glyph on a disc of its own tint.
     private func node(_ symbol: String, tint: Color) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 8.5, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(tint)
             .frame(width: Self.nodeSize, height: Self.nodeSize)
             .background(Circle().fill(tint.opacity(0.16)))
@@ -343,7 +344,7 @@ struct ReconstructedTimelineView: View {
 
     private func tag(_ text: String, tint: Color) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .semibold))
+            .jrbarType(.caption).fontWeight(.semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(tint.opacity(0.14), in: .capsule)
@@ -388,12 +389,12 @@ struct ReconstructedTimelineView: View {
                 HStack(spacing: 5) {
                     if let role = item.role {
                         Text(Self.roleName(role))
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                             .foregroundStyle(Self.roleTint(role))
                     }
                     if let model = item.model {
                         Text(model)
-                            .font(.system(size: 10))
+                            .jrbarType(.caption)
                             .foregroundStyle(.tertiary)
                     }
                     subagentTag(item)
@@ -405,7 +406,7 @@ struct ReconstructedTimelineView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(item.name ?? "tool")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(item.isError ? Color.red : Self.toolTint)
+                        .foregroundStyle(item.isError ? Tone.failure.color : Self.toolTint)
                     subagentTag(item)
                 }
                 if item.redacted {
@@ -431,7 +432,7 @@ struct ReconstructedTimelineView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(item.name.map { "Turn ended · \($0)" } ?? "Turn ended")
                     .font(.system(size: 11))
-                    .foregroundStyle(item.isError ? Color.orange : Color.secondary)
+                    .foregroundStyle(item.isError ? Tone.failure.color : Color.secondary)
                 subagentTag(item)
             }
         }
@@ -446,7 +447,7 @@ struct ReconstructedTimelineView: View {
         } else if let text = item.text {
             Text(text)
                 .font(.system(size: 11, design: item.isError ? .monospaced : .default))
-                .foregroundStyle(item.isError ? Color.red : Color.secondary)
+                .foregroundStyle(item.isError ? Tone.failure.color : Color.secondary)
                 .lineLimit(4)
                 .textSelection(.enabled)
                 .padding(.horizontal, item.isError ? 7 : 0)
@@ -454,13 +455,13 @@ struct ReconstructedTimelineView: View {
                 .background {
                     if item.isError {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.red.opacity(0.08))
+                            .fill(Tone.failure.color.opacity(0.08))
                     }
                 }
         } else {
             Text(item.isError ? "failed" : "done")
                 .font(.system(size: 11))
-                .foregroundStyle(item.isError ? Color.red : Color.secondary)
+                .foregroundStyle(item.isError ? Tone.failure.color : Color.secondary)
         }
     }
 
@@ -511,11 +512,11 @@ struct ReconstructedTimelineView: View {
     }
 
     private static func tint(_ item: ReconstructedItem) -> Color {
-        if item.isError { return .red }
+        if item.isError { return Tone.failure.color }
         switch item.kind {
         case .message: return roleTint(item.role)
         case .toolUse: return toolTint
-        case .toolResult: return .green
+        case .toolResult: return Tone.done.color
         case .turnEnd: return .secondary
         }
     }

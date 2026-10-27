@@ -233,9 +233,6 @@ extension FailureStory {
 
     /// "42 s", "3 min 12 s", "1 h 4 min".
     static func duration(_ seconds: Double) -> String {
-        let total = Int(seconds.rounded())
-        if total < 60 { return "\(total) s" }
-        if total < 3600 { return total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s" }
-        return "\(total / 3600) h \((total % 3600) / 60) min"
+        UsageTime.duration(seconds)
     }
 }

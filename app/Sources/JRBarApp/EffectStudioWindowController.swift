@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The Effect Studio window (Settings › Devices & Lighting › Effects…, the panel's
+/// The Studio window (Settings › Devices & Lighting › Effects…, the panel's
 /// overflow menu, the status menu and the app menu).
 @MainActor
 final class EffectStudioWindowController: NSObject, NSWindowDelegate {
@@ -53,7 +53,7 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     /// Internal for the lifecycle test.
     @discardableResult
     func attachContent(to window: NSWindow) -> NSViewController {
-        WindowContentLifecycle.attach(to: window, title: "Effect Studio", subtitle: "JR-Bar") {
+        WindowContentLifecycle.attach(to: window, title: "Studio", subtitle: "JR-Bar") {
             WindowContentLifecycle.hosting(EffectStudioView(store: store))
         }
     }

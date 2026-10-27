@@ -12,7 +12,7 @@ import JRBarCore
             let json = try JSONDecoder().decode(JSONValue.self, from: Data(
                 "{\"present\":true,\"enabled\":\(enabled),\"running\":true}".utf8))
             let status = try #require(T3CodeStatus.parse(json))
-            #expect(status.line == "Detected")
+            #expect(status.line == "Running")
             #expect(status.isSettling)
             var stopped = status
             stopped.running = false

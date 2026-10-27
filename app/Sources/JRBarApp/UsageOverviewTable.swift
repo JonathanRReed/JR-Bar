@@ -44,7 +44,7 @@ struct UsageOverviewTable: View {
             }.fixedSize(horizontal: false, vertical: true)
             if store.providers.isEmpty { Text("No provider readings yet").foregroundStyle(JRBarTokens.Ink.secondary) }
             Divider()
-            Text("30-day tokens incl. cache reads").font(JRBarTokens.TypeStyle.heading.font)
+            SectionHeader("30-day tokens incl. cache reads")
             if store.tokenHistoryOff {
                 StatusBanner("Token history is off") { Button("Turn on") { store.enableTokenHistory() } }
             } else if let graph = store.overviewGraph {
@@ -141,11 +141,12 @@ struct UsageOverviewHeader: View {
     let windowNames: [String]
 
     static func titleLines(for name: String) -> [String] {
-        let words = name.split(separator: " ")
-        guard words.count > 1 else { return [name] }
+        let title = "\(name) used"
+        let words = title.split(separator: " ")
+        guard words.count > 1 else { return [title] }
         return (1..<words.count).map { cut in
             [words[..<cut].joined(separator: " "), words[cut...].joined(separator: " ")]
-        }.min { width(of: $0) < width(of: $1) } ?? [name]
+        }.min { width(of: $0) < width(of: $1) } ?? [title]
     }
 
     private static func width(of lines: [String]) -> CGFloat {

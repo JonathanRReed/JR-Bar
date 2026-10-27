@@ -128,7 +128,7 @@ struct ResolvedEffectReply: Decodable {
     }
 }
 
-/// Effect Studio › assignments › "Try a situation": pick an event, a
+/// Studio › assignments › "Try a situation": pick an event, a
 /// provider, a scene and a surface, and see which assignment wins — the
 /// deciding scope named — and which rows it shadows.
 struct EffectSituationPanel: View {

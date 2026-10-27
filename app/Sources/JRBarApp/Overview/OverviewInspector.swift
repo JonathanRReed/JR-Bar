@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -18,7 +19,7 @@ struct OverviewInspectorSection<Trailing: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 4)
@@ -46,7 +47,7 @@ enum OverviewEvidence: String {
         switch self {
         case .reported: return .accentColor
         case .derived: return .secondary
-        case .unavailable: return .orange
+        case .unavailable: return JRBarUI.Tone.neutral.color
         }
     }
 }
@@ -71,7 +72,7 @@ struct OverviewFactRow: View {
                 Spacer(minLength: 0)
                 if let evidence {
                     Text(evidence.rawValue)
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
                         .background(evidence.tint.opacity(0.14), in: .capsule)
                         .foregroundStyle(evidence.tint)
@@ -88,10 +89,10 @@ extension OverviewLink.Tone {
     /// the panel's device chips already speak.
     var color: Color {
         switch self {
-        case .good: return .green
+        case .good: return JRBarUI.Tone.done.color
         case .busy: return .blue
-        case .warn: return .orange
-        case .down: return .red
+        case .warn: return JRBarUI.Tone.failure.color
+        case .down: return JRBarUI.Tone.neutral.color
         case .idle: return .secondary.opacity(0.35)
         }
     }
@@ -110,7 +111,7 @@ struct OverviewLinkGlyph: View {
             ProviderTile(style: ProviderStyle.style(for: provider), size: size)
         } else {
             Image(systemName: link.symbol)
-                .font(.system(size: size * 0.62, weight: .medium))
+                .resizable().scaledToFit().frame(width: size * 0.62, height: size * 0.62)
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
         }
@@ -127,7 +128,7 @@ struct OverviewWaitingText: View {
 
     var body: some View {
         if let waiting = OverviewStore.waitingText(entry, now: store.now) {
-            Text(waiting).font(.system(size: 10.5)).monospacedDigit().foregroundStyle(.secondary)
+            Text(waiting).jrbarType(.caption).monospacedDigit().foregroundStyle(.secondary)
         }
     }
 }
@@ -171,7 +172,7 @@ struct OverviewSessionInspector: View {
                 if let message = entry.session.message, !message.isEmpty {
                     OverviewInspectorSection("Last message") {
                         Text(message)
-                            .font(.system(size: 12))
+                            .jrbarType(.callout)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -179,7 +180,7 @@ struct OverviewSessionInspector: View {
                     }
                 }
                 if let coverage = store.coverageNote, entry.visibility == "hidden" {
-                    Text(coverage).font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                    Text(coverage).jrbarType(.caption).foregroundStyle(.tertiary)
                 }
                 timelineSection
                 observedToolsSection
@@ -188,7 +189,7 @@ struct OverviewSessionInspector: View {
                         store.compareWithPreviousRun(entry)
                     } label: {
                         Label("Compare with the previous run here", systemImage: "arrow.left.arrow.right")
-                            .font(.system(size: 11.5))
+                            .jrbarType(.caption)
                     }
                     .buttonStyle(.link)
                     .disabled(store.comparing)
@@ -208,13 +209,13 @@ struct OverviewSessionInspector: View {
             ProviderTile(style: style, size: 32)
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.session.label ?? entry.session.shortId ?? "Session")
-                    .font(.system(size: 15, weight: .semibold))
+                    .jrbarType(.title3).fontWeight(.semibold)
                     .lineLimit(2)
                     .textSelection(.enabled)
                 HStack(spacing: 6) {
                     OverviewStatePill(activity: activity, answered: answered)
                     Text(subtitle)
-                        .font(.system(size: 11.5))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -253,7 +254,7 @@ struct OverviewSessionInspector: View {
             if session.stale { OverviewFactRow(name: "Stale", value: "yes", evidence: .reported) }
             usageFacts
         }
-        .font(.system(size: 11.5))
+        .jrbarType(.caption)
     }
 
     @ViewBuilder
@@ -329,24 +330,24 @@ struct OverviewSessionInspector: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: answered ? "checkmark.circle" : "hand.raised.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(tint)
                 Text(Self.askHeading(ask))
-                    .font(.system(size: 11, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(tint)
                 Spacer(minLength: 4)
                 OverviewWaitingText(entry: entry, store: store)
             }
             Text(ask.summary ?? "This session has an open question.")
-                .font(.system(size: 12.5, weight: .medium))
+                .jrbarType(.callout).fontWeight(.medium)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let preview = ask.previewLine {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     if ask.isDestructive { AskRiskMark(size: 10) }
                     Text(preview)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary.opacity(0.8)))
+                        .jrbarType(.caption).fontDesign(.monospaced)
+                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.primary.opacity(0.8)))
                         .textSelection(.enabled)
                         .lineLimit(3)
                 }
@@ -356,7 +357,7 @@ struct OverviewSessionInspector: View {
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
             } else if ask.isDestructive {
                 Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10.5)).foregroundStyle(.red)
+                    .jrbarType(.caption).foregroundStyle(JRBarUI.Tone.failure.color)
             }
             if ask.hasDetail {
                 // Opened only by the person; reading it answers nothing.
@@ -397,7 +398,7 @@ struct OverviewSessionInspector: View {
                     Button("Approve") {
                         Task { await store.answerAsk(entry: entry, approve: true) }
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(JRBarUI.Tone.done.color)
                 }
                 if plan.alwaysAllow {
                     // Its own button: the agent remembers the rule.
@@ -411,7 +412,7 @@ struct OverviewSessionInspector: View {
                     Button("Deny") {
                         Task { await store.answerAsk(entry: entry, approve: false) }
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                    .buttonStyle(.bordered).controlSize(.small).tint(JRBarUI.Tone.failure.color)
                 }
                 if plan.reply {
                     Button("Reply…") { reply(entry) }
@@ -424,7 +425,7 @@ struct OverviewSessionInspector: View {
                 : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
             if let reason {
                 Label(reason, systemImage: "info.circle")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -442,7 +443,7 @@ struct OverviewSessionInspector: View {
             ForEach(choices, id: \.question) { choice in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(choice.header.map { "\($0) — \(choice.question)" } ?? choice.question)
-                        .font(.system(size: 11, weight: .medium))
+                        .jrbarType(.caption).fontWeight(.medium)
                         .foregroundStyle(.secondary)
                     WrapRow {
                         ForEach(choice.options, id: \.self) { label in
@@ -464,7 +465,7 @@ struct OverviewSessionInspector: View {
                         .disabled(!picks.isComplete(choices))
                 }
                 Button("Deny") { Task { await store.declineQuestion(entry: entry) } }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                    .buttonStyle(.bordered).controlSize(.small).tint(JRBarUI.Tone.failure.color)
             }
         }
         .disabled(busy)
@@ -490,7 +491,7 @@ struct OverviewSessionInspector: View {
             // answer "not found", which reads as broken.
             OverviewInspectorSection("Timeline") {
                 Text("The transcript is on \(entry.session.origin?.label ?? "the remote Mac") — open the session there to read it.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .windowWell(padding: 10)
             }
@@ -509,7 +510,7 @@ struct OverviewSessionInspector: View {
             Button {
                 Task { await store.refreshTimeline() }
             } label: {
-                Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .medium))
+                Image(systemName: "arrow.clockwise").jrbarType(.caption).fontWeight(.medium)
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
             .disabled(store.timelineLoading || store.timelinePage == nil)
@@ -518,7 +519,7 @@ struct OverviewSessionInspector: View {
             Button {
                 store.prepareRunExport(entry)
             } label: {
-                Image(systemName: "square.and.arrow.up").font(.system(size: 10, weight: .medium))
+                Image(systemName: "square.and.arrow.up").jrbarType(.caption).fontWeight(.medium)
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
             .disabled(store.timelinePage == nil || store.timelineSessionID != entry.id)
@@ -542,13 +543,13 @@ struct OverviewSessionInspector: View {
                                           liveTail: OverviewStore.liveTail(for: entry))
                 if let file = page.file {
                     Text("Source: \(file) · \(page.total) items")
-                        .font(.system(size: 9.5)).foregroundStyle(.tertiary)
+                        .jrbarType(.caption).foregroundStyle(.tertiary)
                         .textSelection(.enabled)
                 }
             } else if store.timelineLoading {
                 HStack(spacing: 6) {
                     DelayedWait(size: 12)
-                    Text("Reading transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text("Reading transcript…").jrbarType(.caption).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -567,28 +568,28 @@ struct OverviewSessionInspector: View {
             OverviewInspectorSection(title: "Tools used") {
                 HStack(spacing: 6) {
                     Text("observed")
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
                         .background(Color.accentColor.opacity(0.14), in: .capsule)
                         .foregroundStyle(Color.accentColor)
                     Text("\(map.totalCalls) calls in the loaded transcript")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .jrbarType(.caption).foregroundStyle(.tertiary)
                 }
             } content: {
                 VStack(alignment: .leading, spacing: 6) {
                     if !map.tools.isEmpty {
                         Text(map.tools.prefix(10).map(Self.toolText).joined(separator: " · "))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .jrbarType(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
                     ForEach(map.servers) { server in
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Image(systemName: "server.rack")
-                                .font(.system(size: 9)).foregroundStyle(.tertiary)
-                            Text(server.name).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                                .jrbarType(.caption).foregroundStyle(.tertiary)
+                            Text(server.name).jrbarType(.caption).fontWeight(.medium).foregroundStyle(.secondary)
                             Text(server.tools.prefix(6).map(Self.toolText).joined(separator: " · "))
-                                .font(.system(size: 11)).foregroundStyle(.tertiary)
+                                .jrbarType(.caption).foregroundStyle(.tertiary)
                                 .lineLimit(2)
                         }
                         .help("MCP server \(server.name): \(server.calls) calls")
@@ -613,7 +614,7 @@ struct OverviewSessionInspector: View {
     private var actions: some View {
         if entry.session.remote {
             Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .jrbarType(.caption).foregroundStyle(.secondary)
         } else {
             let app = entry.session.terminal?.app
             HStack(spacing: 8) {
@@ -644,20 +645,9 @@ struct OverviewStatePill: View {
     private var shown: Bool { answered && activity == .waiting }
     var word: String { shown ? Self.answeredWord : activity.word }
     private var tint: Color { shown ? .secondary : activity.tint }
-    private var calm: Bool { shown || activity == .idle || activity == .ended }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Circle().fill(tint).frame(width: 6, height: 6)
-            Text(word)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(activity.wordIsLoud && !shown ? tint : Color.primary.opacity(0.8))
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(tint.opacity(calm ? 0.10 : 0.14)))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("State: \(word)")
+        StatusBadge(word, tint: tint).accessibilityLabel("State: \(word)")
     }
 }
 
@@ -678,12 +668,12 @@ struct OverviewConnectionInspector: View {
                             .fill(link.group == .providers ? Color.clear : Color.primary.opacity(0.06)))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(link.title)
-                            .font(.system(size: 15, weight: .semibold))
+                            .jrbarType(.title3).fontWeight(.semibold)
                             .lineLimit(2)
                         HStack(spacing: 5) {
                             Circle().fill(link.tone.color).frame(width: 6, height: 6)
                             Text(link.subtitle ?? link.group.title)
-                                .font(.system(size: 11.5))
+                                .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -694,7 +684,7 @@ struct OverviewConnectionInspector: View {
                             OverviewFactRow(name: item.label, value: item.value, evidence: .reported)
                         }
                     }
-                    .font(.system(size: 11.5))
+                    .jrbarType(.caption)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .windowWell(padding: 12)
                 }
@@ -717,9 +707,9 @@ struct OverviewConnectionsBrowser: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Connections")
-                        .font(.system(size: 15, weight: .semibold))
+                        .jrbarType(.title3).fontWeight(.semibold)
                     Text("Select a session row for its inspector.")
-                        .font(.system(size: 11.5))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
                 ForEach(OverviewLink.Group.allCases, id: \.self) { group in
@@ -757,12 +747,12 @@ struct OverviewConnectionRow: View {
                 OverviewLinkGlyph(link: link, size: 16)
                     .frame(width: 18)
                 Text(link.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .jrbarType(.callout).fontWeight(.medium)
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 if let subtitle = link.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import Observation
 import SwiftUI
@@ -158,7 +159,7 @@ final class FactoryBrowserConnectionModel {
 
     private static func failureWords(_ error: Error) -> String {
         if let client = error as? CoreClientError, client == .notConnected {
-            return "Monitor offline. Reconnect and try again."
+            return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
         case "browser_session_not_found":
@@ -180,13 +181,13 @@ struct FactoryBrowserConnectionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connect Factory").font(.title2.weight(.semibold))
+            Text("Connect Factory").jrbarType(.heading).fontWeight(.semibold)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Use a browser profile where you’re signed in to Factory. An API key is optional.")
                     Link("Sign in to Factory in your browser", destination: URL(string: "https://app.factory.ai")!)
                     Text("After signing in, return here. Choose that browser profile, approve access, then click Connect.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .jrbarType(.caption).foregroundStyle(.secondary)
                     if model.profiles.isEmpty {
                         Text(model.busy ? "Loading browser profiles…" : "No browser profile selected.")
                             .foregroundStyle(.secondary)
@@ -201,15 +202,15 @@ struct FactoryBrowserConnectionSheet: View {
                     Button("Reload profiles") { _ = Task { await model.load() } }
                         .disabled(model.busy)
                     Text(instance == "default" ? "Default Factory account" : "Factory account: \(instance)")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .jrbarType(.caption).foregroundStyle(.secondary)
                     Toggle("Keep Factory connected using this browser profile", isOn: $model.approved)
                         .toggleStyle(.checkbox)
                         .disabled(model.busy)
                     Text("Allow JR-Bar to read Factory sign-in from this profile, save it in Keychain, and pick up browser renewals while Factory usage is enabled. Usage requests go to api.factory.ai. The browser keeps ownership of its refresh token. Connecting does not turn on usage.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let message = model.message {
-                        Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                        Text(message).jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -263,10 +264,10 @@ struct FactoryBrowserConnectionControls: View {
             .disabled(!core.isLive || model.busy)
             if model.available {
                 Text("Browser sign-in saved. The usage switch controls requests.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
             }
             if let message = model.message, !editing {
-                Text(message).font(.caption).foregroundStyle(.secondary)
+                Text(message).jrbarType(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

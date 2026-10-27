@@ -24,7 +24,7 @@ struct UsageProviderFacts {
     var credits: String? {
         var parts: [String] = []
         if let balance = provider.creditsRemaining, balance.isFinite, balance >= 0 {
-            parts.append("\(UsageFormat.grouped(balance)) credits left")
+            parts.append("\(UsageFormat.grouped(balance)) credits available")
         }
         if let resets = UsageSourceNotes.resetCreditsText(provider.resetCredits) { parts.append(resets) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")

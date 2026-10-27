@@ -9,7 +9,6 @@ import JRBarCore
 struct FailureNoticeRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func namedFailure() async throws {
-        NSApplication.shared.setActivationPolicy(.regular)
         let now = Date().timeIntervalSince1970
         let session = CoreSession(id: "codex:session:root", provider: "codex", cwd: "/repo/synthetic",
                                   mode: "blocked_error", lifecycle: "failed", updatedAt: now, failureSignalUntil: now + 5)
@@ -28,7 +27,8 @@ struct FailureNoticeRenderProofTests {
         let view = NotchSurfaceRenderProofTests.scene(NotchIslandView(toy: toy), size: fitted,
                                                       depth: depth, canvas: canvas)
         for dark in [true, false] {
-            try await DesignFixBProof.write(view, name: "failure-named-notice", title: "JR-Bar", size: canvas, dark: dark)
+            try ProofRender.write(view, size: canvas, name: "failure-named-notice-\(dark ? "dark" : "light")",
+                                  dark: dark, settle: 0)
         }
     }
 }

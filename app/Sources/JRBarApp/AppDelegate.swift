@@ -610,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore.notch.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.connectionDescription = { [weak store] in
-            store?.connectionDescription ?? "Monitor not connected"
+            store?.connectionDescription ?? MonitorWords.label
         }
         utilitiesStore.agents.onOpenMonitorDetails = { [weak overviewWindow] in
             overviewWindow?.show(link: "core")
@@ -626,7 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.onOpenReplay = { [weak historyWindow] in historyWindow?.showEvents() }
         historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
-        // Usage Center (⌘U) and Effect Studio windows.
+        // Usage Center (⌘U) and Studio windows.
         let usageStore = UsageCenterStore(core: core, sessionUsage: store.sessionUsage)
         let usageWindow = UsageCenterWindowController(store: usageStore)
         self.usageStore = usageStore
@@ -935,7 +935,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         // `JRBAR_OPEN_USAGE=1` opens the Usage Center; `JRBAR_OPEN_EFFECTS=1`
-        // (or an effect id) opens the Effect Studio, on that effect.
+        // (or an effect id) opens the Studio, on that effect.
         if environment["JRBAR_OPEN_USAGE"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak usageWindow] in
                 MainActor.assumeIsolated { usageWindow?.show() }
@@ -1401,7 +1401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(NSMenuItem(title: "Overview", action: #selector(openOverview(_:)), keyEquivalent: "o"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
-        appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Creator Micro…", action: #selector(openControlCenter(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
         let checkForUpdates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
@@ -2209,7 +2209,7 @@ extension AppDelegate {
         store?.onManualQuietApplied = { [weak router] seconds in router?.manualQuietApplied(seconds: seconds) }
         router.quiet = { [weak self] mode, seconds, onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
-            guard core.isLive else { return "The monitor is not connected. Quiet needs it." }
+            guard core.isLive else { return "\(MonitorWords.sentence) Quiet needs it." }
             let result = await store.requestQuiet(mode: mode ?? store.quietMode, seconds: seconds,
                                                   feedback: false, onApplied: onApplied).value
             switch result {
@@ -2220,7 +2220,7 @@ extension AppDelegate {
         router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
         router.endQuiet = { [weak self] onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
-            guard core.isLive else { return "The monitor is not connected." }
+            guard core.isLive else { return MonitorWords.sentence }
             let result = await store.requestQuiet(mode: store.quietMode, seconds: 0,
                                                   feedback: false, onApplied: onApplied).value
             switch result {
@@ -2253,7 +2253,7 @@ extension AppDelegate {
         // The checks a link can fail at once stay synchronous; the open
         // itself is awaited, and a refusal after it is said the same way.
         router.openSession = { [weak self] id in
-            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard let core = self?.core, core.isLive else { return MonitorWords.sentence }
             guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
             Task { @MainActor [weak self] in
                 if let refusal = await SessionOpener.open(id) { self?.showFeedback(refusal) }
@@ -2261,7 +2261,7 @@ extension AppDelegate {
             return nil
         }
         router.revealAsk = { [weak self] in
-            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard let core = self?.core, core.isLive else { return MonitorWords.sentence }
             guard !core.asks.isEmpty else { return "No agent is waiting on you." }
             // The notch card or the panel, whichever the asks arrive on;
             // both list the longest-waiting ask first, with Approve and Deny.

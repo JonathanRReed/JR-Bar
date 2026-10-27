@@ -65,8 +65,8 @@ struct NotchMeterCaption {
     func color(fallback: Color) -> Color {
         switch tone {
         case .secondary: fallback
-        case .attention: JRBarTokens.Ink.attention
-        case .failure: JRBarTokens.Ink.failure
+        case .attention: Tone.warning.color
+        case .failure: Tone.failure.color
         }
     }
 }

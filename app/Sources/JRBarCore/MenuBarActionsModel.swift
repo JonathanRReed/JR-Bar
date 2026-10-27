@@ -156,7 +156,7 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         case .screenLocked: t = "when the screen locks"
         case .screenUnlocked: t = "when the screen unlocks"
         case .appActivated(let bundleID): t = "when \(bundleID) activates"
-        case .timeOfDay(let h, let m): t = String(format: "at %02d:%02d", h, m)
+        case .timeOfDay(let h, let m): t = "at \(UsageTime.clock(minutes: h * 60 + m))"
         case .chargerConnected: t = "when the charger connects"
         case .chargerDisconnected: t = "when the charger disconnects"
         case .batteryBelow(let p): t = "when the battery falls to \(p)%"
@@ -198,8 +198,7 @@ public struct MenuBarTriggerRule: Equatable, Codable, Sendable, Identifiable {
         guard let seconds = MenuBarTriggerAction.clampedAwake(seconds) else {
             return "keep the Mac awake until released"
         }
-        if seconds % 3600 == 0 { return "keep the Mac awake for \(seconds / 3600) h" }
-        return "keep the Mac awake for \(max(1, seconds / 60)) min"
+        return "keep the Mac awake for \(UsageTime.duration(Double(seconds)))"
     }
 }
 
@@ -525,8 +524,7 @@ public enum MenuBarCondition: Equatable, Codable, Sendable {
         case .lidClosed: return "the lid is closed"
         case .externalDisplay: return "an external display is attached"
         case .timeBetween(let start, let end):
-            return String(format: "between %02d:%02d and %02d:%02d",
-                          start / 60, start % 60, end / 60, end % 60)
+            return "between \(UsageTime.clock(minutes: start)) and \(UsageTime.clock(minutes: end))"
         }
     }
 }

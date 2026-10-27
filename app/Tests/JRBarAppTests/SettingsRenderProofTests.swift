@@ -172,14 +172,14 @@ struct SettingsRenderProofTests {
 
     /// A Settings store over the mock document, with its toys and
     /// utilities built the way the delegate builds them but never started.
-    private struct Fixture {
+    struct Fixture {
         let core: CoreModel
         let settings: SettingsStore
         let toys: ToysStore
         let utilities: UtilitiesStore
     }
 
-    private static func fixture(firmware: FirmwareStore? = nil) throws -> Fixture {
+    static func fixture(firmware: FirmwareStore? = nil) throws -> Fixture {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-render-proof.sock")
         core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
                                           document: try document())))
@@ -215,7 +215,7 @@ struct SettingsRenderProofTests {
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
     static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false,
-                                  requiresKey: Bool = true) throws -> NSBitmapImageRep {
+                                  requiresKey: Bool = false) throws -> NSBitmapImageRep {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
@@ -409,7 +409,7 @@ struct SettingsRenderProofTests {
                     CardNote("A warning, with its fix beside it.", symbol: "exclamationmark.triangle.fill", tint: .orange)
                     CardSectionHeader("Pills")
                     FlowLayout {
-                        ForEach(statuses, id: \.text) { StatusPill($0.text, tint: $0.tint) }
+                        ForEach(statuses, id: \.text) { StatusBadge($0.text, tint: $0.tint) }
                     }
                     .padding(.vertical, SettingsMetrics.s)
                 }

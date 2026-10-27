@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -159,17 +160,17 @@ private struct DockSampleDesk: View {
         let band = max(air, 1)
         return HStack(alignment: .top, spacing: 0) {
             Rectangle()
-                .fill(Color.orange)
+                .fill(Tone.ask.color)
                 .frame(width: 1.5, height: band)
             Rectangle()
-                .fill(Color.orange.opacity(roomy ? 0 : 0.7))
+                .fill(Tone.ask.color.opacity(roomy ? 0 : 0.7))
                 .frame(width: lead, height: 1)
                 .frame(height: band)
             // Roomy air centres the label on the bar; a thin band hangs
             // it from the glass's foot, clear of the Dock.
             Text("\(Int(air.rounded())) pt")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.orange)
+                .foregroundStyle(Tone.ask.color)
                 .padding(.leading, 3)
                 .fixedSize()
                 .frame(height: roomy ? band : nil)

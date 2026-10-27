@@ -755,7 +755,7 @@ struct ProviderMotionPreview: View {
                                 cornerRadius: JRBarTokens.Radius.tile, phase: phase)
             } else {
                 Text("Preview unavailable")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -785,7 +785,7 @@ struct FinishLookPreview: View {
                 LEDStripPreview(program: live, style: .dots, dotSize: 9, spacing: 6)
             } else {
                 Text("Preview unavailable")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
         }

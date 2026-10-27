@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -78,7 +79,7 @@ struct LinkedSyncControls: View {
 
     private func checkRow(running: Bool) -> some View {
         SettingRow("Check sync", subtitle: checkSubtitle(running: running)) {
-            Button(running ? "Checking…" : "Check sync") { startCheck() }
+            ActionButton(running ? "Checking…" : "Check sync") { startCheck() }
                 .disabled(!extending || !store.core.isLive || sending || running)
         }
     }
@@ -226,8 +227,8 @@ struct DeviceReceiptRow: View {
     var body: some View {
         if let line = DeviceReceiptWords.line(store.core.lights?.deviceReceipts[deviceID], deviceName: deviceName) {
             Label(line, systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline)
-                .foregroundStyle(.orange)
+                .jrbarType(.callout)
+                .foregroundStyle(Tone.neutral.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .settingRowStyle()
         }
@@ -239,11 +240,6 @@ struct DeviceReceiptRow: View {
 /// nothing.
 struct LinkedDotNote: View {
     var body: some View {
-        Label("Linked: follows the SidePulse. Display, Pin to, Asks only and Blend are the strip's while the Dot has a role; pick On its own to set them here.",
-              systemImage: "link")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .settingRowStyle()
+        StatusBanner(detail: "The Dot follows the SidePulse. Display, Pin to, Asks only and Mix follow the strip while the Dot has a role. Pick On its own to set them here.")
     }
 }

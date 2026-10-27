@@ -20,7 +20,7 @@ struct DeviceHealthLineTests {
     @Test func aStripSaysWhyWhenAndHowBig() {
         let surface = CoreLightSurface(program: Self.program, brightness: 0.79, why: "waiting")
         let line = DeviceHealthLine.describe(device: Self.pro(), surface: surface, now: Self.now)
-        #expect(line == "Waiting · written 12 s ago · 3 lines, \(Self.program.utf8.count) of 512 bytes · driven at 79%")
+        #expect(line == "Waiting · written now · 3 lines, \(Self.program.utf8.count) of 512 bytes · driven at 79%")
     }
 
     @Test func aPlayingCueIsNamed() throws {
@@ -56,10 +56,10 @@ struct DeviceHealthLineTests {
     }
 
     @Test func agesAreCoarse() {
-        #expect(DeviceHealthLine.age(-3) == "0 s")
-        #expect(DeviceHealthLine.age(59) == "59 s")
-        #expect(DeviceHealthLine.age(125) == "2 min")
-        #expect(DeviceHealthLine.age(7300) == "2 h")
+        #expect(DeviceHealthLine.age(-3) == "0s")
+        #expect(DeviceHealthLine.age(59) == "59s")
+        #expect(DeviceHealthLine.age(125) == "2m 5s")
+        #expect(DeviceHealthLine.age(7300) == "2h 01m")
         #expect(DeviceHealthLine.age(.greatestFiniteMagnitude) == "over a year")
         #expect(DeviceHealthLine.age(.infinity) == "an unknown time")
         #expect(DeviceHealthLine.age(.nan) == "an unknown time")

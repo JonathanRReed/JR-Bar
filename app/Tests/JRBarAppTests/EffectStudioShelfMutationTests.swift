@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio shelf mutations", .serialized, .timeLimit(.minutes(2)))
+@Suite("Studio shelf mutations", .serialized, .timeLimit(.minutes(2)))
 struct EffectStudioShelfMutationTests {
     @Test("rapid saves retain both programs before settings echoes")
     func rapidSaves() async throws {

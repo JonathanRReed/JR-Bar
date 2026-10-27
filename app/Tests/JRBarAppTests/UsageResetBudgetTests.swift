@@ -26,8 +26,8 @@ struct UsageResetBudgetTests {
         #expect(result.recentRate == 9)
         #expect(result.rateToReset == 7)
         #expect(result.exceedsBudget)
-        #expect(result.recentText == "≈ 9.0 %/h")
-        #expect(result.budgetText == "≤ 7.0 %/h")
+        #expect(result.recentText == "≈ 9.0%/h")
+        #expect(result.budgetText == "≤ 7.0%/h")
         #expect(budget(forecast(rate: 4))?.exceedsBudget == false)
         #expect(budget(forecast(rate: 7))?.exceedsBudget == false)
     }
@@ -35,10 +35,10 @@ struct UsageResetBudgetTests {
     @Test("the displayed limit never rounds up")
     func roundsLimitDown() throws {
         let result = try #require(budget(forecast(used: 72.1)))
-        #expect(result.budgetText == "≤ 6.9 %/h")
+        #expect(result.budgetText == "≤ 6.9%/h")
         let small = try #require(budget(forecast(used: 99.8, resetIn: 7 * 86400)))
-        #expect(small.budgetText == "≤ 0.001 %/h")
-        #expect(UsageResetBudget(recentRate: 1, rateToReset: 0.0000099).budgetText == "≤ 0.000009 %/h")
+        #expect(small.budgetText == "≤ 0.001%/h")
+        #expect(UsageResetBudget(recentRate: 1, rateToReset: 0.0000099).budgetText == "≤ 0.000009%/h")
         #expect(budget(forecast(used: 99.999999, resetIn: 7 * 86400)) == nil)
     }
 

@@ -17,7 +17,7 @@ struct PanelView: View {
                     Button("Restart") { store.restartCore() }
                 }.padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if !store.isLive {
-                StatusBanner("Connecting to the monitor", detail: store.connectionDescription)
+                StatusBanner(MonitorWords.reconnecting, detail: store.connectionDescription)
                     .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if let failure = store.providerList.failure {
                 StatusBanner("Provider list unavailable", kind: .failure, detail: failure)
@@ -203,20 +203,7 @@ struct CountBadge: View {
     var symbol: String? = nil
 
     var body: some View {
-        HStack(spacing: 2.5) {
-            if let symbol {
-                Image(systemName: symbol)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .imageScale(.small)
-            }
-            Text(text)
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .monospacedDigit()
-        }
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .padding(.horizontal, 5)
-        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, -1.5))
+        StatusBadge(text, symbol: symbol).monospacedDigit()
     }
 }
 
@@ -275,10 +262,10 @@ struct ConnectionDot: View {
 
     private var color: Color {
         switch state {
-        case .live: return .green
-        case .connecting: return .orange
+        case .live: return Tone.done.color
+        case .connecting: return Tone.neutral.color
         case .fileFeeds: return Color.secondary.opacity(0.5)
-        case .crashed: return .red
+        case .crashed: return Tone.failure.color
         }
     }
 
@@ -302,7 +289,7 @@ struct ConnectionDot: View {
             }
         }
         .frame(width: 6, height: 6)
-        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? "Connecting to the monitor" : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
+        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? MonitorWords.reconnecting : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
     }
 }
 
@@ -358,7 +345,7 @@ struct SessionRowView: View {
     /// The tint of a quiet row's "quiet 12m": amber-leaning, a notch softer
     /// than an ask's, so a stuck run reads differently from a healthy one
     /// without claiming it needs you.
-    static let quietTint = Color.orange.opacity(0.85)
+    static let quietTint = Tone.neutral.color.opacity(0.85)
 
     /// The word's HStack spacing and the mark's slot, which an orb and
     /// every mark share (`SessionRowMark.slot`).
@@ -377,7 +364,7 @@ struct SessionRowView: View {
     static let elapsedWidth: CGFloat = elapsedTextWidth("00h 00m")
 
     /// The same, on a working row gone quiet (`SessionRow.quietText`).
-    static let quietElapsedWidth: CGFloat = elapsedTextWidth("quiet 00h 00m")
+    static let quietElapsedWidth: CGFloat = elapsedTextWidth("Quiet 00h 00m")
 
     /// `text` in the elapsed line's type.
     static func elapsedTextWidth(_ text: String) -> CGFloat {
@@ -839,12 +826,7 @@ struct AskRow: View {
             if isDemo {
                 DemoAskBadge()
             } else {
-                Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(Color.orange)
-                    .lineLimit(1)
-                    .padding(.horizontal, 5).padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color.orange.opacity(0.14)))
+                StatusBadge(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask", tone: .ask)
             }
             staleCapsule
             if row.ask?.isDestructive == true {
@@ -877,7 +859,7 @@ struct AskRow: View {
             if let preview = row.ask?.previewLine, let ask = row.ask {
                 HStack(spacing: 2) {
                     AskPreviewLine(text: preview, size: 10.5,
-                                   tint: ask.isDestructive ? Color.red.opacity(0.9) : Color.primary.opacity(0.75),
+                                   tint: ask.isDestructive ? Tone.failure.color.opacity(0.9) : Color.primary.opacity(0.75),
                                    well: true)
                     AskDetailToggle(ask: ask)
                 }
@@ -945,15 +927,13 @@ struct AskRow: View {
                     .frame(maxWidth: 200)
                     .disabled(store.isAnswerPending(ask))
                     .onSubmit { send(ask) }
-                Button("Send") { send(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Send", prominent: true) { send(ask) }
                     .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
                     .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
             } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask, at: now) {
                 // A held question: its options are the answer, sent
                 // through the agent's own hook — Deny declines it.
-                Button("Deny ⌘D") { store.deny(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton("Deny ⌘D") { store.deny(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help("Decline the question (⌘D)")
                 AskRowChoices(ask: ask, store: store)
@@ -964,20 +944,17 @@ struct AskRow: View {
                 // the refusal — not a guess — is what the toast then
                 // shows. All go quiet while the answer is on the wire
                 // so a double click cannot post twice.
-                Button("Deny ⌘D") { store.deny(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton("Deny ⌘D") { store.deny(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help("Answer no (⌘D)")
                 if AskVerbs.alwaysAllows(ask, at: now) {
                     // Its own button, never a chord: the agent will
                     // remember this rule and stop asking.
-                    Button("Always Allow") { store.alwaysAllow(ask) }
-                        .buttonStyle(PillButtonStyle(prominent: false))
+                    ActionButton("Always Allow") { store.alwaysAllow(ask) }
                         .disabled(store.isAnswerPending(ask))
                         .help("Approve, and let \(row.style.name) remember the rule it offered")
                 }
-                Button("Approve ⌘↩") { store.approve(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Approve ⌘↩", prominent: true) { store.approve(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help(approveHelp(ask, now: now))
             } else if row.isRemote {
@@ -993,8 +970,8 @@ struct AskRow: View {
                 Text(AskAnswerHost.line(host: row.answerHost))
                     .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary).lineLimit(1)
                     .truncationMode(.tail)
-                Button(AskAnswerHost.buttonTitle(host: row.answerHost)) { store.open(row) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton(AskAnswerHost.buttonTitle(host: row.answerHost)) { store.open(row) }
+
                     .help(row.ask?.wantsTextReply == true
                           ? "This ask wants a typed reply — answer it in the session's window"
                           : "The panel cannot answer this one — answer it in the session's window")
@@ -1013,12 +990,7 @@ struct AskRow: View {
     @ViewBuilder
     private var staleCapsule: some View {
         if row.ask?.isStale == true {
-            Text("may be stale")
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 5).padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.primary.opacity(0.08)))
+            StatusBadge("May be stale", tone: .stale)
                 .help(staleHelp)
         }
     }
@@ -1046,12 +1018,12 @@ struct AskRow: View {
     @ViewBuilder
     private var staleDismiss: some View {
         if isDemo {
-            Button("Put Away") { store.dismissDemo() }
-                .buttonStyle(PillButtonStyle(prominent: false))
+            ActionButton("Put Away") { store.dismissDemo() }
+
                 .help("Take the demo down. Nothing was ever sent to an agent.")
         } else if let ask = row.ask, ask.isDismissible, !row.isRemote {
-            Button("Dismiss") { store.dismissStaleAsk(ask) }
-                .buttonStyle(PillButtonStyle(prominent: false))
+            ActionButton("Dismiss") { store.dismissStaleAsk(ask) }
+
                 .help("Hide this ask on this Mac. \(row.style.name) is not told anything and its own prompt is unchanged.")
         }
     }
@@ -1090,10 +1062,9 @@ struct AskRowChoices: View {
         switch AskChoiceLayout.layout(choices) {
         case .buttons(let labels):
             ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
-                Button(label) {
+                ActionButton(label, prominent: index == 0) {
                     if let choice = choices.first { store.pick(label, in: choice, of: ask) }
                 }
-                .buttonStyle(PillButtonStyle(prominent: index == 0))
                 .disabled(store.isAnswerPending(ask))
                 .help("Answer “\(label)” through the agent's own hook")
             }
@@ -1110,8 +1081,7 @@ struct AskRowChoices: View {
             .disabled(store.isAnswerPending(ask))
             .help(choices.count == 1 ? choices[0].question : "\(choices.count) questions — pick an answer for each")
             if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
-                Button("Send") { store.sendPicks(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Send", prominent: true) { store.sendPicks(ask) }
                     .disabled(store.isAnswerPending(ask))
             }
         }
@@ -1121,57 +1091,6 @@ struct AskRowChoices: View {
 /// The panel's buttons: a quiet capsule, or — for the one verb that
 /// answers yes — a filled amber one with a little depth. Both brighten
 /// under the pointer and fade while they cannot be clicked.
-struct PillButtonStyle: ButtonStyle {
-    let prominent: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        PillButtonBody(label: configuration.label, prominent: prominent, pressed: configuration.isPressed)
-    }
-}
-
-/// A pill button as drawn: the view owns the hover, so each button
-/// keeps its own.
-private struct PillButtonBody: View {
-    let label: ButtonStyleConfiguration.Label
-    let prominent: Bool
-    let pressed: Bool
-    @ViewState private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        label
-            .font((prominent ? JRBarTokens.TypeStyle.headline : .callout).font)
-            .lineLimit(1)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 3.5)
-            .background { plate }
-            .contentShape(Capsule())
-            .opacity(isEnabled ? 1 : 0.45)
-            .onHover { hovering = $0 }
-    }
-
-    @ViewBuilder
-    private var plate: some View {
-        if prominent {
-            let amber = JRBarTokens.Ink.accent
-            let top = amber.opacity(pressed ? 0.8 : 1)
-            let bottom = amber.opacity(pressed ? 0.7 : 0.88)
-            Capsule()
-                .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
-                .brightness(hovering && isEnabled && !pressed ? 0.05 : 0)
-                .overlay(Capsule().strokeBorder(LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
-                                                               startPoint: .top, endPoint: .bottom),
-                                                lineWidth: 0.5))
-                .shadow(color: amber.opacity(isEnabled ? 0.3 : 0), radius: 3, y: 1)
-        } else {
-            Capsule()
-                .fill(Color.primary.opacity(pressed ? 0.16 : (hovering && isEnabled ? 0.12 : 0.08)))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-        }
-    }
-}
-
 // MARK: - Context
 
 struct ContextHairline: View {
@@ -1190,8 +1109,8 @@ struct ContextHairline: View {
 
     private var fill: Color {
         switch Self.level(fraction) {
-        case .critical: return .red
-        case .warning: return .orange
+        case .critical: return Tone.failure.color
+        case .warning: return Tone.neutral.color
         case .calm: return accent.opacity(0.55)
         }
     }
@@ -1224,7 +1143,7 @@ struct PanelDevicesRow: View {
     private var linkGlyph: (name: String, style: AnyShapeStyle)? {
         switch dotLink?.state {
         case "linked": return ("link", AnyShapeStyle(.tertiary))
-        case "failed": return ("exclamationmark.triangle", AnyShapeStyle(Color.orange))
+        case "failed": return ("exclamationmark.triangle", AnyShapeStyle(Tone.failure.color))
         default: return nil
         }
     }
@@ -1354,22 +1273,11 @@ struct DeviceChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(present ? Color.green : Color.secondary.opacity(0.35))
-                .frame(width: 5, height: 5)
-            Text(name).font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(present ? .primary : .secondary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3.5)
-        .background(Capsule().fill(.primary.opacity(0.06)))
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-        .opacity(dimmed ? 0.55 : 1)
-        .contentShape(Capsule())
-        .accessibilityLabel(accessibilityText)
-        .accessibilityAddTraits(.isButton)
+        StatusBadge(name, tone: present ? .done : .neutral)
+            .opacity(dimmed ? 0.55 : 1)
+            .contentShape(Rectangle())
+            .accessibilityLabel(accessibilityText)
+            .accessibilityAddTraits(.isButton)
     }
 }
 

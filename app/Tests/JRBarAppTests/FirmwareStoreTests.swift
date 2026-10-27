@@ -126,7 +126,7 @@ struct FirmwareStoreTests {
         await store.refresh()
         #expect(link.names == ["firmware_status", "firmware_status"])
         #expect(store.status != nil, "the last good reading is kept")
-        #expect(store.statusFailure == "The monitor is not reachable.")
+        #expect(store.statusFailure == "The monitor is not connected.")
         link.statusError = nil
         await store.refresh()
         #expect(store.statusFailure == nil)
@@ -239,7 +239,7 @@ struct FirmwareStoreTests {
         link.updateError = CoreClientError.notConnected
         store.openSheet(deviceID: "SPP-000067", settingsID: "devices.0")
         await store.startUpdate(deviceID: "SPP-000067")
-        #expect(store.startFailure == "The monitor is not reachable, so nothing was started.")
+        #expect(store.startFailure == "The monitor is not connected. Nothing was started.")
         #expect(store.sheetStage == .confirm)
     }
 

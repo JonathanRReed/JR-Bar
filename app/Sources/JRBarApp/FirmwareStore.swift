@@ -86,7 +86,7 @@ final class FirmwareStore {
             if parsed.job == nil, !isStarting { job = nil }
             receive(job: parsed.job, fromState: false)
         } catch {
-            statusFailure = Self.sentence(error, fallback: "The monitor is not reachable.")
+            statusFailure = Self.sentence(error, fallback: MonitorWords.sentence)
         }
     }
 
@@ -203,7 +203,7 @@ final class FirmwareStore {
             watched.insert(begun.id)
             receive(job: begun, fromState: false)
         } catch {
-            startFailure = Self.sentence(error, fallback: "The monitor is not reachable, so nothing was started.")
+            startFailure = Self.sentence(error, fallback: "\(MonitorWords.sentence) Nothing was started.")
         }
     }
 

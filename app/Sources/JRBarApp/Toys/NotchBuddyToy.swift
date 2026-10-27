@@ -380,7 +380,7 @@ final class NotchBuddyToy: Toy {
 
     /// The walk dial's readout: "12 min".
     static func walkWords(_ minutes: Double) -> String {
-        "\(Int(NotchBuddySettings.clampedWalkEvery(minutes).rounded())) min"
+        UsageTime.settingMinutes(NotchBuddySettings.clampedWalkEvery(minutes))
     }
 
     // MARK: Roaming
@@ -1619,7 +1619,7 @@ private struct BuddyControlsView: View {
                 Button("Give treat") { toy.giveTreat() }
                     .overlay(alignment: .top) { treatHearts }
                 Text(toy.careLine)
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
             }
             .padding(.top, 4)
@@ -1630,7 +1630,7 @@ private struct BuddyControlsView: View {
             let history = [card.since, card.favourite, card.longestAsk].compactMap { $0 }
             if !history.isEmpty {
                 Text(history.joined(separator: " · "))
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1642,7 +1642,7 @@ private struct BuddyControlsView: View {
                 HStack(spacing: 10) {
                     Button("Bring it back") { toy.isOn = true }
                     Text("Tucked away until the next event.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                 }
             } else {

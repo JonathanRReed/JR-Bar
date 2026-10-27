@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -22,27 +23,17 @@ struct SettingsSealNoticeCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SettingsMetrics.s + 2) {
-            SettingsBanner(symbol: symbol, tint: .orange, title: notice.title, detail: notice.detail)
+        StatusBanner(notice.title, detail: notice.detail) {
             HStack(spacing: SettingsMetrics.s) {
-                Spacer(minLength: 28)
                 switch notice {
                 case .ignoredChange(_, let canKeep):
                     Button("Discard the change", action: onDiscard)
-                    if canKeep {
-                        Button("Keep the change", action: onKeep)
-                            .buttonStyle(.borderedProminent)
-                    }
-                case .keychainUnavailable:
-                    Button("Try again", action: onRetry)
-                case .notSealed:
-                    Button("Seal now", action: onDiscard)
+                    if canKeep { Button("Keep the change", action: onKeep) }
+                case .keychainUnavailable: Button("Try again", action: onRetry)
+                case .notSealed: Button("Seal now", action: onDiscard)
                 }
-                Spacer(minLength: 0)
-            }
-            .disabled(working)
+            }.disabled(working)
         }
-        .padding(.vertical, 2)
     }
 }
 
@@ -60,7 +51,7 @@ struct SettingsSealBanner: View {
                 onRetry: { Task { await seal.tryKeychainAgain() } }
             )
         } else if let line = seal.resultLine {
-            SettingsBanner(symbol: "checkmark.circle.fill", tint: .green, title: line)
+            SettingsBanner(symbol: "checkmark.circle.fill", tint: Tone.done.color, title: line)
                 .task(id: line) {
                     try? await Task.sleep(for: .seconds(8))
                     guard !Task.isCancelled else { return }

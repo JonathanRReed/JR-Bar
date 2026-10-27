@@ -154,9 +154,9 @@ struct StudioWhatPlays: View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             HStack(alignment: .firstTextBaseline) {
                 Text("What plays").jrbarType(.headline)
-                if !lights.core.isLive { Text("Last preview · disconnected").foregroundStyle(JRBarTokens.Ink.attention) }
+                if !lights.core.isLive { Text("Last preview · not connected").foregroundStyle(Tone.stale.color) }
                 if lights.core.isLive, (lights.scenario == .live ? lights.planFailure : lights.failure) != nil {
-                    Text("Last preview").foregroundStyle(JRBarTokens.Ink.attention)
+                    Text("Last preview").foregroundStyle(Tone.stale.color)
                 }
                 Spacer()
                 if let cycle = lights.playbackCycle {
@@ -165,7 +165,7 @@ struct StudioWhatPlays: View {
                 if lights.refreshing { Text("Updating").foregroundStyle(.secondary) }
             }
             if let failure = lights.playFailure {
-                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(JRBarTokens.Ink.attention)
+                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(Tone.failure.color)
             }
             ForEach(lights.auditions.keys.sorted(), id: \.self) { name in
                 if let audition = lights.auditions[name] {
@@ -174,7 +174,7 @@ struct StudioWhatPlays: View {
                 }
             }
             if let failure = lights.scenario == .live ? lights.planFailure : lights.failure {
-                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(JRBarTokens.Ink.attention)
+                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(Tone.failure.color)
             }
             if lights.scenario == .live {
                 if let plan = lights.plan {
@@ -206,7 +206,7 @@ struct StudioWhatPlays: View {
     private func warnings(_ rows: [String]) -> some View {
         ForEach(Array(rows.enumerated()), id: \.offset) { _, text in
             Label(text, systemImage: "exclamationmark.triangle")
-                .jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.attention)
+                .jrbarType(.caption).foregroundStyle(Tone.failure.color)
         }
     }
 }
@@ -219,7 +219,7 @@ private struct StudioPlanInspector: View {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.md) {
                 EffectLiveOutput(lights: lights.core.lights, connected: lights.core.isLive)
                 Text("Devices").jrbarType(.headline)
-                if let failure = lights.planFailure { Text(failure).foregroundStyle(JRBarTokens.Ink.attention) }
+                if let failure = lights.planFailure { Text(failure).foregroundStyle(Tone.failure.color) }
                 ForEach(lights.plan?.devices ?? []) { device in
                     Text(lights.deviceName(device.device)).jrbarType(.headline)
                     Text("\(device.ledCount) LEDs")
@@ -228,7 +228,7 @@ private struct StudioPlanInspector: View {
                     }
                     Divider()
                 }
-                Button("Edit devices", action: openDevices)
+                Button("Open Devices", action: openDevices)
             }.padding(JRBarTokens.Space.lg)
         }
     }

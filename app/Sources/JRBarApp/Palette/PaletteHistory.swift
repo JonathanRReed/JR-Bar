@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 
@@ -56,7 +57,7 @@ enum HistoryPaletteRows {
             return PaletteItem(
                 id: "history.\(row.id)", title: row.displayTitle,
                 subtitle: row.detailIsTitle ? nil : row.detail,
-                icon: row.provider.map { PaletteIcon.provider($0) } ?? .symbol("clock.arrow.circlepath", .orange),
+                icon: row.provider.map { PaletteIcon.provider($0) } ?? .symbol("clock.arrow.circlepath", .semantic(.neutral)),
                 tags: [PaletteTag(text: row.kindWord, tone: tone(for: row.kind))]
                     + (PanelStore.elapsed(since: row.date, now: now).map { [PaletteTag(text: "\($0) ago")] } ?? []),
                 kind: "History", section: .history, actions: actions)
@@ -64,7 +65,7 @@ enum HistoryPaletteRows {
         items.append(PaletteItem(
             id: "history.search", title: "Search History for “\(trimmed)”",
             subtitle: "Every run, ask and failure, newest first",
-            icon: .symbol("clock.arrow.circlepath", .orange), kind: "History", section: .history,
+            icon: .symbol("clock.arrow.circlepath", .semantic(.neutral)), kind: "History", section: .history,
             actions: [PaletteAction(id: "search", title: "Search History", symbol: "magnifyingglass") {
                 verbs.search(trimmed)
                 return nil

@@ -440,37 +440,3 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         return Double(totalCacheRead) / Double(base)
     }
 }
-
-public enum UsageFormat {
-    /// 1234 → "1.2k", 4_560_000 → "4.6M".
-    public static func tokens(_ count: Int) -> String {
-        let value = Double(count)
-        // Each tier starts where the one below would round up to 1000, so
-        // 999_999 reads "1.0M" and never "1000k", and 9_999 reads "10k".
-        if value >= 999_500_000 { return String(format: "%.1fB", value / 1_000_000_000) }
-        if value >= 999_500 { return String(format: value >= 9_950_000 ? "%.0fM" : "%.1fM", value / 1_000_000) }
-        if value >= 1_000 { return String(format: value >= 9_950 ? "%.0fk" : "%.1fk", value / 1_000) }
-        return "\(count)"
-    }
-
-    public static func cost(_ usd: Double, currency: String = "USD") -> String {
-        let symbol = currency == "USD" ? "$" : (currency == "EUR" ? "€" : (currency == "GBP" ? "£" : currency + " "))
-        if usd < 0.01, usd > 0 { return "<\(symbol)0.01" }
-        // Past a thousand the cents are noise and the digits run together:
-        // "$253,305" reads, "$253305" does not.
-        if usd >= 999.995 { return symbol + grouped(usd.rounded()) }
-        return String(format: "%@%.2f", symbol, usd)
-    }
-
-    /// 253305 → "253,305", in the reader's own locale.
-    static let groupingFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter
-    }()
-
-    public static func grouped(_ value: Double) -> String {
-        groupingFormatter.string(from: NSNumber(value: value)) ?? String(format: "%.0f", value)
-    }
-}

@@ -269,24 +269,11 @@ struct AgentRow: View {
     private var status: String? { store.hookStatus(provider) }
 
     var statusWord: String {
-        guard store.isLive else { return "Monitor offline" }
-        switch status {
-        case "ok": return "Live"
-        case "missing": return "Not installed"
-        case "stale": return "Quiet"
-        case nil: return "Unknown"
-        case let other?: return other.capitalized
-        }
+        store.isLive ? HookStatus(status).word : MonitorWords.label
     }
 
     var statusColor: Color {
-        guard store.isLive else { return Color(nsColor: .quaternaryLabelColor) }
-        switch status {
-        case "ok": return .green
-        case "stale": return .orange
-        case "missing": return Color(nsColor: .tertiaryLabelColor)
-        default: return Color(nsColor: .quaternaryLabelColor)
-        }
+        store.isLive ? HookStatus(status).tone.color : Tone.neutral.color
     }
 
     private var busy: Bool { store.hookBusy.contains(provider) }
@@ -301,7 +288,7 @@ struct AgentRow: View {
                     Text(style.name)
                     Circle().fill(statusColor).frame(width: 6, height: 6)
                     Text(statusWord)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -340,8 +327,8 @@ struct AgentRow: View {
         if let note = store.hookNotes[provider] {
             // The reply's own words, where the click happened.
             Text(note.text)
-                .font(.caption)
-                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                .jrbarType(.caption)
+                .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .transition(.opacity)
@@ -349,19 +336,19 @@ struct AgentRow: View {
             // Something to fix, and the fix beside it.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(reason)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Repair") { store.installHooks(provider) }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .disabled(!canInstall)
                     .help("Reinstall \(style.name)'s hooks the way JR-Bar writes them today")
             }
         } else if let doctor, let line = HooksDoctor.line(doctor) {
             Text(line)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -477,9 +464,7 @@ struct DevicesPage: View {
     }
 
     static func screenBarStatus(device: CoreDevice?, live: Bool) -> String {
-        guard live else { return "Monitor not connected" }
-        guard let enabled = device?.enabled else { return "Not reported" }
-        return enabled ? "Shown" : "Hidden"
+        live ? DeviceConnectionState.screenBar(device, live: live).rawValue : MonitorWords.label
     }
 
     var body: some View {
@@ -530,11 +515,10 @@ struct ScreenBarSettingsCard: View {
         SettingGroup(anchor: "Screen Bar") {
             ScreenBarCard(store: store, device: device)
         } header: {
-            let bar = store.deviceFacts("screen-bar")
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
-                                pill: store.isLive ? DevicesPage.screenBarStatus(device: bar, live: true) : nil,
-                                pillTint: store.isLive && bar?.enabled == true ? .green : .secondary)
+                                pill: store.screenBarConnection.badgeWord(live: store.isLive),
+                                pillTint: store.screenBarConnection.tone.color)
         }
     }
 }
@@ -567,8 +551,8 @@ struct DeviceCard: View {
             SettingsGroupHeader(title: device.name,
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
                                 tint: SettingsStore.Page.devices.tint,
-                                pill: connection.rawValue,
-                                pillTint: connection.isConnected ? .green : .secondary,
+                                pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color,
                                 trailing: device.kind == "dot" ? "2 LEDs" : device.kind == "pro" ? "8 LEDs" : nil)
         }
     }
@@ -629,7 +613,7 @@ struct DeviceCalibrationRow: View {
 
     var body: some View {
         SettingRow("Colour calibration", subtitle: SettingsStore.calibrationSummary(prefix: prefix) { store.values.double($0) }) {
-            Button("Calibrate…") { store.calibrating = deviceID }
+            ActionButton("Calibrate…") { store.calibrating = deviceID }
                 .disabled(!store.isLive)
         }
     }
@@ -687,7 +671,7 @@ enum DeviceHealthLine {
             parts.append("the last write failed (\(error.replacingOccurrences(of: "_", with: " ")))")
         }
         if let written = device.lastWrite {
-            parts.append("written \(age(now.timeIntervalSince1970 - written)) ago")
+            parts.append("written \(UsageTime.ago(now.timeIntervalSince1970 - written))")
         } else {
             parts.append("not written since the monitor started")
         }
@@ -706,11 +690,8 @@ enum DeviceHealthLine {
     /// "4 s", "12 min", "3 h" — a clock step behind is harmless.
     static func age(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite else { return "an unknown time" }
-        let seconds = max(0, seconds)
         if seconds >= 365 * 24 * 3600 { return "over a year" }
-        if seconds < 60 { return "\(Int(seconds)) s" }
-        if seconds < 3600 { return "\(Int(seconds / 60)) min" }
-        return "\(Int(seconds / 3600)) h"
+        return UsageTime.duration(seconds)
     }
 }
 
@@ -727,8 +708,8 @@ struct CreatorMicroCard: View {
 
     private var statusColor: Color {
         guard connection.isConnected, let device else { return .secondary }
-        if device.hasConflict { return .red }
-        return device.approved ? .green : .orange
+        if device.hasConflict { return Tone.failure.color }
+        return device.approved ? Tone.done.color : Tone.neutral.color
     }
 
     var connection: DeviceConnectionState { store.creatorMicroConnection }
@@ -802,20 +783,17 @@ struct CreatorMicroCard: View {
 
     var body: some View {
         SettingGroup(anchor: "Creator Micro") {
-            if store.isLive || store.deckNote != nil {
-                SettingsRow("Status") {
-                    VStack(alignment: .trailing, spacing: 3) {
-                        if store.isLive { StatusPill(statusText, tint: statusColor) }
-                        // The toggle's own answer, where the click happened.
-                        if let note = store.deckNote {
-                            Text(note.text)
-                                .font(.caption)
-                                .foregroundStyle(note.isError ? Color.red : Color.secondary)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.trailing)
-                                .transition(.opacity)
-                        }
-                    }
+            if let note = store.deckNote {
+                StatusBanner(note.text, kind: note.isError ? .failure : .information)
+            }
+            if connection.isConnected, let device {
+                if device.hasConflict {
+                    StatusBanner(DeckDevice.conflictText, kind: .failure, detail: device.conflict)
+                } else if !device.approved {
+                    StatusBanner("Creator Micro is not enabled", detail: "Approve it in Creator Micro.")
+                }
+                SettingsRow("Connection", subtitle: [device.transport?.label, device.serial].compactMap { $0 }.joined(separator: " · ")) {
+                    EmptyView()
                 }
             }
             SettingsNavigationRow("Open Creator Micro") { store.onOpenControlCenter?() }
@@ -826,8 +804,8 @@ struct CreatorMicroCard: View {
         } header: {
             SettingsGroupHeader(title: "Creator Micro", symbol: "keyboard.fill",
                                 tint: Color(nsColor: .systemIndigo),
-                                pill: connection.rawValue,
-                                pillTint: statusColor)
+                                pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color)
         }
     }
 
@@ -855,7 +833,7 @@ struct CreatorMicroCard: View {
         if let deck {
             DisclosureRow("Details") {
                 SettingsRow("Keymap") {
-                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? Tone.neutral.color : .secondary)
                 }
                 SettingsRow("Compact rail") {
                     Text(deck.rail.edge.label).foregroundStyle(.secondary)
@@ -871,7 +849,7 @@ struct CreatorMicroCard: View {
                 }
                 if let receipt = deck.device?.receipt {
                     SettingsRow("Last receipt") {
-                        Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
+                        Text(receipt.text).foregroundStyle(receipt.isProblem ? Tone.neutral.color : .secondary)
                             .multilineTextAlignment(.trailing)
                     }
                 }
@@ -912,7 +890,7 @@ struct ScreenBarCard: View {
     @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
-        ScreenBarRightNowRow(store: store)
+        if store.isLive { ScreenBarRightNowRow(store: store) }
         settingsRows
     }
 

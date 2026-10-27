@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -24,7 +25,7 @@ struct OverviewView: View {
             inspector
         }
         .frame(minWidth: 720, minHeight: 380)
-        .font(.system(size: 13))
+        .jrbarType(.body)
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
             if store.canCompare || store.comparing {
@@ -248,14 +249,14 @@ struct OverviewView: View {
             OverviewSummaryStrip(store: store)
             OverviewConnectionsStrip(store: store)
             if let error = store.error, !store.roster.isEmpty {
-                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error)
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: Tone.failure.color, text: error)
                     .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if let status = store.actionStatus {
                 WindowNoticeRow(symbol: store.actionIsError ? "xmark.octagon.fill" : "checkmark.circle.fill",
-                                tint: store.actionIsError ? .red : .green, text: status) {
+                                tint: store.actionIsError ? Tone.failure.color : Tone.done.color, text: status) {
                     Button { store.actionStatus = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "xmark").jrbarType(.caption).fontWeight(.semibold)
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Dismiss status")
@@ -272,7 +273,7 @@ struct OverviewView: View {
                             .help("Every started, finished, asked and failed row of that day")
                     }
                     Button { store.dayFilter = nil } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                        Image(systemName: "xmark.circle.fill").jrbarType(.caption)
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Show every day")
@@ -287,7 +288,7 @@ struct OverviewView: View {
                     .map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
                 WindowNoticeRow(symbol: "person.2.fill", tint: .accentColor, text: "Workers of \(parentName)") {
                     Button { store.workerFilter = nil } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                        Image(systemName: "xmark.circle.fill").jrbarType(.caption)
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
                     .accessibilityLabel("Show all sessions")
@@ -296,28 +297,28 @@ struct OverviewView: View {
             }
             Divider()
             if !store.isLive, store.roster.isEmpty {
-                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                    text: "The roster comes from the monitor. Rows appear as soon as the socket is live.",
-                                   tint: .orange)
+                                   tint: Tone.neutral.color)
             } else if !store.isLive {
                 // The window is the record of what happened — a dead
                 // socket must not erase it. Show the last roster, dimmed
                 // and disclaimed, with live actions gated by `canOpen`/
                 // `askAction` which already refuse remote/dead work.
-                WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: .orange,
-                                text: "Monitor not connected — showing the last roster it reported.")
+                WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: Tone.neutral.color,
+                                text: "\(MonitorWords.sentence) Showing the last roster it reported.")
                     .padding(.horizontal, 10).padding(.vertical, 6)
                 rosterTable.opacity(0.55)
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
-                                   text: error, tint: .orange)
+                                   text: error, tint: Tone.failure.color)
             } else if store.nobodyWaiting {
                 // The default view with nothing to answer is good news,
                 // not a filter that failed.
                 let working = store.workingOverall
                 OverviewEmptyState(symbol: "checkmark", title: "Nobody's waiting on you",
                                    text: "When an agent asks for you, it lands here.",
-                                   tint: .green,
+                                   tint: Tone.done.color,
                                    actionTitle: working > 0 ? "Show \(working) working" : nil,
                                    action: { store.showWorking() })
             } else if store.rows.isEmpty {
@@ -334,7 +335,7 @@ struct OverviewView: View {
                 // every run; where the rest are is what the reader needs.
                 Divider()
                 Text("Older runs live in History (⌘Y)")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .jrbarType(.caption).foregroundStyle(.tertiary)
                     .padding(.horizontal, 12).padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .help(store.coverageNote ?? "")
@@ -345,7 +346,7 @@ struct OverviewView: View {
                 // scoped answer carried — say so rather than let the
                 // table read as the whole record.
                 Text("Showing \(store.counts.listed) of \(store.counts.total) sessions on record")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .jrbarType(.caption).foregroundStyle(.tertiary)
                     .padding(.horizontal, 12).padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -373,7 +374,7 @@ struct OverviewView: View {
                                     store.workerFilter = entry.id
                                 } label: {
                                     Text("+\(entry.session.workers)")
-                                        .foregroundStyle(.secondary).font(.system(size: 10))
+                                        .foregroundStyle(.secondary).jrbarType(.caption)
                                 }
                                 .buttonStyle(.plain)
                                 .help("\(entry.session.workers) workers — show only this session's workers")
@@ -399,7 +400,7 @@ struct OverviewView: View {
                                 // read apart without opening the inspector.
                                 if workspace.isLinkedWorktree {
                                     Image(systemName: "square.split.2x1")
-                                        .font(.system(size: 8)).foregroundStyle(.tertiary)
+                                        .jrbarType(.caption).foregroundStyle(.tertiary)
                                 }
                                 Text(head).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                             }
@@ -563,9 +564,9 @@ struct OverviewView: View {
         let word = entry.axes?.freshness ?? (entry.session.stale ? "stale" : "live")
         HStack(spacing: 4) {
             if word != "live" {
-                Image(systemName: "clock.badge.exclamationmark").font(.system(size: 9))
+                Image(systemName: "clock.badge.exclamationmark").jrbarType(.caption)
             }
-            Text(word).foregroundStyle(word == "live" ? Color.secondary : Color.orange)
+            Text(word).foregroundStyle(word == "live" ? Color.secondary : Tone.neutral.color)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Freshness: \(word)")
@@ -614,9 +615,7 @@ struct OverviewSnoozedTag: View {
 
     var body: some View {
         if OverviewStore.isSnoozed(entry, now: store.now) {
-            Text("snoozed").font(.system(size: 10))
-                .foregroundStyle(.tertiary).lineLimit(1)
-                .help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
+            StatusBadge("Snoozed").help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
         }
     }
 }
@@ -648,16 +647,16 @@ struct OverviewAttentionCell: View {
         let now = store.now
         HStack(spacing: 5) {
             if entry.pinned || entry.session.ask != nil {
-                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
+                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(entry.session.ask != nil ? Tone.ask.color : Tone.neutral.color)
                     .help(entry.session.ask?.summary ?? "Waiting on you")
             }
             if entry.axes?.outcome == "failed" {
-                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(Tone.failure.color)
                     .help("Run failed — outcome reported by the monitor")
             }
             if let waiting = OverviewStore.waitingText(entry, now: now) {
-                Text(waiting).font(.system(size: 9))
-                    .foregroundStyle(.orange).lineLimit(1)
+                Text(waiting).jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color).lineLimit(1)
             }
         }
         .accessibilityElement(children: .combine)
@@ -689,11 +688,11 @@ struct CompareRunsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Compare runs").font(.system(size: 15, weight: .semibold))
+                Text("Compare runs").jrbarType(.title3).fontWeight(.semibold)
                 Spacer()
                 if comparison.generatedAt != nil {
                     Text("Replay-free · live facts")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .jrbarType(.caption).foregroundStyle(.tertiary)
                 }
                 Button("Done", action: dismiss)
                     .keyboardShortcut(.cancelAction)
@@ -701,7 +700,7 @@ struct CompareRunsSheet: View {
             if comparison.warnings.contains("not_a_controlled_benchmark") {
                 Label("Uncontrolled runs — not a fair model benchmark.",
                       systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .jrbarType(.caption).foregroundStyle(Tone.neutral.color)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 GridRow {
@@ -764,16 +763,16 @@ struct CompareRunsSheet: View {
                     }.flatMap { $0.isEmpty ? nil : $0 } ?? "—"
                 }
             }
-            .font(.system(size: 12))
+            .jrbarType(.callout)
             if let a = comparison.a.artifacts, let b = comparison.b.artifacts, a.total + b.total > 0 {
                 filesSection(RunFileDiff(a: a, b: b))
             }
             ForEach(gaps, id: \.self) { gap in
-                Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
+                Text(Self.gapText(gap)).jrbarType(.caption).foregroundStyle(Tone.neutral.color)
             }
             if usage(comparison.a)?.estimatedCostUSD != nil || usage(comparison.b)?.estimatedCostUSD != nil {
                 Text("Costs are API-equivalent estimates from list prices — not invoices, and not a verdict on which model is better.")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .jrbarType(.caption).foregroundStyle(.tertiary)
             }
         }
         .padding(20)
@@ -797,7 +796,7 @@ struct CompareRunsSheet: View {
                 fileList(diff.onlyB)
             }
         }
-        .font(.system(size: 11))
+        .jrbarType(.caption)
     }
 
     private func fileList(_ paths: [String]) -> some View {
@@ -806,12 +805,12 @@ struct CompareRunsSheet: View {
                 Text("—").foregroundStyle(.quaternary)
             }
             ForEach(paths.prefix(8), id: \.self) { path in
-                Text(path).font(.system(size: 10, design: .monospaced))
+                Text(path).jrbarType(.caption).fontDesign(.monospaced)
                     .lineLimit(1).truncationMode(.head).textSelection(.enabled)
                     .help(path)
             }
             if paths.count > 8 {
-                Text("+\(paths.count - 8) more").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("+\(paths.count - 8) more").jrbarType(.caption).foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -819,8 +818,8 @@ struct CompareRunsSheet: View {
 
     private func sideHeader(_ side: CoreRunSide) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(side.label ?? side.id).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-            Text(side.id).font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+            Text(side.label ?? side.id).jrbarType(.callout).fontWeight(.semibold).lineLimit(1)
+            Text(side.id).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -837,12 +836,7 @@ struct CompareRunsSheet: View {
     /// Whole minutes and seconds under an hour and a half: a formatted
     /// `seconds / 60` rounds, so 119 s would read "2m 59s".
     static func durationText(_ seconds: Double) -> String {
-        if seconds < 90 { return String(format: "%.0fs", seconds) }
-        if seconds < 5400 {
-            let whole = Int(seconds)
-            return "\(whole / 60)m \(whole % 60)s"
-        }
-        return String(format: "%.1fh", seconds / 3600)
+        UsageTime.duration(seconds)
     }
 
     private static func gapText(_ gap: String) -> String {
@@ -878,20 +872,20 @@ private struct ExportPreviewSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Audit export").font(.system(size: 15, weight: .semibold))
+            Text("Audit export").jrbarType(.title3).fontWeight(.semibold)
             if let preview = store.exportPreview {
                 let gaps = preview.document["gaps"]?.arrayValue?.compactMap(\.stringValue) ?? []
                 if !gaps.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Gaps").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                        Text("Gaps").jrbarType(.caption).fontWeight(.semibold).foregroundStyle(.tertiary)
                         ForEach(gaps, id: \.self) { gap in
-                            Text("· \(gap)").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text("· \(gap)").jrbarType(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
                 ScrollView {
                     Text(preview.markdown)
-                        .font(.system(size: 11, design: .monospaced))
+                        .jrbarType(.caption).fontDesign(.monospaced)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -932,11 +926,11 @@ private struct RunExportSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Export this run").font(.system(size: 15, weight: .semibold))
+            Text("Export this run").jrbarType(.title3).fontWeight(.semibold)
             if let preview = store.runExportPreview {
                 ScrollView {
                     Text(preview.markdown)
-                        .font(.system(size: 11, design: .monospaced))
+                        .jrbarType(.caption).fontDesign(.monospaced)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -945,7 +939,7 @@ private struct RunExportSheet: View {
                 .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
             }
             HStack {
-                Text("What you see is what is saved.").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text("What you see is what is saved.").jrbarType(.caption).foregroundStyle(.tertiary)
                 Spacer()
                 Button("Cancel") { store.runExportPreview = nil }
                     .keyboardShortcut(.cancelAction)
@@ -1044,9 +1038,9 @@ struct ReplyPromptForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Reply to \(entry.session.label ?? entry.session.shortId ?? "session")")
-                .font(.system(size: 14, weight: .semibold))
+                .jrbarType(.body).fontWeight(.semibold)
             if let summary = entry.session.ask?.summary {
-                Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
+                Text(summary).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
             Group {
                 if snapshot {
@@ -1057,7 +1051,7 @@ struct ReplyPromptForm: View {
                     TextEditor(text: $text)
                 }
             }
-                .font(.system(size: 12))
+                .jrbarType(.callout)
                 .frame(minHeight: 110)
                 .padding(6)
                 .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
@@ -1068,8 +1062,8 @@ struct ReplyPromptForm: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
+                .jrbarType(.caption)
+                .foregroundStyle(Tone.neutral.color)
                 .textSelection(.enabled)
                 .accessibilityElement(children: .combine)
             }

@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -23,12 +24,12 @@ struct UsageHooksSection: View {
                           path: "usage_hooks.enabled")
             if let problem = model.configProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if rules.isEmpty {
                 Text("No rules yet. Add one with jrbar usage-hooks add --event quota_low /path/to/script.")
-                    .font(.subheadline)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .settingRowStyle()
@@ -68,13 +69,13 @@ struct UsageHookRuleView: View {
             }
             if let problem {
                 Label("Will not run: \(problem)", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if let last = model.lastResults[rule.id] {
                 Label(last.line(now: Date(), ruleEvent: rule.event), systemImage: last.ok ? "checkmark.circle" : "xmark.octagon")
-                    .font(.caption)
-                    .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+                    .jrbarType(.caption)
+                    .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Tone.failure.color))
                     .monospacedDigit()
             }
         }
@@ -122,11 +123,11 @@ struct UsageHookRuleRow: Identifiable, Hashable {
         "refresh_failed": "Refresh failed",
     ]
 
-    /// "Quota low · Claude · at or below 20% left".
+    /// "Quota low · Claude · at or above 80% used".
     var scopeText: String {
         var parts = [Self.eventWords[event] ?? event]
         if let provider { parts.append(ProviderStyle.style(for: provider).name) }
-        if let threshold { parts.append("at or below \(Int(saturating: threshold.rounded()))% left") }
+        if let threshold { parts.append("at or above \(UsageNumber.percent(100 - threshold)) used") }
         return parts.joined(separator: " · ")
     }
 
@@ -184,10 +185,10 @@ struct UsageHookLastResult: Hashable {
     /// "Last run: Quota low: exit 0 in 0.1 s · 3m ago" under an every-event one.
     func line(now: Date, ruleEvent: String? = nil) -> String {
         let text = shown(ruleEvent: ruleEvent)
-        guard let at, let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now) else {
+        guard let at else {
             return "Last run: \(text)"
         }
-        return "Last run: \(text) · \(age) ago"
+        return "Last run: \(text) · \(UsageTime.ago(now.timeIntervalSince1970 - at))"
     }
 }
 

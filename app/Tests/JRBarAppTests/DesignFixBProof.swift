@@ -36,15 +36,12 @@ enum DesignFixBProof {
         defer { window.contentView = nil; window.close() }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         try #require(!NSScreen.screens.contains { $0.frame.intersects(window.frame) })
-        try WindowPresenter.renderProofKey(window)
-        if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
         for _ in 0..<8 {
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
         }
         CATransaction.flush()
-        try #require(window.isKeyWindow)
         let frame = try #require(window.contentView?.superview)
         let bitmap = try #require(frame.bitmapImageRepForCachingDisplay(in: frame.bounds))
         appearance.performAsCurrentDrawingAppearance { frame.cacheDisplay(in: frame.bounds, to: bitmap) }

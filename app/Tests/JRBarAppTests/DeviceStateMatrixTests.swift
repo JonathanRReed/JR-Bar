@@ -23,7 +23,7 @@ struct DeviceStateMatrixTests {
                 ])]),
                 "serve_enabled": .bool(state != .off),
             ]))))
-        let connected: Bool? = state == .unknown ? nil : state == .connected
+        let connected: Bool? = state == .connected
         // Off reproduces the daemon dropping the row entirely.
         let devices = state == .off ? [] : [CoreDevice(id: hardware.rawValue, kind: hardware.rawValue,
             name: name, connected: connected)]
@@ -47,7 +47,7 @@ struct DeviceStateMatrixTests {
             #expect(card.connection == expected)
             let event = CoreEvent(id: "fixture-event", kind: expected == .connected ? "device_connected" : "device_disconnected",
                                   label: entry.name, detail: entry.id)
-            let toast = DeviceConnectionState.toast(event, settings: panel.settingsDocument, live: expected != .unknown)
+            let toast = DeviceConnectionState.toast(event, settings: panel.settingsDocument, live: true)
             #expect(toast == "\(entry.name) · \(expected.rawValue)")
             #expect(card.connection.isConnected == (expected == .connected))
             let chip = try #require(chips.first { $0.id == hardware.rawValue })
@@ -60,7 +60,7 @@ struct DeviceStateMatrixTests {
             let integration = IntegrationStatus.device(facts, state: store.deviceConnection(entry.id), firmware: nil)
             #expect(integration.split(separator: "·").first?.trimmingCharacters(in: .whitespaces) == expected.rawValue)
         case .streamDeck:
-            let running: Bool? = expected == .unknown ? nil : expected == .connected
+            let running: Bool? = expected == .connected
             #expect(store.streamDeckConnection(running: running) == expected)
             #expect(IntegrationStatus.server(live: true, enabled: expected != .off, running: running) == expected.rawValue)
             // The panel has no Stream Deck status chip.
@@ -95,10 +95,23 @@ struct DeviceStateMatrixTests {
         let store = Self.fixture(hardware, .connected)
         store.core.stop()
         switch hardware {
-        case .pro, .dot: #expect(store.deviceConnection(hardware.rawValue) == .unknown)
-        case .creatorMicro: #expect(store.creatorMicroConnection == .unknown)
-        case .streamDeck: #expect(store.streamDeckConnection(running: true) == .unknown)
+        case .pro, .dot: #expect(store.deviceConnection(hardware.rawValue) == .notConnected)
+        case .creatorMicro: #expect(store.creatorMicroConnection == .notConnected)
+        case .streamDeck: #expect(store.streamDeckConnection(running: true) == .notConnected)
         }
+    }
+
+    @Test func deviceVocabularyAndBannerOwnTheState() {
+        #expect(Set(DeviceConnectionState.allCases.map(\.rawValue)) == ["Connected", "Not connected", "Off"])
+        for state in DeviceConnectionState.allCases {
+            #expect(state.badgeWord(live: false) == nil)
+            #expect(state.badgeWord(live: true) == state.rawValue)
+            #expect(state.tone == (state.isConnected ? .done : .neutral))
+        }
+        let stale = CoreDevice(id: "screen-bar", kind: "screen_bar", connected: true, enabled: true)
+        #expect(DeviceConnectionState.screenBar(stale, enabled: false, live: true) == .off)
+        #expect(DeviceConnectionState.device(nil, live: true) == .notConnected)
+        #expect(DeviceConnectionState.streamDeck(enabled: true, running: nil, live: true) == .notConnected)
     }
 }
 

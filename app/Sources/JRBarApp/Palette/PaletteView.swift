@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -86,18 +87,18 @@ struct PaletteView: View {
         let placeholder = input?.prompt ?? prompt
         return HStack(spacing: 10) {
             Image(systemName: model.inputActive ? "text.cursor" : "magnifyingglass")
-                .font(.system(size: 16, weight: .medium))
+                .jrbarType(.title3).fontWeight(.medium)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             if snapshot {
                 Text(shown.isEmpty ? placeholder : shown)
-                    .font(.system(size: 17))
+                    .jrbarType(.heading)
                     .foregroundStyle(shown.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 TextField("", text: fieldText, prompt: Text(placeholder))
                     .textFieldStyle(.plain)
-                    .font(.system(size: 17))
+                    .jrbarType(.heading)
                     .focused($focus, equals: .search)
                     .accessibilityLabel(input?.prompt ?? "Search JR-Bar")
             }
@@ -105,7 +106,7 @@ struct PaletteView: View {
                 // Raycast's breadcrumb: the panel, or the field, is about
                 // this row.
                 Text(selected.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .jrbarType(.callout).fontWeight(.medium)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .padding(.horizontal, 8)
@@ -178,7 +179,7 @@ struct PaletteView: View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(sections) { section in
                 Text(section.section.title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
                     .padding(.top, 10)
@@ -208,17 +209,17 @@ struct PaletteView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: model.searching ? "hourglass" : "magnifyingglass")
-                .font(.system(size: 20, weight: .regular))
+                .jrbarType(.title1).fontWeight(.regular)
                 .foregroundStyle(.secondary)
                 .frame(width: 52, height: 52)
                 .background(Circle().fill(RadialGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.03)],
                                                          center: .center, startRadius: 3, endRadius: 28)))
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
             Text(model.searching ? "Searching menus and History…" : "No results")
-                .font(.system(size: 14, weight: .semibold))
+                .jrbarType(.body).fontWeight(.semibold)
             if !model.searching {
                 Text("Try an app, a session, or a verb — “hide”, “quiet 45m”, “scene”.")
-                    .font(.system(size: 12))
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
             }
         }
@@ -272,7 +273,7 @@ struct PaletteView: View {
                     .disabled(model.selected?.actions.isEmpty ?? true)
             }
         }
-        .font(.system(size: 12))
+        .jrbarType(.callout)
         .padding(.horizontal, 14)
         .frame(height: 40)
         .background(Color.primary.opacity(0.035))
@@ -309,13 +310,13 @@ struct PaletteRowView: View {
             PaletteIconView(icon: item.icon, size: 22)
             HStack(spacing: 8) {
                 Text(item.title)
-                    .font(.system(size: 13.5))
+                    .jrbarType(.body)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .layoutPriority(2)
                 if let subtitle = item.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 13))
+                        .jrbarType(.body)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -327,7 +328,7 @@ struct PaletteRowView: View {
                 PaletteTagView(tag: tag)
             }
             Text(item.kind)
-                .font(.system(size: 12))
+                .jrbarType(.callout)
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .fixedSize()
@@ -399,7 +400,7 @@ struct PaletteIconView: View {
                     RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
                         .fill(tint.color.gradient)
                     Image(systemName: name)
-                        .font(.system(size: size * 0.52, weight: .semibold))
+                        .resizable().scaledToFit().frame(width: size * 0.52, height: size * 0.52)
                         .foregroundStyle(.white)
                 }
             case .app(let pid, let bundleID):
@@ -420,16 +421,7 @@ struct PaletteTagView: View {
     let tag: PaletteTag
 
     var body: some View {
-        Text(tag.text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(tag.tone == .neutral ? AnyShapeStyle(.secondary) : AnyShapeStyle(tag.tone.color))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tag.tone == .neutral
-                                       ? Color.primary.opacity(0.07)
-                                       : tag.tone.color.opacity(0.16)))
+        StatusBadge(tag.text, tint: tag.tone.color)
     }
 }
 
@@ -459,7 +451,7 @@ struct PaletteActionPanel: View {
         let actions = model.visibleActions
         VStack(alignment: .leading, spacing: 0) {
             Text(item.title)
-                .font(.system(size: 11, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .padding(.horizontal, 14)
@@ -467,7 +459,7 @@ struct PaletteActionPanel: View {
                 .padding(.bottom, 4)
             if actions.isEmpty {
                 Text("No matching actions")
-                    .font(.system(size: 12))
+                    .jrbarType(.callout)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -489,14 +481,14 @@ struct PaletteActionPanel: View {
             Group {
                 if snapshot {
                     Text(model.actionQuery.isEmpty ? "Search for actions…" : model.actionQuery)
-                        .font(.system(size: 13))
+                        .jrbarType(.body)
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     TextField("", text: Binding(get: { model.actionQuery }, set: { model.actionQuery = $0 }),
                               prompt: Text("Search for actions…"))
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .jrbarType(.body)
                         .focused(focus, equals: .actions)
                         .accessibilityLabel("Search actions for \(item.title)")
                 }
@@ -519,12 +511,12 @@ struct PaletteActionPanel: View {
     private func actionRow(_ action: PaletteAction, selected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: action.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                .jrbarType(.body).fontWeight(.medium)
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.secondary))
                 .frame(width: 18)
             Text(action.title)
-                .font(.system(size: 13))
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                .jrbarType(.body)
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.primary))
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let chord = item.shortcut(for: action) {
@@ -551,7 +543,7 @@ struct PaletteKeycaps: View {
         HStack(spacing: 3) {
             ForEach(Array(caps.enumerated()), id: \.offset) { _, cap in
                 Text(cap)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.medium).fontDesign(.rounded)
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 18, minHeight: 18)
                     .padding(.horizontal, cap.count > 1 ? 4 : 0)
@@ -592,10 +584,10 @@ struct PaletteHUDView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .jrbarType(.body).fontWeight(.semibold)
                 .foregroundStyle(.secondary)
             Text(text)
-                .font(.system(size: 13, weight: .medium))
+                .jrbarType(.body).fontWeight(.medium)
                 .lineLimit(1)
         }
         .padding(.horizontal, 16)
@@ -610,9 +602,9 @@ extension PaletteTint {
         switch self {
         case .gray: return Color(nsColor: .systemGray)
         case .blue: return Color(nsColor: .systemBlue)
-        case .orange: return Color(nsColor: .systemOrange)
-        case .red: return Color(nsColor: .systemRed)
-        case .green: return Color(nsColor: .systemGreen)
+        case .orange: return JRBarUI.Tone.neutral.color // jrbar-token-exception: palette identifier, not a raw colour
+        case .red: return JRBarUI.Tone.failure.color // jrbar-token-exception: palette identifier, not a raw colour
+        case .green: return JRBarUI.Tone.done.color // jrbar-token-exception: palette identifier, not a raw colour
         case .purple: return Color(nsColor: .systemPurple)
         case .pink: return Color(nsColor: .systemPink)
         case .teal: return Color(nsColor: .systemTeal)
@@ -621,6 +613,7 @@ extension PaletteTint {
         case .mint: return Color(nsColor: .systemMint)
         case .brown: return Color(nsColor: .systemBrown)
         case .provider(let id): return ProviderStyle.style(for: id).accent
+        case .semantic(let tone): return tone.color
         }
     }
 }
@@ -630,9 +623,10 @@ extension PaletteTag.Tone {
         switch self {
         case .neutral: return .secondary
         case .accent: return .accentColor
-        case .attention: return .orange
-        case .alert: return .red
-        case .positive: return .green
+        case .attention: return JRBarUI.Tone.ask.color
+        case .warning: return JRBarUI.Tone.warning.color
+        case .alert: return JRBarUI.Tone.failure.color
+        case .positive: return JRBarUI.Tone.done.color
         }
     }
 }

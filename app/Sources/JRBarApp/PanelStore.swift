@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Foundation
 import JRBarCore
@@ -200,7 +201,7 @@ struct SessionRow: Identifiable, Equatable {
     func quietText(now: Date) -> String? {
         guard SilentSession.silence(activity: activity, stale: stale, openToolCall: openToolCall,
                                     lastSignal: since, now: now) != nil else { return nil }
-        return PanelStore.elapsed(since: since, now: now).map { "quiet \($0)" }
+        return PanelStore.elapsed(since: since, now: now).map { "Quiet \($0)" }
     }
 
     /// The elapsed column's text: the plain age, prefixed "quiet" once a
@@ -644,8 +645,8 @@ final class PanelStore {
             if let stale = staleUpdateText { return "Monitor \(version) connected — quiet, \(stale)" }
             return "Monitor \(version) connected"
         case .connected: return "Connected, waiting for state"
-        case .connecting(let attempt): return attempt <= 1 ? "Connecting to the monitor…" : "Reconnecting to the monitor (try \(attempt))…"
-        case .disconnected(let reason): return "Monitor not connected: \(reason)"
+        case .connecting: return MonitorWords.reconnecting
+        case .disconnected(let reason): return "\(MonitorWords.label): \(reason)"
         case .idle: return "Monitor client idle"
         }
     }
@@ -702,7 +703,7 @@ final class PanelStore {
         if aggregate.failed > 0 { parts.append("\(aggregate.failed) failed") }
         if parts.isEmpty {
             let total = state.mainSessions.count
-            return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
+            return total == 0 ? "No agents running" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
         }
         return Self.countLine(parts: parts, headerWord: "Agents", total: state.mainSessions.count)
     }
@@ -1091,9 +1092,9 @@ final class PanelStore {
 
     /// "4 min" once an ask has waited a minute; nil before.
     nonisolated static func askWaitWords(opened: Double, now: Double) -> String? {
-        let minutes = Int(max(0, now - opened) / 60)
+        let minutes = Int(saturating: max(0, now - opened) / 60)
         guard minutes >= 1 else { return nil }
-        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+        return UsageTime.duration(Double(minutes) * 60)
     }
 
     // MARK: The awake hold
@@ -1336,8 +1337,7 @@ final class PanelStore {
 
     /// `HH:mm` for "until 08:00" in the toast and the menu's preset label.
     nonisolated static func clockTime(_ date: Date) -> String {
-        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        UsageTime.clock(date.timeIntervalSince1970)
     }
 
     /// Seconds to the next local 08:00 that is at least an hour away:
@@ -1432,7 +1432,7 @@ final class PanelStore {
                     result = .refused("Quiet failed: the monitor returned an incomplete result.")
                 }
             } catch {
-                result = .refused("Quiet failed: the monitor is not answering.")
+                result = .refused("Quiet failed: \(MonitorWords.sentence)")
             }
             if feedback {
                 switch result {
@@ -1621,12 +1621,21 @@ final class PanelStore {
         /// The vendor's status feed reports an outage.
         case incident(String)
 
+        var tone: Tone {
+            switch self {
+            case .stale: UsageStatus.stale.tone
+            case .usedUp: UsageStatus.usedUp.tone
+            case .runsOut: UsageStatus.runsOut.tone
+            case .incident: UsageStatus.incident.tone
+            }
+        }
+
         var text: String {
             switch self {
-            case .stale: return "Stale"
-            case .usedUp: return "Used up"
-            case .runsOut(let when): return "Runs out \(when)"
-            case .incident: return "Incident"
+            case .stale: return UsageStatus.stale.word
+            case .usedUp: return UsageStatus.usedUp.word
+            case .runsOut(let when): return "\(UsageStatus.runsOut.word) \(when)"
+            case .incident: return UsageStatus.incident.word
             }
         }
     }
@@ -1641,7 +1650,7 @@ final class PanelStore {
         // resets before the forecast runs dry is on track.
         if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
            primary?.resetsAt.map({ exhaustsAt < $0 }) ?? true {
-            return .runsOut(UsageForecast.relative(to: exhaustsAt, now: now))
+            return .runsOut(UsageTime.runOutWhen(at: exhaustsAt, now: now.timeIntervalSince1970))
         }
         if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
         return nil
@@ -1934,7 +1943,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
                 }
             } catch {
-                self.show(toast: "The monitor is not answering")
+                self.show(toast: MonitorWords.sentence)
             }
         }
     }
@@ -1955,7 +1964,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not dismiss that ask")
                 }
             } catch {
-                self.show(toast: "The monitor is not answering")
+                self.show(toast: MonitorWords.sentence)
             }
         }
     }
@@ -2036,7 +2045,7 @@ final class PanelStore {
                 }
             } catch {
                 guard self.clearRequestGeneration == generation else { return }
-                self.show(toast: "Clear failed: the monitor is not answering")
+                self.show(toast: "Clear failed: \(MonitorWords.sentence)")
             }
         }
     }
@@ -2075,7 +2084,7 @@ final class PanelStore {
             } catch {
                 guard self.undoOfferGeneration == offerGeneration,
                       self.clearRequestGeneration == clearGeneration else { return }
-                self.show(toast: "Undo failed: the monitor is not answering")
+                self.show(toast: "Undo failed: \(MonitorWords.sentence)")
             }
         }
     }
@@ -2424,27 +2433,11 @@ final class PanelStore {
     // MARK: Formatting
 
     nonisolated static func elapsed(since date: Date?, now: Date) -> String? {
-        guard let date else { return nil }
-        let seconds = max(0, Int(saturating: now.timeIntervalSince(date)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return String(format: "%dh %02dm", hours, minutes % 60) }
-        return "\(hours / 24)d \(hours % 24)h"
+        date.map { UsageTime.duration(now.timeIntervalSince($0)) }
     }
 
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
-        guard let epoch else { return nil }
-        // Past the reset the number on screen is the old window's until
-        // the next reading lands; "resets now" read like a promise.
-        if resetHasPassed(epoch, now: now) { return "reset — waiting for a new reading" }
-        let seconds = Int(saturating: epoch - now.timeIntervalSince1970)
-        let minutes = (seconds + 30) / 60
-        if minutes < 60 { return "resets in \(max(1, minutes))m" }
-        let hours = minutes / 60
-        if hours < 24 { return String(format: "resets in %dh %02dm", hours, minutes % 60) }
-        return "resets in \(hours / 24)d \(hours % 24)h"
+        epoch.map { UsageTime.countdown(to: $0, now: now) }
     }
 
     /// A window's reset for a source that may be broken, the panel's

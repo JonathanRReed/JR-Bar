@@ -20,7 +20,7 @@ struct UsageForecastTests {
         #expect(forecast.source == .local)
         #expect(forecast.ratePctPerHour == 0)
         #expect(forecast.rateText == nil)
-        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Comfortable: 61 % left, nothing burning right now")
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Comfortable: 39% used, nothing burning right now")
         #expect(!forecast.isCritical)
     }
 
@@ -32,12 +32,12 @@ struct UsageForecastTests {
         #expect(forecast.isCritical)
         #expect(forecast.remainingPct == 0)
         #expect(forecast.pace == "ahead")
-        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Used up: the 5h window resets in 1h 15m")
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Used up: the 5h window resets \(UsageTime.resetLine(Self.now + 4500, now: Self.now, timeZone: Self.utc))")
     }
 
     @Test("runs out before the reset: local linear extrapolation")
     func runsOutLocally() {
-        // 20 % → 60 % over 40 minutes: 60 %/h; 40 % left → 40 minutes.
+        // 20 % → 60 % over 40 minutes: 60%/h; 60% used → 40 minutes.
         let window = CoreUsageWindow(name: "5h", usedPct: 60, resetsAt: Self.now + 3 * 3600)
         let climbing = Self.samples([(40, 20), (30, 30), (20, 40), (10, 50), (0, 60)])
         let forecast = UsageForecaster.forecast(window: window, daemon: nil, samples: climbing, now: Self.now)
@@ -46,12 +46,12 @@ struct UsageForecastTests {
         }
         #expect(abs(at - (Self.now + 40 * 60)) < 5)
         #expect(abs((forecast.ratePctPerHour ?? 0) - 60) < 0.01)
-        #expect(forecast.rateText == "60 %/h")
+        #expect(forecast.rateText == "60%/h")
         #expect(forecast.source == .local)
         #expect(forecast.isCritical)
         let headline = forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
-        #expect(headline.hasPrefix("At this pace the 5h window runs out at "))
-        #expect(headline.hasSuffix("(in 40m)"))
+        #expect(headline.hasPrefix("Runs out in 40m"))
+        #expect(headline.hasSuffix("at this pace for the 5h window"))
     }
 
     @Test("reset before exhaustion is comfortable even at a real pace")
@@ -60,7 +60,7 @@ struct UsageForecastTests {
         let climbing = Self.samples([(40, 20), (30, 30), (20, 40), (10, 50), (0, 60)])
         let forecast = UsageForecaster.forecast(window: window, daemon: nil, samples: climbing, now: Self.now)
         #expect(forecast.verdict == .comfortable)
-        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Comfortable: 40 % left, resets before you'd hit it")
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Comfortable: 60% used, resets before you'd hit it")
     }
 
     @Test("the daemon's forecast wins over the samples")
@@ -85,7 +85,7 @@ struct UsageForecastTests {
         let forecast = UsageForecaster.forecast(window: window, daemon: nil, samples: one, now: Self.now)
         #expect(forecast.verdict == .unknown)
         #expect(forecast.source == UsageForecast.Source.none)
-        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "39 % left · no pace yet")
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "61% used · no pace yet")
         // Two samples less than a minute apart are not a pace either.
         let close = Self.samples([(0.5, 60), (0, 61)])
         #expect(UsageForecaster.rate(samples: close, now: Self.now) == nil)
@@ -108,12 +108,12 @@ struct UsageForecastTests {
         #expect(forecast.guardReason == "reset_boundary")
         #expect(!forecast.isCritical)
         #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
-            == "60 % left · window just reset; pace resumes as readings arrive")
+            == "40% used · window just reset; pace resumes as readings arrive")
         // An unrecognized guard reason still reads honestly.
         let other = UsageForecaster.forecast(window: window,
                                              daemon: CoreUsageForecast(pace: "guarded", reason: "no_such_reason"),
                                              samples: [], now: Self.now)
-        #expect(other.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "60 % left · no pace yet")
+        #expect(other.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "40% used · no pace yet")
         // A daemon "under" with no date is a verdict, not an invitation
         // for the local fit to override it with a worse-threshold pace.
         let under = UsageForecaster.forecast(window: window,
@@ -124,7 +124,7 @@ struct UsageForecastTests {
 
     @Test("a reset inside the lookback restarts the fit")
     func resetRestartsFit() {
-        // Climbing, then a drop to 5 %, then climbing again at 30 %/h.
+        // Climbing, then a drop to 5 %, then climbing again at 30%/h.
         let samples = Self.samples([(40, 80), (30, 90), (20, 5), (10, 10), (0, 15)])
         let rate = UsageForecaster.rate(samples: samples, now: Self.now)
         #expect(abs((rate ?? 0) - 30) < 0.01)

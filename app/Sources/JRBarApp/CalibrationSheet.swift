@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -80,9 +81,9 @@ struct CalibrationSheet: View {
             HStack(alignment: .center, spacing: SettingsMetrics.m) {
                 SettingsIconTile(symbol: deviceSymbol, tint: SettingsStore.Chapter.devices.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Calibrate \(deviceName)").font(.title3.weight(.semibold))
+                    Text("Calibrate \(deviceName)").jrbarType(.title3).fontWeight(.semibold)
                     Text("The device is showing the patch below. Hold it beside the screen and match it by eye.")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .jrbarType(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -106,8 +107,8 @@ struct CalibrationSheet: View {
             if model.patch == .white {
                 if whiteMatched {
                     Label("Matched", systemImage: "checkmark.circle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.green)
+                        .jrbarType(.callout)
+                        .foregroundStyle(Tone.done.color)
                 } else {
                     VStack(alignment: .leading, spacing: SettingsMetrics.s) {
                         Text("Does the light look white?")
@@ -128,14 +129,14 @@ struct CalibrationSheet: View {
 
             DisclosureGroup(isExpanded: $fineTuneExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
-                    gainRow("Red", value: $model.red, tint: .red)
+                    gainRow("Red", value: $model.red, tint: Tone.failure.color)
                         .settingControl("\(device?.prefix ?? "devices.0").red_gain")
-                    gainRow("Green", value: $model.green, tint: .green)
+                    gainRow("Green", value: $model.green, tint: Tone.done.color)
                         .settingControl("\(device?.prefix ?? "devices.0").green_gain")
                     gainRow("Blue", value: $model.blue, tint: .blue)
                         .settingControl("\(device?.prefix ?? "devices.0").blue_gain")
                     Text("1.00 is the die as shipped; below dims the channel, above boosts a weak one.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {
                         Text("Resting glow").frame(width: 90, alignment: .leading)
@@ -169,8 +170,8 @@ struct CalibrationSheet: View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s) {
             if let error = submission.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.callout)
+                    .foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

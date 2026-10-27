@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -51,7 +52,7 @@ struct DemoAskTryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("See an ask before one arrives").font(.system(size: 13, weight: .medium))
                 Text("A demo ask with Approve and Deny that answer nothing. \(DemoAsk.whereLine)")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -66,7 +67,7 @@ struct DemoAskTryRow: View {
 struct DemoAskBadge: View {
     var body: some View {
         Text(DemoAsk.badge)
-            .font(.system(size: 9.5, weight: .bold))
+            .font(.system(size: 9.5, weight: .bold)) // jrbar-token-exception: shared notch demo badge preserves its geometry
             .tracking(0.6)
             .foregroundStyle(DemoAskLook.tint)
             .padding(.horizontal, 5).padding(.vertical, 1.5)

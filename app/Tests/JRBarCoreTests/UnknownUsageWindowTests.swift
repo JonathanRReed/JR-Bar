@@ -59,12 +59,12 @@ struct UnknownUsageWindowTests {
         let forecast = UsageForecaster.forecast(window: unknown, daemon: nil, samples: [], now: Self.now)
         #expect(forecast.verdict == .unmeasured)
         #expect(forecast.usedPct == nil)
-        // No "100 % left", which is what `remainingPct` would have said.
+        // No "100% left", which is what `remainingPct` would have said.
         #expect(forecast.remainingPct == nil)
         #expect(!forecast.isCritical)
         #expect(forecast.rateText == nil)
         let line = forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
-        #expect(line == "No reading for the 7d window · resets in 1h 00m")
+        #expect(line == "No reading for the 7d window · resets \(UsageTime.resetLine(Self.now + 3600, now: Self.now, timeZone: Self.utc))")
         #expect(!line.contains("Comfortable"))
         #expect(!line.contains("left"))
 

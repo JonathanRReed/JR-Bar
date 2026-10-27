@@ -169,9 +169,9 @@ struct FirmwareModelTests {
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 98304, total: 137_875)) == "96 of 135 KB")
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 98304, total: nil)) == "96 KB so far")
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 900_000, total: 137_875)) == "135 of 135 KB")
-        #expect(FirmwarePresenter.duration(42) == "42 s")
-        #expect(FirmwarePresenter.duration(72) == "1 min 12 s")
-        #expect(FirmwarePresenter.duration(120) == "2 min")
+        #expect(FirmwarePresenter.duration(42) == "42s")
+        #expect(FirmwarePresenter.duration(72) == "1m 12s")
+        #expect(FirmwarePresenter.duration(120) == "2m")
     }
 
     // MARK: The group
@@ -285,7 +285,7 @@ struct FirmwareModelTests {
         #expect(result.lines.contains("The previous firmware 1.0.2 is kept in slot A."))
         #expect(result.lines.contains("JR-Bar tidied 2 hidden macOS files off the drive."))
         #expect(result.colourNote == "This firmware applies its own colour gains, so colour calibration may need a re-check.")
-        #expect(result.tookLine == "It took about 1 min 12 s.")
+        #expect(result.tookLine == "It took about 1m 12s.")
         let card = state(device: Self.proDevice, job: job, show: true)
         #expect(card.display == .succeeded)
         #expect(!state(device: Self.proDevice, job: job, show: false).isRunning)

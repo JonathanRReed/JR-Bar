@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -65,7 +66,7 @@ struct ScreenBarHiddenAppsRow: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("Show over \(ShelfShakeExclusionsRow.name(of: id)) again")
         }
-        .font(.callout)
+        .jrbarType(.callout)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(Capsule().fill(Color.primary.opacity(0.07)))

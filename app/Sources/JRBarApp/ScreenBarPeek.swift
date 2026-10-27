@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Carbon
 import JRBarCore
@@ -244,7 +245,7 @@ struct ScreenBarPeekView: View {
             if let awake = model.awake {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: awake.symbol)
-                        .font(.system(size: 10, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .foregroundStyle(ScreenBarWingSlot(text: "", tone: awake.tone).textColor)
                         .accessibilityHidden(true)
                     Text(awake.text)

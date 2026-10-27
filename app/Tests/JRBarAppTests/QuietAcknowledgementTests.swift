@@ -80,7 +80,7 @@ struct QuietAcknowledgementTests {
             let action = store.quietFor(seconds: 1800)
             try await fixture.pending(1)
             fixture.core.stop()
-            #expect(await action.value == .refused("Quiet failed: the monitor is not answering."))
+            #expect(await action.value == .refused("Quiet failed: \(MonitorWords.sentence)"))
             #expect(!store.isQuietChanging && applied == 0)
         }
     }

@@ -397,7 +397,7 @@ struct PaletteSourcesTests {
         let items = WhyLightPaletteRows.items(explanation: explanation, verbs: verbs)
         #expect(items.map(\.id) == ["lights.why"])
         #expect(items[0].subtitle == "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)")
-        #expect(items[0].icon == .symbol("questionmark.bubble.fill", .orange))
+        #expect(items[0].icon == .symbol("questionmark.bubble.fill", .semantic(.ask)))
         #expect(items[0].primary?.title == "Open session")
         _ = items[0].primary?.run()
         #expect(items[0].action(for: .commandShift("c"))?.run() == "Copied why this light")
@@ -450,8 +450,8 @@ struct PaletteSourcesTests {
         let log = Log()
         let items = UsagePaletteRows.items(usage: [provider], now: now) { log.calls.append($0) }
         #expect(items.first?.title == "Claude Usage")
-        #expect(items.first?.tags.first == PaletteTag(text: "92%", tone: .alert))
-        #expect(items.first?.subtitle?.contains("resets in 1h") == true)
+        #expect(items.first?.tags.first == PaletteTag(text: "92%", tone: .warning))
+        #expect(items.first?.subtitle == "5h · \(UsageTime.resetLine(window.resetsAt, now: now.timeIntervalSince1970))")
         _ = items.first?.primary?.run()
         #expect(log.calls == ["claude"])
     }

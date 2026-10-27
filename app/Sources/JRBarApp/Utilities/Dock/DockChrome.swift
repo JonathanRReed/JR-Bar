@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import SwiftUI
 
@@ -121,7 +122,7 @@ struct DockStillPlaceholder: View {
                     }
                     if minimized {
                         Text("Minimized")
-                            .font(.system(size: 9.5, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -142,7 +143,7 @@ struct DockStillPlaceholder: View {
 struct DockMinimizedMark: View {
     var body: some View {
         Image(systemName: "arrow.down.right.and.arrow.up.left")
-            .font(.system(size: 8, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(.white)
             .frame(width: 18, height: 18)
             .background(Circle().fill(Color.black.opacity(0.55)))
@@ -154,18 +155,9 @@ struct DockMinimizedMark: View {
 /// a lift so it reads over the icon it rides.
 struct DockBadgePill: View {
     let text: String
-    var size: CGFloat = 9.5
 
     var body: some View {
-        Text(text)
-            .font(.system(size: size, weight: .bold))
-            .monospacedDigit()
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .padding(.horizontal, size * 0.42)
-            .frame(minWidth: size * 1.7, minHeight: size * 1.7)
-            .background(Capsule().fill(Color(red: 1.0, green: 0.23, blue: 0.19)))
-            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+        StatusBadge(text).monospacedDigit()
     }
 }
 

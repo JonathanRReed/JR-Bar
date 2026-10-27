@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import IOKit.pwr_mgt
 import JRBarCore
@@ -126,7 +127,7 @@ import Testing
                 Section {
                     HStack {
                         Text(utility.name).font(.body.weight(.semibold))
-                        StatusPill(utility.status.text, tint: utility.status.tint)
+                        StatusBadge(utility.status.text, tint: utility.status.tint)
                         Spacer()
                         Toggle("Manual session", isOn: .constant(utility.isOn)).toggleStyle(.switch)
                     }

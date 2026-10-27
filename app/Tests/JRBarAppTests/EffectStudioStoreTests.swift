@@ -5,7 +5,7 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// The Effect Studio store's pure decisions: how the library groups,
+/// The Studio store's pure decisions: how the library groups,
 /// filters and orders effects; the Reduce Motion substitution the
 /// preview plays; and the math that keeps every LED of a wide device on
 /// screen.

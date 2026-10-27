@@ -1,3 +1,4 @@
+import JRBarUI
 import Charts
 import JRBarCore
 import SwiftUI
@@ -67,7 +68,7 @@ struct UsageCompositionView: View {
                     AxisValueLabel {
                         if let number = value.as(Double.self),
                            let text = UsageGraphView.axisLabel(number, metric: graph.metric) {
-                            Text(text).font(.system(size: 9))
+                            Text(text).jrbarType(.caption)
                         }
                     }
                 }
@@ -75,7 +76,7 @@ struct UsageCompositionView: View {
             .chartXAxis {
                 AxisMarks(values: Array(graph.labels.indices)) { value in
                     if let index = value.as(Int.self), index < graph.labels.count, !graph.labels[index].isEmpty {
-                        AxisValueLabel { Text(graph.labels[index]).font(.system(size: 9)) }
+                        AxisValueLabel { Text(graph.labels[index]).jrbarType(.caption) }
                     }
                 }
             }
@@ -108,13 +109,13 @@ struct UsageCompositionView: View {
                     .font(.system(size: 11, weight: .medium)).monospacedDigit()
                 ForEach(day.portions) { portion in
                     Text("\(ProviderStyle.style(for: portion.provider).name): \(UsageGraphView.valueLabel(portion.value, metric: graph.metric))")
-                        .font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                        .jrbarType(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
                 if !day.missing.isEmpty { disclosure("Missing", providers: day.missing) }
                 if !day.unpriced.isEmpty { disclosure("Unpriced", providers: day.unpriced) }
                 if day.incomplete {
                     Text("Daily coverage incomplete. Missing and unpriced usage is excluded.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .jrbarType(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -131,6 +132,6 @@ struct UsageCompositionView: View {
 
     private func disclosure(_ word: String, providers: [String]) -> some View {
         Text(word + ": " + providers.map { ProviderStyle.style(for: $0).name }.joined(separator: ", "))
-            .font(.system(size: 10)).foregroundStyle(.secondary)
+            .jrbarType(.caption).foregroundStyle(.secondary)
     }
 }

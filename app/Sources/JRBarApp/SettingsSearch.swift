@@ -35,7 +35,8 @@ struct SettingsSearchEntry: Hashable, Identifiable, Sendable {
         self.group = group
         self.title = title
         self.subtitle = subtitle
-        self.keywords = keywords
+        let mixRow = group == "Mix" || title == "Mix" || title == "Mix mode"
+        self.keywords = mixRow && !keywords.contains("blend") ? keywords + ["blend"] : keywords
         self.card = card
     }
 }
@@ -84,7 +85,7 @@ enum SettingsSearch {
 
     private nonisolated static func currentEntry(_ entry: SettingsSearchEntry) -> SettingsSearchEntry? {
         // Lighting and animation controls moved into Studio.
-        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Role", "Also glow for finished runs", "Look", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
+        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Mix", "Role", "Also glow for finished runs", "Look", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
         if entry.group == "Calibration profiles" || (entry.chapter == .lighting && entry.title != "Maximum brightness") || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
             return SettingsSearchEntry(.lighting, entry.group, entry.title, subtitle: entry.subtitle,
                                        keywords: entry.keywords, card: entry.card, hint: entry.hint)
@@ -241,7 +242,7 @@ enum SettingsSearch {
               hint: "Shown when the monitor has reported Screen Bar device settings."),
         .init(.devices, "Screen Bar", "Asks only", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
-        .init(.devices, "Screen Bar", "Blend", keywords: ["screen bar"],
+        .init(.devices, "Screen Bar", "Mix", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
         .init(.devices, "Screen Bar", "Colour calibration", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
@@ -267,13 +268,13 @@ enum SettingsSearch {
               keywords: ["accent", "color", "swatch", "hue"]),
         .init(.lighting, "State colours", "State colours", subtitle: "The colour of idle, working, done, ask and error.",
               keywords: ["idle", "working", "done", "ask", "error", "mode colours", "swatch"]),
-        .init(.lighting, "Blend", "Blend mode"),
-        .init(.lighting, "Blend", "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo."),
-        .init(.lighting, "Blend", "Celebrate completions", subtitle: "A flourish when a session settles into Done."),
-        .init(.lighting, "Blend", "Celebration preview", subtitle: "The finish the strip plays, once, when a session is done."),
-        .init(.lighting, "Blend", "Finish", subtitle: "Bloom, Land or Ripple: how a finished session is celebrated.",
+        .init(.lighting, "Mix", "Mix mode"),
+        .init(.lighting, "Mix", "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Studio keeps its own tempo."),
+        .init(.lighting, "Mix", "Celebrate completions", subtitle: "A flourish when a session settles into Done."),
+        .init(.lighting, "Mix", "Celebration preview", subtitle: "The finish the strip plays, once, when a session is done."),
+        .init(.lighting, "Mix", "Finish", subtitle: "Bloom, Land or Ripple: how a finished session is celebrated.",
               keywords: ["celebration", "done", "land", "ripple", "bloom"]),
-        .init(.lighting, "Blend", "Tint by tool", subtitle: "The working light's head takes the colour of the tool the agent is using.",
+        .init(.lighting, "Mix", "Tint by tool", subtitle: "The working light's head takes the colour of the tool the agent is using.",
               keywords: ["tool", "tint", "shell", "edit"]),
         .init(.lighting, "Pulse range", "Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness."),
         .init(.lighting, "Dimming", "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
@@ -286,7 +287,7 @@ enum SettingsSearch {
         .init(.lighting, "Dimming", "Turn off when idle", subtitle: "After a long idle the lights switch off entirely."),
         .init(.lighting, "Dimming", "Off after"),
         .init(.lighting, "Scene", "Active scene", subtitle: "Which scene's effect assignments are in force."),
-        .init(.lighting, "Provider colours and animations", "Effect Studio"),
+        .init(.lighting, "Provider colours and animations", "Studio"),
         .init(.lighting, "Ambient cues", "Scene pack", subtitle: "An installed Scene pack whose policy rows override the built-in scene's.",
               keywords: ["pack", "scene", "policy"]),
         .init(.lighting, "Ambient cues", "Also at night", subtitle: "Keeps the Rainstick drifting at night too.",
@@ -347,10 +348,10 @@ enum SettingsSearch {
         .init(.remote, "Peers", "Unmuted machines", subtitle: "Machines whose asks still take a light here while remote asks are muted.",
               keywords: ["peers", "machine", "mute"]),
         .init(.remote, "Peers", "Mute remote asks", subtitle: "A peer's asks take no light here until you unmute that machine."),
-        .init(.remote, "Serve", "Serve status", subtitle: "Opens a loopback endpoint so local tools can read this desk's status."),
-        .init(.remote, "Serve", "Bearer token"),
-        .init(.remote, "Cloud ingest", "Cloud ingest", subtitle: "Opens a loopback port so off-machine agents can post their own lifecycle."),
-        .init(.remote, "Cloud ingest", "Token file"),
+        .init(.remote, "Local tools", "Share status with local tools", subtitle: "Lets local tools read this Mac's status."),
+        .init(.remote, "Local tools", "Access key", subtitle: "Bearer token for local tools."),
+        .init(.remote, "Other machines", "Accept events from other machines", subtitle: "Receives agent events from other machines."),
+        .init(.remote, "Other machines", "Access key file"),
         .init(.notifications, "Webhook", "Webhook URL", subtitle: "POSTs stage-3 escalations whenever set."),
         .init(.notifications, "Webhook", "Also send", subtitle: "Extra events to post alongside escalations."),
         .init(.notifications, "Phone alert", "ntfy topic", subtitle: "A topic name for ntfy.sh, or the https address of your own ntfy server.",
@@ -361,7 +362,7 @@ enum SettingsSearch {
               keywords: ["phone", "idle", "locked", "ntfy"]),
         .init(.notifications, "Phone alert", "Test", subtitle: "Sends one message now, whatever the switches say.",
               keywords: ["phone", "ntfy", "send test message"]),
-        .init(.devices, "Stream Deck", "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote."),
+        .init(.devices, "Stream Deck", "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote."),
         .init(.devices, "Stream Deck", "Endpoint"),
         .init(.devices, "Stream Deck", "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts."),
         .init(.sounds, "Volume", "JR-Bar sounds", subtitle: "One volume for every JR-Bar sound.",

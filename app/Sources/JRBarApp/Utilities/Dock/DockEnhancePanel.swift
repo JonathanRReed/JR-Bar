@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -570,7 +571,7 @@ struct DockPreviewView: View {
                 .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
                 .overlay(alignment: .topTrailing) {
                     if let badge = content.badge {
-                        DockBadgePill(text: badge, size: 9.5)
+                        DockBadgePill(text: badge)
                             .offset(x: 7, y: -6)
                     }
                 }
@@ -592,7 +593,7 @@ struct DockPreviewView: View {
                     .truncationMode(.tail)
                 if let channel = appTitle.channel {
                     Text(channel)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.secondary)
@@ -1104,7 +1105,7 @@ struct DockPreviewCard: View {
         VStack(spacing: 1) {
             if let armedNote {
                 Text(armedNote)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             } else {
@@ -1121,7 +1122,7 @@ struct DockPreviewCard: View {
                     // What the agent in this window is doing — the fact the
                     // panel's row would show, one quiet line.
                     Text(agent.statusLine)
-                        .font(.system(size: 10, weight: agent.isWaiting ? .semibold : .regular))
+                        .jrbarType(.caption).fontWeight(agent.isWaiting ? .semibold : .regular)
                         .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.accent) : AnyShapeStyle(.secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1246,7 +1247,7 @@ private struct DockFolderChip: View {
                 face
                     .frame(width: 40, height: 40)
                 Text(entry.name)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .jrbarType(.caption).fontWeight(.medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.horizontal, 4)
@@ -1519,7 +1520,7 @@ private struct DockPreviewCompactRow: View {
                                 Image(systemName: "arrow.up.right.and.arrow.down.left")
                             }
                         }
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                 }
                 Text(armedNote ?? window.title)
@@ -1664,7 +1665,7 @@ private struct DockAskRow: View {
                     .lineLimit(1)
                 if let preview = ask?.previewLine {
                     AskPreviewLine(text: preview, size: 10,
-                                   tint: destructive ? Color.red.opacity(0.9) : .secondary)
+                                   tint: destructive ? Tone.failure.color.opacity(0.9) : .secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -1686,7 +1687,7 @@ private struct DockAskRow: View {
         .overlay {
             if destructive {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.red.opacity(0.55), lineWidth: 1)
+                    .strokeBorder(Tone.failure.color.opacity(0.55), lineWidth: 1)
             }
         }
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
@@ -1949,7 +1950,7 @@ private struct DockMediaScrubber: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(minWidth: 34, alignment: .trailing)
             }
-            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
             .foregroundStyle(.secondary)
         }
         .help("Drag to seek")
@@ -1990,7 +1991,7 @@ private struct DockCalendarRow: View {
                 if let freeUntil {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(Color.green)
+                            .fill(Tone.done.color)
                             .frame(width: 6, height: 6)
                         Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
                     }
@@ -2009,7 +2010,7 @@ private struct DockCalendarRow: View {
         let now = event.start <= Date()
         return HStack(spacing: 9) {
             Capsule()
-                .fill(now ? Color.green : Color.accentColor)
+                .fill(now ? Tone.done.color : Color.accentColor)
                 .frame(width: 3, height: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title)
@@ -2026,7 +2027,7 @@ private struct DockCalendarRow: View {
                     Label("Join", systemImage: "video.fill")
                         .imageScale(.small)
                 }
-                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: .green))
+                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: Tone.done.color))
                 .help("Join the meeting link")
             }
         }

@@ -26,15 +26,7 @@ struct SetupAgent: Identifiable, Equatable, Sendable {
     /// The Settings › Agents & Usage row's words, shared so the walkthrough and
     /// the page can never disagree.
     func statusWord(monitorLive: Bool) -> String {
-        guard monitorLive else { return "Monitor offline" }
-        switch hookStatus {
-        case "ok": return "Live"
-        case "missing": return "Not installed"
-        case "stale": return "Quiet"
-        case "disabled": return "Disabled in provider"
-        case nil: return "Unknown"
-        case let other?: return other.capitalized
-        }
+        monitorLive ? HookStatus(hookStatus).word : MonitorWords.label
     }
 }
 
@@ -239,10 +231,10 @@ struct SetupModel {
     var usageOffers: () async throws -> [SetupUsageOffer] = { [] }
     /// The person's answer for one provider: `true` is "Turn on", `false`
     /// withdraws it. Never called for "Not now", which asks nothing.
-    var setUsage: (String, Bool) async -> SetupNote = { _, _ in SetupNote("Monitor offline", isError: true) }
+    var setUsage: (String, Bool) async -> SetupNote = { _, _ in SetupNote(MonitorWords.label, isError: true) }
     /// `install_hooks` awaited for one provider; the reply's own words
     /// become the row note, the same reading `SettingsStore.runHook` gives.
-    var installHooks: (String) async -> SetupNote = { _ in SetupNote("Monitor offline", isError: true) }
+    var installHooks: (String) async -> SetupNote = { _ in SetupNote(MonitorWords.label, isError: true) }
     /// Re-probes every row: EventKit (events + reminders), the
     /// notification centre, `CGPreflightScreenCaptureAccess`,
     /// `AVCaptureDevice`, `CBManager.authorization`, `AXIsProcessTrusted`,
@@ -366,7 +358,7 @@ extension SetupModel {
     /// `set_provider_usage_consent` with source `setup`, read the way
     /// `installHooks` reads its reply: the daemon's words on a refusal.
     static func setUsage(_ provider: String, on: Bool, core: CoreModel?) async -> SetupNote {
-        guard let core, core.isLive else { return SetupNote("Monitor offline", isError: true) }
+        guard let core, core.isLive else { return SetupNote(MonitorWords.label, isError: true) }
         do {
             try await core.setProviderUsageConsent(provider, enabled: on, source: "setup")
             return SetupNote(on ? "Usage on" : "Usage off", isError: false)
@@ -382,7 +374,7 @@ extension SetupModel {
     /// line, `results[provider].ok == false` carries the per-provider
     /// failure, a `warning` shows instead of a bare success.
     static func installHooks(_ provider: String, on core: CoreModel?) async -> SetupNote {
-        guard let core, core.isLive else { return SetupNote("Monitor offline", isError: true) }
+        guard let core, core.isLive else { return SetupNote(MonitorWords.label, isError: true) }
         do {
             let reply = try await core.installHooksNow(providers: [provider])
             if !reply.ok {

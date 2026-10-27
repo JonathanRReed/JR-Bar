@@ -48,7 +48,7 @@ struct UsageWindowInspectionTests {
         let result = inspect(window, provider: provider)
         #expect(result.inspectLabel == "Inspect Gemini 4 Argon Weekly window, 64 percent used")
         #expect(result.amountText == "64% used")
-        #expect(result.resetText == "resets in 5d 0h")
+        #expect(result.resetText == UsageTime.resetLine(window.resetsAt, now: now.timeIntervalSince1970))
         #expect(result.forecastEvidence == "Monitor forecast · 1 quota reading")
     }
 
@@ -70,7 +70,7 @@ struct UsageWindowInspectionTests {
                                      forecast: CoreUsageForecast(pace: "under", samples: 12, ratePctPerHour: 1))
         let result = inspect(window, live: false)
         #expect(result.amountText == "42% used")
-        #expect(result.readingNotice == "Monitor disconnected. This is the last reading.")
+        #expect(result.readingNotice == "The monitor is not connected. This is the last reading.")
         #expect(result.verdictText == "Paused")
         #expect(result.forecastEvidence == nil)
         #expect(result.explanation == "Forecasts resume when the monitor reconnects.")
@@ -118,7 +118,7 @@ struct UsageWindowInspectionTests {
             #expect(inspect(CoreUsageWindow(name: "5h", usedPct: 42, resetsAt: reset)).resetText == "Reset time unavailable")
         }
         let elapsed = inspect(CoreUsageWindow(name: "5h", usedPct: 42, resetsAt: now.timeIntervalSince1970 - 60))
-        #expect(elapsed.resetText.contains("waiting for a new reading"))
+        #expect(elapsed.resetText == "Reset 1m ago")
         #expect(elapsed.verdictText == "Paused")
     }
 
@@ -164,7 +164,7 @@ struct UsageWindowInspectionTests {
         let window = CoreUsageWindow(name: "7d", usedPct: 42, resetsAt: reset,
                                      forecast: CoreUsageForecast(pace: "under", samples: 12, ratePctPerHour: 1))
         let result = inspect(window)
-        #expect(result.resetText == "resets in 1d 0h")
+        #expect(result.resetText == UsageTime.resetLine(reset, now: now.timeIntervalSince1970))
         #expect(result.verdictText == "Resets first")
         #expect(result.explanation.contains("resets before"))
         #expect(result.forecastEvidence == "Monitor forecast · 12 quota readings")

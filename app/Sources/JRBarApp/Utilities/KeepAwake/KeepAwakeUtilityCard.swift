@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import IOKit.pwr_mgt
 import JRBarCore
@@ -96,7 +97,7 @@ struct KeepAwakeUtilityControls: View {
             CardSectionHeader("Right now")
             nowLine
             Text(KeepAwakeReading.manualSessionHelp)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             presets
@@ -127,7 +128,7 @@ struct KeepAwakeUtilityControls: View {
                 .monospacedDigit()
             Spacer(minLength: 0)
         }
-        .font(.callout)
+        .jrbarType(.callout)
         .padding(.vertical, SettingsMetrics.rowPadding)
         .help(reading.chipHelp(now: at))
     }
@@ -225,7 +226,7 @@ struct KeepAwakeUtilityControls: View {
                     .disabled(durations.count <= 1)
                     .accessibilityLabel("Remove \(KeepAwakeMenu.title(seconds: seconds))")
                 }
-                .font(.callout)
+                .jrbarType(.callout)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
@@ -260,7 +261,7 @@ struct KeepAwakeUtilityControls: View {
         }
         if failed {
             CardNote("Could not read macOS's power assertions. Refresh to try again.",
-                     symbol: "exclamationmark.triangle", tint: .orange)
+                     symbol: "exclamationmark.triangle", tint: Tone.neutral.color)
         } else if holders == nil && !hasReadHolders && shown.isEmpty {
             CardNote("Checking which other apps hold this Mac awake.")
         } else if shown.isEmpty {

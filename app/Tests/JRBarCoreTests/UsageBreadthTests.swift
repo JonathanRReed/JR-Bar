@@ -47,7 +47,7 @@ struct UsageBreadthTests {
         #expect(held.heldIdle)
         #expect(!held.isCritical)
         #expect(held.verdictWord() == "Holding")
-        #expect(held.headline(now: Date(timeIntervalSince1970: Self.now)) == "Holding at 60 % left: no agent is working on it here")
+        #expect(held.headline(now: Date(timeIntervalSince1970: Self.now)) == "Holding at 40% used: no agent is working on it here")
         #expect(held.projectedAtReset(now: Self.now) == 40)
 
         let working = SessionAwarePace.adjust(runsOut, working: 2)
@@ -58,8 +58,8 @@ struct UsageBreadthTests {
 
     @Test("room for one more: what each working agent burns, times one more, against the reset")
     func room() {
-        // 40 % used, 20 %/h across two agents → 10 %/h each; three would
-        // burn 30 %/h and need 2 h for the 60 % left: exactly the reset.
+        // 40 % used, 20%/h across two agents → 10%/h each; three would
+        // burn 30%/h and need 2 h for the 40% used: exactly the reset.
         let two = SessionAwarePace.adjust(Self.burning(used: 40, rate: 20, resetIn: 2), working: 2)
         #expect(SessionAwarePace.roomForOneMore(two, now: Self.now) == true)
         let tight = SessionAwarePace.adjust(Self.burning(used: 40, rate: 20, resetIn: 3), working: 2)

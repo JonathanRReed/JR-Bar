@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Foundation
 @testable import JRBarCore
@@ -27,7 +28,7 @@ struct KeepAwakeSessionRenderProofTests {
             Section {
                 HStack {
                     Text(utility.name).font(.body.weight(.semibold))
-                    StatusPill(utility.status.text, tint: utility.status.tint)
+                    StatusBadge(utility.status.text, tint: utility.status.tint)
                     Spacer()
                     Toggle("Manual session", isOn: .constant(utility.isOn)).toggleStyle(.switch)
                 }

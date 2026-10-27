@@ -30,7 +30,7 @@ enum AppMenuVerb: String, CaseIterable, Identifiable, Sendable {
         case .events: return "Events…"
         case .overview: return "Overview…"
         case .usageCenter: return "Usage Center…"
-        case .effects: return "Effect Studio…"
+        case .effects: return "Studio…"
         case .creatorMicro: return "Creator Micro…"
         case .whatsNew: return "What's New…"
         case .checkForUpdates: return "Check for Updates…"

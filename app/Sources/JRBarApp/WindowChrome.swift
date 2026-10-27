@@ -1,9 +1,10 @@
+import JRBarUI
 import SwiftUI
 
 // The pieces every titled window draws the same way: its cards, its
 // empty states, the one-line notices under the toolbar, the search
 // field, the capsule that says what just happened, and section titles.
-// History, the Usage Center, Effect Studio, the Creator Micro window and
+// History, the Usage Center, Studio, the Creator Micro window and
 // the Overview all take them from here, so the windows read as one app.
 
 /// Corner radii the windows share: cards, the wells inside them, and
@@ -75,7 +76,7 @@ extension View {
     }
 }
 
-/// A section's title inside a window: 13 pt semibold, with an optional
+/// A section's title inside a window, with an optional
 /// quiet count or caption on the right.
 struct WindowSectionTitle<Trailing: View>: View {
     let title: String
@@ -86,15 +87,13 @@ struct WindowSectionTitle<Trailing: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
+                    .jrbarType(.section)
                     .foregroundStyle(.secondary)
             }
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
+            SectionHeader(title)
             Spacer(minLength: 8)
             trailing()
-                .font(.system(size: 11))
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
@@ -120,41 +119,11 @@ struct WindowEmptyState: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [tint.opacity(0.20), tint.opacity(0.05)],
-                                         center: .center, startRadius: 4, endRadius: 36))
-                Circle()
-                    .strokeBorder(tint.opacity(0.18), lineWidth: 0.5)
-                Image(systemName: symbol)
-                    .font(.system(size: 24, weight: .regular))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(tint)
-            }
-            .frame(width: 64, height: 64)
-            .accessibilityHidden(true)
-            VStack(spacing: 5) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                Text(text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 340)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .controlSize(.regular)
-                    .padding(.top, 2)
-            }
+        StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information, detail: text) {
+            if let actionTitle, let action { Button(actionTitle, action: action) }
         }
-        .padding(24)
+        .frame(maxWidth: 480).padding(JRBarTokens.Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A button of its own must stay a button to VoiceOver.
-        .accessibilityElement(children: actionTitle == nil ? .combine : .contain)
     }
 }
 
@@ -168,27 +137,9 @@ struct WindowNoticeRow<Trailing: View>: View {
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 16)
-            Text(text)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(text)
-            Spacer(minLength: 8)
+        StatusBanner(text, kind: tint == Tone.failure.color ? .failure : tint == Tone.ask.color ? .attention : .information) {
             trailing()
-                .font(.system(size: 11.5))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
-            .fill(tint == .secondary ? Color.primary.opacity(0.04) : tint.opacity(0.08)))
-        // Read as one line, unless it carries a button of its own: a
-        // button must stay a button to VoiceOver.
         .accessibilityElement(children: Trailing.self == EmptyView.self ? .combine : .contain)
     }
 }
@@ -207,25 +158,7 @@ struct WindowStatusCapsule: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(isError ? Color.orange : Color.green)
-            Text(text)
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-        }
-        .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
-        .padding(.bottom, 16)
-        .padding(.horizontal, 24)
-        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
-        // It is gone in a few seconds: say it, so an outcome or an error is
-        // not missed by someone who cannot see it.
-        .onAppear { AccessibilityNotification.Announcement(text).post() }
+        StatusBanner(text, kind: isError ? .failure : .information)
     }
 }
 

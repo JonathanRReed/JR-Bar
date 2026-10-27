@@ -62,3 +62,98 @@ def test_prune_only_removes_allowances(tmp_path: Path):
 def test_repository_matches_baseline():
     root = Path(__file__).resolve().parents[1]
     assert not differences(scan(root), json.loads((root / BASELINE).read_text()))
+
+
+def test_typography_migration_cannot_be_reopened_with_an_allowance():
+    root = Path(__file__).resolve().parents[1]
+    for file, hits in scan(root).items():
+        # The notch is pinned; the divider lane owns the remaining Menu Bar files.
+        if "/Notch/" in file or "/Utilities/MenuBar/" in file:
+            continue
+        assert not any(key.startswith(("font-floor:", "semantic-font:", "semantic-small:")) for key in hits), file
+
+
+@pytest.mark.parametrize("source,kind", [
+    ('Text("State").font(.caption)', "semantic-font"),
+    ('Text("State").font(.caption2.weight(.medium))', "semantic-font"),
+    ('Text("State").font(.system(.caption, design: .monospaced))', "semantic-small"),
+    ('Text("State").font(.system(size: 10.5))', "font-floor"),
+    ('Text("State").foregroundStyle(.orange)', "status-colour"),
+    ('Text("State").foregroundStyle(Color.red)', "status-colour"),
+    ('Text("State").foregroundStyle(.green)', "status-colour"),
+    ('Text("\\(value) % left")', "spaced-percent"),
+    ('String(format: "%.1f %%/h", rate)', "spaced-percent"),
+    ('Text("\\(minutes) min")', "elapsed-unit"),
+    ('String(format: "%d min", minutes)', "elapsed-unit"),
+    ('String(format: "%02d:%02d", hour, minute)', "fixed-clock"),
+    ('formatter.setLocalizedDateFormatFromTemplate("EEEj")', "missing-clock-minutes"),
+    ('func currencySymbol(_ currency: String) -> String {}', "currency-table"),
+    ('switch currency { case "EUR": "€"; default: "$" }', "currency-table"),
+    ('let count = tokens / 1_000', "token-math"),
+    ('Text("Monitor offline")', "monitor-wording"),
+    ('Text("The monitor is not answering")', "monitor-wording"),
+    ('Text("Effect Studio")', "ui-name"),
+    ('Text("Blend mode")', "ui-name"),
+    ('Text("42% left")', "usage-direction"),
+    ('view.foregroundStyle(JRBarTokens.Ink.attention)', "quota-tone"),
+    ('view.buttonStyle(PillButtonStyle(prominent: false))', "secondary-button"),
+])
+def test_rejects_ui_drift(source, kind):
+    assert any(hit.startswith(kind + ":") for hit in offenders(source))
+
+
+def test_wording_and_notch_exceptions_are_narrow():
+    source = 'Text("State").font(.caption).foregroundStyle(.orange)'
+    assert not offenders(source, "app/Sources/JRBarApp/Toys/Notch/NotchCardView.swift")
+    assert offenders(source, "app/Sources/JRBarApp/SettingsView.swift")
+    assert not offenders('func currencySymbol() {}', "app/Sources/JRBarCore/Wording.swift")
+    assert offenders('func currencySymbol() {}', "app/Sources/JRBarApp/Other.swift")
+    assert not offenders('let label = "Monitor not connected"', "app/Sources/JRBarCore/StatusWords.swift")
+    assert not offenders('let paint = model.red + model.green')
+    assert not offenders('Text("42% left")', "app/Sources/JRBarUI/StatusIconRenderer.swift")
+    assert offenders('Text("42% left")', "app/Sources/JRBarApp/UsageProviderDetail.swift")
+
+
+@pytest.mark.parametrize("file,name", [
+    ("PanelView.swift", "CountBadge"),
+    ("PanelView.swift", "DeviceChip"),
+    ("ControlCenterView.swift", "KeymapBadge"),
+    ("EffectStudioView.swift", "Badge"),
+    ("EffectStudioView.swift", "FactChip"),
+    ("HistoryView.swift", "KindBadge"),
+    ("Palette/PaletteView.swift", "PaletteTagView"),
+    ("Overview/OverviewView.swift", "OverviewSnoozedTag"),
+    ("Overview/OverviewStrips.swift", "OverviewCountPill"),
+    ("Overview/OverviewInspector.swift", "OverviewStatePill"),
+    ("Utilities/Dock/DockChrome.swift", "DockBadgePill"),
+])
+def test_status_badges_use_the_shared_renderer(file, name):
+    root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
+    source = (root / file).read_text()
+    declaration = source.split("struct " + name + ":", 1)[1].split("\n}\n", 1)[0]
+    assert "StatusBadge(" in declaration
+    assert "Capsule()" not in declaration
+
+
+@pytest.mark.parametrize("file,name", [
+    ("WindowChrome.swift", "WindowEmptyState"),
+    ("WindowChrome.swift", "WindowNoticeRow"),
+    ("WindowChrome.swift", "WindowStatusCapsule"),
+    ("SettingsAtoms.swift", "SettingsBanner"),
+    ("SettingsAtoms.swift", "CardNote"),
+    ("SettingsView.swift", "SectionNote"),
+    ("UsageCenterView.swift", "UsageCenterNoticeView"),
+    ("UsageCenterView.swift", "ResetSaveNotice"),
+    ("ControlCenterView.swift", "DeckNotice"),
+    ("ControlCenterView.swift", "ConflictBanner"),
+    ("HistoryView.swift", "AwayBanner"),
+    ("LinkedSyncControls.swift", "LinkedDotNote"),
+    ("SettingsPagesB.swift", "EventKitAccessNote"),
+    ("SettingsSealViews.swift", "SettingsSealNoticeCard"),
+    ("Waits/WaitViews.swift", "PaletteWaitNote"),
+    ("Overview/OverviewView.swift", "OverviewEmptyState"),
+])
+def test_notices_use_the_shared_renderer(file, name):
+    root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
+    declaration = (root / file).read_text().split("struct " + name, 1)[1].split("\n}\n", 1)[0]
+    assert "StatusBanner(" in declaration or "WindowEmptyState(" in declaration

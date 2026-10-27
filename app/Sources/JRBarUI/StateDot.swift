@@ -15,17 +15,19 @@ public struct StateDot: View {
 
         var ink: Color {
             switch self {
-            case .working: JRBarTokens.Ink.working
-            case .asking: JRBarTokens.Ink.attention
-            case .done: JRBarTokens.Ink.done
-            case .failed: JRBarTokens.Ink.failure
-            case .stale: JRBarTokens.Ink.tertiary
-            case .live: JRBarTokens.Ink.live
+            case .working: Tone.working.color
+            case .asking: Tone.ask.color
+            case .done: Tone.done.color
+            case .failed: Tone.failure.color
+            case .stale: Tone.stale.color
+            case .live: Tone.live.color
             }
         }
     }
 
     public let state: State
+    private var overrideTone: Tone?
+    private var overrideLabel: String?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.jrbarReduceMotion) private var motionOverride
     private var reduceMotion: Bool { motionOverride ?? systemReduceMotion }
@@ -33,16 +35,23 @@ public struct StateDot: View {
     @MainActor public static private(set) var activePulses = 0
 
     public init(_ state: State) { self.state = state }
+    public init(tone: Tone, label: String) {
+        self.state = .stale
+        self.overrideTone = tone
+        self.overrideLabel = label
+    }
 
     public var body: some View {
         Group {
-            if let duration = state.breathDuration, !reduceMotion {
+            if let overrideTone {
+                Circle().fill(overrideTone.color).frame(width: 8, height: 8)
+            } else if let duration = state.breathDuration, !reduceMotion {
                 BreathingDot(ink: state.ink, duration: duration).id(state)
             } else {
                 Circle().fill(state == .stale ? neutralInk.tertiary : state.ink).frame(width: 8, height: 8)
             }
         }
-        .accessibilityLabel(state.rawValue.capitalized)
+        .accessibilityLabel(overrideLabel ?? state.rawValue.capitalized)
     }
 
     private struct BreathingDot: View {

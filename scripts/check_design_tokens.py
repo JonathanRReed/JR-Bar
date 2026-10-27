@@ -18,6 +18,21 @@ PATTERNS = {
     "colour": re.compile(r"\bColor\s*\(\s*(?:\.sRGB\s*,\s*)?red\s*:\s*" + NUMBER),
     "radius": re.compile(r"(?:\bcornerRadius\s*:\s*|\.cornerRadius\s*\(\s*)" + NUMBER),
     "animation": re.compile(r"\b(?:duration|response|blendDuration)\s*:\s*" + NUMBER),
+    "semantic-font": re.compile(r"\.font\(\.(?:caption2?|callout|subheadline|headline|body|title[123]?)\b"),
+    "semantic-small": re.compile(r"\.system\(\s*\.caption2?\b"),
+    "font-floor": re.compile(r"\.system\s*\(\s*size\s*:\s*(?:[0-9](?:\.\d+)?|10(?:\.\d+)?)(?![\d.])"),
+    "status-colour": re.compile(r"(?<![\w.\\])(?:Color)?\.(?:orange|red|green)\b"),
+    "spaced-percent": re.compile(r"\) %(?: left| used|/h)| %%/h"),
+    "elapsed-unit": re.compile(r'\\\([^\n"]*\) (?:min|h)(?![\w=])|" (?:min|h)"|%[\d.*]*[df] (?:min|h)(?![\w=])'),
+    "fixed-clock": re.compile(r'String\s*\(\s*format:\s*"(?:at |between )?%02d:%02d|dateFormat\s*=\s*"HH:mm"'),
+    "missing-clock-minutes": re.compile(r'setLocalizedDateFormatFromTemplate\("EEEj"\)'),
+    "currency-table": re.compile(r'\bfunc\s+currencySymbol\b|"(?:EUR|GBP)"\s*:'),
+    "token-math": re.compile(r"/\s*1_000(?:_000)*(?![\d_])"),
+    "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)'),
+    "ui-name": re.compile(r'"[^"\n]*(?:Effect Studio|Lights Studio|One at a Time|Status Only|Global Mix|Blend mode)[^"\n]*"|"Blend"'),
+    "usage-direction": re.compile(r'% left|percent[^"\n]*\) left'),
+    "quota-tone": re.compile(r'JRBarTokens\.Ink\.attention'),
+    "secondary-button": re.compile(r'\bPillButton(?:Style|Body)\b'),
     "block-meter": re.compile(r"[\u2580-\u259f\u25a0\u25a1\u25b0\u25b1]+"),
 }
 
@@ -73,7 +88,7 @@ def swift_regions(source: str) -> tuple[str, str]:
     return "".join(text), "".join(code)
 
 
-def offenders(source: str) -> Counter[str]:
+def offenders(source: str, path: str = "") -> Counter[str]:
     text, code = swift_regions(source)
     exception_lines = {
         source.count("\n", 0, match.start())
@@ -82,7 +97,22 @@ def offenders(source: str) -> Counter[str]:
     }
     found: Counter[str] = Counter()
     for kind, pattern in PATTERNS.items():
-        for match in pattern.finditer(text if kind == "block-meter" else code):
+        if kind in {"semantic-font", "semantic-small", "font-floor", "status-colour", "elapsed-unit"} and "/Notch/" in path:
+            continue
+        if kind == "status-colour" and ("/JRBarCore/" in path or "/Utilities/MenuBar/" in path):
+            continue
+        if kind in {"currency-table", "token-math"} and path.endswith("JRBarCore/Wording.swift"):
+            continue
+        if kind == "monitor-wording" and path.endswith("JRBarCore/StatusWords.swift"):
+            continue
+        if kind == "ui-name" and ("/Notch/" in path or "/Utilities/MenuBar/" in path or path.endswith("/WhatsNewCatalog.swift")):
+            continue
+        if kind == "usage-direction" and path.endswith(("/StatusIconRenderer.swift", "/StatusItemController.swift", "/ClaudeStatusLineSection.swift")):
+            continue
+        if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
+            continue
+        text_checks = {"block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:
                 continue
@@ -95,7 +125,7 @@ def scan(root: Path) -> dict[str, dict[str, int]]:
     return {
         str(path.relative_to(root)): dict(hits)
         for path in sorted((root / "app/Sources").rglob("*.swift"))
-        if (hits := offenders(path.read_text(encoding="utf-8")))
+        if (hits := offenders(path.read_text(encoding="utf-8"), str(path.relative_to(root))))
     }
 
 
@@ -128,6 +158,10 @@ def main(arguments: list[str] | None = None) -> int:
         path.write_text(json.dumps(pruned, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         baseline = pruned
     errors = differences(current, baseline)
+    warnings = sum(swift_regions(file.read_text(encoding="utf-8"))[0].count(" — ")
+                   for file in (options.root / "app/Sources").rglob("*.swift"))
+    if warnings:
+        print(f"Warning: {warnings} UI em dash separators remain; use a sentence or a middle dot.")
     for error in errors:
         print(error)
     count = sum(sum(hits.values()) for hits in current.values())

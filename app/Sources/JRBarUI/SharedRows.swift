@@ -2,6 +2,17 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
+public struct SectionHeader: View {
+    @Environment(\.jrbarInk) private var neutralInk
+    private let title: String
+    public init(_ title: String) { self.title = title }
+
+    public var body: some View {
+        Text(title).jrbarType(.section).foregroundStyle(neutralInk.secondary)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 public struct ProviderLogoTile: View {
     @Environment(\.jrbarInk) private var neutralInk
     public let provider: String
@@ -77,8 +88,8 @@ public struct StatusBanner<Action: View>: View {
     private var tint: Color {
         switch kind {
         case .information: neutralInk.secondary
-        case .attention: JRBarTokens.Ink.attention
-        case .failure: JRBarTokens.Ink.failure
+        case .attention: Tone.ask.color
+        case .failure: Tone.failure.color
         }
     }
 
@@ -87,12 +98,12 @@ public struct StatusBanner<Action: View>: View {
             Image(systemName: kind == .information ? "info.circle" : "exclamationmark.triangle.fill")
                 .foregroundStyle(tint).padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(message).jrbarType(.headline)
+                if !message.isEmpty { Text(message).jrbarType(.headline) }
                 if let detail { Text(detail).jrbarType(.caption).foregroundStyle(neutralInk.secondary) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            action.buttonStyle(.borderedProminent).controlSize(.small)
+            action.buttonStyle(.bordered).controlSize(.small)
         }
         .font(JRBarTokens.TypeStyle.body.font)
         .foregroundStyle(neutralInk.label)
@@ -105,6 +116,10 @@ public struct StatusBanner<Action: View>: View {
 public extension StatusBanner where Action == EmptyView {
     init(_ message: String, kind: Kind = .information, detail: String? = nil) {
         self.init(message, kind: kind, detail: detail) { EmptyView() }
+    }
+
+    init(detail: String, kind: Kind = .information) {
+        self.init("", kind: kind, detail: detail) { EmptyView() }
     }
 }
 
@@ -151,13 +166,50 @@ public struct SettingsNavigationRow: View {
     public var body: some View {
         Button(action: action) {
             SettingsRow(title, subtitle: subtitle) {
-                Image(systemName: "chevron.right").foregroundStyle(neutralInk.tertiary)
+                Image(systemName: "chevron.right").jrbarType(.caption).foregroundStyle(neutralInk.tertiary)
             }
             .background(hovering ? neutralInk.hover : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .help(title.hasPrefix("Open ") ? title : "Open \(title)")
+    }
+}
+
+public struct SettingsExpansionRow<Content: View>: View {
+    @Environment(\.jrbarInk) private var neutralInk
+    @Binding private var expanded: Bool
+    @UIState private var hovering = false
+    private let title: String
+    private let subtitle: String?
+    private let content: () -> Content
+
+    public init(_ title: String, subtitle: String? = nil, isExpanded: Binding<Bool>,
+                @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self._expanded = isExpanded
+        self.content = content
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { expanded.toggle() } label: {
+                SettingsRow(title, subtitle: subtitle) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .jrbarType(.caption)
+                        .foregroundStyle(neutralInk.tertiary)
+                }
+                .background(hovering ? neutralInk.hover : .clear)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("\(expanded ? "Collapse" : "Expand") \(title)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            if expanded { content() }
+        }
     }
 }
 

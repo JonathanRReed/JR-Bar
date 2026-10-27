@@ -2,10 +2,25 @@
 
 Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
 
+`Wording` exports `UsageNumber`, `UsageTime` and `UsageFormat`. Their
+Foundation implementation lives in `JRBarCore`, which also constructs display
+facts. Percentages use integer digits with an attached `%`. Usage views say
+`used`. The menu tooltip and Claude status line say `left`.
+Durations use padded minutes, such as `1h 05m`, and at most two units.
+Clock times follow the Mac's clock setting and include minutes.
+`UsageFormat` owns token counts, costs, prices and the currency table.
+
+`MonitorWords`, `HookStatus` and `UsageStatus` own state words. The UI maps
+those states to `Tone`. Orange means an ask or a quota warning. Stale,
+quiet and unavailable states use neutral ink. `Runs out` uses `warning`;
+`Used up` uses `failure`.
+
 - `JRBarTokens.TypeStyle` supplies title 26/32, title1 22/28, heading
   17/22, title3 15/20, headline 13/18, body 13/18, callout 12/16,
   caption 11/14 and section 11/14. Use `.jrbarType(.body)` to apply
   font and leading to wrapped text. Section text is secondary and semibold.
+  Canvas drawing calls that require `Text` use `.font(JRBarTokens.TypeStyle.caption.font)`.
+  Text stays at or above 11 pt outside the frozen notch.
 - `JRBarTokens.Ink` supplies adaptive labels, fills, separators and status
   colours, including hover, group, groupEdge, quaternary and accentSoft.
   `onAccent` is the native selected-control text colour.
@@ -38,16 +53,16 @@ snapshotReceivedAt:locale:timeZone:pace:fix:onAction:onRetry:)` renders
 supplied facts without polling. The default `.detail` layout has 6 pt
 lanes and optional pace ticks. Use `.compact` in the panel and drawer.
 It has a 20 pt tile and a 100 pt identity column. Window columns share
-all remaining width, with a 64 pt minimum. Each percentage sits beside
-its 4 pt gauge, with the reset time below. Normal panel rows are 44 pt
-tall with 4/12 pt padding. Status and action rows keep extra height.
+all remaining width, with a 76 pt minimum. Each percentage sits beside
+its 4 pt gauge, with the reset time below. Normal panel rows are 36 pt
+tall with 2/12 pt padding. Status and action rows keep extra height.
 Columns wrap below the name when they cannot fit beside it.
 
 Place `UsageGaugeHeader(windowNames:)` once above compact rows. Pass the
 same names to each row so mixed window sets align. A missing slot is a
 dash. `orderedWindowNames(_:)` deduplicates names and places 5h before 7d.
 Rows identify columns by window name. Overview passes `compactColumnWidth` to
-fit its two-line headers. Other callers keep the 64 pt default. Detail rows label their own lanes.
+fit its two-line headers. Other callers keep the 76 pt default. Detail rows label their own lanes.
 Percentages clamp to 0...100. Missing values have no track. Elapsed
 windows say Reset; an unmeasured window says No reading.
 
@@ -56,7 +71,7 @@ Pass the page's clock, locale, time zone and connection state. Pass
 when `readingAt` is missing. The age then advances from
 `lastGoodAgeSeconds`. A row captures arrival locally if this is omitted.
 Stale age appears once under the name. Each lane keeps only its reset
-time: `in 42m`, a same-day clock time, or a later weekday and hour.
+time: `in 42m`, a same-day clock time, or a later weekday and clock time.
 No timers run inside the row.
 
 Status text stays below the name with tail truncation and its full text
@@ -66,6 +81,7 @@ optional `fix` text and `onRetry` there. Route `onAction` through the
 existing provider action command with `provider.actionKind`. Absent
 providers draw no row. Not-found, consent-off and sessions-only providers
 draw no old numbers.
+An unsupported quota source gets a full-width `No quota source` line.
 
 - `JRBarGauge(value:tint:stale:height:pace:)` is the shared continuous
   gauge. Value and pace use percent units, 0...100. Nil draws nothing.
@@ -79,11 +95,17 @@ draw no old numbers.
   Accessibility uses the display name. Pass `.black`, `.lightGlass` or
   `.darkGlass` for those backgrounds; ordinary content plates are automatic.
 - `StatusBanner(_:kind:detail:action:)` has a semibold title, optional
-  11 pt detail, radius 12 and a small prominent action. Use information for
+  11 pt detail, radius 12 and a small bordered action. Use information for
   non-failure messages. Omit the action builder for messages without one.
+- `StatusBadge(_:tone:)` supplies the dot, 11 pt text, capsule and insets.
+  `ActionButton(_:prominent:action:)` supplies small native action buttons.
+  `SectionHeader(_:)` supplies section titles. Device group titles use
+  `.heading` with an icon tile.
 - `SettingsRow(_:subtitle:control:)` applies 8/12 pt padding and small
   control size. Supply a native switch with `.toggleStyle(.switch)`.
   `SettingsNavigationRow(_:subtitle:action:)` adds a chevron and hover fill.
+  `SettingsExpansionRow(_:subtitle:isExpanded:content:)` adds the matching
+  disclosure row. Its detail builder runs only while expanded.
   Place rows in `SettingsGroup { ... }` for radius 12, group fill, edge
   and separators inset 12 pt at both ends. The group supplies each row's
   insets, including bare pickers and custom rows. Use `.settingsRowInsets()`
@@ -129,10 +151,11 @@ fail. After converting a screen, run it with `--prune` to remove retired
 allowances. This command cannot add allowances. A necessary exception needs
 `// jrbar-token-exception: reason` on the offending line. Token definitions
 use that marker too. `make fast` runs the check and its tests.
+The other lane owns the remaining Menu Bar allowances. The shared notch
+demo badge and calendar copy retain their pinned presentation.
 
-Render the foundation matrix with `JRBAR_RENDER_PROOF=1` and
+Render the consistency matrix with `JRBAR_RENDER_PROOF=1` and
 `JRBAR_RENDER_PROOF_DIR=<scratch directory>`, then run
-`swift test --package-path app --filter JRBarAppTests.FoundationRenderProofTests`.
-Leave `JRBAR_INTERACTIVE_TESTS` unset. The host uses
-`WindowPresenter.renderProofKey` to make only an offscreen proof window key,
-so switches and buttons capture their active accent. Open every PNG.
+`swift test --package-path app --no-parallel --filter ConsistencyRenderProofTests`.
+Leave `JRBAR_INTERACTIVE_TESTS` unset. The proof lays out offscreen windows
+without activating or ordering them. Open every PNG.

@@ -5,7 +5,7 @@ import Testing
 
 /// "Save as Effect…": a tuned effect kept as a named effect in Yours,
 /// written so the monitor reads every parameter back as it was set.
-@Suite("Effect Studio · Yours")
+@Suite("Studio · Yours")
 @MainActor
 struct EffectStudioYoursTests {
     private static let aurora = EffectDefinition(

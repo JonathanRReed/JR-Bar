@@ -151,7 +151,7 @@ struct SettingsSearchResults: View {
                                 .lineLimit(1)
                             Text(entry.chapter == .lighting ? "Studio" : (entry.group.isEmpty || entry.group == entry.title
                                  ? entry.page.title : "\(entry.page.title) › \(entry.group)"))
-                                .font(.caption)
+                                .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -309,28 +309,24 @@ struct Provided<Content: View>: View {
 
     private var provided: Bool { store.hasDocument && paths.contains { store.isProvided($0) } }
 
+    static func reason(live: Bool, hasDocument: Bool, provided: Bool) -> String? {
+        if !live { return "Reconnect to change this setting." }
+        if !hasDocument { return "Waiting for settings." }
+        return provided ? nil : "Not in this version"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             content()
                 .settingControl(recordsControl ? paths : [])
                 .disabled(!provided || !store.isLive)
-            if store.hasDocument, !provided {
-                NotProvidedHint()
+            if let reason = Self.reason(live: store.isLive, hasDocument: store.hasDocument, provided: provided) {
+                Text(reason).jrbarType(.caption).foregroundStyle(.secondary)
             }
         }
     }
 }
 
-struct NotProvidedHint: View {
-    var body: some View {
-        Text("Not in this version")
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-    }
-}
-
-/// A title with an optional explanatory line below it, the way System
-/// Settings labels a toggle.
 struct SettingLabel: View {
     let title: String
     var subtitle: String? = nil
@@ -656,17 +652,14 @@ struct SectionNote: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        StatusBanner(detail: text)
     }
 }
 
 extension SettingsStore {
     static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }
     static let seconds: (Double) -> String = { $0 == $0.rounded() ? "\(Int($0)) s" : String(format: "%.1f s", $0) }
-    static let minutes: (Double) -> String = { "\(Int($0.rounded())) min" }
+    static let minutes: (Double) -> String = UsageTime.settingMinutes
     static let points: (Double) -> String = { String(format: "%g pt", $0) }
 }
 

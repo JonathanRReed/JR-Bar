@@ -40,11 +40,11 @@ struct UsageCenterView: View {
                 VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
                     if store.providers.isEmpty {
                         WindowEmptyState(symbol: store.isLive ? "chart.xyaxis.line" : "bolt.horizontal.circle",
-                            title: store.isLive ? "No usage yet" : "Monitor not connected",
+                            title: store.isLive ? "No usage yet" : MonitorWords.label,
                             text: store.isLive ? "Installed providers appear when the monitor reports them." : "Your usage will appear when JR-Bar reconnects.",
                             actionTitle: "Open Providers", action: store.openUsageSettings)
                     } else {
-                        if !store.isLive { StatusBanner("Monitor not connected", detail: "Showing the last readings.") }
+                        if !store.isLive { StatusBanner(MonitorWords.label, detail: "Showing the last readings.") }
                         if store.resetSaveFailure != nil { ResetSaveNotice { store.loadResetStatus(retry: true) } }
                         if visibleSelection == "overview" {
                             UsageOverviewTable(store: store, showCost: showCost) { selection = $0 }
@@ -118,19 +118,12 @@ struct UsageCenterNoticeView: View {
     let dismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: JRBarTokens.Space.md) {
-            Image(systemName: notice.isFailure ? "exclamationmark.triangle" : "checkmark.circle")
-                .foregroundStyle(notice.isFailure ? Color.orange : Color.secondary)
-            Text(notice.text)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Copy", action: copy)
-                .help("Copy this message")
-            Button("Dismiss", action: dismiss)
-                .help("Dismiss this message")
-        }
-        .font(JRBarTokens.TypeStyle.callout.font)
-        .windowCard(padding: JRBarTokens.Space.md)
+        StatusBanner(notice.text, kind: notice.isFailure ? .failure : .information) {
+            HStack {
+                Button("Copy", action: copy).help("Copy this message")
+                Button("Dismiss", action: dismiss).help("Dismiss this message")
+            }
+        }.textSelection(.enabled)
     }
 }
 
@@ -201,19 +194,18 @@ struct UsageProviderConnection: View {
 
 enum UsageCardCopy {
     nonisolated static func readingAgeText(_ provider: CoreProviderUsage, now: Date) -> String? {
-        guard let readingAt = provider.readingAt,
-              let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: readingAt), now: now)
-        else { return nil }
-        return "read \(age) ago"
+        guard let readingAt = provider.readingAt else { return nil }
+        return "Read \(UsageTime.ago(now.timeIntervalSince1970 - readingAt))"
     }
+
     static func pricingDisclosure(_ history: UsageHistory) -> String {
         guard let pricing = history.pricing else { return "Approximate: the monitor reported no price table for this provider." }
         var text: String
         if pricing.estimated {
             text = "Approximate: list prices"
             if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
-                text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
-                if let cache = pricing.cacheReadPerMillion { text += String(format: ", %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += " (\(UsageFormat.price(perMillion: input, currency: pricing.currency)) in / \(UsageFormat.price(perMillion: output, currency: pricing.currency)) out per M tokens"
+                if let cache = pricing.cacheReadPerMillion { text += ", \(UsageFormat.price(perMillion: cache, currency: pricing.currency)) cache" }
                 text += ")"
             }
             if let model = pricing.model { text += " for \(model)" }
@@ -224,8 +216,8 @@ enum UsageCardCopy {
             text = "List price"
             if let model = pricing.model { text += " for \(model)" }
             if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
-                text += String(format: ": %@%.2f in / %@%.2f out", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
-                if let cache = pricing.cacheReadPerMillion { text += String(format: " / %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += ": \(UsageFormat.price(perMillion: input, currency: pricing.currency)) in / \(UsageFormat.price(perMillion: output, currency: pricing.currency)) out"
+                if let cache = pricing.cacheReadPerMillion { text += " / \(UsageFormat.price(perMillion: cache, currency: pricing.currency)) cache" }
                 text += " per M tokens"
             }
             if let asOf = pricing.asOf { text += ", as of \(asOf)" }
@@ -238,12 +230,7 @@ enum UsageCardCopy {
         return text + " Subscription plans are not billed per token."
     }
     static func verdictTint(_ forecast: UsageForecast) -> Color {
-        switch forecast.verdict {
-        case .exhausted: return JRBarTokens.Ink.failure
-        case .runsOut: return JRBarTokens.Ink.attention
-        case .comfortable: return forecast.heldIdle ? .secondary : JRBarTokens.Ink.done
-        case .unknown, .guarded, .unmeasured: return .secondary
-        }
+        forecast.status.tone.color
     }
 }
 
@@ -319,7 +306,7 @@ struct ProviderFixControls: View {
             FixSignInButton(provider: provider, store: store)
             if let action = provider.action, !action.isEmpty {
                 Text(action)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
@@ -418,11 +405,11 @@ struct SignInNoteLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: Self.symbol(note.tone))
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(Self.tint(note.tone))
                 .accessibilityHidden(true)
             Text(note.text)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -439,8 +426,8 @@ struct SignInNoteLine: View {
 
     static func tint(_ tone: UsageCenterStore.SignInNote.Tone) -> Color {
         switch tone {
-        case .done: return .green
-        case .todo: return .orange
+        case .done: return Tone.done.color
+        case .todo: return Tone.neutral.color
         case .info: return .secondary
         }
     }
@@ -472,9 +459,9 @@ struct AddAccountButton: View {
         .popover(isPresented: WindowPresenter.presentation($open), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Add a \(providerID) account")
-                    .font(.headline)
+                    .jrbarType(.headline)
                 Text("The instance id distinguishes the account — \"work\", \"personal\". The account's own credential or consented browser session is set up next, from its card's manage row.")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: 260)
@@ -515,28 +502,13 @@ struct AddAccountButton: View {
 
 
 
-extension UsageFormat {
-    static func currencySymbol(_ currency: String) -> String {
-        switch currency {
-        case "USD": return "$"
-        case "EUR": return "€"
-        case "GBP": return "£"
-        default: return currency + " "
-        }
-    }
-}
 
 struct ResetSaveNotice: View {
     let retry: () -> Void
 
     var body: some View {
-        HStack {
-            Label("Reset feedback not saved", systemImage: "exclamationmark.triangle")
-            Spacer()
+        StatusBanner("Reset feedback not saved", kind: .failure) {
             Button("Retry", action: retry)
         }
-        .font(.callout)
-        .foregroundStyle(.orange)
-        .windowCard(padding: 14)
     }
 }

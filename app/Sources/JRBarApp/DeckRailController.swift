@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import QuartzCore
@@ -465,16 +466,16 @@ struct RailSlotCell: View {
             }
             HStack(spacing: 0) {
                 Text("\(slot.index + 1)")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.semibold).fontDesign(.rounded)
                 Text(mark)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
             }
             .foregroundStyle(lit || glow ? Color.black.opacity(0.8) : (dim ? Color.primary.opacity(0.35) : Color.primary.opacity(0.75)))
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             if slot.pinned {
                 Image(systemName: "pin.fill")
-                    .font(.system(size: 5, weight: .bold))
+                    .jrbarType(.caption).fontWeight(.bold)
                     .foregroundStyle(lit || glow ? Color.black.opacity(0.6) : Color.primary.opacity(0.5))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(2)
@@ -503,7 +504,7 @@ struct RailOverflowCell: View {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(Color.primary.opacity(hovered ? 0.2 : 0.1))
             Text("…")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
                 .foregroundStyle(Color.primary.opacity(0.8))
         }
         .padding(1.5)
@@ -582,10 +583,10 @@ struct RailLabelView: View {
                         AskRiskMark(size: 10)
                     }
                 }
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Text(subtitle).jrbarType(.caption).foregroundStyle(.secondary)
                 if let detail {
                     Text(detail)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(SessionActivity.waiting.tint)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -594,7 +595,7 @@ struct RailLabelView: View {
                 }
                 if let preview = ask?.previewLine {
                     AskPreviewLine(text: preview, size: 10.5,
-                                   tint: ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                                   tint: ask?.isDestructive == true ? Tone.failure.color.opacity(0.85) : .secondary)
                         .frame(width: 220, alignment: .leading)
                 }
                 if isInteractive, let ask, let desk {
@@ -607,14 +608,14 @@ struct RailLabelView: View {
                     // Answered from JR-Bar and the agent has not moved on:
                     // no verb, just where the verbs were.
                     Text(line)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .padding(.top, 2)
                 }
             }
             Text(number)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .jrbarType(.caption).fontWeight(.semibold).fontDesign(.rounded)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 10)
@@ -669,8 +670,8 @@ struct RailAskVerbs: View {
             Spacer(minLength: 0)
             if let note = desk.note(for: ask.session) {
                 Text(note.text)
-                    .font(.caption)
-                    .foregroundStyle(note.refused ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                    .jrbarType(.caption)
+                    .foregroundStyle(note.refused ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else {

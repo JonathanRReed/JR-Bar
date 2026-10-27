@@ -14,8 +14,8 @@ struct FinishBannerTests {
         #expect(FinishBanner.durationWords(45.2) == "45s")
         #expect(FinishBanner.durationWords(60) == "1m")
         #expect(FinishBanner.durationWords(252.4) == "4m 12s")
-        #expect(FinishBanner.durationWords(3600) == "1h")
-        #expect(FinishBanner.durationWords(3900) == "1h 5m")
+        #expect(FinishBanner.durationWords(3600) == "1h 00m")
+        #expect(FinishBanner.durationWords(3900) == "1h 05m")
         #expect(FinishBanner.durationWords(90_000) == "1d 1h")
         #expect(FinishBanner.durationWords(1e12) == nil)
     }

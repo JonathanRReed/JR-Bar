@@ -23,7 +23,7 @@ final class AgentUtility: Toy {
     /// The "Open the Overview" button's target — the delegate wires it
     /// to `OverviewWindowController.show()`. Left unset the button hides,
     /// so the utility stands alone.
-    @ObservationIgnored var connectionDescription: @MainActor () -> String = { "Monitor not connected" }
+    @ObservationIgnored var connectionDescription: @MainActor () -> String = { MonitorWords.label }
     @ObservationIgnored var onOpenMonitorDetails: (@MainActor () -> Void)?
     @ObservationIgnored var onOpenOverview: (@MainActor () -> Void)?
 
@@ -83,7 +83,7 @@ final class AgentUtility: Toy {
         if snapshot.stateRejected != nil { return .paused("Monitor update unreadable") }
         if snapshot.connected { return .paused("Waiting for monitor state") }
         if snapshot.connecting { return .paused("Connecting to monitor") }
-        return .paused("Monitor not connected")
+        return .paused(MonitorWords.label)
     }
 
     var controls: AnyView { AnyView(AgentUtilityControls(utility: self)) }

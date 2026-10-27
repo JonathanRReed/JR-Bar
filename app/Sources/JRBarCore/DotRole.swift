@@ -107,7 +107,7 @@ public struct DotRoleReadout: Equatable, Sendable {
                             dot: CoreLightSurface?) -> DotRoleReadout {
         guard live else {
             return DotRoleReadout(chosen: chosen, active: nil, rendersItself: false,
-                                  headline: "Monitor not connected",
+                                  headline: MonitorWords.label,
                                   detail: "Reconnect the monitor to see what the Dot is doing.")
         }
         let active = dot?.role.map(DotRole.parse)

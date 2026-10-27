@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -37,9 +38,9 @@ enum ToyStatus: Equatable {
     var tint: Color {
         switch self {
         case .off: return Color(nsColor: .tertiaryLabelColor)
-        case .on: return .green
-        case .paused, .external, .limited: return Color(nsColor: .systemOrange)
-        case .needsPermission: return .red
+        case .on: return Tone.done.color
+        case .paused, .external, .limited: return Tone.neutral.color
+        case .needsPermission: return Tone.failure.color
         case .unavailable, .note: return Color(nsColor: .secondaryLabelColor)
         }
     }
@@ -223,14 +224,14 @@ struct ToyCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Text(toy.name)
-                                .font(.body.weight(.semibold))
+                                .jrbarType(.body).fontWeight(.semibold)
                                 .layoutPriority(1)
                             if status.showsChip {
-                                StatusPill(status.text, tint: status.tint)
+                                StatusBadge(status.text, tint: status.tint)
                             }
                         }
                         Text(toy.blurb)
-                            .font(.subheadline)
+                            .jrbarType(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +246,7 @@ struct ToyCard: View {
             .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
             if toy.switchLabel != toy.name {
                 Text(toy.switchLabel)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
             Toggle(toy.switchLabel, isOn: toggle)
@@ -290,7 +291,7 @@ private struct ToyCostLine: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             if let line = toy.cost(at: ToyMeter.uptime) {
                 Label(line, systemImage: "gauge.with.dots.needle.33percent")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
                     .lineLimit(2)

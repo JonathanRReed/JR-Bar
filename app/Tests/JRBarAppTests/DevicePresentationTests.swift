@@ -47,7 +47,7 @@ struct DevicePresentationTests {
         #expect(device.id == "screen-bar")
         #expect(device.enabled == true)
         #expect(store.deviceEntries.first?.id == "virtual:status-bar")
-        #expect(DevicesPage.screenBarStatus(device: device, live: store.isLive) == "Shown")
+        #expect(DevicesPage.screenBarStatus(device: device, live: store.isLive) == "Connected")
         #expect(store.deviceLastWrite("virtual:status-bar") == 1_800_000_001)
         #expect(store.deviceSurface("virtual:status-bar") == surface)
         store.core.stop()
@@ -57,7 +57,7 @@ struct DevicePresentationTests {
         store.core.apply(.state(CoreState(devices: [])))
         #expect(store.deviceFacts("virtual:status-bar") == nil)
         #expect(DevicesPage.screenBarStatus(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
-            == "Not reported")
+            == "Not connected")
     }
 
     @Test func screenBarHasOneSettingsSeatWithoutChangingDeviceIndexes() throws {
@@ -83,10 +83,10 @@ struct DevicePresentationTests {
         let shown = CoreDevice(id: "screen-bar", kind: "screen_bar", enabled: true)
         let hidden = CoreDevice(id: "screen-bar", kind: "screen_bar", enabled: false)
         let unknown = CoreDevice(id: "screen-bar", kind: "screen_bar")
-        #expect(DevicesPage.screenBarStatus(device: shown, live: true) == "Shown")
-        #expect(DevicesPage.screenBarStatus(device: hidden, live: true) == "Hidden")
-        #expect(DevicesPage.screenBarStatus(device: nil, live: true) == "Not reported")
-        #expect(DevicesPage.screenBarStatus(device: unknown, live: true) == "Not reported")
+        #expect(DevicesPage.screenBarStatus(device: shown, live: true) == "Connected")
+        #expect(DevicesPage.screenBarStatus(device: hidden, live: true) == "Off")
+        #expect(DevicesPage.screenBarStatus(device: nil, live: true) == "Not connected")
+        #expect(DevicesPage.screenBarStatus(device: unknown, live: true) == "Not connected")
         #expect(DevicesPage.screenBarStatus(device: shown, live: false) == "Monitor not connected")
         #expect(DevicesPage.screenBarStatus(device: hidden, live: false) == "Monitor not connected")
         #expect(DevicesPage.screenBarStatus(device: nil, live: false) == "Monitor not connected")
@@ -117,15 +117,15 @@ struct DevicePresentationTests {
         let store = Self.fixture(live: false)
         let device = try #require(store.deviceFacts("pro"))
         #expect(device.isPresent)
-        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Unknown")
+        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Not connected")
         store.core.handle(.connected)
         store.core.apply(.state(CoreState(devices: [device])))
         #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Connected")
     }
 
     @Test func unknownAndDisconnectedDevicesAreNamed() {
-        #expect(DeviceConnectionState.device(nil, live: true).rawValue == "Unknown")
-        #expect(DeviceConnectionState.device(nil, live: false).rawValue == "Unknown")
+        #expect(DeviceConnectionState.device(nil, live: true).rawValue == "Not connected")
+        #expect(DeviceConnectionState.device(nil, live: false).rawValue == "Not connected")
         let absent = CoreDevice(id: "dot", kind: "dot", connected: false, error: "")
         #expect(DeviceConnectionState.device(absent, live: true).rawValue == "Not connected")
     }

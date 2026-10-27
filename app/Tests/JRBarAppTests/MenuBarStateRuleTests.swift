@@ -402,6 +402,6 @@ struct MenuBarStateRuleTests {
         #expect(rule(.wifiIs(ssid: "Office"), negated: true, [.quietBar]).summary
                 == "while not: on Wi-Fi “Office” → tuck everything away")
         #expect(MenuBarCondition.timeBetween(startMinute: 540, endMinute: 1020).label
-                == "between 09:00 and 17:00")
+                == "between \(UsageTime.clock(minutes: 540)) and \(UsageTime.clock(minutes: 1020))")
     }
 }

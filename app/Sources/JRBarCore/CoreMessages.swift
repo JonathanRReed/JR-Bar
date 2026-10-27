@@ -200,13 +200,7 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     /// An age in the words a person says ("12 minutes", "9 hours",
     /// "3 days"); the daemon's `ask_age_words` says the same.
     public static func ageWords(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "a while" }
-        if seconds < 60 { return "under a minute" }
-        let minutes = Int(seconds / 60)
-        if minutes < 60 { return minutes == 1 ? "1 minute" : "\(minutes) minutes" }
-        let hours = Int(seconds / 3600)
-        if hours < 48 { return hours == 1 ? "1 hour" : "\(hours) hours" }
-        return "\(Int(seconds / 86_400)) days"
+        UsageTime.spokenAge(seconds)
     }
 
     /// The agent's hook is holding this ask for JR-Bar's Approve/Deny.

@@ -22,6 +22,7 @@ from .animation import (
     step_duration_ms,
 )
 from .led_status import LedDisplayState, apply_brightness
+from .provider_ids import provider_display_name
 
 
 @dataclass(frozen=True)
@@ -40,9 +41,9 @@ class CannotFit(ValueError):
 
 MIX_LABELS = {
     "color_blend": "Smooth", "round_robin": "Everyone",
-    "spatial_split": "Split", "cycle": "One at a Time",
+    "spatial_split": "Split", "cycle": "One at a time",
     "alternate": "Alternate", "relay": "Relay", "weave": "Weave",
-    "tide": "Tide", "classic": "Status Only", "effect": "Play an effect",
+    "tide": "Tide", "classic": "Status only", "effect": "Play an effect",
 }
 
 
@@ -590,7 +591,7 @@ def _cycle(agents, settings, count, warnings):
         try:
             program = render_turns()
             if stretched:
-                warnings.append("One at a Time stretches fewer cycles to four seconds to fit the device.")
+                warnings.append("One at a time stretches fewer cycles to four seconds to fit the device.")
             return program
         except CannotFit:
             candidates = [index for index, (_steps, _duration, repeats) in enumerate(turns) if repeats > 1]
@@ -830,7 +831,8 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         }.get(mode, c._color_blend_program)
         program = renderer(selected, led_count=led_count, brightness=brightness, settings=settings)
         return MixPlan(state, program, mode, "status", "No provider is working.")
-    names = " and ".join(agent.provider for agent in selected)
+    names = " and ".join(provider_display_name(agent.provider) for agent in selected)
+    working = "is working" if len(selected) == 1 else "are working"
     requested = mode
     attempts = [mode]
     if mode in ("spatial_split", "round_robin"):
@@ -850,7 +852,7 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             elif attempt == "cycle":
                 program = _cycle(selected, settings.with_blend_mode("cycle"), led_count, warnings)
                 if any(settings.agent_animation(agent.provider) == "kitt" for agent in selected) and led_count > 2:
-                    warnings.append("One at a Time uses a circulating Knight Rider scan to fit all providers.")
+                    warnings.append("One at a time uses a circulating Knight Rider scan to fit all providers.")
             elif attempt == "classic":
                 program = settings.mode_color(c._STATE_TO_MODE_KEY[state])
             elif attempt == "color_blend":
@@ -861,14 +863,14 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             if not c._fits_with_brightness(program):
                 raise CannotFit("the program exceeds 512 bytes or 20 lines")
             program = _safe_program(program, led_count, warnings)
-            reason = (f"{MIX_LABELS[attempt]} plays because {names} are working."
+            reason = (f"{MIX_LABELS[attempt]} plays because {names} {working}."
                       if attempt == requested else f"Showing {MIX_LABELS[attempt]} because the requested program cannot fit exactly.")
             if attempt == "round_robin" and _has_sweep(selected, settings):
                 reason += " Sweep animations use contiguous provider shares."
             if attempt == "effect":
                 reason = f"{effect_label} plays one cycle per provider in their colours: {names}."
             if attempt == "classic":
-                reason = "Status Only shows the current state colour with no animation."
+                reason = "Status only shows the current state colour with no animation."
             return MixPlan(state, apply_brightness(program, brightness), requested, attempt, reason, tuple(warnings))
         except CannotFit as error:
             warnings.append(f"{MIX_LABELS[attempt]} cannot play exactly on {led_count} LEDs: {error}.")

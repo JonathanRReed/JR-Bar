@@ -280,7 +280,7 @@ final class HistoryStore {
     var undoRemaining: String? {
         guard let last = core.lastClear, core.canUndoClear else { return nil }
         let left = Int(EventPolicy.undoWindow - now.timeIntervalSince(last.at))
-        return left >= 60 ? "\(left / 60) min" : "\(max(0, left)) s"
+        return UsageTime.duration(Double(left))
     }
     var completedCount: Int { core.sessions.filter { SessionActivity.reduce($0).isClearable || $0.stale }.count }
     var isLive: Bool { core.isLive }
@@ -459,7 +459,7 @@ final class HistoryStore {
                     self.say(reply.error?.message ?? "Could not resume \(row.displayTitle)", isError: true)
                 }
             } catch {
-                self.say("The monitor is not answering", isError: true)
+                self.say(MonitorWords.sentence, isError: true)
             }
         }
     }
@@ -569,7 +569,7 @@ final class HistoryStore {
                 self.loading = false
                 if let refresh = self.reload() { await refresh.value }
             } catch {
-                self.say("\(verb) failed: the monitor is not answering.", isError: true)
+                self.say("\(verb) failed: \(MonitorWords.sentence)", isError: true)
             }
         }
     }
@@ -588,7 +588,7 @@ final class HistoryStore {
 
     /// The time of day in the reader's own 12- or 24-hour clock.
     static func clock(_ date: Date, locale: Locale = .autoupdatingCurrent) -> String {
-        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
+        UsageTime.clock(date.timeIntervalSince1970, locale: locale)
     }
 
     /// `m:ss` under an hour, `h:mm:ss` after; monospaced in the column.

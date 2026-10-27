@@ -46,6 +46,7 @@ from .led_status import (
     srgb_to_linear,
 )
 from .models import MODE_PRIORITY, AgentMode, AgentStatus
+from .provider_ids import provider_display_name
 from .providers import PROVIDER_SPECS
 
 # --- Mode color keys -------------------------------------------------------
@@ -3721,7 +3722,7 @@ def demo_statuses_for_preview() -> tuple[AgentStatus, ...]:
             AgentStatus(
                 provider=provider,
                 agent_id=f"{provider}:preview",
-                display_name=provider.title(),
+                display_name=provider_display_name(provider),
                 mode=mode,
                 updated_at=now,
                 event_name="Preview",
@@ -3746,7 +3747,7 @@ def _preview_status(provider: str, mode: AgentMode, *, agent_id: str, now: datet
     return AgentStatus(
         provider=provider,
         agent_id=agent_id,
-        display_name=provider.title(),
+        display_name=provider_display_name(provider),
         mode=mode,
         updated_at=now,
         event_name="Preview",
@@ -3866,7 +3867,7 @@ PREVIEW_SCENARIO_LABELS: dict[str, str] = {
     PREVIEW_SCENARIO_PAIR: "Two Different Agents",
     PREVIEW_SCENARIO_FULL_TEAM: "Full Team, Mixed States",
     PREVIEW_SCENARIO_BUSY_TEAM: "Busy Team (more agents than LEDs)",
-    PREVIEW_SCENARIO_FLEET: "Three Agents: Two Working, One Done",
+    PREVIEW_SCENARIO_FLEET: "Three agents: two working, one done",
 }
 
 

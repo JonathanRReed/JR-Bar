@@ -574,9 +574,6 @@ struct WhyDetailView: View {
     /// "now", "4m", "2h" — how long ago, in the log's narrow column.
     static func age(_ at: Double, now: Date = Date()) -> String {
         let seconds = max(0, now.timeIntervalSince1970 - at)
-        if seconds < 45 { return "now" }
-        if seconds < 3600 { return "\(Int((seconds / 60).rounded()))m" }
-        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
-        return "\(Int(seconds / 86_400))d"
+        return seconds < 30 ? "now" : UsageTime.duration(seconds)
     }
 }

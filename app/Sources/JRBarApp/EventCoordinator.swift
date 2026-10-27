@@ -164,7 +164,7 @@ final class EventCoordinator {
         for notice in found {
             let banner = SilentSessionWatcher.banner(for: notice, focus: state.focus)
             if let banner { notifications.deliver(banner) }
-            core.appendLocalLog("session \(notice.label) quiet for \(Int(notice.seconds / 60)) min" + (banner == nil ? " (held)" : " → banner"))
+            core.appendLocalLog("session \(notice.label) quiet for \(UsageTime.duration(notice.seconds))" + (banner == nil ? " (held)" : " → banner"))
         }
     }
 

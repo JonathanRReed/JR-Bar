@@ -20,21 +20,21 @@ struct UsageReadingAgeTests {
     @Test("a stale card whose poll failed a minute ago still says its numbers are five hours old")
     func staleNamesTheReadingsAge() {
         let stale = row(observedAgo: 60, readAgo: 5 * 3600)
-        #expect(UsageCardCopy.readingAgeText(stale, now: now) == "read 5h 00m ago")
+        #expect(UsageCardCopy.readingAgeText(stale, now: now) == "Read 5h 00m ago")
     }
 
     @Test("a live card reads from its own time")
     func liveNamesTheAttempt() {
         let live = row(observedAgo: 90, readAgo: nil, state: "ready")
-        #expect(UsageCardCopy.readingAgeText(live, now: now) == "read 1m ago")
+        #expect(UsageCardCopy.readingAgeText(live, now: now) == "Read 1m 30s ago")
         let sameTime = row(observedAgo: 90, readAgo: 90, state: "ready")
-        #expect(UsageCardCopy.readingAgeText(sameTime, now: now) == "read 1m ago")
+        #expect(UsageCardCopy.readingAgeText(sameTime, now: now) == "Read 1m 30s ago")
     }
 
     @Test("a daemon that does not send read_at keeps the caption it always had")
     func olderDaemon() {
         let old = row(observedAgo: 2 * 86_400 + 3 * 3600, readAgo: nil)
-        #expect(UsageCardCopy.readingAgeText(old, now: now) == "read 2d 3h ago")
+        #expect(UsageCardCopy.readingAgeText(old, now: now) == "Read 2d 3h ago")
     }
 
     @Test("with no time at all there is no caption")

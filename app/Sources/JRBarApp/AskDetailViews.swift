@@ -124,7 +124,7 @@ struct AskDetailView: View {
                 }
                 if let note = AskDetailCopy.footnote(detail) {
                     Text(note)
-                        .font(.system(size: 9.5))
+                        .jrbarType(.caption)
                         .foregroundStyle(palette.secondary)
                         .lineLimit(1)
                 }
@@ -147,7 +147,7 @@ struct AskDetailView: View {
                 .lineLimit(1)
             ForEach(Array(AskDetailCopy.pathLines(edit).enumerated()), id: \.offset) { _, path in
                 Text(path)
-                    .font(.system(size: 10, design: .monospaced))
+                    .jrbarType(.caption).fontDesign(.monospaced)
                     .foregroundStyle(palette.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -161,7 +161,7 @@ struct AskDetailView: View {
     private func bodyWell(_ text: String, detail: CoreAskDetail) -> some View {
         SnapshotScrollView {
             Text(text)
-                .font(.system(size: 10.5, design: .monospaced))
+                .jrbarType(.caption).fontDesign(.monospaced)
                 .foregroundStyle(palette.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -182,14 +182,13 @@ struct AskDetailView: View {
     private var planAction: some View {
         HStack(spacing: 8) {
             Text(AskDetailCopy.planNote)
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .foregroundStyle(palette.secondary)
                 .lineLimit(1)
                 .layoutPriority(-1)
             Spacer(minLength: 4)
             if let onOpenSession {
-                Button(AskDetailCopy.sessionActionTitle, action: onOpenSession)
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton(AskDetailCopy.sessionActionTitle, prominent: true, action: onOpenSession)
                     .fixedSize()
                     .help(AskDetailCopy.sessionActionHelp)
             }

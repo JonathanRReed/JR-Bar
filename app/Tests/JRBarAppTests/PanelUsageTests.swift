@@ -36,7 +36,7 @@ struct PanelUsageTests {
         #expect(tag(provider("claude", 100)) == .usedUp)
         #expect(tag(provider("claude", 60, forecast: CoreUsageForecast(pace: "exhausted"))) == .usedUp)
         let soon = CoreUsageForecast(exhaustsAt: now.timeIntervalSince1970 + 2 * 3600 + 5 * 60, pace: "ahead")
-        #expect(tag(provider("claude", 70, forecast: soon)) == .runsOut("in 2h 05m"))
+        #expect(tag(provider("claude", 70, forecast: soon)) == .runsOut(UsageTime.runOutWhen(at: now.timeIntervalSince1970 + 7500, now: now.timeIntervalSince1970)))
         #expect(PanelStore.UsageTag.runsOut("in 2h 05m").text == "Runs out in 2h 05m")
         #expect(tag(provider("claude", 70, forecast: soon), heldIdle: true) == nil, "a held-idle slope is history")
         let late = CoreUsageForecast(exhaustsAt: now.timeIntervalSince1970 + 5 * 3600, pace: "behind")

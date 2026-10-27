@@ -155,7 +155,7 @@ public enum LightExplainer {
         case .idleDim:
             let after = context.settings?.double("idle_dim_after_minutes").map { Int($0) } ?? 10
             let fraction = context.detail?.brightnessFactor ?? context.settings?.double("idle_dim_fraction") ?? 0.3
-            return ("Dimmed", "Idle for \(after) min, dimmed to \(percent(fraction))", nil)
+            return ("Dimmed", "Idle for \(UsageTime.duration(Double(after) * 60)), dimmed to \(percent(fraction))", nil)
         case .battery:
             let dimmed = context.detail?.brightnessFactor.map { ", dimmed to \(percent($0))" } ?? ""
             return ("Dimmed", "On battery\(dimmed)", nil)
@@ -176,7 +176,7 @@ public enum LightExplainer {
         case .preview:
             return ("Preview", "Previewing a program", nil)
         case .studio:
-            return ("Preview", "Effect Studio is previewing", nil)
+            return ("Preview", "Studio is previewing", nil)
         case .unknown:
             // Today's daemon may send a word the table has no line for: say
             // what the light looks like and who is on top, never a UUID.
@@ -337,7 +337,7 @@ public enum LightExplainer {
             if let motion = surface.motion, !motion.isEmpty { parts.append(motion) }
             if let colour = surface.staticFallback.flatMap(dominantColourName) { parts.append(colour) }
             if let brightness = surface.brightness { parts.append("\(Int((brightness * 100).rounded()))% bright") }
-            if let anchor = surface.anchor, let ago = elapsed(seconds: context.now.timeIntervalSince1970 - anchor) { parts.append("started \(ago) ago") }
+            if let anchor = surface.anchor, elapsed(seconds: context.now.timeIntervalSince1970 - anchor) != nil { parts.append("started \(UsageTime.ago(context.now.timeIntervalSince1970 - anchor))") }
             if parts.isEmpty { parts.append(surface.program.isEmpty ? "no program" : "\(surface.program.split(separator: "\n").count) lines") }
             result.append(.init(label: label, value: parts.joined(separator: " · ")))
             // The Dot's role decides its program and its `why`, so the
@@ -374,7 +374,7 @@ public enum LightExplainer {
             if settings.bool("idle_dim_enabled") == true {
                 let after = Int(settings.double("idle_dim_after_minutes") ?? 10)
                 let fraction = Int(((settings.double("idle_dim_fraction") ?? 0.3) * 100).rounded())
-                result.append(.init(label: "Idle dim", value: "to \(fraction)% after \(after) min"))
+                result.append(.init(label: "Idle dim", value: "to \(fraction)% after \(UsageTime.settingMinutes(Double(after)))"))
             } else {
                 result.append(.init(label: "Idle dim", value: "off"))
             }
@@ -421,35 +421,26 @@ public enum LightExplainer {
     static let longestPlausibleState: Double = 400 * 24 * 60 * 60
 
     static func elapsed(seconds: Double) -> String? {
-        guard seconds.isFinite, seconds < longestPlausibleState else { return nil }
-        let seconds = Int(seconds.rounded())
-        guard seconds >= 0 else { return nil }
-        if seconds < 60 { return "\(seconds) s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes) min" }
-        let hours = minutes / 60
-        if hours < 24 { return minutes % 60 == 0 ? "\(hours) h" : "\(hours) h \(minutes % 60) min" }
-        return "\(hours / 24) d"
+        guard seconds.isFinite, seconds >= 0, seconds < longestPlausibleState else { return nil }
+        return UsageTime.duration(seconds)
     }
 
     static func ago(_ epoch: Double?, now: Date) -> String? {
-        guard let epoch, let text = elapsed(seconds: now.timeIntervalSince1970 - epoch) else { return nil }
-        return "\(text) ago"
+        guard let epoch, elapsed(seconds: now.timeIntervalSince1970 - epoch) != nil else { return nil }
+        return UsageTime.ago(now.timeIntervalSince1970 - epoch)
     }
 
     static func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded()))%"
+        UsageNumber.percent(fraction * 100)
     }
 
     /// The time of day in the reader's own 12- or 24-hour clock.
     static func clock(_ epoch: Double, locale: Locale = .autoupdatingCurrent) -> String {
-        Date(timeIntervalSince1970: epoch)
-            .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
+        UsageTime.clock(epoch, locale: locale)
     }
 
     static func minutes(_ total: Double) -> String {
-        let value = Int(total) % (24 * 60)
-        return String(format: "%02d:%02d", value / 60, value % 60)
+        UsageTime.clock(minutes: Int(saturating: total))
     }
 
     static func providerName(_ id: String) -> String { SessionLabel.providerName(id) }
@@ -577,7 +568,7 @@ extension LightExplainer.Context {
     /// "12 s ago" from the session's last change, else from `seconds_in_state`.
     func agoText(for id: String?, fallback seconds: Double?) -> String? {
         if let id, let session = state?.session(withID: id), let text = LightExplainer.ago(session.updatedAt ?? session.since, now: now) { return text }
-        if let seconds, let text = LightExplainer.elapsed(seconds: seconds) { return "\(text) ago" }
+        if let seconds, LightExplainer.elapsed(seconds: seconds) != nil { return UsageTime.ago(seconds) }
         return nil
     }
 }

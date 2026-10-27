@@ -68,7 +68,7 @@ struct LightWhyEnumTests {
         #expect(explanation.session == Self.mainID)
         #expect(!explanation.headline.contains("Claude Claude"))
         #expect(!explanation.headline.contains("f6d1"))
-        #expect(explanation.details.contains { $0.label == "In this state" && $0.value == "1 min" })
+        #expect(explanation.details.contains { $0.label == "In this state" && $0.value == "1m 40s" })
     }
 
     /// The "In this state" row of one explanation, or nil when it has none.
@@ -83,10 +83,10 @@ struct LightWhyEnumTests {
         let frame = Self.lights(why: "working", detail: Self.detail(seconds: 4))
         let document = Self.state([held])
         let first = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now)
-        #expect(Self.inThisState(first) == "25 min", "not the frame's 4 s")
+        #expect(Self.inThisState(first) == "25m", "not the frame's 4 s")
         // The same frame, ten minutes later: the row moves with the clock.
         let later = LightExplainer.explain(lights: frame, state: document, settings: nil, now: Self.now.addingTimeInterval(600))
-        #expect(Self.inThisState(later) == "35 min")
+        #expect(Self.inThisState(later) == "35m")
     }
 
     @Test("a waiting or escalating light ages from the ask's opening, whichever list holds the ask")
@@ -100,18 +100,18 @@ struct LightWhyEnumTests {
 
         // In state.asks; the session's own `since` is much newer.
         let inList = Self.explain("waiting", [asking], detail: detail, asks: [pinned])
-        #expect(Self.inThisState(inList) == "5 min")
+        #expect(Self.inThisState(inList) == "5m")
         // Embedded in the session.
         var embedded = asking
         embedded.ask = pinned
         let inSession = Self.explain("waiting", [embedded], detail: detail)
-        #expect(Self.inThisState(inSession) == "5 min")
+        #expect(Self.inThisState(inSession) == "5m")
         // The escalation reads the same anchor.
         let escalating = Self.explain("escalation", [embedded], detail: detail)
-        #expect(Self.inThisState(escalating) == "5 min")
+        #expect(Self.inThisState(escalating) == "5m")
         // No ask anywhere: the session's own since.
         let bare = Self.explain("waiting", [asking], detail: detail)
-        #expect(Self.inThisState(bare) == "10 s")
+        #expect(Self.inThisState(bare) == "10s")
     }
 
     @Test("a completed or failed light counts from the session's since, as the daemon does")
@@ -120,34 +120,34 @@ struct LightWhyEnumTests {
         // "30 s ago"; the row counts the state itself.
         let detail = Self.detail(session: Self.codexDone.id, label: "Codex 01a08b62", provider: "codex", seconds: 1)
         let done = Self.explain("completed", [Self.codexDone], detail: detail)
-        #expect(Self.inThisState(done) == "3 min")
+        #expect(Self.inThisState(done) == "3m 20s")
         var failed = Self.main
         failed.lifecycle = "failed"
         let failure = Self.explain("failed", [failed], detail: Self.detail(seconds: 1))
-        #expect(Self.inThisState(failure) == "1 min")
+        #expect(Self.inThisState(failure) == "1m 40s")
     }
 
     @Test("with nothing to age from, the row keeps the daemon's number, and never a nonsense one")
     func inThisStateFallbacks() {
         // Idle names no session: the frame's number is all there is.
         let idle = Self.explain("idle", [], detail: Self.detail(session: nil, label: nil, provider: nil, seconds: 30))
-        #expect(Self.inThisState(idle) == "30 s")
+        #expect(Self.inThisState(idle) == "30s")
         // A session the state no longer lists.
         let ghost = Self.explain("working", [Self.main], detail: Self.detail(session: "claude:session:gone", seconds: 75))
-        #expect(Self.inThisState(ghost) == "1 min")
+        #expect(Self.inThisState(ghost) == "1m 15s")
         // A since in the future, or an epoch's worth of garbage, is not aged.
         var future = Self.main
         future.since = Self.now.timeIntervalSince1970 + 50
-        #expect(Self.inThisState(Self.explain("working", [future], detail: Self.detail(seconds: 30))) == "30 s")
+        #expect(Self.inThisState(Self.explain("working", [future], detail: Self.detail(seconds: 30))) == "30s")
         var garbage = Self.main
         garbage.since = 5
-        #expect(Self.inThisState(Self.explain("working", [garbage], detail: Self.detail(seconds: 30))) == "30 s")
+        #expect(Self.inThisState(Self.explain("working", [garbage], detail: Self.detail(seconds: 30))) == "30s")
         #expect(Self.inThisState(Self.explain("working", [garbage], detail: Self.detail(seconds: nil))) == nil,
                 "never a number like 20704 d")
         // A session with no since at all.
         var unstamped = Self.main
         unstamped.since = nil
-        #expect(Self.inThisState(Self.explain("working", [unstamped], detail: Self.detail(seconds: 30))) == "30 s")
+        #expect(Self.inThisState(Self.explain("working", [unstamped], detail: Self.detail(seconds: 30))) == "30s")
     }
 
     @Test("the old provider-plus-UUID label never shows a UUID or a doubled provider")
@@ -162,7 +162,7 @@ struct LightWhyEnumTests {
     func detailOnly() throws {
         let detail = Self.detail(session: "codex:session:ghost", label: "Codex 01a08b62", provider: "codex", seconds: 12)
         let explanation = try #require(Self.explain("completed", [], detail: detail, motion: "finite", fallback: "#00FF66"))
-        #expect(explanation.reason == "Codex 01a08b62 finished 12 s ago")
+        #expect(explanation.reason == "Codex 01a08b62 finished now")
         #expect(explanation.motion == "Green sweep")
         #expect(explanation.session == "codex:session:ghost")
     }
@@ -173,16 +173,16 @@ struct LightWhyEnumTests {
         asking.mode = "waiting"; asking.lifecycle = "active"
         asking.ask = CoreAsk(kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 45, summary: "Run: rm -rf build")
         let waiting = try #require(Self.explain("waiting", [asking, Self.main], detail: Self.detail(session: asking.id, label: "Codex 01a08b62", provider: "codex", seconds: 45)))
-        #expect(waiting.headline == "Amber pulse: Codex 01a08b62 is waiting on you (permission, 45 s)")
+        #expect(waiting.headline == "Amber pulse: Codex 01a08b62 is waiting on you (permission, 45s)")
         #expect(waiting.session == asking.id)
 
         var failed = Self.main
         failed.lifecycle = "failed"
         let failure = try #require(Self.explain("failed", [failed], detail: Self.detail(seconds: 5)))
-        #expect(failure.headline == "Red flash: Claude jr-bar-67 failed 1 min ago")
+        #expect(failure.headline == "Red flash: Claude jr-bar-67 failed 1m 40s ago")
 
         let escalation = try #require(Self.explain("escalation", [asking], escalation: CoreEscalation(stage: "menu_bar", since: Self.now.timeIntervalSince1970 - 120)))
-        #expect(escalation.headline == "Bright amber pulse: Codex 01a08b62 has waited 2 min · escalation stage 2")
+        #expect(escalation.headline == "Bright amber pulse: Codex 01a08b62 has waited 2m · escalation stage 2")
     }
 
     @Test("the dimming whys read their factor from why_detail")
@@ -191,7 +191,7 @@ struct LightWhyEnumTests {
         #expect(battery.headline == "Dimmed: On battery, dimmed to 50%")
         #expect(battery.details.contains { $0.label == "Dimming" && $0.value == "battery · 50%" })
         let idleDim = try #require(Self.explain("idle_dim", [Self.main], detail: Self.detail(factor: 0.3, dimming: ["idle_dim"])))
-        #expect(idleDim.reason == "Idle for 10 min, dimmed to 30%")
+        #expect(idleDim.reason == "Idle for 10m, dimmed to 30%")
         let calendar = try #require(Self.explain("calendar", [Self.main], detail: Self.detail(factor: 0.6, dimming: ["calendar"]), motion: "static"))
         #expect(calendar.headline == "Steady orange: In a calendar event, dimmed to 60%")
         let sleep = try #require(Self.explain("sleep_dim", [Self.main]))
@@ -206,7 +206,7 @@ struct LightWhyEnumTests {
         let reminder = try #require(Self.explain("reminder", [Self.main], motion: "finite"))
         #expect(reminder.headline == "Orange sweep: A reminder is due")
         #expect(try #require(Self.explain("preview", [])).headline == "Preview: Previewing a program")
-        #expect(try #require(Self.explain("studio", [])).headline == "Preview: Effect Studio is previewing")
+        #expect(try #require(Self.explain("studio", [])).headline == "Preview: Studio is previewing")
         #expect(try #require(Self.explain("idle", [], motion: "breathe", fallback: "#020204")).headline == "Idle breath: Nothing is running")
     }
 

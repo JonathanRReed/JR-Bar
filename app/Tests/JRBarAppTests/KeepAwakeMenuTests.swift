@@ -6,7 +6,7 @@ import Testing
 
 /// The keep-awake duration menu the Awake chip, the footer cup and the
 /// Screen Bar's ear share: each preset asks the one hold for its
-/// seconds, "Until 08:00" means the panel's own next-morning rule at any
+/// seconds, "Until \(UsageTime.clock(minutes: 480))" means the panel's own next-morning rule at any
 /// hour, "Until the agents finish" is the daemon's agents lease, and the
 /// person's own list of durations is kept clean. No power assertion is
 /// ever taken — the lease and the assertions are fakes.
@@ -101,15 +101,15 @@ import Testing
         // 23:10 waits for tomorrow's 08:00; 06:45 for this morning's.
         let late = KeepAwakeMenu.items(durations: [], reading: KeepAwakeReading(state: .off),
                                        displayOn: false, monitorLive: true, now: try today(23, 10))
-        #expect(late.first { $0.choice == .untilMorning }?.title == "Until 08:00 tomorrow")
+        #expect(late.first { $0.choice == .untilMorning }?.title == "Until \(UsageTime.clock(minutes: 480)) tomorrow")
         let early = KeepAwakeMenu.items(durations: [], reading: KeepAwakeReading(state: .off),
                                         displayOn: false, monitorLive: true, now: try today(6, 45))
-        #expect(early.first { $0.choice == .untilMorning }?.title == "Until 08:00")
+        #expect(early.first { $0.choice == .untilMorning }?.title == "Until \(UsageTime.clock(minutes: 480))")
         // A moment with a fraction of a second still names 08:00, not 07:59.
         let fractional = try today(23, 10).addingTimeInterval(0.6)
         let named = KeepAwakeMenu.items(durations: [], reading: KeepAwakeReading(state: .off),
                                         displayOn: false, monitorLive: true, now: fractional)
-        #expect(named.first { $0.choice == .untilMorning }?.title == "Until 08:00 tomorrow")
+        #expect(named.first { $0.choice == .untilMorning }?.title == "Until \(UsageTime.clock(minutes: 480)) tomorrow")
     }
 
     @Test func theAgentsItemSendsTheAgentsLease() async throws {
@@ -174,8 +174,8 @@ import Testing
         #expect(KeepAwakeMenu.normalized(Array(stride(from: 600, through: 12_000, by: 600))).count
                 == KeepAwakeMenu.maxDurations)
         #expect(KeepAwakeMenu.title(seconds: 5400) == "1 hour 30 minutes")
-        #expect(KeepAwakeMenu.shortTitle(seconds: 900) == "15 m")
-        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2 h")
+        #expect(KeepAwakeMenu.shortTitle(seconds: 900) == "15m")
+        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2h 00m")
     }
 
     @Test func theCardSwitchIsThePersonsHold() async throws {

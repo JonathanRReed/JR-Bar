@@ -25,6 +25,14 @@ PROVIDER_ALIASES = {
 }
 
 
+PROVIDER_DISPLAY_NAMES = {
+    "claude": "Claude", "codex": "Codex", "gemini": "Gemini", "antigravity": "Antigravity",
+    "cursor": "Cursor", "factory": "Factory", "devin": "Devin", "opencode": "OpenCode",
+    "kiro": "Kiro", "grok": "Grok", "openclaw": "OpenClaw", "pi": "Pi", "hermes": "Hermes",
+    "kimi": "Kimi", "kilo": "Kilo", "openai-api": "OpenAI API", "jrbar": "JR-Bar", "t3code": "T3 Code",
+}
+
+
 def _alias_key(value: str) -> str:
     return re.sub(r"[\s_-]+", "", value.strip().lower())
 
@@ -40,3 +48,9 @@ def canonical_provider_id(value: str) -> str:
 def canonical_work_id(value: str) -> str:
     provider, separator, rest = value.partition(":")
     return canonical_provider_id(provider) + separator + rest
+
+
+def provider_display_name(value: str) -> str:
+    """Use the same provider names as the app's palette."""
+    canonical = canonical_provider_id(value)
+    return PROVIDER_DISPLAY_NAMES.get(canonical, value.strip().title())

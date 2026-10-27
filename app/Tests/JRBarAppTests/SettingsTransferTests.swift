@@ -180,7 +180,7 @@ import Testing
                                      "include_messages": .bool(false), "max_peers": .number(4)]),
         ], "the layout lands; every consent, secret and program stays as this Mac has it")
         #expect(plan.needsYourOK == [
-            "Agent update checks", "Answering from the local endpoint", "Claude plan limits", "Cloud ingest",
+            "Accept events from other machines", "Agent update checks", "Answering from the local endpoint", "Claude plan limits",
             "Escalation webhook", "Local status endpoint", "Provider status pages", "Remote machines", "Usage hooks",
         ])
     }

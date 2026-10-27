@@ -74,7 +74,7 @@ struct WhatsNewView: View {
             Label(entry.title, systemImage: entry.symbol)
                 .font(lead ? JRBarTokens.TypeStyle.heading.font : JRBarTokens.TypeStyle.headline.font)
             Text(refusals[entry.id] ?? entry.detail)
-                .foregroundStyle(refusals[entry.id] == nil ? JRBarTokens.Ink.secondary : JRBarTokens.Ink.attention)
+                .foregroundStyle(refusals[entry.id] == nil ? JRBarTokens.Ink.secondary : Tone.failure.color)
                 .jrbarType(.body)
                 .fixedSize(horizontal: false, vertical: true)
             if let command = entry.tryIt {

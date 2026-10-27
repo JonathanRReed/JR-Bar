@@ -1,3 +1,4 @@
+import JRBarUI
 import Charts
 import JRBarCore
 import SwiftUI
@@ -17,7 +18,7 @@ struct HistoryView: View {
             }
         }
         .frame(minWidth: 560, minHeight: 360)
-        .font(.system(size: 13))
+        .jrbarType(.body)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $store.mode) {
@@ -44,7 +45,7 @@ struct HistoryView: View {
             if let error = store.error, !store.rows.isEmpty {
                 // A failed refresh keeps the stale rows and says so in one
                 // line, rather than only in the empty state nobody sees.
-                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: Tone.failure.color, text: error) {
                     Button("Retry") { store.reload() }
                         .buttonStyle(.link)
                 }
@@ -54,7 +55,7 @@ struct HistoryView: View {
             if let notice = store.notice {
                 // Resume's or Open's outcome, in the monitor's words.
                 WindowNoticeRow(symbol: notice.isError ? "exclamationmark.triangle.fill" : "arrow.uturn.forward.circle.fill",
-                                tint: notice.isError ? .orange : .accentColor, text: notice.text)
+                                tint: notice.isError ? Tone.failure.color : .accentColor, text: notice.text)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
                     .transition(.opacity)
@@ -138,31 +139,13 @@ struct AwayBanner: View {
     @Bindable var store: HistoryStore
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "moon.stars.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color.accentColor.opacity(0.14)))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(summary.text).font(.system(size: 13, weight: .semibold))
-                    .lineLimit(2)
-                Text("Since \(HistoryStore.clock(summary.since)) · newer than your last visit here")
-                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
+        StatusBanner(summary.text, detail: "Since \(HistoryStore.clock(summary.since))") {
             if let first = summary.rows.first(where: { $0.kind == "asked" && store.isLiveSession($0.session) })
                 ?? summary.rows.first(where: { store.isLiveSession($0.session) }) {
                 Button("Open latest") { store.open(first) }
-                    .controlSize(.small)
             }
         }
-        .windowWell(padding: 12, tint: .accentColor)
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, JRBarTokens.Space.md).padding(.top, JRBarTokens.Space.md)
     }
 }
 
@@ -198,9 +181,9 @@ struct HistoryFilterBar: View {
                     // one chip, and clicking it lets every day back in.
                     FilterChip(selected: true, accent: .accentColor) {
                         HStack(spacing: 4) {
-                            Image(systemName: "calendar").font(.system(size: 9, weight: .bold))
+                            Image(systemName: "calendar").jrbarType(.caption).fontWeight(.bold)
                             Text(HistoryDayParse.title(day))
-                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            Image(systemName: "xmark").jrbarType(.caption).fontWeight(.bold)
                         }
                     } action: { store.filter.day = nil }
                     .help("Showing one day — click to show every day")
@@ -220,13 +203,13 @@ struct HistoryFilterBar: View {
                 ForEach(store.kinds, id: \.self) { kind in
                     FilterChip(selected: store.filter.kinds.contains(kind), accent: HistoryKindStyle.color(kind)) {
                         HStack(spacing: 4) {
-                            Image(systemName: HistoryKindStyle.symbol(kind)).font(.system(size: 9, weight: .bold))
+                            Image(systemName: HistoryKindStyle.symbol(kind)).jrbarType(.caption).fontWeight(.bold)
                             Text(HistoryKindStyle.word(kind))
                         }
                     } action: { store.toggleKind(kind) }
                 }
                 if !store.filter.isEmpty {
-                    Button("Clear") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 11))
+                    Button("Clear") { store.clearFilter() }.buttonStyle(.link).jrbarType(.caption)
                 }
             }
             .padding(.vertical, 1)
@@ -245,10 +228,10 @@ struct HistoryFilterBar: View {
     private func caption(_ title: String, _ detail: String) -> some View {
         VStack(alignment: .trailing, spacing: 1) {
             Text(title)
-                .font(.system(size: 11, weight: .medium))
+                .jrbarType(.caption).fontWeight(.medium)
                 .foregroundStyle(.secondary)
             Text(detail)
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
         }
         .monospacedDigit()
@@ -257,8 +240,7 @@ struct HistoryFilterBar: View {
     /// "updated 12s ago", or "Refreshing…" while a load is out.
     private func freshness(_ loadedAt: Date) -> String {
         if store.loading { return "Refreshing…" }
-        let age = PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s"
-        return "updated \(age) ago"
+        return "Updated \(UsageTime.ago(store.now.timeIntervalSince(loadedAt)))"
     }
 }
 
@@ -373,7 +355,7 @@ struct HistoryRhythm: View {
     /// colour so it sits on the line rather than in it.
     private static var failureDot: some View {
         Circle()
-            .fill(Color.red)
+            .fill(Tone.failure.color)
             .frame(width: 5, height: 5)
             .padding(1.25)
             .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
@@ -455,7 +437,7 @@ struct FilterChip<Label: View>: View {
     var body: some View {
         Button(action: action) {
             label()
-                .font(.system(size: 11, weight: .medium))
+                .jrbarType(.caption).fontWeight(.medium)
                 .lineLimit(1)
                 .fixedSize()
                 .foregroundStyle(selected ? accent : .primary.opacity(0.8))
@@ -477,9 +459,9 @@ struct DayHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .semibold))
+            Text(title).jrbarType(.callout).fontWeight(.semibold)
             Text("\(count)")
-                .font(.system(size: 10.5, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
@@ -513,10 +495,10 @@ enum HistoryKindStyle {
 
     static func color(_ kind: String) -> Color {
         switch kind {
-        case "completed": return .green
-        case "asked", "ask_expired": return .orange
+        case "completed": return Tone.done.color
+        case "asked", "ask_expired": return Tone.ask.color
         case "answered": return .blue
-        case "failed": return .red
+        case "failed": return Tone.failure.color
         case "quota_crossed": return .purple
         case "started": return .secondary
         default: return .secondary
@@ -579,14 +561,14 @@ struct HistoryRowView: View {
                 if let session = row.session, store.onRevealSession != nil {
                     Button("Open in Overview") { store.onRevealSession?(session) }
                         .buttonStyle(.link)
-                        .font(.system(size: 11))
+                        .jrbarType(.caption)
                         .help("The session's inspector: model, tokens, cost, the full timeline with older pages")
                 }
             }
         } else if store.isLoadingTimeline(row) {
             HStack(spacing: 6) {
                 DelayedWait(size: 12)
-                Text("Reading the transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text("Reading the transcript…").jrbarType(.caption).foregroundStyle(.tertiary)
             }
         }
     }
@@ -595,7 +577,7 @@ struct HistoryRowView: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
                 Text(HistoryStore.clock(row.date))
-                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+                    .jrbarType(.caption).monospacedDigit().foregroundStyle(.tertiary)
                     .lineLimit(1)
                     // Room for "12:35 PM" on a 12-hour clock.
                     .frame(width: 56, alignment: .trailing)
@@ -606,12 +588,12 @@ struct HistoryRowView: View {
                         KindBadge(kind: row.kind)
                         if row.kind == "started", store.isLiveSession(row.session) {
                             Text("still running")
-                                .font(.system(size: 10, weight: .semibold))
+                                .jrbarType(.caption).fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
                         }
                         if !folded.isEmpty {
                             Text("+\(folded.count)")
-                                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                                .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
                                 .foregroundStyle(.tertiary)
                                 .help(Self.foldedHelp(folded))
                         }
@@ -620,14 +602,14 @@ struct HistoryRowView: View {
                         }
                     }
                     if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle || QuotaAccountCaption.isQuota(row.kind) {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        Text(detail).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
-                        Text(style.name).font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text(style.name).jrbarType(.caption).foregroundStyle(.tertiary)
                     }
                 }
                 Spacer(minLength: 8)
                 Text(HistoryStore.duration(row.duration) ?? "")
-                    .font(.system(size: 11.5, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+                    .jrbarType(.caption).fontWeight(.medium).monospacedDigit().foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
                     .help(row.duration.map { "Took \(Int(saturating: $0.rounded())) s" } ?? "")
                 if resumable, hovering || selected {
@@ -637,7 +619,7 @@ struct HistoryRowView: View {
                         .help("Resume this session in the terminal it ran in")
                 } else {
                     Image(systemName: "arrow.up.forward.square")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .jrbarType(.caption).foregroundStyle(.tertiary)
                         .opacity(hovering && openable ? 1 : 0)
                 }
                 if expandable {
@@ -645,7 +627,7 @@ struct HistoryRowView: View {
                         store.toggleExpanded(row)
                     } label: {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                             .foregroundStyle(expanded ? .secondary : .tertiary)
                             .frame(width: 16, height: 16)
@@ -720,11 +702,11 @@ struct EventLogView: View {
             if store.replay.events.isEmpty {
                 WindowEmptyState(
                     symbol: store.isLive ? "list.bullet.rectangle" : "antenna.radiowaves.left.and.right.slash",
-                    title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : "Monitor not connected",
+                    title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : MonitorWords.label,
                     text: store.isLive
                         ? "The journal holds the events the monitor published since it started."
                         : "The event journal lives in the monitor. It appears when the socket is live.",
-                    tint: store.isLive ? .secondary : .orange)
+                    tint: store.isLive ? .secondary : Tone.neutral.color)
             } else if store.events.isEmpty {
                 WindowEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
                                  text: "No event in the journal fits this search and these categories.",
@@ -752,7 +734,7 @@ struct EventLogView: View {
     private var banner: some View {
         HStack(spacing: 10) {
             Label("Read only", systemImage: "lock.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Color.secondary.opacity(0.14), in: .capsule)
                 .foregroundStyle(.secondary)
@@ -760,15 +742,15 @@ struct EventLogView: View {
             Text("This run's journal · \(store.replay.retained) retained" +
                  (store.replay.dropped > 0 ? " · \(store.replay.dropped) dropped" : "") +
                  (store.replay.resyncRequired ? " · resync required" : ""))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .jrbarType(.caption).foregroundStyle(.secondary)
             Spacer()
             if store.replay.liveAttention > 0 {
                 Label("\(store.replay.liveAttention) need you now — live", systemImage: "exclamationmark.bubble")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption).fontWeight(.medium)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if let error = store.replay.error {
-                Text(error).font(.system(size: 10)).foregroundStyle(.red).lineLimit(1)
+                Text(error).jrbarType(.caption).foregroundStyle(Tone.failure.color).lineLimit(1)
             }
         }
         .padding(.horizontal, 16)
@@ -786,13 +768,13 @@ struct EventLogView: View {
                         FilterChip(selected: store.eventFilter.categories.contains(category),
                                    accent: EventLogStyle.color(category)) {
                             HStack(spacing: 4) {
-                                Image(systemName: EventLogStyle.symbol(category)).font(.system(size: 9, weight: .bold))
+                                Image(systemName: EventLogStyle.symbol(category)).jrbarType(.caption).fontWeight(.bold)
                                 Text("\(category.word) \(store.eventCount(category))").monospacedDigit()
                             }
                         } action: { store.toggleEventCategory(category) }
                     }
                     if !store.eventFilter.isEmpty {
-                        Button("Clear") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).font(.system(size: 11))
+                        Button("Clear") { store.eventFilter = EventLogFilter() }.buttonStyle(.link).jrbarType(.caption)
                     }
                 }
                 .padding(.vertical, 1)
@@ -812,28 +794,28 @@ struct EventLogRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(event.at.map { EventLogStyle.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
-                .font(.system(size: 10, design: .monospaced))
+                .jrbarType(.caption).fontDesign(.monospaced)
                 .foregroundStyle(.tertiary)
                 .frame(width: 64, alignment: .leading)
             Image(systemName: EventLogStyle.symbol(category))
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .foregroundStyle(EventLogStyle.color(category))
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(LightLog.text(for: event, privacyMode: store.core.state?.usage?.privacyMode))
-                    .font(.system(size: 12, weight: .medium))
+                    .jrbarType(.callout).fontWeight(.medium)
                     .lineLimit(1)
                 if let detail = event.detail ?? event.message, !detail.isEmpty, detail != event.label {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(detail).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
             Spacer()
-            Text(event.kind).font(.system(size: 9, design: .monospaced)).foregroundStyle(.quaternary).lineLimit(1)
+            Text(event.kind).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.quaternary).lineLimit(1)
             if store.canReveal(event) {
                 Button {
                     store.reveal(event)
                 } label: {
-                    Image(systemName: "arrow.up.forward.square").font(.system(size: 11))
+                    Image(systemName: "arrow.up.forward.square").jrbarType(.caption)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
@@ -860,10 +842,10 @@ enum EventLogStyle {
 
     static func color(_ category: EventLogCategory) -> Color {
         switch category {
-        case .asks: return .orange
-        case .runs: return .green
-        case .failures: return .red
-        case .escalation: return .orange
+        case .asks: return Tone.ask.color
+        case .runs: return Tone.done.color
+        case .failures: return Tone.failure.color
+        case .escalation: return Tone.ask.color
         case .quota: return .purple
         case .devices: return .blue
         case .other: return .secondary
@@ -881,13 +863,7 @@ struct KindBadge: View {
     let kind: String
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: HistoryKindStyle.symbol(kind)).font(.system(size: 7.5, weight: .bold))
-            Text(HistoryKindStyle.word(kind)).font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundStyle(HistoryKindStyle.color(kind))
-        .padding(.horizontal, 5).padding(.vertical, 1.5)
-        .background(Capsule().fill(HistoryKindStyle.color(kind).opacity(0.13)))
+        StatusBadge(HistoryKindStyle.word(kind), tint: HistoryKindStyle.color(kind), symbol: HistoryKindStyle.symbol(kind))
     }
 }
 
@@ -896,9 +872,9 @@ struct HistoryEmptyState: View {
 
     var body: some View {
         if !store.isLive {
-            WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: "Monitor not connected",
+            WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: MonitorWords.label,
                              text: store.error ?? "History lives in the monitor. The rows come back as soon as the socket is live.",
-                             tint: .orange)
+                             tint: Tone.neutral.color)
         } else if store.loading {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Loading history…",
                              text: "Reading what finished, failed and asked for you.")

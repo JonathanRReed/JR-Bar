@@ -8,7 +8,7 @@ import JRBarUI
 
 /// Render proofs for the windows: the menu-bar panel in its main states
 /// (quiet, working, asking, usage-heavy), History, the Usage Center,
-/// Effect Studio, the Creator Micro window, What's New, Setup and the
+/// Studio, the Creator Micro window, What's New, Setup and the
 /// Overview's roster, sidebar and inspector — each in light and dark at
 /// 2×, so a human can eyeball the whole set side by side. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
@@ -26,7 +26,7 @@ struct WindowsRenderProofTests {
     /// Writes `view` at the requested width and at least the requested
     /// height, once per appearance, over the window's material plate.
     static func write<V: View>(_ name: String, size: CGSize, plate: Plate = .window,
-                               requiresKey: Bool = true, @ViewBuilder _ view: () -> V) throws {
+                               requiresKey: Bool = false, @ViewBuilder _ view: () -> V) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let content = view()
         for dark in [false, true] {
@@ -420,7 +420,7 @@ struct WindowsRenderProofTests {
         }
     }
 
-    // MARK: Effect Studio
+    // MARK: Studio
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func effectStudio() async throws {

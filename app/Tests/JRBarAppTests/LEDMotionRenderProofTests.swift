@@ -12,7 +12,7 @@ import Testing
 /// colours at reference times, into `JRBarLEDSTests/Fixtures/programs/motions`.
 ///
 /// Always: the Swift sampler must agree with the firmware on every one of
-/// them, so what Effect Studio and Settings draw is what the strip plays.
+/// them, so what Studio and Settings draw is what the strip plays.
 /// With `JRBAR_RENDER_PROOF=1`: a timeline for each (rows are time, columns
 /// are LEDs, so a sweep is a diagonal) beside the strip at a quarter, half
 /// and three quarters of its cycle, on a dark and a light stage, and the

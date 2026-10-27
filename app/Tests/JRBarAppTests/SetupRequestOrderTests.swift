@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import SwiftUI
 import Testing
@@ -83,7 +84,7 @@ struct SetupRequestOrderTests {
         var model = SetupModel()
         model.agents = { [SetupAgent(id: "claude", name: "Claude", detected: true, hookStatus: "ok")] }
         let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
-        #expect(store.agentRows[0].statusWord(monitorLive: false) == "Monitor offline")
+        #expect(store.agentRows[0].statusWord(monitorLive: false) == "Monitor not connected")
         #expect(store.summaryRows.first { $0.text == "Agents" }?.ok == false)
     }
 
@@ -96,16 +97,16 @@ struct SetupRequestOrderTests {
         let store = SettingsStore(core: core)
         let row = AgentRow(store: store, provider: "claude")
         #expect(row.statusWord == "Live")
-        #expect(row.statusColor == Color.green)
+        #expect(row.statusColor == JRBarUI.Tone.live.color)
 
         core.handle(.stateRejected("missing generation"))
 
         #expect(core.connection.isConnected)
         #expect(store.hookStatus("claude") == "ok")
         #expect(!store.isLive)
-        #expect(row.statusWord == "Monitor offline")
-        #expect(row.statusColor == Color(nsColor: .quaternaryLabelColor))
-        #expect(row.statusColor != Color.green)
+        #expect(row.statusWord == "Monitor not connected")
+        #expect(row.statusColor == JRBarUI.Tone.neutral.color)
+        #expect(row.statusColor != JRBarUI.Tone.live.color)
     }
 
     @Test(.timeLimit(.minutes(2)))
@@ -227,7 +228,7 @@ struct SetupRequestOrderTests {
         #expect(!doctor.loading)
         #expect(doctor.entry(for: "claude", live: false)?.isStale == true)
         #expect(doctor.receiverLine(live: false) == "Last report · Hook receiver not answering")
-        #expect(doctor.statusLine(live: false) == "Monitor offline. Recheck when it reconnects.")
+        #expect(doctor.statusLine(live: false) == "The monitor is not connected. Recheck when it reconnects.")
     }
 
     @Test func anOlderMonitorDoesNotKeepThePreviousReceiverVerdict() async {

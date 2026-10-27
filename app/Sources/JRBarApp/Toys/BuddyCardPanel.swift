@@ -91,12 +91,7 @@ struct BuddyPalCard: Equatable {
     /// read tolerantly, so a hand-edited or runaway figure is clamped to
     /// a year rather than trapping the Int conversion.
     static func duration(_ seconds: Double) -> String {
-        let s = Int((seconds.isFinite ? min(max(seconds, 0), maxDuration) : 0).rounded())
-        if s < 60 { return "\(s) s" }
-        let minutes = s / 60
-        if minutes < 60 { return "\(minutes) min" }
-        let hours = minutes / 60, rest = minutes % 60
-        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+        UsageTime.duration(seconds.isFinite ? min(max(seconds, 0), maxDuration) : 0)
     }
 
     /// The longest span `duration` will spell out.

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -47,7 +48,7 @@ struct ClaudeStatusLineSection: View {
             if let askToWrap {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(askToWrap, systemImage: "info.circle")
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
@@ -60,8 +61,8 @@ struct ClaudeStatusLineSection: View {
             }
             if let failure {
                 Label(failure, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color)
             }
             SettingToggle(store, "Show JR-Bar's line", subtitle: "\"JR-Bar · 2 working · 5h 58% left\" in Claude Code. Off keeps only the reading.",
                           path: "statusline_text_enabled", default: true)

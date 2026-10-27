@@ -156,11 +156,7 @@ public enum FirmwarePresenter {
 
     /// "42 s", "1 min 12 s".
     public static func duration(_ seconds: Double) -> String {
-        let whole = max(0, Int(seconds.rounded()))
-        guard whole >= 60 else { return "\(whole) s" }
-        let minutes = whole / 60
-        let rest = whole % 60
-        return rest == 0 ? "\(minutes) min" : "\(minutes) min \(rest) s"
+        UsageTime.duration(seconds)
     }
 
     // MARK: Names

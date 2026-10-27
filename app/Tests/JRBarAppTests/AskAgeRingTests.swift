@@ -62,8 +62,8 @@ struct AskAgeRingTests {
     @Test("the peek says minutes, never seconds")
     func words() {
         #expect(PanelStore.askWaitWords(opened: 0, now: 59) == nil)
-        #expect(PanelStore.askWaitWords(opened: 0, now: 60) == "1 min")
-        #expect(PanelStore.askWaitWords(opened: 0, now: 3_725) == "1 h 2 min")
+        #expect(PanelStore.askWaitWords(opened: 0, now: 60) == "1m")
+        #expect(PanelStore.askWaitWords(opened: 0, now: 3_725) == "1h 02m")
     }
 
     @Test("an asking focus rings; a working one keeps its bare glyph")
@@ -77,7 +77,7 @@ struct AskAgeRingTests {
         #expect(slot.meter == 0.5)
         #expect(slot.tone == .attention)
         #expect(slot.provider == "claude")
-        #expect(slot.text == "Needs you ·2 · 2 min")
+        #expect(slot.text == "Needs you ·2 · 2m")
         // The same minute and twelfth: the same slot, so no relayout.
         #expect(PanelStore.activitySlot(for: asking, askCount: 2, now: opened + 160, finalSeconds: 300) == slot)
 

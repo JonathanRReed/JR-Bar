@@ -7,9 +7,7 @@ import UserNotifications
 
 // MARK: - Lighting
 
-struct LightingPage: View {
-    @Bindable var store: SettingsStore
-
+enum LightingPage {
     static let blendModes: [(value: String, label: String, detail: String)] = [
         // Smooth first: it is the default, and on the Screen Bar's blended
         // surface per-agent blocks average into mud.
@@ -20,138 +18,21 @@ struct LightingPage: View {
         ("relay", "Relay", "A scanner passes in each provider colour."),
         ("weave", "Weave", "Provider colours interleave and travel."),
         ("tide", "Tide", "Provider colours meet from both ends."),
-        ("cycle", "One at a Time", "The whole strip shows one agent, then the next."),
-        ("classic", "Status Only", "One colour for whatever needs you most. Agents are not shown."),
+        ("cycle", "One at a time", "The whole strip shows one agent, then the next."),
+        ("classic", "Status only", "One colour for whatever needs you most. Agents are not shown."),
     ]
 
     static let scenes: [(value: String, label: String)] = [
         ("calm", "Calm"), ("focus", "Focus"), ("night", "Night"), ("demo", "Demo"), ("travel", "Travel"), ("dnd", "Do Not Disturb"),
     ]
 
-    private let swatchColumns = [GridItem(.adaptive(minimum: 160), alignment: .leading)]
-
-    var body: some View {
-        SettingGroup("Provider colours and animations") {
-            SettingRow("Effect Studio") {
-                Button("Open Effect Studio…") { store.onOpenEffects?() }
-            }
-            // Twelve colour wells, each with a live preview: folded until
-            // asked for, since they are most of what the page costs to open.
-            SettingsFoldRow(store, id: SettingsFold.providerColours, title: "Colours",
-                            subtitle: "Each provider's colour, beside its working light under the blend below.") {
-                LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
-                    ForEach(SettingsKey.providers, id: \.self) { provider in
-                        ProviderSwatch(store: store, provider: provider)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            ColorVisionNote(store: store, colors: providerColorsInUse)
-        }
-
-        SettingGroup("Blend") {
-            Provided(store, "colors.blend_mode") {
-                Picker(selection: store.string("colors.blend_mode", default: "color_blend")) {
-                    ForEach(Self.blendModes, id: \.value) { Text($0.label).tag($0.value) }
-                } label: {
-                    SettingLabel(title: "Blend mode", subtitle: blendDetail)
-                }
-                .pickerStyle(.menu)
-            }
-            FleetPreviewRow(store: store)
-            SettingSlider(store, "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
-            SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
-                          path: "colors.done_celebration_enabled", default: true)
-            SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
-                FinishLookPreview(core: store.core)
-                    .frame(width: 168)
-                    .opacity((store.values.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
-                    .accessibilityLabel("Done celebration preview")
-            }
-            LightingMotionRows(store: store)
-        }
-
-        SettingGroup("State colours", note: "What each state looks like, whoever is running. Ask and Error are deliberately separate — set them to the same colour and the lights still pull them apart.") {
-            LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
-                ForEach(SettingsKey.modes, id: \.self) { mode in
-                    ModeSwatch(store: store, mode: mode)
-                }
-            }
-            .padding(.vertical, 2)
-            ColorVisionNote(store: store, colors: stateColors, others: providerColorsInUse)
-        }
-
-        SettingGroup("Dimming") {
-            // The one brightness cap: General points here.
-            SettingSlider(store, "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
-                          path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
-            SettingToggle(store, "Dim when idle", path: "idle_dim_enabled", default: true)
-            SettingSlider(store, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1, default: 10, format: SettingsStore.minutes)
-                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
-            SettingSlider(store, "Idle brightness", path: "idle_dim_fraction", in: 0.05...1, default: 0.3, format: SettingsStore.percent)
-                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
-            SettingToggle(store, "Dim on display sleep", path: "sleep_dim_enabled", default: true)
-            SettingSlider(store, "Sleep brightness", path: "sleep_dim_fraction", in: 0.05...1, default: 0.2, format: SettingsStore.percent)
-                .disabled(!(store.values.bool("sleep_dim_enabled") ?? true))
-            SettingToggle(store, "Turn off when idle", subtitle: "After a long idle the lights switch off entirely.", path: "idle_auto_off_enabled")
-            SettingSlider(store, "Off after", path: "idle_auto_off_after_minutes", in: 5...1440, step: 5, default: 60, format: SettingsStore.minutes)
-                .disabled(!(store.values.bool("idle_auto_off_enabled") ?? false))
-        }
-
-        SettingGroup("Scene") {
-            SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
-                          path: "active_scene", options: Self.scenes, default: "calm")
-            ScenePackPicker(store: store)
-        }
-        DeviceLinkSettings(store: store)
-    }
-
-    /// The lit states' colours for the vision check — idle is the dark
-    /// resting whisper, never read against the others.
-    private var stateColors: [ColorVisionNote.Entry] {
-        SettingsKey.modes.filter { $0 != "idle" }.map { mode in
-            let path = "colors.mode_colors.\(mode)"
-            return ColorVisionNote.Entry(
-                id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized, path: path,
-                hex: store.values.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
-        }
-    }
-
-    /// The providers worth comparing: the ones this Mac actually runs —
-    /// a live session or an installed hook. Twelve hues all against each
-    /// other would flag pairs nobody will ever see side by side.
-    private var providerColorsInUse: [ColorVisionNote.Entry] {
-        let running = store.runningProviders
-        return SettingsKey.providers
-            .filter { running.contains($0) || (store.hookStatus($0).map { $0 != "missing" } ?? false) }
-            .map { provider in
-                let style = ProviderStyle.style(for: provider)
-                let path = "colors.agent_colors.\(provider)"
-                return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
-                                             hex: store.values.string(SettingsPath(path)) ?? style.accentHex)
-            }
-    }
-
-    private var blendDetail: String {
-        let mode = store.values.string("colors.blend_mode") ?? "color_blend"
-        return Self.blendModes.first { $0.value == mode }?.detail ?? ""
-    }
-
-    /// The colour the celebration plays in: the document's done colour when
-    /// it has one, else the firmware reference green.
-    private var celebrationColor: String {
-        for path in ["colors.done_celebration_color", "colors.mode_colors.done", "colors.status_colors.done", "colors.status_colors.completed"] {
-            if let hex = store.values.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
-        }
-        return "#00FF66"
-    }
 }
 
 /// Scene packs on the Lighting page: try one on the strip before it
 /// takes over, then use it — Hue Sync lets you look at an area before
 /// switching to it. The pack's tour (`preview_scene_pack`) plays one step
 /// per scene it overrides, in that scene's colour, at its brightness and
-/// motion. Installing and removing packs stays in Effect Studio. A core
+/// motion. Installing and removing packs stays in Studio. A core
 /// without scene-pack commands keeps the old one-line note.
 struct ScenePackPicker: View {
     @Bindable var store: SettingsStore
@@ -193,8 +74,8 @@ struct ScenePackPicker: View {
                     }
                 }
             } else if !active.isEmpty {
-                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
-                    .font(.callout)
+                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Studio.")
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -204,7 +85,7 @@ struct ScenePackPicker: View {
     }
 
     private var subtitle: String {
-        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Effect Studio." }
+        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Studio." }
         let scenes = packs.first { $0.id == shown }?.scenes ?? []
         let overrides = scenes.isEmpty ? "" : " Overrides \(ScenePackPicker.sceneList(scenes))."
         return shown == active
@@ -379,8 +260,7 @@ struct ColorVisionNote: View {
                         }
                     }
                 } label: {
-                    Label(Self.summary(rows.count), systemImage: "eye.trianglebadge.exclamationmark")
-                        .font(.callout).foregroundStyle(.secondary)
+                    StatusBanner(detail: Self.summary(rows.count))
                 }
             }
         }
@@ -396,7 +276,7 @@ struct ColorVisionNote: View {
     private func pairRow<Trailing: View>(_ text: String, @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(text)
-                .font(.callout).foregroundStyle(.secondary)
+                .jrbarType(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             trailing()
@@ -545,7 +425,7 @@ struct AutoDimSection: View {
                     .labelsHidden()
                     .accessibilityLabel("Auto-dim mode")
                     Text(mode.detail)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -740,8 +620,8 @@ struct AutoDimReadoutRow: View {
         SettingsRow("Right now", subtitle: AutoDimReadoutRow.smoothingNote(result)) {
             HStack(spacing: 6) {
                 Image(systemName: unavailable ? "exclamationmark.triangle.fill" : symbol)
-                    .foregroundStyle(unavailable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                    .font(.callout)
+                    .foregroundStyle(unavailable ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
+                    .jrbarType(.callout)
                 Text(line)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -886,11 +766,11 @@ struct FadeRow: View {
         Provided(store, floorPath, ceilingPath) {
             SettingsRow(mode.capitalized) {
                 HStack(spacing: 10) {
-                    Text("Floor").font(.callout).foregroundStyle(.secondary)
+                    Text("Floor").jrbarType(.callout).foregroundStyle(.secondary)
                     Slider(value: store.double(floorPath, default: 0.01), in: 0...1).frame(width: 90)
                         .accessibilityLabel("\(mode.capitalized) floor")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(floorPath)) ?? 0.01), width: 40)
-                    Text("Ceiling").font(.callout).foregroundStyle(.secondary).padding(.leading, 6)
+                    Text("Ceiling").jrbarType(.callout).foregroundStyle(.secondary).padding(.leading, 6)
                     Slider(value: store.double(ceilingPath, default: 0.5), in: 0...1).frame(width: 90)
                         .accessibilityLabel("\(mode.capitalized) ceiling")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(ceilingPath)) ?? 0.5), width: 40)
@@ -927,9 +807,9 @@ struct NotificationsPage: View {
                           path: "completion_notification_enabled", default: true)
             if store.notificationPermissionDenied {
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.neutral.color)
                     Text("macOS has notifications turned off for JR-Bar — banners cannot appear until it is allowed.")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .jrbarType(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Open Settings") {
                         DesktopServices.automatic.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
@@ -1015,7 +895,7 @@ struct NotificationsAdvanced: View {
             SettingSlider(store, "Or with less left than",
                           subtitle: "Time left, not charge: a fast drain at 20 % can be nearer empty than a slow one at 8 %. Twice as early while agents run under a keep-awake hold; never on macOS's first guess, never plugged in.",
                           path: "battery_monitoring.low_battery_threshold_minutes", in: 0...120, step: 5, default: 0) { minutes in
-                minutes < 1 ? "Off" : "\(Int(minutes)) min"
+                minutes < 1 ? "Off" : UsageTime.settingMinutes(minutes)
             }
             .disabled(!(store.values.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
             SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",
@@ -1215,13 +1095,8 @@ struct EventKitAccessNote: View {
 
     var body: some View {
         if Self.isRefused(status) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Text(entity == .event
-                     ? "macOS has Calendar access turned off for JR-Bar — the glow cannot see your events until it is allowed."
-                     : "macOS has Reminders access turned off for JR-Bar — the glow cannot see your reminders until it is allowed.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Spacer()
+            StatusBanner(entity == .event ? "Calendar access is off" : "Reminders access is off",
+                         detail: "Allow access in System Settings to show these events.") {
                 Button("Open Settings") {
                     let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
@@ -1316,24 +1191,24 @@ struct RemotePage: View {
             }
         }
 
-        SettingGroup("Serve", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
-            SettingToggle(store, "Serve status", subtitle: "Opens a loopback endpoint so local tools can read this desk's status.", path: "serve_enabled")
+        SettingGroup("Local tools", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
+            SettingToggle(store, "Share status with local tools", subtitle: "Lets local tools read this Mac's status.", path: "serve_enabled")
             Provided(store, "serve_enabled") {
-                SettingRow("Bearer token") {
-                    Button("Copy token") { store.copyServeToken() }
+                SettingRow("Access key", subtitle: "Bearer token for local tools.") {
+                    ActionButton("Copy key") { store.copyServeToken() }
                         .disabled(!(store.values.bool("serve_enabled") ?? false) || !store.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
         }
 
-        SettingGroup("Cloud ingest") {
-            SettingToggle(store, "Cloud ingest", subtitle: "Opens a loopback port so off-machine agents can post their own lifecycle.", path: "cloud_ingest_enabled")
+        SettingGroup("Other machines") {
+            SettingToggle(store, "Accept events from other machines", subtitle: "Receives agent events from other machines.", path: "cloud_ingest_enabled")
             Provided(store, "cloud_ingest_token_path") {
-                SettingRow("Token file") {
+                SettingRow("Access key file") {
                     HStack(spacing: 8) {
                         Text(store.values.string("cloud_ingest_token_path") ?? "")
-                            .font(.callout.monospaced())
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -1467,17 +1342,14 @@ struct StreamDeckCard: View {
 
     private var statusColor: Color {
         guard enabled, store.isLive else { return .secondary }
-        return running == true ? .green : .orange
+        return running == true ? Tone.done.color : Tone.neutral.color
     }
 
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
-            if store.isLive {
-                SettingRow("Endpoint") { StatusPill(statusText, tint: statusColor) }
-            }
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
-                            subtitle: "Serve status, the status URL and its token.") {
-                SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
+                            subtitle: "Share status with local tools and copy its access key.") {
+                SettingToggle(store, "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                               path: "serve_enabled")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("Answer from a key", isOn: Binding(
@@ -1499,10 +1371,10 @@ struct StreamDeckCard: View {
                     HStack(spacing: 8) {
                         Text("http://127.0.0.1:8737/status.json")
                             .fixedSize()
-                            .font(.callout.monospaced())
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        Button("Copy token") { store.copyServeToken() }
+                        ActionButton("Copy key") { store.copyServeToken() }
                             .disabled(!enabled || !store.isLive)
                             .help("Fetches the endpoint's bearer token from the monitor and copies it")
                     }
@@ -1511,8 +1383,8 @@ struct StreamDeckCard: View {
             }
         } header: {
             SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
-                                tint: Color(nsColor: .systemBlue), pill: connection.rawValue,
-                                pillTint: statusColor)
+                                tint: Color(nsColor: .systemBlue), pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color)
         }
         .task(id: enabled && store.isLive) { await refreshServeState() }
     }
@@ -1542,7 +1414,7 @@ struct AdvancedPage: View {
             ConnectionWordRow(store: store)
             SettingsRow("Core version") { Text(store.core.hello?.coreVersion ?? "—").foregroundStyle(.secondary) }
             SettingsRow("Socket") {
-                Text(store.core.socketPath).font(.callout.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(store.core.socketPath).jrbarType(.callout).fontDesign(.monospaced).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             SettingsRow("Capabilities") {
                 Text(store.core.hello?.capabilities.joined(separator: ", ") ?? "—")
@@ -1570,7 +1442,7 @@ struct AdvancedPage: View {
             HStack {
                 Text("Core log")
                 Spacer()
-                Text("\(store.core.logTail.count) lines").font(.callout).foregroundStyle(.tertiary)
+                Text("\(store.core.logTail.count) lines").jrbarType(.callout).foregroundStyle(.tertiary)
             }
         }
 
@@ -1647,7 +1519,7 @@ struct LogTail: View {
                             // a fixed column that wraps broke it across two
                             // lines as "UPDATE / R".
                             Text((entry.level ?? "info").uppercased())
-                                .foregroundStyle(entry.level == "error" ? Color.red : (entry.level == "warn" || entry.level == "warning" ? .orange : .secondary))
+                                .foregroundStyle(entry.level == "error" ? Tone.failure.color : (entry.level == "warn" || entry.level == "warning" ? Tone.neutral.color : .secondary))
                                 .lineLimit(1)
                                 .fixedSize()
                                 .frame(minWidth: 44, alignment: .leading)
@@ -1683,16 +1555,16 @@ struct DoctorSheet: View {
             HStack(spacing: SettingsMetrics.m) {
                 SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Chapter.advanced.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Doctor").font(.title3.weight(.semibold))
+                    Text("Doctor").jrbarType(.title3).fontWeight(.semibold)
                     Text("What the monitor checked just now.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 if report["ok"]?.boolValue == true {
-                    StatusPill("All good", tint: .green)
+                    StatusBadge("All good", tint: Tone.done.color)
                 } else if failing > 0 {
-                    StatusPill(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: .red)
+                    StatusBadge(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: Tone.failure.color)
                 }
             }
             if !checks.isEmpty {
@@ -1701,7 +1573,7 @@ struct DoctorSheet: View {
                         if index > 0 { Divider() }
                         HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Image(systemName: check["ok"]?.boolValue == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                .foregroundStyle(check["ok"]?.boolValue == true ? Color.green : .red)
+                                .foregroundStyle(check["ok"]?.boolValue == true ? Tone.done.color : Tone.failure.color)
                                 .frame(width: 16)
                             Text(check["name"]?.stringValue ?? "check")
                             Spacer()
@@ -1718,7 +1590,7 @@ struct DoctorSheet: View {
                 .background(InsetPanel())
             }
             Text("Report")
-                .font(.subheadline.weight(.semibold))
+                .jrbarType(.callout).fontWeight(.semibold)
                 .foregroundStyle(.secondary)
             ScrollView {
                 Text(Self.render(report))

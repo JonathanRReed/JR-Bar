@@ -569,7 +569,7 @@ import JRBarCore
 
     @Test("Compare's durations count whole minutes and seconds", arguments: [
         (45.0, "45s"), (95.0, "1m 35s"), (119.0, "1m 59s"), (150.4, "2m 30s"),
-        (3599.0, "59m 59s"), (5399.0, "89m 59s"), (5400.0, "1.5h"),
+        (3599.0, "59m 59s"), (5399.0, "1h 29m"), (5400.0, "1h 30m"),
     ])
     func compareDuration(seconds: Double, text: String) {
         #expect(CompareRunsSheet.durationText(seconds) == text)

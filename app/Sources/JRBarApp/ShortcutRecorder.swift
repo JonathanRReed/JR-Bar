@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Carbon
 import JRBarCore
@@ -129,7 +130,7 @@ struct ShortcutRecorderField: View {
             if let takeover {
                 HStack(spacing: 6) {
                     Text("\(takeover.chord.displayString) is “\(takeover.holder.title)”.")
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                     Button("Use Here") {
                         onTakeOver?(takeover.holder.id)
@@ -142,8 +143,8 @@ struct ShortcutRecorderField: View {
                 }
             } else if let problem {
                 Text(problem)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .jrbarType(.caption)
+                    .foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 240, alignment: .trailing)
             }
@@ -167,13 +168,13 @@ struct ShortcutRecorderField: View {
     private var label: some View {
         if recording {
             Text(held.isEmpty ? "Type shortcut…" : held + "…")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(Color.accentColor)
         } else if let chord {
             Keycaps(display: chord.displayString)
         } else {
             Text("Record Shortcut")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
         }
     }
@@ -288,8 +289,8 @@ struct ShortcutRow: View {
                 Text(title)
                 if let line = statusLine {
                     Text(line)
-                        .font(.subheadline)
-                        .foregroundStyle(isProblem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        .jrbarType(.callout)
+                        .foregroundStyle(isProblem ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

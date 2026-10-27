@@ -48,7 +48,7 @@ struct UsageProviderDetail: View {
                     .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary)
             }
             HStack {
-                Text(store.metric == .cost && showCost ? "Estimated cost" : "Tokens").font(JRBarTokens.TypeStyle.heading.font)
+                SectionHeader(store.metric == .cost && showCost ? "Estimated cost" : "Tokens")
                 Spacer()
                 Text(store.range.label).foregroundStyle(JRBarTokens.Ink.secondary)
             }
@@ -72,7 +72,7 @@ struct UsageProviderDetail: View {
 
                 if showCost {
                     VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
-                        Text("Estimated cost").font(JRBarTokens.TypeStyle.heading.font)
+                        SectionHeader("Estimated cost")
                         Text(history.costIsUnpriced ? "No price for this usage" : UsageFormat.cost(history.totalCost, currency: history.pricing?.currency ?? "USD"))
                             .font(JRBarTokens.TypeStyle.title1.font).monospacedDigit()
                     }
@@ -90,7 +90,7 @@ struct UsageProviderDetail: View {
                 UsageHistoryDetails(history: history, showCost: showCost)
             }
             Divider()
-            Text("Context · open sessions").font(JRBarTokens.TypeStyle.heading.font)
+            SectionHeader("Context · open sessions")
             if sessions.isEmpty {
                 Text("No open sessions").foregroundStyle(JRBarTokens.Ink.secondary)
             }
@@ -206,12 +206,8 @@ struct UsageForecastSummary: View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             HStack(spacing: JRBarTokens.Space.sm) {
                 Text(inspection.window.longName).font(JRBarTokens.TypeStyle.headline.font)
-                Text(inspection.verdictText)
+                StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
                     .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".verdict": inspection.displayForecast])
-                    .font(JRBarTokens.TypeStyle.section.font)
-                    .foregroundStyle(inspection.verdictColor)
-                    .padding(.horizontal, JRBarTokens.Space.sm).padding(.vertical, JRBarTokens.Space.xs)
-                    .background(inspection.verdictColor.opacity(0.12), in: Capsule())
             }
             Text(inspection.explanation).font(JRBarTokens.TypeStyle.callout.font)
                 .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".headline": inspection.displayForecast])

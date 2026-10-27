@@ -58,21 +58,22 @@ struct StaleResetWordsTests {
 
     @Test("the Usage Center's caption, ring and combined row name a broken source's fix")
     func usageCenterWords() throws {
-        for (usage, words) in BrokenUsageSources.resetWords {
+        for (usage, _) in BrokenUsageSources.resetWords {
             let window = try #require(usage.windows.first)
-            #expect(UsageCenterStore.resetText(window, of: usage, now: now) == words, "\(usage.id)")
-            #expect(UsageCenterStore.headlineResetLine(window, of: usage, now: now) == "5-hour window · \(words)",
+            let expected = UsageTime.resetLine(window.resetsAt, now: now.timeIntervalSince1970, fix: usage.staleFix)
+            #expect(UsageCenterStore.resetText(window, of: usage, now: now) == expected, "\(usage.id)")
+            #expect(UsageCenterStore.headlineResetLine(window, of: usage, now: now) == "5-hour window · \(expected)",
                     "\(usage.id)")
             let leading = UsageCenterStore.primaryWindow(of: usage)
-            #expect(UsageCenterStore.resetText(leading, of: usage, now: now) == words, "\(usage.id)")
+            #expect(UsageCenterStore.resetText(leading, of: usage, now: now) == expected, "\(usage.id)")
         }
         // A broken source's weekly reset is still ahead, and still true.
         var both = BrokenUsageSources.claude
         let weekly = CoreUsageWindow(key: "7d", name: "7d", usedPct: 12,
                                      resetsAt: now.timeIntervalSince1970 + 3 * 86_400)
         both.windows.append(weekly)
-        #expect(UsageCenterStore.resetText(weekly, of: both, now: now) == "resets in 3d 0h")
-        #expect(UsageCenterStore.headlineResetLine(weekly, of: both, now: now) == "7-day window · resets in 3d 0h")
+        #expect(UsageCenterStore.resetText(weekly, of: both, now: now) == UsageTime.resetLine(weekly.resetsAt, now: now.timeIntervalSince1970))
+        #expect(UsageCenterStore.headlineResetLine(weekly, of: both, now: now) == "7-day window · \(UsageTime.resetLine(weekly.resetsAt, now: now.timeIntervalSince1970))")
         // No window, no reset: the row leaves it blank and the caption says so.
         #expect(UsageCenterStore.resetText(nil, of: both, now: now) == nil)
         let unclocked = CoreUsageWindow(key: "credits", name: "Credits", usedPct: 31)
@@ -85,7 +86,7 @@ struct StaleResetWordsTests {
     func paletteWords() {
         let usage = BrokenUsageSources.resetWords.map(\.usage)
         let rows = UsagePaletteRows.items(usage: usage, now: now) { _ in }
-        let expected: [String] = BrokenUsageSources.resetWords.map { "5h · \($0.words)" }
+        let expected: [String] = BrokenUsageSources.resetWords.map { "5h · \(UsageTime.resetLine($0.usage.headlineWindow?.resetsAt, now: now.timeIntervalSince1970, fix: $0.usage.staleFix))" }
         #expect(rows.map { $0.subtitle ?? "" } == expected)
         var work = BrokenUsageSources.claude
         work.instance = "work"

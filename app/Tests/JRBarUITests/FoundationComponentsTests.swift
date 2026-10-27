@@ -44,19 +44,19 @@ struct FoundationComponentsTests {
         #expect(a.percentUsed == 42)
         #expect(b.percentUsed == 18)
         #expect(a.footnote == "in 42m")
-        #expect(b.footnote == "Sat 8\u{202F}AM")
+        #expect(b.footnote == "Sat 8:00\u{202F}AM")
     }
 
     @Test func resetFormattingUsesClockLocaleAndDay() {
         // Thursday 1 January 2026, 13:00 UTC.
         let clock = 1_767_272_400.0
         #expect(UsageGaugeReading.resetTime(clock + 6000, now: clock, locale: locale, timeZone: zone) == "2:40\u{202F}PM")
-        #expect(UsageGaugeReading.resetTime(clock + 86400, now: clock, locale: locale, timeZone: zone) == "Fri 1\u{202F}PM")
+        #expect(UsageGaugeReading.resetTime(clock + 86400, now: clock, locale: locale, timeZone: zone) == "Fri 1:00\u{202F}PM")
         let german = UsageGaugeReading.resetTime(clock + 6000, now: clock, locale: Locale(identifier: "de_DE"), timeZone: zone)
         #expect(german == "14:40")
-        #expect(UsageGaugeReading.interval(59) == "<1m")
-        #expect(UsageGaugeReading.interval(10800) == "3h")
-        #expect(UsageGaugeReading.interval(259200) == "3d")
+        #expect(UsageGaugeReading.interval(59) == "59s")
+        #expect(UsageGaugeReading.interval(10800) == "3h 00m")
+        #expect(UsageGaugeReading.interval(259200) == "3d 0h")
     }
 
     @Test func expiredOrExplicitlyElapsedWindowSuppressesOldPercent() {
@@ -65,7 +65,7 @@ struct FoundationComponentsTests {
         let reading = UsageGaugeReading(window: window, provider: provider, now: now)
         #expect(reading.percentUsed == nil)
         #expect(reading.elapsed)
-        #expect(reading.footnote == "<1m ago")
+        #expect(reading.footnote == "Reset now")
         window.resetsAt = now + 3600
         window.elapsed = true
         #expect(UsageGaugeReading(window: window, provider: provider, now: now).percentUsed == nil)

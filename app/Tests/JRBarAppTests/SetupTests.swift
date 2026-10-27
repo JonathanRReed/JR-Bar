@@ -332,8 +332,8 @@ import SwiftUI
         #expect(store.agentRows.map(\.id) == ["claude", "codex", "gemini"])
         #expect(store.agentRows[0].statusWord(monitorLive: true) == "Live")
         #expect(store.agentRows[1].statusWord(monitorLive: true) == "Not installed")
-        #expect(store.agentRows[2].statusWord(monitorLive: true) == "Unknown")
-        #expect(store.agentRows[2].statusWord(monitorLive: false) == "Monitor offline")
+        #expect(store.agentRows[2].statusWord(monitorLive: true) == "Not reported")
+        #expect(store.agentRows[2].statusWord(monitorLive: false) == "Monitor not connected")
         #expect(store.canInstall(store.agentRows[0]), "live monitor + detected CLI")
         #expect(!store.canInstall(store.agentRows[1]), "no CLI found disables Install")
         recorder.live = false
@@ -435,7 +435,7 @@ import SwiftUI
         await store.refreshPermissions()
         #expect(store.summaryRows.first { $0.text == "Permissions" }?.ok == false)
         #expect(SetupAgent(id: "claude", name: "Claude", hookStatus: "disabled")
-            .statusWord(monitorLive: true) == "Disabled in provider")
+            .statusWord(monitorLive: true) == "Off")
     }
 }
 

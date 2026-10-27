@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-/// Effect Studio › Moments › Lid and Finish, always on. The documents are
+/// Studio › Moments › Lid and Finish, always on. The documents are
 /// the daemon's own answers to `list_lid_presets` and `list_finish_looks`
 /// for a fresh settings file, exported by `scripts/export_motion_fixtures.py`
 /// into `JRBarCoreTests/Fixtures` (`tests/test_lid_presets.py` fails when

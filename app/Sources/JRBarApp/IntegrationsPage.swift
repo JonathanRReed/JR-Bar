@@ -112,7 +112,7 @@ struct IntegrationsPage: View {
     }
 
     private var hookSummary: String {
-        guard store.isLive else { return "Monitor not connected" }
+        guard store.isLive else { return MonitorWords.label }
         let hooks = store.core.state?.health?["hooks"]?.objectValue ?? [:]
         guard !hooks.isEmpty else { return "Not reported" }
         return hooks.keys.sorted().map { "\(ProviderPalette.displayName(for: $0)): \(hooks[$0]?.stringValue ?? "Unknown")" }
@@ -120,7 +120,7 @@ struct IntegrationsPage: View {
     }
 
     private func connection(_ name: String, status: String, page: SettingsStore.Page, feature: String? = nil) -> some View {
-        SettingsNavigationRow(name, subtitle: status) {
+        SettingsNavigationRow(name, subtitle: status == MonitorWords.label ? nil : status) {
             store.subpage = nil
             store.page = page
             if let feature { store.openFeature(feature) }

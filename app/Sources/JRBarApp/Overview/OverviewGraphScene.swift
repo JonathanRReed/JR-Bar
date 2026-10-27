@@ -376,9 +376,9 @@ private struct GraphPainter {
     /// for a failure, the provider's own colour otherwise.
     func edgeEnd(_ activity: SessionActivity, accent: Color) -> Color {
         switch activity {
-        case .waiting: .orange
-        case .failed: .red
-        case .done: .green
+        case .waiting: Tone.ask.color
+        case .failed: Tone.failure.color
+        case .done: Tone.done.color
         default: accent
         }
     }
@@ -447,7 +447,7 @@ private struct GraphPainter {
             // pane, a hairline, and its title. Someone waiting inside
             // warms all three a little.
             let halo = rect.insetBy(dx: -rect.width * 0.1, dy: -rect.height * 0.16)
-            let haloColor = waiting ? Color.orange.opacity(dark ? 0.07 : 0.06)
+            let haloColor = waiting ? Tone.ask.color.opacity(dark ? 0.07 : 0.06)
                 : (dark ? Color.white.opacity(0.03) : Color.white.opacity(0.85))
             var pool = c
             pool.translateBy(x: halo.midX, y: halo.midY)
@@ -457,8 +457,8 @@ private struct GraphPainter {
                 Self.falloff(haloColor), center: .zero, startRadius: reach * 0.3, endRadius: reach))
             let pane = Path(roundedRect: rect, cornerRadius: 24, style: .continuous)
             c.fill(pane, with: .color(clusterFill))
-            if waiting { c.fill(pane, with: .color(.orange.opacity(dark ? 0.03 : 0.025))) }
-            c.stroke(pane, with: .color(waiting ? Color.orange.opacity(0.3) : clusterStroke), lineWidth: hairline)
+            if waiting { c.fill(pane, with: .color(Tone.ask.color.opacity(dark ? 0.03 : 0.025))) }
+            c.stroke(pane, with: .color(waiting ? Tone.ask.color.opacity(0.3) : clusterStroke), lineWidth: hairline)
             if let title = c.resolveSymbol(id: "cluster." + cluster.id) {
                 drawLabel(&c, title, in: CGRect(x: rect.minX + 16, y: rect.minY + 9, width: rect.width - 32, height: 20))
             }
@@ -595,12 +595,12 @@ private struct GraphPainter {
                                            endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
         switch node.activity {
         case .waiting:
-            c.fill(body, with: .color(.orange.opacity(dark ? 0.1 : 0.07)))
-            c.stroke(body, with: .color(.orange.opacity(0.6)), lineWidth: hairline * 1.6)
+            c.fill(body, with: .color(Tone.ask.color.opacity(dark ? 0.1 : 0.07)))
+            c.stroke(body, with: .color(Tone.ask.color.opacity(0.6)), lineWidth: hairline * 1.6)
             if !motion { strokeGlow(&c, rect: rect, strength: 0.6) }
         case .failed:
-            c.fill(body, with: .color(.red.opacity(dark ? 0.08 : 0.04)))
-            c.stroke(body, with: .color(.red.opacity(0.4)), lineWidth: hairline * 1.3)
+            c.fill(body, with: .color(Tone.failure.color.opacity(dark ? 0.08 : 0.04)))
+            c.stroke(body, with: .color(Tone.failure.color.opacity(0.4)), lineWidth: hairline * 1.3)
         default:
             c.stroke(body, with: .color(capsuleStroke), lineWidth: hairline)
         }
@@ -774,14 +774,14 @@ private struct GraphPainter {
                 context.stroke(arc, with: .color(working), style: StrokeStyle(lineWidth: width, lineCap: .round))
             }
         case .waiting:
-            context.stroke(path, with: .color(.orange), lineWidth: width)
+            context.stroke(path, with: .color(Tone.ask.color), lineWidth: width)
         case .failed:
-            context.stroke(path, with: .color(.red), lineWidth: width)
-            drawBadge(&context, center: center, ring: ring, worker: worker, color: .red, check: false, alpha: 1)
+            context.stroke(path, with: .color(Tone.failure.color), lineWidth: width)
+            drawBadge(&context, center: center, ring: ring, worker: worker, color: Tone.failure.color, check: false, alpha: 1)
         case .done:
             let fade = doneFade(node)
-            context.stroke(path, with: .color(.green.opacity(0.8 * fade)), lineWidth: width - 0.4)
-            drawBadge(&context, center: center, ring: ring, worker: worker, color: .green, check: true, alpha: fade)
+            context.stroke(path, with: .color(Tone.done.color.opacity(0.8 * fade)), lineWidth: width - 0.4)
+            drawBadge(&context, center: center, ring: ring, worker: worker, color: Tone.done.color, check: true, alpha: fade)
         case .idle:
             context.stroke(path, with: .color(.secondary.opacity(0.4)), lineWidth: 1)
         case .ended:
@@ -824,7 +824,7 @@ private struct GraphPainter {
         for (spread, opacity) in Self.glowBands {
             let halo = rect.insetBy(dx: -spread / 2 - 1, dy: -spread / 2 - 1)
             context.stroke(Path(roundedRect: halo, cornerRadius: halo.height / 2, style: .continuous),
-                           with: .color(.orange.opacity(opacity * strength * 1.6)), lineWidth: spread)
+                           with: .color(Tone.ask.color.opacity(opacity * strength * 1.6)), lineWidth: spread)
         }
     }
 
@@ -1029,7 +1029,7 @@ struct GraphNetworkNodeLabel: View {
         VStack(alignment: .leading, spacing: 2) {
             GraphNodeLabel(node: node, caption: caption, side: .right, worker: worker)
             Text([node.project ?? "No folder", node.provenance].compactMap { $0 }.joined(separator: " · "))
-                .font(.system(size: 9)).foregroundStyle(.secondary)
+                .jrbarType(.caption).foregroundStyle(.secondary)
                 .lineLimit(1).truncationMode(.tail)
         }
         .frame(width: worker ? 116 : 160, height: worker ? 46 : 62, alignment: .topLeading)
@@ -1062,7 +1062,7 @@ struct GraphNodeLabel: View {
             if !worker, let caption {
                 ViewThatFits(in: .horizontal) {
                     ForEach(caption.details, id: \.self) { detail in
-                        line(caption, detail: detail).font(.system(size: 10.5)).monospacedDigit()
+                        line(caption, detail: detail).jrbarType(.caption).monospacedDigit()
                     }
                 }
             }
@@ -1083,7 +1083,7 @@ struct GraphHubCaption: View {
             Text(ProviderStyle.style(for: provider).name)
                 .font(.system(size: 12, weight: .semibold))
             Text(detail)
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
@@ -1103,7 +1103,7 @@ struct GraphClusterTitle: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: cluster.id.isEmpty ? "questionmark.folder" : "folder.fill")
-                .font(.system(size: 10.5))
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
             Text(cluster.title)
                 .font(.system(size: 12.5, weight: .semibold))
@@ -1111,7 +1111,7 @@ struct GraphClusterTitle: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text("\(cluster.nodeIDs.count)")
-                .font(.system(size: 10, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
             HStack(spacing: 3) {
