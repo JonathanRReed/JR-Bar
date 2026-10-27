@@ -903,8 +903,8 @@ struct NotchCardView: View {
         }
         if !model.meters.isEmpty || model.privacyLine != nil {
             VStack(alignment: .leading, spacing: 7) {
-                ForEach(Array(model.meters.enumerated()), id: \.element.id) { index, meter in
-                    revealRow(steps.meters + index, meterRow(meter))
+                if !model.meters.isEmpty {
+                    meterRows(model.meters, firstStep: steps.meters)
                 }
                 if let privacy = model.privacyLine {
                     revealRow(steps.privacy, privacyRow(privacy))
@@ -1209,11 +1209,17 @@ struct NotchCardView: View {
         }
     }
 
+    func meterRows(_ meters: [NotchIslandMeter], now: Date = Date(), firstStep: Int = 0) -> some View {
+        NotchUniformMeterRows(meters: meters) { index, meter, form in
+            revealRow(firstStep + index, meterRow(meter, now: now, sharedForm: form))
+        }
+    }
+
     /// One quota meter: provider, window, a continuous bar, the percent
     /// — with the reset countdown the ear's drain arc only hints at (a
     /// broken source's fix once the reset is past), and the status
     /// feed's incident mark when the vendor is having a day.
-    func meterRow(_ meter: NotchIslandMeter, now: Date = Date()) -> some View {
+    func meterRow(_ meter: NotchIslandMeter, now: Date = Date(), sharedForm: Int = 0) -> some View {
         let accent = NotchProviderTile.style(for: meter.provider).accent
         let caption = NotchMeterCaption(meter: meter, now: now)
         return HStack(spacing: 7) {
@@ -1233,7 +1239,7 @@ struct NotchCardView: View {
                     .accessibilityHidden(true)
                     .overlay(alignment: .leading) {
                         ViewThatFits(in: .horizontal) {
-                            ForEach(caption.forms, id: \.self) { form in
+                            ForEach(Array(caption.forms.enumerated()).dropFirst(sharedForm), id: \.offset) { _, form in
                                 Text(form)
                                     .fixedSize(horizontal: true, vertical: false)
                                     .accessibilityLabel(caption.help)
@@ -1260,9 +1266,29 @@ struct NotchCardView: View {
                     .layoutPriority(-1)
                     .help(caption.help)
                     .background(GeometryReader { geometry in
-                        Color.clear.preference(key: NotchMeterCaptionWidthEvidence.self,
-                            value: [meter.id: geometry.size.width])
+                        Color.clear
+                            .preference(key: NotchMeterCaptionWidthEvidence.self,
+                                value: [meter.id: geometry.size.width])
+                            .preference(key: NotchMeterCaptionFitEvidence.self,
+                                value: [meter.id: .init(kind: caption.kind, available: geometry.size.width)])
                     })
+                    .background(alignment: .leading) {
+                        ZStack(alignment: .leading) {
+                            ForEach(Array(caption.forms.enumerated()), id: \.offset) { index, form in
+                                Text(form)
+                                    .font(.system(size: 10)) // jrbar-token-exception: measure the notch caption font
+                                    .monospacedDigit()
+                                    .foregroundStyle(.clear)
+                                    .fixedSize()
+                                    .background(GeometryReader { geometry in
+                                        Color.clear.preference(key: NotchMeterCaptionFitEvidence.self,
+                                            value: [meter.id: .init(kind: caption.kind,
+                                                widths: [index: geometry.size.width])])
+                                    })
+                            }
+                        }
+                        .accessibilityHidden(true)
+                    }
             }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
