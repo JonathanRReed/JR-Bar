@@ -571,7 +571,8 @@ struct PanelTitleBar: View {
             Spacer(minLength: 0)
             if let hold = store.awakeHold {
                 Button { store.openKeepAwakeSettings() } label: {
-                    Image(systemName: hold.symbol).font(JRBarTokens.TypeStyle.caption.font)
+                    AwakeMark(symbol: hold.symbol, steam: store.awakeSteam, ink: JRBarTokens.Ink.label)
+                        .font(JRBarTokens.TypeStyle.caption.font)
                 }
                 .buttonStyle(.plain).help(hold.text).accessibilityLabel(hold.text)
                 .contextMenu { KeepAwakeMenuItems() }
@@ -614,4 +615,23 @@ func panelSectionTitle(_ title: String, trailing: String? = nil) -> some View {
             Text(trailing).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)
         }
     }.padding(.horizontal, JRBarTokens.Space.md).frame(height: PanelComposition.sectionHeight)
+}
+
+/// The awake hold's glyph: the cup steams while it holds, and only the
+/// steam thins as a countdown runs out. Any other mark (the battery, the
+/// closed lid) is drawn as it is.
+struct AwakeMark<Ink: ShapeStyle>: View {
+    let symbol: String
+    let steam: KeepAwakeSteam
+    let ink: Ink
+
+    var body: some View {
+        if symbol == KeepAwakeSteam.none.symbol, steam != .none {
+            Image(systemName: steam.symbol)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(ink, ink.opacity(steam.opacity))
+        } else {
+            Image(systemName: symbol).foregroundStyle(ink)
+        }
+    }
 }

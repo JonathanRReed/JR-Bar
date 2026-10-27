@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import JRBarCore
+import JRBarUI
 @testable import JRBarApp
 
 /// The footer's hold mark: why the Mac is awake, from `state.power`.
@@ -50,5 +51,31 @@ struct AwakeHoldTests {
             #"{"keep_awake":true,"battery":{"runway":{"agents":2,"minutes_left":20,"short":true}}}"#), working: 2))
         #expect(hold.symbol == "battery.25percent")
         #expect(hold.text.hasSuffix("\nOn battery with 2 agents working: about 20 min left"))
+    }
+}
+
+/// The panel cup, the notch chip and the Settings row read the same hold.
+@Suite("Awake marks")
+@MainActor
+struct AwakeMarkTests {
+    @Test("the cup steams while it holds and stays a plain mark otherwise")
+    func cupSteams() {
+        #expect(KeepAwakeSteam.none.symbol == "cup.and.saucer.fill")
+        #expect(KeepAwakeSteam.full.symbol != KeepAwakeSteam.none.symbol)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let reading = KeepAwakeReading(localHeld: true, until: start.addingTimeInterval(3_600), display: false,
+                                       startedAt: start)
+        #expect(reading.steam(now: start) == .full)
+        #expect(reading.steam(now: start.addingTimeInterval(2_400)) == .low)
+        #expect(reading.steam(now: start.addingTimeInterval(3_400)) == .faint)
+        let store = PanelStore(core: CoreModel(), draftsDefaults: ScratchDefaults.open(ScratchDefaults.suiteName("awake-mark")),
+                               screenBarShown: false)
+        #expect(store.awakeSteam == .none, "no monitor, no hold, no steam")
+    }
+
+    @Test("a failed status reads red on the Settings row; others stay amber")
+    func failedRowTint() {
+        #expect(SettingsFeatureRow.chipTint(.failed("Couldn't hold the Mac awake")) == Tone.failure.color)
+        #expect(SettingsFeatureRow.chipTint(.paused("Waiting")) == Tone.neutral.color)
     }
 }

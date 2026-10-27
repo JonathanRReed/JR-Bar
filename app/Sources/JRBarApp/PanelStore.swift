@@ -1116,6 +1116,12 @@ final class PanelStore {
                        working: rows.filter { $0.activity == .working && !$0.isRemote }.count)
     }
 
+    /// The cup's steam: full while the hold has no end or more than half
+    /// left, thinning as a countdown runs out (`KeepAwakeSteam`).
+    var awakeSteam: KeepAwakeSteam {
+        KeepAwakeReading(power: isLive ? core.state?.power : nil).steam(now: now)
+    }
+
     /// Amphetamine's lesson: the hold is state worth a glance. A closed
     /// lid held open outranks the plain keep-awake, since it is the one
     /// that keeps a shut laptop running. It counts only while the lid
