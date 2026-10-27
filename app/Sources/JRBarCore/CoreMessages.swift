@@ -2712,7 +2712,10 @@ public struct CoreReplyError: Codable, Hashable, Sendable, Error, LocalizedError
     /// plain words for the code. Never the code itself.
     public var sentence: String {
         if let message = message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
-            let first = message.prefix(1).uppercased() + message.dropFirst()
+            // A message that opens with a setting key keeps its case.
+            let opener = message.prefix(while: { !$0.isWhitespace })
+            let keyed = opener.contains("_") || opener.contains(".")
+            let first = keyed ? message : message.prefix(1).uppercased() + message.dropFirst()
             return ".!?…".contains(first.last ?? " ") ? first : first + "."
         }
         return Self.codeWords[code] ?? "The monitor refused that. Details are in the log."
