@@ -16,7 +16,7 @@ struct MenuBarHealthTests {
 
     @Test("the lines read plainly, the divider's with its edge")
     func lines() {
-        #expect(MenuBarEngineHealth.parked.line() == "Parked")
+        #expect(MenuBarEngineHealth.parked.line() == "Not hiding anything: the switch is off or another app draws the menu bar")
         #expect(MenuBarEngineHealth.divider.line()
                 == "Divider · the icon is the divider, position is the setting")
         #expect(MenuBarEngineHealth.divider.line(fitEdge: 901.6)

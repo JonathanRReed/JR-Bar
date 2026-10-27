@@ -1121,6 +1121,7 @@ final class DockEnhanceController {
     /// `keyboardOpened` is ⌥`: no pointer rests on the tile, and the walk
     /// starts on the app's next window when the list lands.
     func showPreview(for item: DockAXItem, keyboardOpened: Bool = false) {
+        UtilityCost.dockPreviews.tick()
         frontAppRequest = nil
         generation += 1
         // A preview is at stake from here: the tick keeps its beat even

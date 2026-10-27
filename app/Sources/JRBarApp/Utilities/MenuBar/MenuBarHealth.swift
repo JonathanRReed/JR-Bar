@@ -19,7 +19,8 @@ enum MenuBarEngineHealth: Equatable, Sendable {
     func line(fitEdge: CGFloat? = nil) -> String {
         switch self {
         case .parked:
-            return "Parked"
+            // Say what is true, not "Parked": nothing of ours hides items.
+            return "Not hiding anything: the switch is off or another app draws the menu bar"
         case .divider:
             let edge = fitEdge.map { " · edge at \(Int($0.rounded())) pt" } ?? ""
             return "Divider · the icon is the divider, position is the setting\(edge)"

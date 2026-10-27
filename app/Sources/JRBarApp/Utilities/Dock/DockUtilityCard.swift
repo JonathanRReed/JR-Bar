@@ -24,7 +24,36 @@ extension DockUtility: Toy {
         if !enhance.accessibilityTrusted {
             return .needsPermission("Needs Accessibility")
         }
-        return enhance.running || switcher.running ? .on : .paused("Parked")
+        if enhance.running || switcher.running { return .on }
+        let current = settings()
+        return Self.idleChip(previewsOn: current.enhance.hoverPreviews, switcherOn: current.switcherWanted)
+    }
+
+    /// The chip while JR-Bar has the Dock and neither half runs: that both
+    /// halves are switched off, or that they are still starting, never
+    /// "Parked". A counterpart's chip is `providerStatus`.
+    nonisolated static func idleChip(previewsOn: Bool, switcherOn: Bool) -> ToyStatus {
+        if !previewsOn && !switcherOn { return .note("Previews and switcher are off") }
+        return .paused("Starting")
+    }
+
+    /// What the Dock costs right now, measured where the work happens.
+    func cost(at now: TimeInterval) -> String? {
+        guard isOn else { return UtilityCost.off }
+        return Self.costLine(watching: enhance.running, switcher: switcher.running,
+                             previews: UtilityCost.dockPreviews.count(at: now),
+                             captures: UtilityCost.dockCaptures.count(at: now))
+    }
+
+    nonisolated static func costLine(watching: Bool, switcher: Bool, previews: Int, captures: Int) -> String {
+        var parts: [String] = []
+        if watching {
+            parts.append("Watching the Dock through Accessibility")
+            parts.append("\(UtilityCost.count(previews, "preview")), \(UtilityCost.count(captures, "capture")) in the last minute")
+        }
+        if switcher { parts.append("one key tap for the switcher chords") }
+        if parts.isEmpty { return "Nothing running · the Dock is someone else's or switched off" }
+        return parts.joined(separator: " · ")
     }
 
     var controls: AnyView { AnyView(DockUtilityControls(utility: self)) }

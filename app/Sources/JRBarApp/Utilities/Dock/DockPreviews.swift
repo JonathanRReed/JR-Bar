@@ -399,6 +399,7 @@ enum DockThumbnailer {
         guard let cgImage = try? await SCScreenshotManager.captureImage(
             contentFilter: SCContentFilter(desktopIndependentWindow: scWindow),
             configuration: configuration) else { return nil }
+        UtilityCost.dockCaptures.tick()
         guard !Self.fullyTransparent(cgImage) else { return nil }
         let trimmed = Self.trimmed(cgImage)
         let image = NSImage(

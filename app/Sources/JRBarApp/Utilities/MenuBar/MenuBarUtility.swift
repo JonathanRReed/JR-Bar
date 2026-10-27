@@ -219,8 +219,8 @@ final class MenuBarUtility: Toy {
         let name = providerName
         if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
         return probe.running
-            ? "\(name) is rendering the bar — ours is parked"
-            : "\(name) isn't running — ours stays parked"
+            ? "\(name) draws the menu bar, so JR-Bar leaves it alone"
+            : "\(name) isn't running, so nothing hides menu bar items — open it or pick JR-Bar"
     }
 
     /// The picked counterpart's display name for the note.
@@ -511,7 +511,23 @@ final class MenuBarUtility: Toy {
     var status: ToyStatus {
         if !isOn { return .off }
         if let providerStatus { return providerStatus }
-        return running ? .on : .paused("Parked")
+        // Ours is the renderer and hasn't come up yet; never "Parked".
+        return running ? .on : .paused("Starting")
+    }
+
+    /// What the Menu Bar costs right now, from what is actually running.
+    func cost(at now: TimeInterval) -> String? {
+        guard isOn else { return UtilityCost.off }
+        return Self.costLine(rechecking: hider.isRunning, conditionRules: systemTriggerSource.isPolling)
+    }
+
+    nonisolated static func costLine(rechecking: Bool, conditionRules: Bool) -> String {
+        guard rechecking else { return "Nothing running · another app draws the menu bar" }
+        var parts = ["Rechecks the bar once a second", "listens for display, Space and sleep changes"]
+        if conditionRules {
+            parts.append("condition rules checked every \(Int(MenuBarSystemTriggerSource.pollInterval)) s")
+        }
+        return parts.joined(separator: " · ")
     }
 
     var controls: AnyView {
