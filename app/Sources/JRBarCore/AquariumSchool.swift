@@ -141,6 +141,13 @@ public struct SchoolFlock: Equatable, Sendable {
 
     public init() {}
 
+    /// Whether `advance(to: t)` would do anything: its first sight, a
+    /// step falling due, or a clock set back.
+    public func isDue(at t: Double) -> Bool {
+        guard let time else { return true }
+        return t < time || t - time >= Self.step * 0.99
+    }
+
     /// The member `id`, if it swims here.
     public func member(_ id: String) -> Member? {
         index(of: id).map { members[$0] }
@@ -217,9 +224,12 @@ public struct SchoolFlock: Equatable, Sendable {
         let dt = Self.step
         let maxSpeed = k.maxSpeed * pace
         let minSpeed = k.minSpeed * pace
-        let snapshot = members
-        for i in members.indices where snapshot[i].active {
-            let me = snapshot[i]
+        // Every fish steers from the same moment: the new velocities are
+        // worked out first and applied after, so no copy of the school is
+        // taken each step.
+        var steering = [(ax: Double, ay: Double)](repeating: (0, 0), count: members.count)
+        for i in members.indices where members[i].active {
+            let me = members[i]
             var ax = 0.0
             var ay = 0.0
             var count = 0
@@ -227,8 +237,8 @@ public struct SchoolFlock: Equatable, Sendable {
             var sumVY = 0.0
             var sumX = 0.0
             var sumY = 0.0
-            for j in snapshot.indices where j != i && snapshot[j].active {
-                let other = snapshot[j]
+            for j in members.indices where j != i && members[j].active {
+                let other = members[j]
                 let dx = me.x - other.x
                 let dy = me.y - other.y
                 let d2 = dx * dx + dy * dy
@@ -282,6 +292,12 @@ public struct SchoolFlock: Equatable, Sendable {
             }
             ax += urgent.x
             ay += urgent.y
+            steering[i] = (ax, ay)
+        }
+        for i in members.indices where members[i].active {
+            let me = members[i]
+            let ax = steering[i].ax
+            let ay = steering[i].ay
             var next = me
             next.vx += ax * dt
             next.vy += ay * dt

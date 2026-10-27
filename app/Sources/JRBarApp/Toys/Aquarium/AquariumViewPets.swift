@@ -249,25 +249,26 @@ extension AquariumView {
         // The pack's shared target sweeps the midwater slowly.
         let cx = size.width * (0.5 + 0.28 * sin(t * 0.09))
         let cy = size.height * (0.42 + 0.10 * sin(t * 0.13 + 1.7))
-        let still = (0..<7).map { i in stillTetraPose(i, cx: cx, cy: cy, t: t) }
         // Reduce Motion holds the pack in its still spots.
-        guard !reduceMotion else { return still }
+        guard !reduceMotion else { return (0..<7).map { stillTetraPose($0, cx: cx, cy: cy, t: t) } }
         // Moving, they flock (`SchoolFlock`) after the target: they bunch,
-        // split round a fish in their way and re-form.
+        // split round a fish in their way and re-form. A newcomer starts
+        // at its still spot.
         let key = TankSwimMemory.tetraSchoolKey
         let school = motion.swim.school(key)
         for i in 0..<7 {
-            let spot = still[i]
-            school.flock.join(Self.tetraIDs[i], at: t, spawn: { (spot.x, spot.y) }, facing: spot.c)
+            school.flock.join(Self.tetraIDs[i], at: t, spawn: {
+                let spot = stillTetraPose(i, cx: cx, cy: cy, t: t)
+                return (spot.x, spot.y)
+            }, facing: cos(t * 0.09) >= 0 ? 1 : -1)
         }
-        let bounds = SchoolFlock.Bounds(minX: 16, minY: 30, maxX: Double(size.width) - 16,
-                                        maxY: Double(size.height) * 0.78)
-        school.flock.advance(to: t, goal: (cx, cy), bounds: bounds, obstacles: obstacles,
-                             tuning: .tetra, pace: swimTempo)
-        return (0..<7).map { i in
-            guard let member = school.flock.member(Self.tetraIDs[i]) else { return still[i] }
-            return PetPose(x: member.x, y: member.y, c: member.facing)
+        if school.flock.isDue(at: t) {
+            let bounds = SchoolFlock.Bounds(minX: 16, minY: 30, maxX: Double(size.width) - 16,
+                                            maxY: Double(size.height) * 0.78)
+            school.flock.advance(to: t, goal: (cx, cy), bounds: bounds, obstacles: obstacles,
+                                 tuning: .tetra, pace: swimTempo)
         }
+        return school.flock.members.map { PetPose(x: $0.x, y: $0.y, c: $0.facing) }
     }
 
     /// The seven tetras' ids in their school, in a stable order.

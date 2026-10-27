@@ -22,7 +22,7 @@ struct ToyFrameCostTests {
     private final class Timing { var total: Duration = .zero }
 
     /// Four working fish with six fry each, plus the tetra school.
-    private func tank() -> (AquariumView, [Fish]) {
+    private func tank(season: SeasonalOccasion? = nil) -> (AquariumView, [Fish]) {
         var roster: [Fish] = []
         for index in 0..<4 {
             let parent = Fish(id: "parent-\(index)", label: "work-\(index)",
@@ -40,13 +40,18 @@ struct ToyFrameCostTests {
             }
         }
         let game = AquariumGame(inventory: [ShopItem.tetraSchool.rawValue: 1])
-        let view = AquariumView(fixture: .init(fish: roster, game: game, night: 0))
+        let view = AquariumView(fixture: .init(fish: roster, game: game, night: 0, season: season))
         return (view, roster)
     }
 
     @Test(.enabled(if: ToyFrameCostTests.enabled, "set JRBAR_FRAME_COST=1"))
     func aquarium() throws {
-        let (view, roster) = tank()
+        try tankFrames(name: "aquarium", season: nil)
+        try tankFrames(name: "aquarium-halloween", season: SeasonalOccasion(holiday: .halloween))
+    }
+
+    private func tankFrames(name: String, season: SeasonalOccasion?) throws {
+        let (view, roster) = tank(season: season)
         let mains = Dictionary(uniqueKeysWithValues: roster.filter { !$0.isFry }.map { ($0.id, $0) })
         let frames = 900
         let timing = Timing()
@@ -74,12 +79,13 @@ struct ToyFrameCostTests {
                 view.drawTetraSchool(canvas: &canvas, size: size, t: t)
                 view.drawPlankton(canvas: &canvas, size: size, t: t, density: 1, front: false)
                 view.drawBubbles(canvas: &canvas, size: size, t: t, density: 1)
+                view.drawSeasonParticles(canvas: &canvas, size: size, t: t)
             }
             timing.total = start.duration(to: clock.now)
         }
         let renderer = ImageRenderer(content: canvas.frame(width: size.width, height: size.height))
         _ = renderer.nsImage
-        report("aquarium", frames: frames, timing.total)
+        report(name, frames: frames, timing.total)
     }
 
     /// The schools' motion alone — fry places and tetra poses, no
@@ -112,9 +118,10 @@ struct ToyFrameCostTests {
 
     @Test(.enabled(if: ToyFrameCostTests.enabled, "set JRBAR_FRAME_COST=1"))
     func buddy() throws {
-        let variants: [(name: String, gaze: BuddyGaze.Look)] = [
-            ("buddy-rest", .rest),
-            ("buddy-gaze", BuddyGaze.Look(x: 0.6, y: -0.3, weight: 1)),
+        let variants: [(name: String, gaze: BuddyGaze.Look, season: SeasonalHoliday?)] = [
+            ("buddy-rest", .rest, nil),
+            ("buddy-gaze", BuddyGaze.Look(x: 0.6, y: -0.3, weight: 1), nil),
+            ("buddy-santa-hat", .rest, .christmas),
         ]
         for variant in variants {
             let frames = 240
@@ -125,7 +132,7 @@ struct ToyFrameCostTests {
                                          tint: .blue, phase: Double(frame) / 30, hopProgress: nil,
                                          waveAge: nil, slumpAge: nil, leans: false, still: false,
                                          askCount: 0, care: .content, trick: nil, treatAge: nil,
-                                         crumbAge: nil, gaze: variant.gaze)
+                                         crumbAge: nil, gaze: variant.gaze, season: variant.season)
                     .frame(width: 30, height: 26)
                 let renderer = ImageRenderer(content: figure)
                 renderer.scale = 2

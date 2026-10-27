@@ -475,6 +475,14 @@ extension AquariumView {
         let h = fish.seed
         let phase = Double(h & 0xFF) / 0xFF * .pi * 2
         let orbitR = 30 + Double((h >> 8) & 0xFF) / 0xFF * 26
+        // Moving, the school flocks (`SchoolFlock`): each fry keeps off
+        // its siblings, swims with them and stays on its parent's flank.
+        // A newcomer joins at its still orbit spot. Reduce Motion keeps
+        // the orbit below.
+        if !reduceMotion {
+            return flockFryLayout(of: fish, in: size, at: t, now: now, parent: parent, spawnAngle: phase,
+                                  orbitR: orbitR)
+        }
         let omega = (0.45 + Double((h >> 16) & 0xFF) / 0xFF * 0.45)
             * ((h >> 24) & 1 == 0 ? 1.0 : -1.0)
         // An idling school mills about at less than half speed. The
@@ -492,13 +500,6 @@ extension AquariumView {
         // of a turn is all there is to see.
         let travel = -sin(angle) * (omega >= 0 ? 1 : -1)
         let orbitFacing = reduceMotion ? (travel >= 0 ? 1.0 : -1.0) : min(1, max(-1, travel / 0.35))
-        // Moving, the school flocks (`SchoolFlock`): each fry keeps off
-        // its siblings, swims with them and stays on its parent's flank.
-        // Reduce Motion keeps the still orbit spot above.
-        if !reduceMotion {
-            return flockFryLayout(of: fish, in: size, at: t, now: now, parent: parent, spawnAngle: angle,
-                                  orbitR: orbitR)
-        }
 
         var l = Layout()
         l.scale = pl.scale * 1.08
@@ -551,12 +552,15 @@ extension AquariumView {
         let spawn = (x: pl.x + cos(spawnAngle) * orbitR, y: pl.y + sin(spawnAngle) * orbitR * 0.5 - 12)
         school.flock.join(fish.id, at: t, spawn: { spawn }, facing: pl.yawCos, active: flocking)
         // Its flank: a little behind the parent and a touch above.
-        let goal = (x: pl.x - pl.yawCos * 24, y: pl.y - 14)
-        let parentLength = Self.fishBaseLength * pl.scale
-        let body = SchoolFlock.Obstacle(x: pl.x, y: pl.y, radius: parentLength * 0.36)
-        school.flock.advance(to: t, goal: goal, bounds: Self.schoolBounds(in: size, around: pl),
-                             obstacles: [body], tuning: .fry,
-                             pace: swimTempo * (parent.fish.state == .idling ? 0.45 : 1))
+        // Only the frame that steps the school builds what the step reads.
+        if school.flock.isDue(at: t) {
+            let goal = (x: pl.x - pl.yawCos * 24, y: pl.y - 14)
+            let parentLength = Self.fishBaseLength * pl.scale
+            let body = SchoolFlock.Obstacle(x: pl.x, y: pl.y, radius: parentLength * 0.36)
+            school.flock.advance(to: t, goal: goal, bounds: Self.schoolBounds(in: size, around: pl),
+                                 obstacles: [body], tuning: .fry,
+                                 pace: swimTempo * (parent.fish.state == .idling ? 0.45 : 1))
+        }
         let member = school.flock.member(fish.id)
             ?? SchoolFlock.Member(id: fish.id, x: spawn.x, y: spawn.y, seen: t)
 

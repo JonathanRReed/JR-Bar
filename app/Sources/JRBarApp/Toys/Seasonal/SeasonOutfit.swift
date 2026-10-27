@@ -315,13 +315,18 @@ enum SeasonOutfit {
 /// petals, hearts rising like bubbles, confetti, bats, twinkling stars,
 /// gold coins sinking. A pure function of the clock, so a held clock
 /// (Reduce Motion, resting on battery, a hidden window) is a still frame
-/// and nothing is stored between frames.
+/// and nothing is stored between frames. At a few points across the
+/// shading doesn't show, so each is one flat path: they ride the live
+/// pass and cost next to nothing there.
 enum SeasonParticles {
+    typealias Context = GraphicsContext
+
     /// How many drift at once: a few, never a blizzard.
     static let count = 9
 
-    static func draw(_ c: inout GraphicsContext, _ occasion: SeasonalOccasion, in rect: CGRect, t: Double) {
+    static func draw(_ c: inout Context, _ occasion: SeasonalOccasion, in rect: CGRect, t: Double) {
         let holiday = occasion.holiday
+        let colors = palette(holiday)
         for i in 0..<count {
             let seed = Double((i * 7919 + holiday.rawValue.count * 104_729) % 1000) / 1000
             let seed2 = Double((i * 3571 + 17) % 997) / 997
@@ -333,75 +338,113 @@ enum SeasonParticles {
             let down = CGPoint(x: x, y: rect.minY - 15 + fall)
             let up = CGPoint(x: x, y: rect.maxY + 15 - fall)
             let turn = t * (0.6 + seed) + seed * 6
+            let color = colors[i % colors.count]
             switch holiday {
-            case .christmas, .groundhogDay, .hanukkah:
-                if holiday == .hanukkah && i.isMultiple(of: 3) {
-                    coin(&c, at: down, size: size * 1.1)
+            case .christmas, .groundhogDay:
+                SeasonArt.snowflake(&c, at: down, size: size * 1.3, opacity: 0.85)
+            case .hanukkah:
+                if i.isMultiple(of: 3) {
+                    flat(&c, Path(ellipseIn: CGRect(x: down.x - size * 0.5, y: down.y - size * 0.5,
+                                                    width: size, height: size)), at: .zero, angle: 0, color: SeasonArt.gold)
                 } else {
                     SeasonArt.snowflake(&c, at: down, size: size * 1.3, opacity: 0.85)
                 }
             case .halloween:
-                let across = (seed * (rect.width + 40) + t * speed * 1.4).truncatingRemainder(dividingBy: rect.width + 40)
-                let at = CGPoint(x: rect.minX - 20 + across, y: rect.minY + seed2 * rect.height * 0.6 + sin(t + seed * 5) * 8)
                 if i % 3 == 0 {
-                    SeasonArt.bat(&c, at: at, size: size * 1.8, flap: sin(t * 6 + seed * 9))
+                    let across = (seed * (rect.width + 40) + t * speed * 1.4).truncatingRemainder(dividingBy: rect.width + 40)
+                    let at = CGPoint(x: rect.minX - 20 + across,
+                                     y: rect.minY + seed2 * rect.height * 0.6 + sin(t + seed * 5) * 8)
+                    flat(&c, batPath(size * 1.8, flap: sin(t * 6 + seed * 9)), at: at, angle: 0,
+                         color: SeasonArt.paint(0.26, 0.18, 0.36))
                 } else {
-                    SeasonArt.leaf(&c, at: down, size: size * 1.4, angle: turn,
-                                   color: [SeasonArt.paint(0.98, 0.55, 0.13), SeasonArt.paint(0.55, 0.35, 0.7)][i % 2])
+                    flat(&c, leafPath(size * 1.4), at: down, angle: turn, color: color)
                 }
             case .thanksgiving, .earthDay:
-                let colors: [Color] = holiday == .earthDay
-                    ? [SeasonArt.paint(0.36, 0.72, 0.32), SeasonArt.paint(0.5, 0.8, 0.4)]
-                    : [SeasonArt.paint(0.86, 0.3, 0.12), SeasonArt.paint(0.95, 0.6, 0.14),
-                       SeasonArt.paint(0.7, 0.36, 0.14)]
-                SeasonArt.leaf(&c, at: down, size: size * 1.6, angle: turn, color: colors[i % colors.count])
+                flat(&c, leafPath(size * 1.6), at: down, angle: turn, color: color)
             case .diaDeMuertos, .easter:
-                let colors: [Color] = holiday == .easter
-                    ? [SeasonArt.paint(0.98, 0.72, 0.78), SeasonArt.paint(0.7, 0.86, 1),
-                       SeasonArt.paint(0.98, 0.92, 0.6)]
-                    : [SeasonArt.paint(1, 0.62, 0.08), SeasonArt.paint(1, 0.78, 0.2)]
-                petal(&c, at: down, size: size * 1.2, angle: turn, color: colors[i % colors.count])
+                flat(&c, Path(ellipseIn: CGRect(x: -size * 0.6, y: -size * 0.36, width: size * 1.2, height: size * 0.72)),
+                     at: down, angle: turn, color: color)
             case .valentines:
-                SeasonArt.heart(&c, at: up, size: size * 1.4,
-                                color: [SeasonArt.paint(0.95, 0.3, 0.45), SeasonArt.paint(1, 0.6, 0.72)][i % 2])
+                flat(&c, SeasonArt.heartPath(.zero, size * 1.4), at: up, angle: sin(t + seed * 4) * 0.2, color: color)
             case .stPatricks:
-                SeasonArt.shamrock(&c, at: down, size: size * 1.5, angle: turn)
+                flat(&c, cloverPath(size * 1.5), at: down, angle: turn, color: color)
             case .newYear, .birthday, .pride, .kwanzaa:
-                let colors: [Color]
-                switch holiday {
-                case .pride: colors = SeasonArt.rainbow
-                case .kwanzaa: colors = [SeasonArt.paint(0.86, 0.16, 0.16), Color(white: 0.2),
-                                         SeasonArt.paint(0.12, 0.6, 0.3)]
-                case .newYear: colors = [SeasonArt.gold, Color(white: 0.9), SeasonArt.paint(0.75, 0.6, 1)]
-                default: colors = [SeasonArt.paint(1, 0.5, 0.6), SeasonArt.paint(0.45, 0.75, 1),
-                                   SeasonArt.paint(1, 0.82, 0.3), SeasonArt.paint(0.6, 0.86, 0.45)]
-                }
-                SeasonArt.confettiBit(&c, at: down, size: size * 1.1, angle: turn, color: colors[i % colors.count])
+                let bit = Path(roundedRect: CGRect(x: -size * 0.55, y: -size * 0.24, width: size * 1.1, height: size * 0.48),
+                               cornerSize: CGSize(width: size * 0.1, height: size * 0.1))
+                flat(&c, bit, at: down, angle: turn, color: color)
             case .lunarNewYear, .ramadanEid, .independenceDay:
-                let twinkle = 0.45 + 0.55 * abs(sin(t * 0.9 + seed * 7))
-                let at = CGPoint(x: x, y: rect.minY + seed2 * rect.height * 0.7)
-                let colors: [Color] = holiday == .independenceDay
-                    ? [SeasonArt.usRed, .white, SeasonArt.paint(0.45, 0.62, 1)]
-                    : [SeasonArt.gold, SeasonArt.paint(1, 0.9, 0.6)]
                 var spark = c
-                spark.opacity = twinkle
-                SeasonArt.star(&spark, at: at, size: size * 1.3, color: colors[i % colors.count])
+                spark.opacity = 0.45 + 0.55 * abs(sin(t * 0.9 + seed * 7))
+                let at = CGPoint(x: x, y: rect.minY + seed2 * rect.height * 0.7)
+                flat(&spark, SeasonArt.starPath(.zero, size * 0.65), at: at, angle: 0, color: color)
             }
         }
     }
 
-    private static func coin(_ c: inout GraphicsContext, at p: CGPoint, size s: Double) {
-        let rect = CGRect(x: p.x - s / 2, y: p.y - s / 2, width: s, height: s)
-        c.fill(Path(ellipseIn: rect), with: SeasonArt.lit(SeasonArt.gold, in: rect, light: 0.45))
-        c.stroke(Path(ellipseIn: rect.insetBy(dx: s * 0.15, dy: s * 0.15)),
-                 with: .color(SeasonArt.gold.mix(with: .black, by: 0.25)), lineWidth: 0.5)
+    /// Each set's particle colours.
+    static func palette(_ holiday: SeasonalHoliday) -> [Color] {
+        switch holiday {
+        case .halloween: return [SeasonArt.paint(0.98, 0.55, 0.13), SeasonArt.paint(0.55, 0.35, 0.7)]
+        case .thanksgiving:
+            return [SeasonArt.paint(0.86, 0.3, 0.12), SeasonArt.paint(0.95, 0.6, 0.14), SeasonArt.paint(0.7, 0.36, 0.14)]
+        case .earthDay: return [SeasonArt.paint(0.36, 0.72, 0.32), SeasonArt.paint(0.5, 0.8, 0.4)]
+        case .diaDeMuertos: return [SeasonArt.paint(1, 0.62, 0.08), SeasonArt.paint(1, 0.78, 0.2)]
+        case .easter:
+            return [SeasonArt.paint(0.98, 0.72, 0.78), SeasonArt.paint(0.7, 0.86, 1), SeasonArt.paint(0.98, 0.92, 0.6)]
+        case .valentines: return [SeasonArt.paint(0.95, 0.3, 0.45), SeasonArt.paint(1, 0.6, 0.72)]
+        case .stPatricks: return [SeasonArt.paint(0.2, 0.66, 0.3), SeasonArt.paint(0.3, 0.74, 0.36)]
+        case .pride: return SeasonArt.rainbow
+        case .kwanzaa: return [SeasonArt.paint(0.86, 0.16, 0.16), Color(white: 0.2), SeasonArt.paint(0.12, 0.6, 0.3)]
+        case .newYear: return [SeasonArt.gold, Color(white: 0.9), SeasonArt.paint(0.75, 0.6, 1)]
+        case .birthday:
+            return [SeasonArt.paint(1, 0.5, 0.6), SeasonArt.paint(0.45, 0.75, 1), SeasonArt.paint(1, 0.82, 0.3),
+                    SeasonArt.paint(0.6, 0.86, 0.45)]
+        case .independenceDay: return [SeasonArt.usRed, .white, SeasonArt.paint(0.45, 0.62, 1)]
+        case .lunarNewYear, .ramadanEid: return [SeasonArt.gold, SeasonArt.paint(1, 0.9, 0.6)]
+        case .christmas, .groundhogDay, .hanukkah: return [.white]
+        }
     }
 
-    private static func petal(_ c: inout GraphicsContext, at p: CGPoint, size s: Double, angle: Double, color: Color) {
+    /// One flat path at `p`, turned by `angle`.
+    private static func flat(_ c: inout Context, _ path: Path, at p: CGPoint, angle: Double, color: Color) {
         var local = c
         local.translateBy(x: p.x, y: p.y)
-        local.rotate(by: .radians(angle))
-        let rect = CGRect(x: -s * 0.5, y: -s * 0.3, width: s, height: s * 0.6)
-        local.fill(Path(ellipseIn: rect), with: SeasonArt.lit(color, in: rect, light: 0.3, dark: 0.1))
+        if angle != 0 { local.rotate(by: .radians(angle)) }
+        local.fill(path, with: .color(color))
+    }
+
+    private static func leafPath(_ s: Double) -> Path {
+        var blade = Path()
+        blade.move(to: CGPoint(x: 0, y: -s * 0.5))
+        blade.addCurve(to: CGPoint(x: 0, y: s * 0.4), control1: CGPoint(x: s * 0.5, y: -s * 0.3),
+                       control2: CGPoint(x: s * 0.42, y: s * 0.2))
+        blade.addCurve(to: CGPoint(x: 0, y: -s * 0.5), control1: CGPoint(x: -s * 0.42, y: s * 0.2),
+                       control2: CGPoint(x: -s * 0.5, y: -s * 0.3))
+        return blade
+    }
+
+    private static func cloverPath(_ s: Double) -> Path {
+        var path = Path()
+        for k in 0..<3 {
+            let a = -Double.pi / 2 + Double(k) * 2 * .pi / 3
+            let leaf = CGRect(x: cos(a) * s * 0.22 - s * 0.2, y: sin(a) * s * 0.22 - s * 0.2, width: s * 0.4, height: s * 0.4)
+            path.addEllipse(in: leaf)
+        }
+        return path
+    }
+
+    private static func batPath(_ s: Double, flap: Double) -> Path {
+        let lift = flap * s * 0.2
+        var path = Path()
+        path.addEllipse(in: CGRect(x: -s * 0.14, y: -s * 0.2, width: s * 0.28, height: s * 0.4))
+        for side in [-1.0, 1.0] {
+            path.move(to: CGPoint(x: side * s * 0.1, y: -s * 0.08))
+            path.addQuadCurve(to: CGPoint(x: side * s * 0.8, y: -s * 0.26 - lift),
+                              control: CGPoint(x: side * s * 0.42, y: -s * 0.5 - lift))
+            path.addQuadCurve(to: CGPoint(x: side * s * 0.1, y: s * 0.12),
+                              control: CGPoint(x: side * s * 0.6, y: s * 0.05 - lift))
+            path.closeSubpath()
+        }
+        return path
     }
 }
