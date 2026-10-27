@@ -386,6 +386,7 @@ final class DockUtility {
         // A trigger or scroll edit re-seats the icon gestures' monitors
         // on a watcher that was already running.
         enhance.installGestureMonitors()
+        enhance.syncNativePreviews()
         if wanted.tap { switcher.start() } else { switcher.stop() }
         // The tap can't read main-actor settings mid-callback; mirror
         // the chord switches into it on every apply.

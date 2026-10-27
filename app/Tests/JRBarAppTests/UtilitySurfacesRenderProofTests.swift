@@ -664,14 +664,14 @@ private enum Fixtures {
         content.bundleID = "com.apple.iCal"
         content.isRunning = true
         let now = Date()
-        content.calendarFreeUntil = now.addingTimeInterval(40 * 60)
-        content.calendarEvents = [
+        content.calendarNow = now
+        content.calendarState = .events([
             ShelfCalendarModel.Event(title: "Design review", start: now.addingTimeInterval(40 * 60),
                                      end: now.addingTimeInterval(70 * 60),
                                      url: URL(string: "https://zoom.us/j/1")),
             ShelfCalendarModel.Event(title: "Lunch with Maya", start: now.addingTimeInterval(3 * 3600),
                                      end: now.addingTimeInterval(4 * 3600), url: nil),
-        ]
+        ])
         return content
     }
 

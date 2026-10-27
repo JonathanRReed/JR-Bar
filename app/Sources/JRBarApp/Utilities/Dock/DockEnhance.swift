@@ -1,6 +1,5 @@
 import AppKit
 import ApplicationServices
-import EventKit
 import JRBarCore
 import Observation
 import OSLog
@@ -402,10 +401,7 @@ final class DockEnhanceController {
     /// The scroll gesture's running total, per tile.
     @ObservationIgnored private var scrollFlick = DockEnhanceMath.SwipeAccumulator()
     @ObservationIgnored private var scrollTile: String?
-    /// The `MediaFeed` reader a player tile's preview holds — started
-    /// on show, released on hide, so the perl helper only lives while
-    /// a media card is actually up.
-    @ObservationIgnored private var mediaToken: UUID?
+    @ObservationIgnored var nativePreviews = DockNativePreviews()
     /// The daemon's live sessions as marks — wired by `DockUtility`.
     @ObservationIgnored var agentMarks: @MainActor () -> [DockAgentMark] = { [] }
     /// The notch Shelf's tray — wired by the app delegate. A folder
@@ -1232,25 +1228,15 @@ final class DockEnhanceController {
         guard generation == landing.generation else { return }
         let item = landing.item
         liveStill.stop()
-        if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
-        mediaToken = nil
+        nativePreviews.stop()
         preview.largeCards = preferences.largePreviews
         preview.metrics = preferences.metrics
         preview.hugWindows = preferences.cardsHugWindows
         fill(preview, for: item, tile: landing.tile, answer: answer)
+        nativePreviews.seed(content: preview, settings: preferences.read())
+        preview.nativeWindowsExpanded = landing.keyboardOpened
 
-        // Nothing to preview — no windows to raise — is no panel. A
-        // running app with no windows earned a header-only chip on
-        // every pass before; an app not running has the Dock's own
-        // click to open it. A folder tile pops even when empty — the
-        // pop is the point of the hover — and a player or the Calendar
-        // tile earns its row even without a window. The tracker keeps
-        // the tile as shown, so this does not retry on every tick.
-        let earnsRow = preview.bundleID.map {
-            DockEnhanceMath.playerBundleIDs.contains($0)
-                || $0 == DockEnhanceMath.calendarBundleID
-        } ?? false
-        guard !preview.windows.isEmpty || preview.folderURL != nil || earnsRow else {
+        guard previewHasContent else {
             hidePreview()
             return
         }
@@ -1339,43 +1325,7 @@ final class DockEnhanceController {
             loadFolder(folderURL, generation: generationAtShow)
         }
 
-        // A player tile subscribes to the shared Now Playing feed for
-        // the life of its panel — any app tile too while another surface
-        // already runs the feed; the reader applies the bundle match —
-        // a track from a different app never lands on this one.
-        if let bundleID = preview.bundleID,
-           DockEnhanceMath.readsMedia(appBundleID: bundleID, feedRunning: MediaFeed.shared.isRunning) {
-            mediaToken = MediaFeed.shared.subscribe { [weak self] media in
-                guard let self, self.generation == generationAtShow else { return }
-                self.preview.media = media.flatMap {
-                    DockEnhanceMath.showsMediaRow(
-                        mediaBundleID: $0.bundleIdentifier,
-                        appBundleID: bundleID) ? $0 : nil
-                }
-                self.reframe()
-            }
-        }
-
-        // The Calendar tile: read the rest of today only when the grant
-        // already exists — a hover never prompts, it offers. A meeting
-        // app's tile reads too, but only under an existing grant: it
-        // never offers one.
-        if let bundleID = preview.bundleID, DockEnhanceMath.isMeetingApp(bundleID),
-           EKEventStore.authorizationStatus(for: .event) == .fullAccess {
-            loadCalendarRow(generation: generationAtShow, meetingApp: bundleID)
-        }
-        if preview.bundleID == DockEnhanceMath.calendarBundleID {
-            switch EKEventStore.authorizationStatus(for: .event) {
-            case .fullAccess:
-                loadCalendarRow(generation: generationAtShow)
-            case .notDetermined, .writeOnly:
-                preview.calendarNeedsAuth = true
-            case .denied, .restricted:
-                break
-            @unknown default:
-                break
-            }
-        }
+        startNativePreviews()
 
         if preferences.showThumbnails, !preview.compact, screenCaptureGranted,
            let pid = preview.processIdentifier {
@@ -1407,8 +1357,7 @@ final class DockEnhanceController {
         liveStill.stop()
         anchor = nil
         windowObserver.stop()
-        if let mediaToken { MediaFeed.shared.unsubscribe(mediaToken) }
-        mediaToken = nil
+        nativePreviews.stop()
         watchers.stop()
         switcher.setPreviewOpen(false)
         panel?.dismiss()
@@ -1535,10 +1484,7 @@ final class DockEnhanceController {
             preview.selectedWindowID = nil
         }
         applyAgents(to: preview)
-        let earnsRow = preview.bundleID.map {
-            DockEnhanceMath.playerBundleIDs.contains($0) || $0 == DockEnhanceMath.calendarBundleID
-        } ?? false
-        if merged.isEmpty, !earnsRow {
+        if !previewHasContent {
             // The app's last window closed elsewhere — nothing left to raise.
             tracker.reset()
             hidePreview()
@@ -1675,8 +1621,8 @@ final class DockEnhanceController {
         panel.actions.onMinimizeAll = { [weak self] in self?.minimizeAll() }
         panel.actions.onCloseAll = { [weak self] in self?.closeAll() }
         panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
-        panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
-        panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
+        panel.actions.onMediaCommand = { [weak self] in self?.nativePreviews.send($0) }
+        panel.actions.onMediaSeek = { [weak self] in self?.nativePreviews.seek(to: $0) }
         panel.actions.lyrics = lyrics
         panel.actions.onReveal = { url in DesktopServices.automatic.reveal([url]) }
         panel.actions.onDrillFolder = { [weak self] url in self?.drillFolder(url) }
@@ -1687,6 +1633,15 @@ final class DockEnhanceController {
             self?.swipeMinimize(window, minimize)
         }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
+        panel.actions.onCalendarOpen = {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.calendarBundleID) {
+                DesktopServices.automatic.open(url)
+            }
+        }
+        panel.actions.onNativeWindowsChange = { [weak self] in
+            self?.reframe()
+            self?.mirrorPreviewChars()
+        }
         panel.actions.onCalendarJoin = { url in
             guard let url else { return }
             DesktopServices.automatic.open(url)
@@ -1729,9 +1684,9 @@ final class DockEnhanceController {
         content.folderTrail = []
         content.folderEntries = []
         content.media = nil
-        content.calendarEvents = []
-        content.calendarFreeUntil = nil
-        content.calendarNeedsAuth = false
+        content.mediaPending = false
+        content.calendarState = nil
+        content.nativeWindowsExpanded = false
         content.badge = item.badge
         if let key = agentGuard.armedKey { content.clearGuardNote(key) }
         content.armedWindowID = nil
@@ -1989,7 +1944,7 @@ final class DockEnhanceController {
     /// the player row.
     private func previewAction(_ action: String) {
         if action == " " {
-            MediaFeed.shared.send(.togglePlayPause)
+            nativePreviews.send(.togglePlayPause)
             return
         }
         guard let id = preview.selectedWindowID,
@@ -2040,7 +1995,9 @@ final class DockEnhanceController {
             let next = current.map {
                 ($0 + delta + windows.count) % windows.count
             } ?? (delta > 0 ? 0 : windows.count - 1)
+            let wasCollapsed = !preview.showsWindows
             preview.selectedWindowID = windows[next].id
+            if wasCollapsed { reframe() }
             mirrorPreviewChars()
             return true
         case 36, 76: // Return / keypad Enter
@@ -2419,67 +2376,39 @@ final class DockEnhanceController {
         hidePreview()
     }
 
-    /// The calendar row — the shelf's own read (24 h, not all-day,
-    /// earliest first) done off-main; an EventKit query is a synchronous
-    /// IPC to `calendard` and a hover never waits on it. The Calendar
-    /// tile gets today's glance; a meeting app gets the one event whose
-    /// link it opens, or no row.
-    private func loadCalendarRow(generation: Int, meetingApp: String? = nil) {
-        Task { @MainActor [weak self] in
-            let events = await Task.detached(priority: .userInitiated) {
-                Self.upcomingCalendarEvents()
-            }.value
-            guard let self, self.generation == generation else { return }
-            let now = Date()
-            if let meetingApp {
-                self.preview.calendarEvents = DockEnhanceMath.meetingEvent(
-                    for: meetingApp, in: events, now: now).map { [$0] } ?? []
-                self.preview.calendarFreeUntil = nil
-            } else {
-                let glance = DockEnhanceMath.calendarGlance(events, now: now)
-                self.preview.calendarEvents = glance.events
-                self.preview.calendarFreeUntil = glance.freeUntil
-            }
-            self.reframe()
+    /// Start readers after the panel's first presentation. Tests inject synthetic sources.
+    func startNativePreviews() {
+        nativePreviews.onChange = { [weak self] in self?.nativePreviewChanged() }
+        nativePreviews.start(content: preview, settings: preferences.read())
+    }
+
+    private var previewHasContent: Bool {
+        !preview.windows.isEmpty || preview.folderURL != nil || preview.hasNativeCard || preview.mediaPending
+    }
+
+    private func nativePreviewChanged() {
+        reframe()
+        mirrorPreviewChars()
+        guard !previewHasContent else { return }
+        // Subscribe can deliver synchronously, before its token is stored. Close on the next turn.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.previewUp, !self.previewHasContent else { return }
+            // Keep the hover shown so an empty source is not retried until the pointer leaves.
+            self.hidePreview()
         }
     }
 
-    /// One EventKit store for every hover — building one per hover paid
-    /// its database open each time. Created on the first read, which
-    /// only ever runs under an existing Full Calendar grant.
-    nonisolated(unsafe) private static var calendarStore: EKEventStore?
-    nonisolated private static let calendarStoreLock = NSLock()
-
-    /// The EventKit half of the calendar row — pure enough to run on a
-    /// worker: the grant is already checked, and `project`/`joinableURL`
-    /// are nonisolated. Empty reads as "nothing upcoming".
-    nonisolated static func upcomingCalendarEvents() -> [ShelfCalendarModel.Event] {
-        let store: EKEventStore = calendarStoreLock.withLock {
-            if let calendarStore { return calendarStore }
-            let made = EKEventStore()
-            calendarStore = made
-            return made
-        }
-        let now = Date()
-        let predicate = store.predicateForEvents(
-            withStart: now, end: now.addingTimeInterval(24 * 3600), calendars: nil)
-        return store.events(matching: predicate)
-            .filter { !$0.isAllDay }
-            .sorted { $0.startDate < $1.startDate }
-            .map { ShelfCalendarModel.project($0) }
+    func syncNativePreviews() {
+        guard previewUp else { return }
+        nativePreviews.update(settings: preferences.read())
     }
 
-    /// The calendar row's explicit ask — "Show events" requests the
-    /// Full Calendar grant, then fills the row when it's given.
     private func authorizeCalendar() {
-        let store = EKEventStore()
         let generationAtAuth = generation
-        store.requestFullAccessToEvents { [weak self] granted, _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.generation == generationAtAuth else { return }
-                self.preview.calendarNeedsAuth = false
-                if granted { self.loadCalendarRow(generation: generationAtAuth) }
-            }
+        Task { @MainActor [weak self] in
+            await SetupModel.requestCalendar()
+            guard let self, self.generation == generationAtAuth else { return }
+            self.nativePreviews.calendar.refresh()
         }
     }
 
