@@ -109,7 +109,7 @@ class TranscriptTail:
             item = self.rows.get(line)
             if item is None:
                 item = TranscriptRow(line)
-            retained[line] = item
+            retained[item.text] = item
             yield item
         self.rows = retained
 
