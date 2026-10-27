@@ -892,7 +892,8 @@ struct FoldRenderProofTests {
                 let out = try Self.makeTarget(renderer.device, width: panelWidth, height: panelHeight)
                 #expect(renderer.render(to: out, size: CGSize(width: panelWidth, height: panelHeight)))
                 let full = try Self.image(out)
-                let label = String(format: "%@ picture, glass %.1f°", scale == 1 ? "1512×982 (0.10.0)" : "3024×1964 (now)", angle)
+                let picture: String = scale == 1 ? "1512×982 (0.10.0)" : "3024×1964 (now)"
+                let label = String(format: "%@ picture, glass %.1f°", picture, angle)
                 rows.append((label, try #require(full.cropping(to: crop))))
             }
         }
@@ -932,8 +933,11 @@ struct FoldRenderProofTests {
     /// Pictures stacked top to bottom at 1:1, each under its label.
     static func stack(_ rows: [(String, CGImage)], title: String) throws -> CGImage {
         let pad = 12, label = 26, head = 34
-        let w = (rows.map { $0.1.width }.max() ?? 1) + 2 * pad
-        let h = head + rows.reduce(0) { $0 + $1.1.height + label + pad } + pad
+        let widest: Int = rows.map { $0.1.width }.max() ?? 1
+        let w = widest + 2 * pad
+        var rowsHeight = 0
+        for row in rows { rowsHeight += row.1.height + label + pad }
+        let h = head + rowsHeight + pad
         let ctx = try #require(CGContext(
             data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
