@@ -206,6 +206,13 @@ final class MenuBarUtility: Toy {
 
     /// What the card's chip says while a counterpart owns the surface —
     /// nil under `.jrbar`, so the header falls back to the engine line.
+    var providerStatus: ToyStatus? {
+        guard let probe = externalProbe else { return nil }
+        _ = workspaceVersion
+        return UtilityProviderStatus.make(name: providerName, surface: "the menu bar",
+                                          installed: probe.installed, running: probe.running)
+    }
+
     var providerNote: String? {
         guard let probe = externalProbe else { return nil }
         _ = workspaceVersion
@@ -503,6 +510,7 @@ final class MenuBarUtility: Toy {
 
     var status: ToyStatus {
         if !isOn { return .off }
+        if let providerStatus { return providerStatus }
         return running ? .on : .paused("Parked")
     }
 

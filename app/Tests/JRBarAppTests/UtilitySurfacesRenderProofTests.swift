@@ -538,9 +538,8 @@ struct UtilitySurfacesRenderProofTests {
         proofWindow.appearance = hosting.appearance
         proofWindow.contentView = hosting
         defer { proofWindow.contentView = nil; proofWindow.close() }
-        try WindowPresenter.renderProofKey(proofWindow)
-        if !proofWindow.isKeyWindow { FoundationRenderProofTests.runUntilKey(proofWindow) }
-        #expect(proofWindow.isKeyWindow)
+        // Native controls use the explicit controlActiveState above. Proofs
+        // share one app, so making each window key races the other suites.
         hosting.layoutSubtreeIfNeeded()
         let scale: CGFloat = 2
         let bitmap = try #require(NSBitmapImageRep(

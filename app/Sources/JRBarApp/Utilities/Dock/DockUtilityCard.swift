@@ -20,6 +20,7 @@ extension DockUtility: Toy {
 
     var status: ToyStatus {
         guard isOn else { return .off }
+        if let status = providerStatus { return status }
         if !enhance.accessibilityTrusted {
             return .needsPermission("Needs Accessibility")
         }

@@ -210,11 +210,11 @@ struct MenuBarDividerHint: View {
 }
 
 /// The suggestions list: the apps the old list hid, with where each sits.
-/// Acting on one is a ⌘-drag only the person can make; the row can only
-/// be taken off the list.
+/// Moving an item is a ⌘-drag. An absent item can be checked again.
 struct MenuBarSuggestionsPanel: View {
     let content: MenuBarSuggestionsContent
     var onForget: (String) -> Void = { _ in }
+    var onRecheck: () -> Void = {}
     /// The most rows drawn before the rest fold into a count.
     static let visibleRows = 8
 
@@ -232,9 +232,14 @@ struct MenuBarSuggestionsPanel: View {
                     Text(MenuBarPositionCopy.suggestionLine(name: row.name, state: row.state))
                         .font(.system(size: 12))
                     Spacer(minLength: 0)
-                    Button("Not now") { onForget(row.id) }
-                        .controlSize(.small)
-                        .help("Stop suggesting \(row.name). It stays where it is.")
+                    if row.state == .absent {
+                        Button("Check again", action: onRecheck)
+                            .controlSize(.small)
+                    } else {
+                        Button("Not now") { onForget(row.id) }
+                            .controlSize(.small)
+                            .help("Stop suggesting \(row.name). It stays where it is.")
+                    }
                 }
             }
             if content.rows.count > Self.visibleRows {

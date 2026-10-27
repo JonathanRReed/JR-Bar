@@ -12,6 +12,7 @@ enum ToyStatus: Equatable {
     case on
     case paused(String)
     case needsPermission(String)
+    case failed(String)
     case external(String)
     case unavailable(String)
     /// Working, but a missing permission holds back part of it —
@@ -27,7 +28,7 @@ enum ToyStatus: Equatable {
         case .off: return "Off"
         case .on: return "On"
         case .paused(let why): return why
-        case .needsPermission(let why): return why
+        case .needsPermission(let why), .failed(let why): return why
         case .external(let what): return what
         case .unavailable(let why): return why
         case .limited(let what): return what
@@ -40,7 +41,7 @@ enum ToyStatus: Equatable {
         case .off: return Color(nsColor: .tertiaryLabelColor)
         case .on: return Tone.done.color
         case .paused, .external, .limited: return Tone.neutral.color
-        case .needsPermission: return Tone.failure.color
+        case .needsPermission, .failed: return Tone.failure.color
         case .unavailable, .note: return Color(nsColor: .secondaryLabelColor)
         }
     }

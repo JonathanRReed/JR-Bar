@@ -39,20 +39,14 @@ enum MenuBarRivals {
         var handoff: MenuBarProvider?
     }
 
-    nonisolated static let known: [Rival] = [
-        Rival(name: "Bartender",
-              bundleIDs: ["com.surteesstudios.Bartender", "com.surteesstudios.Bartender-4",
-                          "com.surteesstudios.Bartender-5", "com.surteesstudios.Bartender-6",
-                          "com.surteesstudios.Bartender-7"],
-              handoff: .bartender),
-        Rival(name: "Ice", bundleIDs: ["com.jordanbaird.Ice"], handoff: .ice),
-        Rival(name: "Hidden Bar", bundleIDs: ["com.dwarvesf.hidden"], handoff: .hiddenBar),
-        Rival(name: "Vanilla", bundleIDs: ["net.matthewpalmer.Vanilla"], handoff: nil),
-        Rival(name: "Dozer", bundleIDs: ["com.mortennn.Dozer"], handoff: nil),
-        Rival(name: "Barbee", bundleIDs: ["com.HyperartFlow.Barbee"], handoff: nil),
-        Rival(name: "Tuck", bundleIDs: [], handoff: nil),
-        Rival(name: "SaneBar", bundleIDs: [], handoff: nil),
-    ]
+    nonisolated static var known: [Rival] {
+        UtilityRivals.known.filter { $0.roles.contains(.menuBar) }.map { rival in
+            let provider: MenuBarProvider?
+            if case .menuBar(let value)? = rival.handoff(for: .menuBar) { provider = value }
+            else { provider = nil }
+            return Rival(name: rival.name, bundleIDs: rival.bundleIDs, handoff: provider)
+        }
+    }
 
     /// The named rival's bundle ids, newest release first: numbered ids
     /// descending, a bare id (which several releases shared) last.

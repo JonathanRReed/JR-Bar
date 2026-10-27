@@ -20,18 +20,15 @@ import Observation
 ///   the Mac sleeps once both let go.
 ///
 /// Matching is by bundle id, or by the app's own name for rivals whose
-/// id is not pinned. The menu bar keeps its own list (`MenuBarRivals`)
-/// and its own note this wave, and so does the Dock card's switcher
-/// (its chord note); the `.switcher` role is here for the day that note
-/// reads this table.
+/// id is not pinned. MenuBarRivals projects this same table for its card.
 enum UtilityRivals {
     enum Role: String, CaseIterable, Sendable {
-        case dockPreviews, switcher, notch, hud, shelfGesture, keepAwake
+        case menuBar, dockPreviews, switcher, notch, hud, shelfGesture, keepAwake
 
         /// How JR-Bar behaves while a rival for this role runs.
         var policy: Policy {
             switch self {
-            case .dockPreviews, .switcher, .notch, .hud: return .ask
+            case .menuBar, .dockPreviews, .switcher, .notch, .hud: return .ask
             case .shelfGesture: return .stepAside
             case .keepAwake: return .informOnly
             }
@@ -49,6 +46,7 @@ enum UtilityRivals {
 
     /// The pick that hands a role's surface to a rival.
     enum Handoff: Equatable, Sendable {
+        case menuBar(MenuBarProvider)
         case dock(DockProvider)
         case switcher(DockSwitcherProvider)
         case notch(NotchProvider)
@@ -91,6 +89,19 @@ enum UtilityRivals {
     /// projects where the source is public, and from the shipped app
     /// otherwise; a name match covers the rest.
     nonisolated static let known: [Rival] = [
+        Rival(name: "Bartender",
+              bundleIDs: ["com.surteesstudios.Bartender", "com.surteesstudios.Bartender-4",
+                          "com.surteesstudios.Bartender-5", "com.surteesstudios.Bartender-6",
+                          "com.surteesstudios.Bartender-7"],
+              roles: [.menuBar], handoffs: [.menuBar: .menuBar(.bartender)]),
+        Rival(name: "Ice", bundleIDs: ["com.jordanbaird.Ice"], roles: [.menuBar], handoffs: [.menuBar: .menuBar(.ice)]),
+        Rival(name: "Hidden Bar", bundleIDs: ["com.dwarvesf.hidden"], roles: [.menuBar], handoffs: [.menuBar: .menuBar(.hiddenBar)]),
+        Rival(name: "Vanilla", bundleIDs: ["net.matthewpalmer.Vanilla"], roles: [.menuBar]),
+        Rival(name: "Dozer", bundleIDs: ["com.mortennn.Dozer"], roles: [.menuBar]),
+        Rival(name: "Barbee", bundleIDs: ["com.HyperartFlow.Barbee"], roles: [.menuBar]),
+        Rival(name: "Tuck", bundleIDs: [], roles: [.menuBar]),
+        Rival(name: "SaneBar", bundleIDs: [], roles: [.menuBar]),
+
         Rival(name: "DockDoor", bundleIDs: ["com.ethanbills.DockDoor", "com.ejbills.DockDoor"],
               roles: [.dockPreviews, .switcher],
               handoffs: [.dockPreviews: .dock(.dockDoor), .switcher: .switcher(.dockDoor)]),
@@ -175,6 +186,8 @@ enum UtilityRivals {
     /// The note's sentence for one running rival.
     nonisolated static func note(for rival: Rival, role: Role) -> String {
         switch role {
+        case .menuBar:
+            return "\(rival.name) is also hiding menu bar items."
         case .dockPreviews:
             return "\(rival.name) is also drawing Dock previews, so hovering an icon can open two."
         case .switcher:
@@ -216,5 +229,14 @@ final class UtilityRivalsWatch {
 
     isolated deinit {
         if let listener { index.removeListener(listener) }
+    }
+}
+
+/// A selected counterpart owns the surface even while JR-Bar is parked.
+enum UtilityProviderStatus {
+    static func make(name: String, surface: String, installed: Bool, running: Bool) -> ToyStatus {
+        guard installed else { return .unavailable("\(name) isn't installed") }
+        guard running else { return .unavailable("\(name) isn't running") }
+        return .external("\(name) draws \(surface)")
     }
 }

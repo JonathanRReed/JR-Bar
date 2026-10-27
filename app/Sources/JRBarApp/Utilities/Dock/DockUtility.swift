@@ -124,6 +124,13 @@ final class DockUtility {
 
     /// What the card's chip says while a counterpart owns the surface —
     /// nil under `.jrbar`, so the card falls back to the watcher copy.
+    var providerStatus: ToyStatus? {
+        guard let probe = externalProbe else { return nil }
+        _ = workspaceVersion
+        return UtilityProviderStatus.make(name: providerName, surface: "the previews",
+                                          installed: probe.installed, running: probe.running)
+    }
+
     var providerNote: String? {
         guard let probe = externalProbe else { return nil }
         _ = workspaceVersion
