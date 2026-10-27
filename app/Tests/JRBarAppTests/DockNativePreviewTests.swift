@@ -34,7 +34,7 @@ struct DockNativePreviewTests {
         return content
     }
 
-    private func calendar(_ events: [ShelfCalendarModel.Event] = []) -> DockCalendarPreview {
+    private func makeCalendar(_ events: [ShelfCalendarModel.Event] = []) -> DockCalendarPreview {
         let calendar = DockCalendarPreview(reader: ShelfCalendarReader(fetch: { _ in events }))
         calendar.authorization = { .fullAccess }
         calendar.clock = { Self.now }
@@ -91,7 +91,7 @@ struct DockNativePreviewTests {
 
     @Test("calendar-only does not start media, media-only does not read Calendar")
     func independentReaders() async {
-        let calendar = calendar()
+        let calendar = makeCalendar()
         let monitor = Monitor()
         let feed = MediaFeed(monitor: monitor)
         let readers = DockNativePreviews(feed: feed, calendar: calendar)
@@ -187,7 +187,7 @@ struct DockNativePreviewTests {
         let monitor = Monitor()
         let feed = MediaFeed(monitor: monitor)
         let notch = feed.subscribe { _ in }
-        let readers = DockNativePreviews(feed: feed, calendar: calendar())
+        let readers = DockNativePreviews(feed: feed, calendar: makeCalendar())
         let card = content("com.spotify.client")
         readers.start(content: card, settings: DockEnhanceSettings(calendarPreview: false))
         #expect(monitor.starts == 1 && feed.readerCount == 2)
@@ -229,7 +229,7 @@ struct DockNativePreviewTests {
     func currentPlayerAndOff() {
         let monitor = Monitor()
         let feed = MediaFeed(monitor: monitor)
-        let readers = DockNativePreviews(feed: feed, calendar: calendar())
+        let readers = DockNativePreviews(feed: feed, calendar: makeCalendar())
         let card = content("test.browser")
         readers.start(content: card, settings: DockEnhanceSettings())
         monitor.onChange?(AlcoveMedia(title: "Browser song", playing: true, bundleIdentifier: "test.browser"))
@@ -319,7 +319,7 @@ struct DockNativePreviewTests {
         let monitor = Monitor()
         monitor.reportEmptyOnStart = !playing
         let feed = MediaFeed(monitor: monitor)
-        let calendar = calendar()
+        let calendar = makeCalendar()
         let preferences = DockEnhancePreferences()
         preferences.read = { DockEnhanceSettings(calendarPreview: false) }
         let controller = DockEnhanceController(preferences: preferences)

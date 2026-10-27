@@ -58,7 +58,7 @@ final class ShelfCalendarReader: @unchecked Sendable {
                 invalidate()
                 return []
             }
-            let snapshot = cacheLock.withLock { (cached, generation) }
+            let snapshot = cacheLock.withLock { (self.cached, self.generation) }
             if let cached = snapshot.0, now >= cached.at,
                now.timeIntervalSince(cached.at) < Self.cacheLifetime {
                 return cached.events
@@ -97,7 +97,7 @@ final class ShelfCalendarReader: @unchecked Sendable {
 
     /// Call only under `storeLock`.
     private func readStore() -> EKEventStore {
-        if let store { return store }
+        if let store = self.store { return store }
         let store = EKEventStore()
         self.store = store
         return store
