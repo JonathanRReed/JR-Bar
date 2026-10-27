@@ -79,7 +79,7 @@ struct LinkedSyncControls: View {
 
     private func checkRow(running: Bool) -> some View {
         SettingRow("Check sync", subtitle: checkSubtitle(running: running)) {
-            Button(running ? "Checking…" : "Check sync") { startCheck() }
+            ActionButton(running ? "Checking…" : "Check sync") { startCheck() }
                 .disabled(!extending || !store.core.isLive || sending || running)
         }
     }

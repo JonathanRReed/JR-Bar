@@ -32,6 +32,7 @@ PATTERNS = {
     "ui-name": re.compile(r'"[^"\n]*(?:Effect Studio|Lights Studio|One at a Time|Status Only|Global Mix|Blend mode)[^"\n]*"|"Blend"'),
     "usage-direction": re.compile(r'% left|percent[^"\n]*\) left'),
     "quota-tone": re.compile(r'JRBarTokens\.Ink\.attention'),
+    "secondary-button": re.compile(r'\bPillButton(?:Style|Body)\b'),
     "block-meter": re.compile(r"[\u2580-\u259f\u25a0\u25a1\u25b0\u25b1]+"),
 }
 

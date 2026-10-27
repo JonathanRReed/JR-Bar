@@ -228,7 +228,7 @@ public struct UsageGaugeRow: View {
                         .help(status ?? "Not found on this Mac")
                     Spacer(minLength: 0)
                     if let onAction, let title = provider.action, !title.isEmpty {
-                        Button(title, action: onAction).controlSize(.small)
+                        ActionButton(title, action: onAction)
                     }
                 }
             } else {
@@ -330,9 +330,9 @@ public struct UsageGaugeRow: View {
             HStack(spacing: 8) {
                 if let fix { Text(fix).font(JRBarTokens.TypeStyle.caption.font).fixedSize(horizontal: false, vertical: true) }
                 if let onAction, let title = provider.action, !title.isEmpty {
-                    Button(title, action: onAction).controlSize(.small)
+                    ActionButton(title, action: onAction)
                 }
-                if let onRetry { Button("Retry", action: onRetry).controlSize(.small) }
+                if let onRetry { ActionButton("Retry", action: onRetry) }
             }
         }
     }

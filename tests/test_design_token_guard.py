@@ -96,6 +96,7 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('Text("Blend mode")', "ui-name"),
     ('Text("42% left")', "usage-direction"),
     ('view.foregroundStyle(JRBarTokens.Ink.attention)', "quota-tone"),
+    ('view.buttonStyle(PillButtonStyle(prominent: false))', "secondary-button"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))

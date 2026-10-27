@@ -188,8 +188,7 @@ struct AskDetailView: View {
                 .layoutPriority(-1)
             Spacer(minLength: 4)
             if let onOpenSession {
-                Button(AskDetailCopy.sessionActionTitle, action: onOpenSession)
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton(AskDetailCopy.sessionActionTitle, prominent: true, action: onOpenSession)
                     .fixedSize()
                     .help(AskDetailCopy.sessionActionHelp)
             }

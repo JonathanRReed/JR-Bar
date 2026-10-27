@@ -927,15 +927,13 @@ struct AskRow: View {
                     .frame(maxWidth: 200)
                     .disabled(store.isAnswerPending(ask))
                     .onSubmit { send(ask) }
-                Button("Send") { send(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Send", prominent: true) { send(ask) }
                     .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
                     .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
             } else if let ask = row.ask, ask.session != nil, !row.isRemote, AskVerbs.chooses(ask, at: now) {
                 // A held question: its options are the answer, sent
                 // through the agent's own hook — Deny declines it.
-                Button("Deny ⌘D") { store.deny(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton("Deny ⌘D") { store.deny(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help("Decline the question (⌘D)")
                 AskRowChoices(ask: ask, store: store)
@@ -946,20 +944,17 @@ struct AskRow: View {
                 // the refusal — not a guess — is what the toast then
                 // shows. All go quiet while the answer is on the wire
                 // so a double click cannot post twice.
-                Button("Deny ⌘D") { store.deny(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton("Deny ⌘D") { store.deny(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help("Answer no (⌘D)")
                 if AskVerbs.alwaysAllows(ask, at: now) {
                     // Its own button, never a chord: the agent will
                     // remember this rule and stop asking.
-                    Button("Always Allow") { store.alwaysAllow(ask) }
-                        .buttonStyle(PillButtonStyle(prominent: false))
+                    ActionButton("Always Allow") { store.alwaysAllow(ask) }
                         .disabled(store.isAnswerPending(ask))
                         .help("Approve, and let \(row.style.name) remember the rule it offered")
                 }
-                Button("Approve ⌘↩") { store.approve(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Approve ⌘↩", prominent: true) { store.approve(ask) }
                     .disabled(store.isAnswerPending(ask))
                     .help(approveHelp(ask, now: now))
             } else if row.isRemote {
@@ -975,8 +970,8 @@ struct AskRow: View {
                 Text(AskAnswerHost.line(host: row.answerHost))
                     .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary).lineLimit(1)
                     .truncationMode(.tail)
-                Button(AskAnswerHost.buttonTitle(host: row.answerHost)) { store.open(row) }
-                    .buttonStyle(PillButtonStyle(prominent: false))
+                ActionButton(AskAnswerHost.buttonTitle(host: row.answerHost)) { store.open(row) }
+
                     .help(row.ask?.wantsTextReply == true
                           ? "This ask wants a typed reply — answer it in the session's window"
                           : "The panel cannot answer this one — answer it in the session's window")
@@ -1023,12 +1018,12 @@ struct AskRow: View {
     @ViewBuilder
     private var staleDismiss: some View {
         if isDemo {
-            Button("Put Away") { store.dismissDemo() }
-                .buttonStyle(PillButtonStyle(prominent: false))
+            ActionButton("Put Away") { store.dismissDemo() }
+
                 .help("Take the demo down. Nothing was ever sent to an agent.")
         } else if let ask = row.ask, ask.isDismissible, !row.isRemote {
-            Button("Dismiss") { store.dismissStaleAsk(ask) }
-                .buttonStyle(PillButtonStyle(prominent: false))
+            ActionButton("Dismiss") { store.dismissStaleAsk(ask) }
+
                 .help("Hide this ask on this Mac. \(row.style.name) is not told anything and its own prompt is unchanged.")
         }
     }
@@ -1067,10 +1062,9 @@ struct AskRowChoices: View {
         switch AskChoiceLayout.layout(choices) {
         case .buttons(let labels):
             ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
-                Button(label) {
+                ActionButton(label, prominent: index == 0) {
                     if let choice = choices.first { store.pick(label, in: choice, of: ask) }
                 }
-                .buttonStyle(PillButtonStyle(prominent: index == 0))
                 .disabled(store.isAnswerPending(ask))
                 .help("Answer “\(label)” through the agent's own hook")
             }
@@ -1087,8 +1081,7 @@ struct AskRowChoices: View {
             .disabled(store.isAnswerPending(ask))
             .help(choices.count == 1 ? choices[0].question : "\(choices.count) questions — pick an answer for each")
             if picks.isComplete(choices), choices.count > 1 || choices.first?.multi == true {
-                Button("Send") { store.sendPicks(ask) }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                ActionButton("Send", prominent: true) { store.sendPicks(ask) }
                     .disabled(store.isAnswerPending(ask))
             }
         }
@@ -1098,57 +1091,6 @@ struct AskRowChoices: View {
 /// The panel's buttons: a quiet capsule, or — for the one verb that
 /// answers yes — a filled amber one with a little depth. Both brighten
 /// under the pointer and fade while they cannot be clicked.
-struct PillButtonStyle: ButtonStyle {
-    let prominent: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        PillButtonBody(label: configuration.label, prominent: prominent, pressed: configuration.isPressed)
-    }
-}
-
-/// A pill button as drawn: the view owns the hover, so each button
-/// keeps its own.
-private struct PillButtonBody: View {
-    let label: ButtonStyleConfiguration.Label
-    let prominent: Bool
-    let pressed: Bool
-    @ViewState private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        label
-            .font((prominent ? JRBarTokens.TypeStyle.headline : .callout).font)
-            .lineLimit(1)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 3.5)
-            .background { plate }
-            .contentShape(Capsule())
-            .opacity(isEnabled ? 1 : 0.45)
-            .onHover { hovering = $0 }
-    }
-
-    @ViewBuilder
-    private var plate: some View {
-        if prominent {
-            let amber = JRBarTokens.Ink.accent
-            let top = amber.opacity(pressed ? 0.8 : 1)
-            let bottom = amber.opacity(pressed ? 0.7 : 0.88)
-            Capsule()
-                .fill(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom))
-                .brightness(hovering && isEnabled && !pressed ? 0.05 : 0)
-                .overlay(Capsule().strokeBorder(LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.05)],
-                                                               startPoint: .top, endPoint: .bottom),
-                                                lineWidth: 0.5))
-                .shadow(color: amber.opacity(isEnabled ? 0.3 : 0), radius: 3, y: 1)
-        } else {
-            Capsule()
-                .fill(Color.primary.opacity(pressed ? 0.16 : (hovering && isEnabled ? 0.12 : 0.08)))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-        }
-    }
-}
-
 // MARK: - Context
 
 struct ContextHairline: View {

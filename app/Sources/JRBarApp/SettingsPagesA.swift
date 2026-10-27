@@ -613,7 +613,7 @@ struct DeviceCalibrationRow: View {
 
     var body: some View {
         SettingRow("Colour calibration", subtitle: SettingsStore.calibrationSummary(prefix: prefix) { store.values.double($0) }) {
-            Button("Calibrate…") { store.calibrating = deviceID }
+            ActionButton("Calibrate…") { store.calibrating = deviceID }
                 .disabled(!store.isLive)
         }
     }
