@@ -1,3 +1,4 @@
+import AppKit
 import JRBarCore
 import JRBarUI
 import SwiftUI
@@ -84,9 +85,10 @@ struct UsageBurnersView: View {
                         row(burner)
                     }
                 }
-                .help("\(burner.label)\nSession: \(burner.id)")
+                .help("Open \(burner.label)")
+                .contextMenu { Button("Copy session ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(burner.id, forType: .string) } }
                 .accessibilityIdentifier("burner.\(burner.id)")
-                .accessibilityHint("Session: \(burner.id)")
+                .accessibilityCustomContent("Session ID", burner.id)
             }
         }
         .font(JRBarTokens.TypeStyle.callout.font)

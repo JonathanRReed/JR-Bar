@@ -481,7 +481,8 @@ extension LightExplainer.Context {
     }
 
     func who(_ session: CoreSession) -> Subject {
-        Subject(name: "\(session.providerName) \(session.displayLabel)", id: session.id)
+        Subject(name: session.displayLabel.hasPrefix(session.providerName + " ") ? session.displayLabel
+                : "\(session.providerName) \(session.displayLabel)", id: session.id)
     }
 
     /// The subject `why_detail` names, when the daemon sent one: its
@@ -493,7 +494,8 @@ extension LightExplainer.Context {
         let hasName = (detail.label?.isEmpty == false) || (detail.session?.isEmpty == false)
         guard hasName else { return nil }
         let label = SessionLabel.display(label: detail.label, shortId: nil, id: detail.session ?? "", provider: provider)
-        let name = provider.isEmpty ? label : "\(SessionLabel.providerName(provider)) \(label)"
+        let prefix = SessionLabel.providerName(provider) + " "
+        let name = provider.isEmpty || label.hasPrefix(prefix) ? label : prefix + label
         return Subject(name: name, id: detail.session)
     }
 
@@ -615,11 +617,15 @@ extension CoreProviderUsage {
 extension CoreSession {
     /// The label the panel shows: no provider prefix, no UUID (see `SessionLabel`).
     public var displayLabel: String {
-        SessionLabel.display(label: label, shortId: shortId, id: id, provider: provider)
+        SessionLabel.display(label: label, shortId: shortId, id: id, provider: provider, cwd: cwd, project: project)
     }
 
     public var providerName: String { SessionLabel.providerName(provider) }
 
     /// A worker or sub-agent rather than a main session.
     public var isSubagent: Bool { kind != "main" || parent != nil }
+}
+
+extension CoreSession {
+    public var projectName: String? { project ?? AgentProject.name(of: cwd) }
 }

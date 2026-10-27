@@ -1,10 +1,6 @@
 import Foundation
 
-/// How a session is named on screen. Today's daemon sends human labels
-/// (`jr-bar-67`, `Codex 01a08b62`) with a `short_id`; older ones sent the
-/// provider name plus a UUID. Either way the panel shows a single short
-/// label with no UUID in it and no provider name at the front, so a caller
-/// can write "Claude jr-bar-67" without ever producing "Claude Claude …".
+/// Shared access to daemon session names and compatibility for saved labels.
 public enum SessionLabel {
     static let uuidPattern = try! NSRegularExpression(pattern: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     static let hexRunPattern = try! NSRegularExpression(pattern: "^[0-9a-fA-F]{16,}$")
@@ -38,38 +34,46 @@ public enum SessionLabel {
         return result
     }
 
-    /// The shared title without a provider prefix or an opaque session id.
-    /// Ids belong in help and accessibility, never in a title fallback.
-    public static func display(label: String?, shortId: String?, id: String, provider: String) -> String {
-        let providerWords = Set([provider, providerName(provider)].map { $0.lowercased() }.filter { !$0.isEmpty })
-        var text = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        // "Claude fca1eb06-…" → "fca1eb06-…"; "Codex 01a08b62" → "01a08b62".
-        let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        if let first = words.first, providerWords.contains(first.lowercased()) {
-            text = words.dropFirst().joined(separator: " ")
+    /// Compatibility for saved labels. Current labels come from the daemon.
+    public static func display(label: String?, shortId: String?, id: String, provider: String,
+                               cwd: String? = nil, project: String? = nil, detail: String? = nil) -> String {
+        for candidate in [label, detail] {
+            guard let candidate, let title = title(candidate, provider: provider) else { continue }
+            let nativeID = id.split(separator: ":", maxSplits: 2).last.map(String.init) ?? id
+            let generated = candidate.lowercased().hasPrefix(providerName(provider).lowercased() + " ")
+            if title != AgentProject.name(of: cwd), title != id, !generated || title != nativeID { return title }
         }
-        text = humanTitle(text)
-        if text.isEmpty || providerWords.contains(text.lowercased()) { return "Session" }
+        return "\(providerName(provider)) session in \(project ?? AgentProject.name(of: cwd) ?? "Unknown project")"
+    }
+
+    private static func title(_ value: String, provider: String) -> String? {
+        var text = humanTitle(value)
+        let prefix = providerName(provider) + " "
+        if text.lowercased().hasPrefix(prefix.lowercased()), !text.lowercased().hasPrefix(prefix.lowercased() + "session in ") {
+            text = String(text.dropFirst(prefix.count))
+        }
+        if text.range(of: #"^[0-9a-fA-F]{4,}$"#, options: .regularExpression) != nil,
+           text.rangeOfCharacter(from: .decimalDigits) != nil { return nil }
+        guard !text.isEmpty, !text.hasPrefix("t3-"), !text.hasPrefix("/"), !text.hasPrefix("~/"), !text.contains("/t3-"),
+              !["session", "worker", "agent", provider.lowercased(), providerName(provider).lowercased(),
+                providerName(provider).lowercased() + " session", providerName(provider).lowercased() + " agent"].contains(text.lowercased())
+        else { return nil }
         return text
     }
 
-    /// Context comes only from the daemon's proven groups, as in the panel.
+    /// Group context is already part of the daemon's canonical title.
     public static func contextual(_ session: CoreSession, sessions: [CoreSession], groups: [CoreAgentGroup]) -> String {
-        guard let group = groups.first(where: { $0.id == session.groupId && $0.members.contains(session.id) }),
-              group.rootWorkKey != session.id,
-              let head = sessions.first(where: { $0.id == group.rootWorkKey && $0.groupId == group.id }) else { return session.displayLabel }
-        let title = session.displayLabel
-        let fallback = "\(head.displayLabel) worker "
-        if title.hasPrefix(fallback), Int(title.dropFirst(fallback.count)) != nil { return title }
-        return "\(title) · under \(head.displayLabel)"
+        session.displayLabel
     }
 
     /// A notice uses the current session title, then its saved event title.
     public static func eventTitle(_ event: CoreEvent, session: CoreSession?) -> String? {
         if let session { return session.displayLabel }
+        if let id = event.session {
+            return display(label: event.label, shortId: nil, id: id, provider: event.provider ?? "")
+        }
         guard let label = event.label, !label.isEmpty else { return nil }
-        let title = event.session == nil ? humanTitle(label)
-            : display(label: label, shortId: nil, id: event.session ?? "", provider: event.provider ?? "")
+        let title = humanTitle(label)
         return title.isEmpty ? nil : title
     }
 

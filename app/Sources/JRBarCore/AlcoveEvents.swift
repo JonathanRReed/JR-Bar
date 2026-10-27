@@ -253,8 +253,7 @@ public enum AlcoveEventPolicy {
 
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }
-        let project = kind == .failed ? session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } : nil
-        let label = project ?? SessionLabel.eventTitle(event, session: session) ?? providerName
+        let label = SessionLabel.eventTitle(event, session: session) ?? providerName
 
         let title: String
         let subtitle: String
@@ -268,7 +267,7 @@ public enum AlcoveEventPolicy {
             // provider name (a sessionless event, an unlabelled row),
             // where the join would only say it twice.
             if let providerName, let label,
-               label.lowercased() != providerName.lowercased() {
+               label.lowercased() != providerName.lowercased(), !label.hasPrefix(providerName + " ") {
                 title = "\(providerName) · \(label)"
             } else {
                 title = label ?? providerName ?? "Agent"

@@ -2,6 +2,7 @@
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -56,6 +57,18 @@ def test_project_names_fold_t3_claude_and_arbitrary_git_worktrees(tmp_path):
     assert repository_project(str(worktree)) == "Sample"
     assert repository_project(str(worktree / "src")) == "Sample"
     assert repository_project(str(root)) == "Sample"
+
+
+def test_views_do_not_compose_session_names():
+    root = Path(__file__).resolve().parents[1]
+    violations = []
+    for path in (root / "app/Sources/JRBarApp").rglob("*.swift"):
+        if ": View" not in path.read_text() and "View" not in path.name:
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"\b(?:session|asking|entry\.session)\.(?:label|shortId)\b|SessionLabel\.display\(|Text\([^\n]*\\\([^\n]*\.style\.name[^\n]*\.label", line):
+                violations.append(f"{path.name}:{number}: use CoreSession.displayLabel")
+    assert not violations, "\n".join(violations)
 
 
 def test_untitled_sessions_use_their_recorded_start_when_names_collide():

@@ -432,7 +432,7 @@ final class OverviewStore {
         var seen = Set<String>()
         var out: [String] = []
         for entry in roster {
-            guard let name = OverviewFilter.projectName(of: entry.session.cwd), !seen.contains(name) else { continue }
+            guard let name = entry.session.projectName, !seen.contains(name) else { continue }
             seen.insert(name)
             out.append(name)
         }
@@ -1326,7 +1326,7 @@ final class OverviewStore {
         }
         facts.append(.init("Session", entry.id))
         return SessionMarkdown.render(
-            title: SessionLabel.display(label: session.label, shortId: session.shortId, id: entry.id, provider: session.provider),
+            title: session.displayLabel,
             facts: facts, reconstruction: reconstruction, notes: notes, generatedAt: generatedAt)
     }
 
@@ -1864,7 +1864,7 @@ final class OverviewStore {
         let session = entry.session
         let haystacks: [String?] = [
             session.id, session.label, session.shortId, session.cwd,
-            OverviewFilter.projectName(of: session.cwd),
+            session.projectName,
             session.tool, session.event, session.message,
             session.origin?.label, session.provider,
             session.ask?.summary, session.kind, session.parent,
@@ -1893,7 +1893,7 @@ extension CoreRosterEntry {
     // Table sort keys — each column's comparator maps to one stable value
     // so clicking a header re-orders the whole filtered set deterministically.
     var labelSortKey: String { session.displayLabel }
-    var projectSortKey: String { OverviewFilter.projectName(of: session.cwd) ?? "" }
+    var projectSortKey: String { session.projectName ?? "" }
     var stateSortKey: Int { sortRankKey }
     /// The model `session_usage` read from the run's transcript ("Opus
     /// 4.5"); a row nobody has read sorts first, as "".

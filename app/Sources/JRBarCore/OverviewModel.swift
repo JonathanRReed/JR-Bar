@@ -203,11 +203,17 @@ public enum AgentProject {
     public static func name(of cwd: String?) -> String? {
         guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else { return nil }
         let parts = cwd.split(separator: "/").map(String.init)
-        for (index, part) in parts.enumerated() where index > 0 {
-            let claudeWorktree = part == ".claude" && parts.indices.contains(index + 1) && parts[index + 1] == "worktrees"
-            if claudeWorktree || part == ".worktrees" { return parts[index - 1] }
+        for (index, part) in parts.enumerated() {
+            if part == ".t3", parts.indices.contains(index + 2), parts[index + 1] == "worktrees" {
+                return parts[index + 2]
+            }
+            if index > 0 && (part == ".worktrees" ||
+                (part == ".claude" && parts.indices.contains(index + 1) && parts[index + 1] == "worktrees")) {
+                return parts[index - 1]
+            }
         }
-        return parts.last
+        guard let tail = parts.last, !tail.hasPrefix("t3-") else { return nil }
+        return tail
     }
 }
 

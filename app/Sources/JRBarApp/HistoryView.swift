@@ -601,7 +601,7 @@ struct HistoryRowView: View {
                             UnseenDot().help("Newer than your last visit here")
                         }
                     }
-                    if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle || QuotaAccountCaption.isQuota(row.kind) {
+                    if let detail = row.displayDetail {
                         Text(detail).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
                         Text(style.name).jrbarType(.caption).foregroundStyle(.tertiary)
@@ -657,6 +657,9 @@ struct HistoryRowView: View {
             if openable { store.open(row) } else if expandable { store.toggleExpanded(row) }
         }
         .contextMenu {
+            if let session = row.session {
+                Button("Copy session ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session, forType: .string) }
+            }
             if openable {
                 Button("Open Session") { store.open(row) }
             }
@@ -678,7 +681,7 @@ struct HistoryRowView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.displayTitle(privacyMode: store.core.state?.usage?.privacyMode)) \(row.kindWord) at \(HistoryStore.clock(row.date))"
                             + (folded.isEmpty ? "" : ", and \(folded.count) earlier"))
-        .accessibilityHint(row.session.map { "Session: \($0)" } ?? "")
+        .accessibilityCustomContent("Session ID", row.session ?? "")
     }
 
     /// "3 earlier: Finished ×2 · Started".

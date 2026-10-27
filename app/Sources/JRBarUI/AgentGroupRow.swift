@@ -87,7 +87,7 @@ public struct AgentGroupRow<Members: View>: View {
             ProviderLogoTile(provider: provider, dim: unlinked)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(unlinked ? "Unlinked worker" : "\(name) · \(workerCount) \(workerCount == 1 ? "worker" : "workers")")
+                    Text(unlinked ? name : "\(name) · \(workerCount) \(workerCount == 1 ? "worker" : "workers")")
                         .font(JRBarTokens.TypeStyle.headline.font).lineLimit(1).layoutPriority(1)
                     if let context = unlinked ? ProviderPalette.displayName(for: provider) : project {
                         Text(context).font(JRBarTokens.TypeStyle.body.font)

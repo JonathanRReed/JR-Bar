@@ -91,7 +91,7 @@ public struct OverviewFilter: Codable, Equatable, Hashable, Sendable {
         guard preset.matches(entry) else { return false }
         if preset.needsProject {
             guard let project, !project.isEmpty else { return false }
-            return OverviewFilter.projectName(of: entry.session.cwd) == project
+            return entry.session.projectName == AgentProject.name(of: project)
         }
         if preset == .thisBranch {
             guard let branch, !branch.isEmpty, !entry.session.remote else { return false }
@@ -100,14 +100,9 @@ public struct OverviewFilter: Codable, Equatable, Hashable, Sendable {
         return true
     }
 
-    /// The label a project column shows for a cwd: the last two path
-    /// components ("JR-Bar", "work/app") so same-named roots still differ.
+    /// Compatibility for comparison records without a projected repository name.
     public static func projectName(of cwd: String?) -> String? {
-        guard let cwd, !cwd.isEmpty else { return nil }
-        let trimmed = cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
-        let components = trimmed.split(separator: "/").map(String.init)
-        guard let last = components.last, last != "/" else { return trimmed.isEmpty ? nil : trimmed }
-        return components.suffix(2).joined(separator: "/")
+        AgentProject.name(of: cwd)
     }
 }
 

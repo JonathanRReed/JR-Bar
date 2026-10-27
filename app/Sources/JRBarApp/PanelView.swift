@@ -646,6 +646,10 @@ struct SessionContextMenu: View {
                 if verbs.any { Divider() }
             }
             Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+            Button("Copy session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(row.id, forType: .string)
+            }
             if !row.activity.isClearable, row.activity != .failed {
                 // One banner when this run ends — without turning
                 // completion banners on for every run and sub-agent.
@@ -822,7 +826,7 @@ struct AskRow: View {
     /// row's quiet states.
     private var titleLine: some View {
         HStack(spacing: 6) {
-            Text(isDemo ? DemoAsk.label : "\(row.style.name) · \(row.cwdTail ?? row.label)").fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+            Text(isDemo ? DemoAsk.label : row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
             if isDemo {
                 DemoAskBadge()
             } else {

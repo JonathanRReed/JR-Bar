@@ -39,21 +39,24 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         return text
     }
 
-    /// A recorded task detail wins when the session had no human title.
     public var displayTitle: String {
-        let label = (self.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if (label.isEmpty || SessionLabel.looksLikeUUID(label)), let detail, !detail.isEmpty {
-            return SessionLabel.humanTitle(detail)
-        }
-        return displayLabel
+        guard session != nil else { return displayLabel }
+        return SessionLabel.display(label: label, shortId: nil, id: session ?? "", provider: provider ?? session?.split(separator: ":").first.map(String.init) ?? "", detail: detail)
     }
 
-    /// True when `displayTitle` promoted the detail: the row then shows the
-    /// provider under the title instead of repeating the same words.
-    public var detailIsTitle: Bool {
-        let label = (self.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return (label.isEmpty || SessionLabel.looksLikeUUID(label)) && detail?.isEmpty == false
+    public var detailIsTitle: Bool { displayTitle != displayLabel }
+
+    /// Older journals stored a generated session name in the detail line.
+    public var displayDetail: String? {
+        guard let detail, !detail.isEmpty else { return nil }
+        guard let session, !QuotaAccountCaption.isQuota(kind) else { return detail }
+        if detailIsTitle { return nil }
+        let providerID = provider ?? session.split(separator: ":").first.map(String.init) ?? ""
+        let text = SessionLabel.display(label: detail, shortId: nil, id: session, provider: providerID)
+        let fallback = SessionLabel.display(label: nil, shortId: nil, id: session, provider: providerID)
+        return text == fallback || text == displayTitle ? nil : text
     }
+
 
     public init(at: Double, kind: String, provider: String? = nil, session: String? = nil, label: String? = nil,
                 detail: String? = nil, duration: Double? = nil, unseen: Bool = false, instance: String? = nil, instanceLabel: String? = nil) {

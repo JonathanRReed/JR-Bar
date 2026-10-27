@@ -48,8 +48,8 @@ struct BurnerTitleTests {
         let burners = store.burners(for: provider)
         #expect(burners.count == 5)
         #expect(burners.map(\.label) == [
-            "Fix the notch caption · under Sample app", "Sample app worker 2",
-            "Sample app worker 3", "Review the parser · under Sample service",
+            "Fix the notch caption", "Sample app worker 2",
+            "Sample app worker 3", "Review the parser",
             "Sample service worker 2",
         ])
         #expect(burners.map(\.tokens) == [63_000_000, 49_000_000, 45_000_000, 42_000_000, 16_000_000])
@@ -60,7 +60,7 @@ struct BurnerTitleTests {
         for member in members {
             let burner = try #require(burners.first { $0.id == member.id })
             #expect(burner.label == member.label || burner.label.hasPrefix(member.label + " · under "))
-            #expect(member.help(now: store.now)?.contains(member.id) == true)
+            #expect(member.help(now: store.now)?.contains(member.id) == false)
         }
         for label in burners.map(\.label) + members.map(\.label) {
             #expect(label.range(of: #"\b[0-9a-fA-F]{8,}\b"#, options: .regularExpression) == nil)

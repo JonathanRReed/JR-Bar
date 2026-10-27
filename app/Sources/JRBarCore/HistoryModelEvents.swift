@@ -129,7 +129,7 @@ public enum LightLog {
         let who = QuotaAccountCaption.isQuota(event.kind)
             ? QuotaAccountCaption.provider(event.provider, instance: event.instance, label: event.instanceLabel, privacyMode: privacyMode)
             : event.provider.map { SessionLabel.providerName($0) }
-        let subject = event.label.map(SessionLabel.humanTitle)
+        let subject = SessionLabel.eventTitle(event, session: nil)
         let verb: String
         switch event.kind {
         case "ask_opened": verb = "asked"

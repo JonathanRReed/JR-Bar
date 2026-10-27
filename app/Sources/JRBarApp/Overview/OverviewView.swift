@@ -393,7 +393,7 @@ struct OverviewView: View {
                     .width(min: 120, ideal: 180)
                     TableColumn("Project", value: \.projectSortKey) { entry in
                         HStack(spacing: 4) {
-                            Text(OverviewFilter.projectName(of: entry.session.cwd) ?? "—")
+                            Text(entry.session.projectName ?? "—")
                                 .foregroundStyle(.secondary).lineLimit(1)
                             if let workspace = store.workspace(for: entry), let head = workspace.headLabel {
                                 // The branch (and a worktree mark) the run
@@ -819,7 +819,7 @@ struct CompareRunsSheet: View {
 
     private func sideHeader(_ side: CoreRunSide) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(side.label ?? side.id).jrbarType(.callout).fontWeight(.semibold).lineLimit(1)
+            Text(side.displayLabel).jrbarType(.callout).fontWeight(.semibold).lineLimit(1)
             Text(side.id).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

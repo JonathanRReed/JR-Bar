@@ -81,7 +81,7 @@ struct SessionRow: Identifiable, Equatable {
         // A remote path is not this Mac's filesystem: copying or revealing
         // it would lie, so remote rows carry no cwd at all.
         cwd = session.isRemote ? nil : session.cwd
-        cwdTail = session.isRemote ? nil : session.cwd.map { Self.tail(of: $0) }
+        cwdTail = session.isRemote ? nil : session.projectName
         terminalApp = session.terminal?.app
         answerHost = AskAnswerHost.app(of: session)
         snoozedUntil = session.snoozedUntil
@@ -151,7 +151,7 @@ struct SessionRow: Identifiable, Equatable {
     /// not a finished one, why a stale row is still listed, and how long a
     /// live-but-quiet working row has been silent.
     func help(now: Date) -> String? {
-        var parts: [String] = [label, "Session: \(id)"]
+        var parts: [String] = [label]
         if isRemote {
             parts.append(remoteMachine.map { "Runs on \($0) — a remote session; answer it there" }
                          ?? "A remote session — answer it on the machine it runs on")

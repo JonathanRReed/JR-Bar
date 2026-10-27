@@ -131,12 +131,11 @@ import JRBarCore
             Self.entry("there", cwd: "/Users/x/Code/other"),
             Self.entry("nested", cwd: "/Users/x/work/JR-Bar"),
         ])
-        // "JR-Bar" disambiguates by the parent component: the filter is
-        // the two-component label, never a stored session id.
+        store.filter = OverviewFilter(preset: .thisProject, project: "JR-Bar")
+        #expect(store.rows.map(\.id).sorted() == ["here", "nested"])
+        // Saved filters from before repository folding still find the repository.
         store.filter = OverviewFilter(preset: .thisProject, project: "Code/JR-Bar")
-        #expect(store.rows.map(\.id) == ["here"])
-        store.filter = OverviewFilter(preset: .thisProject, project: "work/JR-Bar")
-        #expect(store.rows.map(\.id) == ["nested"])
+        #expect(store.rows.map(\.id).sorted() == ["here", "nested"])
     }
 
     @Test func thisMacDropsRemoteRows() {

@@ -71,8 +71,7 @@ public struct BuddyFocus: Equatable, Sendable {
         guard let session = picked?.0, let phrase = picked?.1 else { return nil }
         return BuddyFocus(id: session.id,
                           provider: SessionLabel.providerName(session.provider),
-                          session: SessionLabel.display(label: session.label, shortId: session.shortId,
-                                                        id: session.id, provider: session.provider),
+                          session: session.displayLabel,
                           phrase: phrase)
     }
 

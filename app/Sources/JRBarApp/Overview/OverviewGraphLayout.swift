@@ -40,7 +40,7 @@ struct OverviewGraphNode: Identifiable, Equatable, Sendable {
     init(_ entry: CoreRosterEntry) {
         let session = entry.session
         self.init(id: entry.id, parentID: session.parent,
-                  project: AgentProject.name(of: session.cwd),
+                  project: session.projectName,
                   provider: session.provider, activity: SessionActivity.reduce(session),
                   label: session.displayLabel, lastActive: session.updatedAt ?? session.since ?? 0,
                   sourceIntegration: session.sourceIntegration)

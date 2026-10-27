@@ -230,7 +230,7 @@ struct OverviewSessionInspector: View {
         var parts = [style.name]
         if entry.session.remote, let origin = entry.session.origin?.label {
             parts.append("on \(origin)")
-        } else if let project = OverviewFilter.projectName(of: entry.session.cwd) {
+        } else if let project = entry.session.projectName {
             parts.append(project)
         }
         return parts.joined(separator: " · ")
@@ -247,7 +247,7 @@ struct OverviewSessionInspector: View {
             OverviewFactRow(name: "Freshness", value: entry.axes?.freshness ?? (session.stale ? "stale" : "live"), evidence: .derived)
             OverviewFactRow(name: "Harness", value: session.provider, evidence: .reported)
             if let origin = session.origin?.label { OverviewFactRow(name: "Origin", value: origin, evidence: .reported) }
-            if let project = OverviewFilter.projectName(of: session.cwd) {
+            if let project = session.projectName {
                 OverviewFactRow(name: "Project", value: project, evidence: .derived)
             }
             if let tool = session.tool { OverviewFactRow(name: "Tool", value: tool, evidence: .reported) }

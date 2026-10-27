@@ -140,8 +140,8 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = false
         window.setContentSize(NSSize(width: 960, height: 540))
         window.minSize = NSSize(width: 720, height: 380)
-        attachContent(to: window)
         window.setFrameAutosaveName("JRBarOverview")
+        attachContent(to: window)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

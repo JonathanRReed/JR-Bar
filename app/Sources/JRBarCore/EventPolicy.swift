@@ -217,8 +217,7 @@ public enum EventPolicy {
             guard notify, session?.isSubagent != true, session?.unlinkedWorker != true else { return .nothing }
             if session?.supersedesFailure(at: event.at, now: now) == true { return .nothing }
             if let at = event.at, now < at || now >= at + 5 { return .nothing }
-            let project = session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
-            let title = project.map { "\(providerName) · \($0) failed" } ?? "\(label) failed"
+            let title = "\(label) failed"
             var delivery = EventDelivery(sound: sound(failureSound))
             delivery.notification = .init(identifier: "failed:\(event.session ?? event.id)", title: title,
                                           body: event.detail ?? "\(providerName) stopped with an error. Click to open the session.",

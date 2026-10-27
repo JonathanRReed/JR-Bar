@@ -256,12 +256,11 @@ public enum NotchIsland {
                 if activity == .failed && !session.signalsFailure(at: now) { continue }
                 s.rows.append(NotchIslandRow(
                     id: session.id,
-                    label: SessionLabel.display(label: session.label, shortId: session.shortId,
-                                                id: session.id, provider: session.provider),
+                    label: session.displayLabel,
                     provider: session.provider,
                     activity: activity,
                     ask: activity == .waiting ? liveAsk(for: session, asks: asks) : nil,
-                    since: session.since, project: session.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }))
+                    since: session.since, project: session.projectName))
             case .done, .ended, .idle: break
             }
         }
@@ -277,7 +276,7 @@ public enum NotchIsland {
             let memberIDs = Set(group.members)
             s.rows.removeAll { memberIDs.contains($0.id) && ($0.activity == .working || $0.activity == .failed) }
             var row = NotchIslandRow(id: root.id, label: root.displayLabel, provider: group.rootProvider, activity: .working,
-                since: root.since, project: root.cwd.map { URL(fileURLWithPath: $0).lastPathComponent })
+                since: root.since, project: root.projectName)
             if s.rows.contains(where: { $0.id == row.id }) { row.id = "group:" + group.id }
             row.workerCount = group.workerCount
             row.members = members.filter { SessionActivity.reduce($0) != .waiting }.map {

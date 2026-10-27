@@ -427,6 +427,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// The daemon's 8-character handle for the session (`short_id`), shown
     /// when the label is missing or is itself a UUID.
     public var shortId: String?
+    public var project: String?
     public var cwd: String?
     /// Decoded for `SessionActivity.reduce` and the light explainer; the
     /// raw word is never displayed.
@@ -490,13 +491,14 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 event: String? = nil, tool: String? = nil, message: String? = nil,
                 axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil,
                 groupId: String? = nil, unlinkedWorker: Bool = false, failureSignalUntil: Double? = nil,
-                quotaWorking: Bool? = nil) {
+                quotaWorking: Bool? = nil, project: String? = nil) {
         self.id = id
         self.provider = ProviderID.canonical(provider)
         self.kind = kind
         self.parent = parent
         self.label = label
         self.shortId = shortId
+        self.project = project
         self.cwd = cwd
         self.mode = mode
         self.lifecycle = lifecycle
@@ -524,7 +526,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
+        case id, provider, kind, parent, label, project, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message, axes
         case failureSignalUntil = "failure_signal_until"
         case groupId = "group_id"
@@ -546,6 +548,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         parent = try c.decodeIfPresent(String.self, forKey: .parent)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         shortId = try c.decodeIfPresent(String.self, forKey: .shortId)
+        project = try c.decodeIfPresent(String.self, forKey: .project)
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         mode = try c.decodeIfPresent(String.self, forKey: .mode)
         lifecycle = try c.decodeIfPresent(String.self, forKey: .lifecycle)
@@ -812,6 +815,11 @@ public struct CoreTimelinePage: Codable, Hashable, Sendable {
 /// `artifacts` is the files the run's edit tools named once its
 /// transcript was read (nil otherwise); `model` is always nil.
 public struct CoreRunSide: Codable, Hashable, Sendable {
+    public var displayLabel: String {
+        SessionLabel.display(label: label, shortId: nil, id: id,
+                             provider: provider ?? id.components(separatedBy: ":").first ?? "", cwd: cwd)
+    }
+
     public var id: String
     public var label: String?
     public var provider: String?

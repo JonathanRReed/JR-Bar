@@ -1308,8 +1308,7 @@ final class NotchBuddyToy: Toy {
         }
         menu.addItem(.separator())
         if let asking = askingSession {
-            let label = SessionLabel.display(label: asking.label, shortId: asking.shortId,
-                                           id: asking.id, provider: asking.provider)
+            let label = asking.displayLabel
             let item = menuActions.item(title: "Open “\(label)”",
                                         action: #selector(BuddyMenuActions.openAsk))
             item.representedObject = asking.id

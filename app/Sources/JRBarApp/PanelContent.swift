@@ -172,14 +172,14 @@ struct PanelAgentView: View {
         Group {
             if agent.unlinked {
                 Button { store.open(agent.row) } label: {
-                    AgentGroupRow(provider: agent.row.style.id, name: agent.row.style.name,
+                    AgentGroupRow(provider: agent.row.style.id, name: agent.row.label,
                         workerCount: 0, unlinked: true, expanded: .constant(false)) { EmptyView() }
                 }
                 .buttonStyle(.plain)
                 .contextMenu { SessionContextMenu(row: agent.row, store: store, anchor: contextFrame) }
             } else if !agent.members.isEmpty || agent.workerCount > 0 {
-                AgentGroupRow(provider: agent.row.style.id, name: agent.row.style.name,
-                              project: agent.row.cwdTail, subtitle: agent.row.label,
+                AgentGroupRow(provider: agent.row.style.id, name: agent.row.label,
+                              project: agent.row.cwdTail,
                               elapsed: agent.row.elapsedText(now: store.now), state: agent.row.panelState,
                               memberMarks: Array(Set(agent.members.map { $0.style.id })).sorted(),
                               workerCount: agent.workerCount, askingCount: agent.askingCount, unlinked: agent.unlinked, expanded: expanded) {
@@ -200,7 +200,7 @@ struct PanelAgentView: View {
                     HStack(spacing: JRBarTokens.Space.sm) {
                         ProviderLogoTile(provider: agent.row.style.id, accent: agent.row.style.accent, dim: agent.unlinked)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(agent.unlinked ? "\(agent.row.style.name) · Unlinked worker" : "\(agent.row.style.name) · \(agent.row.label)").font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
+                            Text(agent.row.label).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
                             if let folder = agent.unlinked ? "No parent found · no share of the strip" : agent.row.cwdTail {
                                 Text(folder).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)
                             }

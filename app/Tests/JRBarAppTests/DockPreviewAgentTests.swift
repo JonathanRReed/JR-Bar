@@ -47,7 +47,7 @@ struct DockPreviewAgentTests {
         let claude = DockAgentMatch.appHostedBundleIDs.first { $0.contains("claude") } ?? ""
         let marks = DockAgentMark.marks(from: [
             session("ask", label: "Asker", waiting: true, host: claude),
-            session("work", label: "Worker", host: claude),
+            session("work", label: "Build the sample", host: claude),
         ])
         let cards = [window(1, "Claude")]
         let sole = DockEnhanceMath.agentMap(windows: cards, bundleID: claude, marks: marks)
@@ -56,7 +56,7 @@ struct DockPreviewAgentTests {
                                                  soleAppWindows: false)
         #expect(elsewhere.cards.isEmpty,
                 "a second window on another display or Space leaves nothing to say which holds the ask")
-        #expect(elsewhere.app.map(\.label) == ["Asker", "Worker"],
+        #expect(elsewhere.app.map(\.label) == ["Asker", "Build the sample"],
                 "the waiting session still counts for the header and its ask row")
     }
 

@@ -6,7 +6,7 @@ import Testing
 struct FailureSignalTests {
     @Test("A top-level failure expires after five seconds and keeps its panel mark")
     func topLevel() {
-        let row = CoreSession(id: "codex:session:root", provider: "codex", cwd: "/repo/synthetic",
+        let row = CoreSession(id: "codex:session:root", provider: "codex", label: "Fix the sample panel", cwd: "/repo/synthetic",
                               mode: "blocked_error", lifecycle: "failed", updatedAt: 100, failureSignalUntil: 105)
         for now in [100.0, 104.999, 105, 200] {
             #expect(row.signalsFailure(at: now) == (now < 105))
@@ -15,8 +15,11 @@ struct FailureSignalTests {
         }
         let event = CoreEvent(id: "failure-1", kind: "failed", session: row.id, at: 100, notify: true, provider: "codex")
         let notice = AlcoveEventPolicy.notice(for: event, session: row, kinds: .init(), now: 100)
-        #expect(notice?.title == "Codex · synthetic")
+        #expect(notice?.title == "Codex · Fix the sample panel")
         #expect(notice?.subtitle == "failed")
+        var untitled = row
+        untitled.label = nil
+        #expect(AlcoveEventPolicy.notice(for: event, session: untitled, kinds: .init(), now: 100)?.title == "Codex session in synthetic")
         var anotherFailure = event
         anotherFailure.id = "failure-2"
         let anotherNotice = AlcoveEventPolicy.notice(for: anotherFailure, session: row, kinds: .init(), now: 100)
@@ -25,7 +28,7 @@ struct FailureSignalTests {
         #expect(notice?.remainingLife(at: 104) == 1)
         #expect(notice?.remainingLife(at: 105) == 0)
         let state = CoreState(sessions: [row])
-        #expect(EventPolicy.delivery(for: event, state: state, settings: nil, now: 104.999).notification?.title == "Codex · synthetic failed")
+        #expect(EventPolicy.delivery(for: event, state: state, settings: nil, now: 104.999).notification?.title == "Fix the sample panel failed")
         #expect(EventPolicy.delivery(for: event, state: state, settings: nil, now: 105) == .nothing)
         #expect(AlcoveEventPolicy.notice(for: event, session: row, kinds: .init(), now: 105) == nil)
     }

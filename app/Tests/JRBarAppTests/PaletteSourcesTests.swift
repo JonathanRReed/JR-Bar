@@ -32,7 +32,7 @@ struct PaletteSourcesTests {
 
     private func session(_ id: String, mode: String = "working", lifecycle: String? = nil,
                          ask: CoreAsk? = nil, remote: Bool = false, stale: Bool = false) -> SessionRow {
-        SessionRow(session: CoreSession(id: id, provider: "claude", label: id, cwd: "/Users/me/src/\(id)",
+        SessionRow(session: CoreSession(id: id, provider: "claude", label: "Sample task", cwd: "/synthetic/Sample",
                                         mode: mode, lifecycle: lifecycle,
                                         since: now.timeIntervalSince1970 - 300, stale: stale,
                                         ask: ask, remote: remote),
@@ -94,7 +94,7 @@ struct PaletteSourcesTests {
         let reply = item.action(for: .secondary)
         #expect(reply?.title == "Reply…")
         #expect(!item.actions.contains { $0.id == "approve" || $0.id == "deny" }, "words, not a verdict")
-        #expect(reply?.input?.prompt == "Reply to claude:s2…")
+        #expect(reply?.input?.prompt == "Reply to Sample task…")
         #expect(reply?.input?.submitTitle == "Send reply")
         #expect(reply?.input?.initial() == "use the")
         #expect(reply?.run() == nil)
@@ -103,7 +103,7 @@ struct PaletteSourcesTests {
         #expect(reply?.input?.submit("use the main branch") == nil, "the panel's toast is the answer")
         #expect(log.calls == ["draft:use the main branch", "reply:req-2:use the main branch"])
         #expect(item.accessibilityNote == nil)
-        #expect(PaletteRanking.rank([item], query: "reply s2", usage: PaletteUsage(), now: now)
+        #expect(PaletteRanking.rank([item], query: "reply sample", usage: PaletteUsage(), now: now)
             .first?.primary?.title == "Reply…")
         // Where the words cannot land, no field opens.
         let blocked = CoreAsk(session: "claude:s3", summary: "Which?", answerable: false, replyable: true)
@@ -128,7 +128,7 @@ struct PaletteSourcesTests {
         let ask = CoreAsk(session: "claude:fix-ci", summary: "Run tests", answerable: true, request: "r")
         let item = AgentPaletteRows.askItem(row: session("claude:fix-ci", mode: "waiting", ask: ask),
                                             ask: ask, now: now, verbs: agentVerbs(log))
-        let typed = PaletteRanking.rank([item], query: "approve fix", usage: PaletteUsage(), now: now)
+        let typed = PaletteRanking.rank([item], query: "approve sample", usage: PaletteUsage(), now: now)
         #expect(typed.first?.primary?.title == "Approve")
         #expect(typed.first?.action(for: .secondary)?.title == "Approve", "Approve keeps its own ⌘↩")
         let letter = PaletteRanking.rank([item], query: "a", usage: PaletteUsage(), now: now)
@@ -159,7 +159,7 @@ struct PaletteSourcesTests {
         let log = Log()
         let working = AgentPaletteRows.sessionItem(row: session("claude:w"), now: now, verbs: agentVerbs(log))
         let field = working.actions.first { $0.id == "snoozeFor" }?.input
-        #expect(field?.prompt == "Snooze claude:w for… 45m, 2h, 1:30")
+        #expect(field?.prompt == "Snooze Sample task for… 45m, 2h, 1:30")
         #expect(field?.accepts("2h") == true)
         #expect(field?.accepts("soon") == false)
         #expect(field?.accepts("30h") == false, "a day at most")
