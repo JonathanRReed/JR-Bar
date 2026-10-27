@@ -7,7 +7,8 @@ public extension HookStatus {
 public extension UsageStatus {
     var tone: Tone {
         switch self {
-        case .usedUp, .incident: .failure
+        case .usedUp, .incident, .unavailable, .needsSignIn: .failure
+        case .ready: .done
         case .runsOut: .warning
         case .stale: .stale
         case .reset: .reset

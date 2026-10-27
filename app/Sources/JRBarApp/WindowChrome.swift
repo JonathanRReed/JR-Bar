@@ -119,8 +119,9 @@ struct WindowEmptyState: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information, detail: text) {
-            if let actionTitle, let action { Button(actionTitle, action: action) }
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.md) {
+            StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information, detail: text)
+            if let actionTitle, let action { ActionButton(actionTitle, action: action) }
         }
         .frame(maxWidth: 480).padding(JRBarTokens.Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

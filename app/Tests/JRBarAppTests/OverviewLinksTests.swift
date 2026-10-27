@@ -70,6 +70,7 @@ import JRBarCore
 
     @Test func deviceTones() {
         var s = OverviewLinkage.Snapshot()
+        s.connected = true
         s.devices = [
             CoreDevice(id: "pro1", kind: "pro", name: "SidePulse", leds: 32, connected: true, brightness: 0.8),
             CoreDevice(id: "bar", kind: "screen_bar", name: "Screen Bar", enabled: true),
@@ -87,11 +88,12 @@ import JRBarCore
 
     @Test func deckJoinsDevices() {
         var s = OverviewLinkage.Snapshot()
+        s.connected = true
         s.deck = DeckDevice(name: "Creator Micro 2", transport: .usb, connected: true, approved: false)
         let link = OverviewLinkage.links(s).first { $0.id == "device:deck" }
         #expect(link?.group == .devices)
         #expect(link?.title == "Creator Micro 2")
-        #expect(link?.subtitle == "awaiting approval")
+        #expect(link?.subtitle == "Connected")
         #expect(link?.tone == .warn)
     }
 
@@ -110,11 +112,11 @@ import JRBarCore
         ]
         let links = OverviewLinkage.links(s)
         let claude = links.first { $0.id == "provider:claude" }
-        #expect(claude?.tone == .warn)
-        #expect(claude?.subtitle == "incident")
+        #expect(claude?.usageStatus == .incident)
+        #expect(claude?.subtitle == "Incident")
         #expect(claude?.facts.contains { $0.label == "Incident" && $0.value.contains("Elevated") } == true)
         #expect(links.first { $0.id == "provider:codex" }?.tone == .good)
-        #expect(links.first { $0.id == "provider:grok" }?.tone == .down)
+        #expect(links.first { $0.id == "provider:grok" }?.usageStatus == .needsSignIn)
     }
 
     @Test func providerPercentReadsInSubtitle() {
@@ -134,13 +136,13 @@ import JRBarCore
         ]
         let links = OverviewLinkage.links(s)
         let stale = links.first { $0.id == "provider:claude" }
-        #expect(stale?.subtitle == "40% used · stale")
-        #expect(stale?.tone == .warn)
+        #expect(stale?.subtitle == "40% used · Stale")
+        #expect(stale?.usageStatus == .stale)
         let work = links.first { $0.id == "provider:claude|work" }
         #expect(work?.title == "Claude · work")
         #expect(work?.tone == .good)
         let none = links.first { $0.id == "provider:opencode" }
-        #expect(none?.subtitle == "no quota source")
+        #expect(none?.subtitle == "No quota source")
         #expect(none?.facts.contains { $0.label == "Quota" } == true)
     }
 

@@ -19,12 +19,17 @@ struct OverviewView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         } content: {
             content
+                .frame(minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+                .navigationSplitViewColumnWidth(min: 360, ideal: 480)
         } detail: {
             inspector
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
         }
-        .frame(minWidth: 720, minHeight: 380)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 960, minHeight: 480)
         .jrbarType(.body)
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
@@ -544,7 +549,7 @@ struct OverviewView: View {
     static func chipLabel(_ link: OverviewLink) -> String {
         var parts = ["\(link.group.title): \(link.title)"]
         if let subtitle = link.subtitle { parts.append(subtitle) }
-        parts.append(link.tone.rawValue)
+        parts.append(link.usageStatus?.word ?? link.tone.rawValue)
         return parts.joined(separator: ", ")
     }
 

@@ -131,7 +131,7 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
     func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         // The titlebar's style, the size and its limits are settled before
         // the content goes in, so the SwiftUI toolbar is laid out once, in
@@ -139,7 +139,7 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         window.toolbarStyle = .unified
         window.titlebarAppearsTransparent = false
         window.setContentSize(NSSize(width: 960, height: 540))
-        window.minSize = NSSize(width: 720, height: 380)
+        window.minSize = NSSize(width: 960, height: 480)
         attachContent(to: window)
         window.setFrameAutosaveName("JRBarOverview")
         window.isReleasedWhenClosed = false

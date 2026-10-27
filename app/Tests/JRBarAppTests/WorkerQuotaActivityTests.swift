@@ -119,7 +119,7 @@ struct WorkerQuotaActivityTests {
         #expect(forecast.workingAgents == 4)
         #expect(SessionAwarePace.roomForOneMore(forecast, now: Self.stamp) == true)
         let panelReading = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider).reading(for: window)
-        #expect(panelReading.forecastHelp.contains("room for one more agent"))
+        #expect(panelReading.forecastHelp.contains("Room for one more agent"))
     }
 
     @Test func groupActivityDoesNotSpendTheIdleRootsQuota() throws {

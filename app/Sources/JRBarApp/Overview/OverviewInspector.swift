@@ -84,6 +84,10 @@ struct OverviewFactRow: View {
     }
 }
 
+extension OverviewLink {
+    var color: Color { usageStatus?.tone.color ?? tone.color }
+}
+
 extension OverviewLink.Tone {
     /// The status dot's colour — the same green-means-live vocabulary
     /// the panel's device chips already speak.
@@ -672,7 +676,7 @@ struct OverviewConnectionInspector: View {
                             .jrbarType(.title3).fontWeight(.semibold)
                             .lineLimit(2)
                         HStack(spacing: 5) {
-                            Circle().fill(link.tone.color).frame(width: 6, height: 6)
+                            Circle().fill(link.color).frame(width: 6, height: 6)
                             Text(link.subtitle ?? link.group.title)
                                 .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
@@ -757,7 +761,7 @@ struct OverviewConnectionRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                Circle().fill(link.tone.color).frame(width: 6, height: 6)
+                Circle().fill(link.color).frame(width: 6, height: 6)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
