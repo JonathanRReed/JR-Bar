@@ -161,9 +161,6 @@
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2
   },
-  "app/Sources/JRBarApp/SettingsStore.swift": {
-    "error-words: : \\(error)\"": 5
-  },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
     "radius: cornerRadius: 8": 1

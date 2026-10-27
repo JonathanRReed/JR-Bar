@@ -1113,7 +1113,7 @@ final class SettingsStore {
             let relative = SettingsPath(segments: Array(requested.segments.dropFirst(SettingsPath(ancestor).segments.count)))
             let merged = SettingsDocument(ancestorValue).replacing(relative, with: value)
             guard merged.value(at: relative) == value else {
-                report(error: "\(path): this position is not present in the pending setting")
+                report(error: saveFailure(path, "Another change to it is still being saved."))
                 return
             }
             writePath = ancestor
@@ -1170,14 +1170,14 @@ final class SettingsStore {
                 let reply = try await self.writeSetting(SettingsPath(path), value: value)
                 guard self.pendingTokens[path] == token else { return }
                 if !reply.ok {
-                    self.report(error: reply.error?.message ?? "\(path): refused (\(reply.error?.code ?? "error"))")
+                    self.report(error: self.saveFailure(path, reply.error?.sentence ?? "The monitor refused it."))
                     self.dropPending(path, token: token)
                 } else {
                     self.settlePending(path, value: value, echoed: reply.result?["value"], token: token)
                 }
             } catch {
                 guard self.pendingTokens[path] == token else { return }
-                self.report(error: "\(path): \(error)")
+                self.report(error: self.saveFailure(path, MonitorWords.reason(error)))
                 self.dropPending(path, token: token)
             }
         }
@@ -1201,7 +1201,7 @@ final class SettingsStore {
         if let token, pendingTokens[path] != token { return }
         if let echoed, !echoed.isNull, !Self.sameValue(echoed, value) {
             dropPending(path, ifStill: value, token: token)
-            report(error: "\(path): the monitor kept \(Self.describeValue(echoed)) instead")
+            report(error: saveFailure(path, "The monitor kept \(Self.describeValue(echoed)) instead."))
             return
         }
         refreshDocument()
@@ -1248,6 +1248,22 @@ final class SettingsStore {
         pendingTokens[path] = nil
         pendingOrigins[path] = nil
         overlayChanged(at: SettingsPath(path))
+    }
+
+    /// Each control's title by its setting path, noted as the control is
+    /// built, so a failed save can name what did not save.
+    @ObservationIgnored private(set) var controlTitles: [String: String] = [:]
+
+    func noteControlTitle(_ title: String, for path: String) {
+        if controlTitles[path] != title { controlTitles[path] = title }
+    }
+
+    /// "Couldn't save Brightness. The monitor did not answer in time."
+    /// The control's title when one is known, never the key path.
+    func saveFailure(_ path: String, _ reason: String) -> String {
+        let name = controlTitles[path] ?? controlTitles[path.split(separator: ".").first.map(String.init) ?? path]
+        let subject = name.map { "Couldn't save \($0)." } ?? "Couldn't save that setting."
+        return reason.isEmpty ? subject : subject + " " + reason
     }
 
     func report(error: String) {
@@ -1588,25 +1604,25 @@ final class SettingsStore {
                 if !reply.ok {
                     let message = reply.error?.sentence ?? "The monitor refused that."
                     self.noteHook(provider, message, isError: true)
-                    self.report(error: "\(verb) hooks for \(provider): \(message)")
+                    self.report(error: "\(verb) hooks for \(ProviderPalette.displayName(for: provider)): \(message)")
                     return
                 }
                 let result = reply.result?["results"]?[provider]
                 if result?["ok"]?.boolValue == false {
                     let message = result?["error"]?.stringValue ?? "failed"
                     self.noteHook(provider, message, isError: true)
-                    self.report(error: "\(verb) hooks for \(provider): \(message)")
+                    self.report(error: "\(verb) hooks for \(ProviderPalette.displayName(for: provider)): \(message)")
                 } else if let warning = result?["warning"]?.stringValue, !warning.isEmpty {
                     self.noteHook(provider, warning, isError: true)
-                    self.report(error: "\(provider): \(warning)")
+                    self.report(error: "\(ProviderPalette.displayName(for: provider)): \(warning)")
                 } else {
                     self.noteHook(provider, verb == "Install" ? "Hooks installed" : "Removed",
                                   isError: false)
-                    self.show(status: verb == "Install" ? "Hooks installed for \(provider)" : "Hooks removed for \(provider)")
+                    self.show(status: verb == "Install" ? "Hooks installed for \(ProviderPalette.displayName(for: provider))" : "Hooks removed for \(ProviderPalette.displayName(for: provider))")
                 }
             } catch {
                 self.noteHook(provider, MonitorWords.reason(error), isError: true)
-                self.report(error: "\(verb) hooks for \(provider): \(error)")
+                self.report(error: "\(verb) hooks for \(ProviderPalette.displayName(for: provider)): \(MonitorWords.reason(error))")
             }
         }
     }
@@ -1672,19 +1688,19 @@ final class SettingsStore {
                 guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
                 if !reply.ok {
                     self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
-                    self.report(error: "claude_plan_limits_enabled: \(reply.error?.sentence ?? "The monitor refused that.")")
+                    self.report(error: "Couldn't change plan limits. " + (reply.error?.sentence ?? "The monitor refused it."))
                     return
                 }
                 if on, reply.result?["value"]?.boolValue != true {
                     self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
-                    self.report(error: "Plan limits stayed off: the monitor applies its own consent stamp and did not keep the write")
+                    self.report(error: "Plan limits stayed off. The monitor did not keep the change.")
                     return
                 }
                 self.settlePending("claude_plan_limits_enabled", value: .bool(on), echoed: reply.result?["value"], token: token)
             } catch {
                 guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
                 self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
-                self.report(error: "claude_plan_limits_enabled: \(error)")
+                self.report(error: "Couldn't change plan limits. " + MonitorWords.reason(error))
             }
         }
     }
@@ -1702,12 +1718,12 @@ final class SettingsStore {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(token, forType: .string)
                     NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-                    self.show(status: "Serve token copied")
+                    self.show(status: "Key copied")
                 } else {
-                    self.report(error: "The monitor did not hand over a serve token")
+                    self.report(error: "Couldn't copy the key. The monitor did not hand one over.")
                 }
             } catch {
-                self.report(error: "serve_token: \(error)")
+                self.report(error: "Couldn't copy the key. " + MonitorWords.reason(error))
             }
         }
     }
@@ -2078,10 +2094,10 @@ final class SettingsStore {
                     }
                     self.show(status: "\(page.title) is back to its defaults")
                 } else {
-                    self.report(error: reply.error?.message ?? "reset refused")
+                    self.report(error: "Couldn't reset \(page.title). " + (reply.error?.sentence ?? "The monitor refused it."))
                 }
             } catch {
-                self.report(error: "reset: \(error)")
+                self.report(error: "Couldn't reset \(page.title). " + MonitorWords.reason(error))
             }
         }
     }
