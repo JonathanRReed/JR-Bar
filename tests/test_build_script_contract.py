@@ -138,7 +138,7 @@ def test_package_builder_retains_structured_notarization_evidence__and_2_more() 
     # --- scenario: package_builder_retains_structured_notarization_evidence
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert "--output-format json" in text
+    assert '"$ROOT_DIR/packaging/notarize.py"' in text
     assert "notary-submission.json" in text
     assert "notary-log.json" in text
     assert "notary-submission-id" in text

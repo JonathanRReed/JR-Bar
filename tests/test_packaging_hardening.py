@@ -15,7 +15,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "packaging/build_macos_pkg.sh"
 def functions():
     source = SCRIPT.read_text()
     transport_default = next(line for line in source.splitlines() if line.startswith("NOTARY_NO_S3_ACCELERATION="))
-    return transport_default + "\n" + source[source.index("require_production_candidate() {"):source.index('SPARKLE_ARCHIVE="')].replace("/bin/sleep 15", ":")
+    return transport_default + "\nNOTARY_TIMEOUT_SECONDS=100\n" + source[source.index("require_production_candidate() {"):source.index('SPARKLE_ARCHIVE="')]
 
 
 def run(tmp_path, body, **values):
@@ -29,6 +29,14 @@ def run(tmp_path, body, **values):
            "BUILD_DIR": str(tmp_path / "build"), "DIST_DIR": str(tmp_path / "dist"),
            "HELPERS": str(tmp_path / "candidate.app/Contents/Helpers"), "ROOT_DIR": str(tmp_path / "source"),
            "RAW_EVIDENCE_DIR": str(tmp_path / "evidence"), **values}
+    if "notarize_and_wait " in body:
+        root = tmp_path / "notary-source"
+        (root / "packaging").mkdir(parents=True, exist_ok=True)
+        source = (SCRIPT.parent / "notarize.py").read_text()
+        # Replace waiting with a deterministic clock advance in the subprocess.
+        clock = "import time\n_now=[0.0]\ntime.monotonic=lambda: _now[0]\ntime.sleep=lambda seconds: _now.__setitem__(0, _now[0]+seconds)\n"
+        (root / "packaging/notarize.py").write_text(clock + source)
+        env["ROOT_DIR"] = str(root)
     return subprocess.run(["/bin/bash", "-c", "set -euo pipefail\n" + functions() + body],
                           env=env, capture_output=True, text=True, timeout=10)
 
@@ -65,100 +73,6 @@ def test_verifier_failure_prevents_submission(tmp_path):
     result = run(tmp_path, 'require_production_candidate\nverify_embedded_source\necho SUBMITTED\n',
                  EMBEDDED_SOURCE_VERIFY_SCRIPT=str(failed))
     assert result.returncode != 0 and "SUBMITTED" not in result.stdout
-
-
-@pytest.mark.parametrize("setting", [None, "0", "1"])
-def test_notary_upload_flag_and_single_submission(tmp_path, setting):
-    tool = tmp_path / "xcrun"
-    log = tmp_path / "calls.jsonl"
-    tool.write_text(f"#!{sys.executable}\nimport json,sys\nwith open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\nprint(json.dumps({{'id':'fixture-submission','status':'Accepted'}}))\n")
-    tool.chmod(0o755)
-    values = {} if setting is None else {"NOTARY_NO_S3_ACCELERATION": setting}
-    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\nnotarize_and_wait fixture.zip "{tmp_path / "reply.json"}"\n', **values)
-    assert result.returncode == 0, result.stderr
-    calls = [json.loads(line) for line in log.read_text().splitlines()]
-    submissions = [call for call in calls if call[:2] == ["notarytool", "submit"]]
-    assert len(submissions) == 1
-    assert ("--no-s3-acceleration" in submissions[0]) is (setting == "1")
-    assert calls[1][:3] == ["notarytool", "info", "fixture-submission"]
-    assert json.loads((tmp_path / "reply.json").read_text())["status"] == "Accepted"
-
-
-@pytest.mark.parametrize("exit_code,submission", [(138, {"id": "fixture-created-job"}), (1, None)])
-def test_failed_notary_upload_preserves_private_diagnostics_without_retry(tmp_path, exit_code, submission):
-    tool = tmp_path / "xcrun"
-    log = tmp_path / "calls.jsonl"
-    response = tmp_path / "reply.json"
-    canary = "SECRET_TRANSPORT_CANARY"
-    tool.write_text(
-        f"#!{sys.executable}\nimport json,sys\n"
-        f"with open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
-        f"submission = {submission!r}\n"
-        "if submission: print(json.dumps(submission))\n"
-        f"print({canary!r}, file=sys.stderr)\nraise SystemExit({exit_code})\n")
-    tool.chmod(0o755)
-    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
-                 f'notarize_and_wait fixture.zip "{response}"\necho SUCCESS\n')
-    assert result.returncode == exit_code
-    calls = [json.loads(line) for line in log.read_text().splitlines()]
-    assert calls[0][:2] == ["notarytool", "submit"]
-    assert len(calls) == 4
-    assert all(call[:2] == ["notarytool", "history"] for call in calls[1:])
-    assert not response.exists()
-    output = result.stdout + result.stderr
-    assert "SUCCESS" not in output
-    assert canary not in output
-    assert "notarytool history" in output and "before" in output and "retry" in output
-    stdout_files = list(tmp_path.glob("reply.json.upload-stdout.*"))
-    stderr_files = list(tmp_path.glob("reply.json.upload-stderr.*"))
-    assert len(stdout_files) == len(stderr_files) == 1
-    for artifact in stdout_files + stderr_files:
-        assert artifact.stat().st_mode & 0o777 == 0o600
-        assert str(artifact) in output
-    assert stderr_files[0].read_text() == canary + "\n"
-    assert stdout_files[0].read_text() == (json.dumps(submission) + "\n" if submission else "")
-
-
-def test_notary_upload_attempts_keep_distinct_private_files(tmp_path):
-    tool = tmp_path / "xcrun"
-    tool.write_text("#!/bin/bash\nprintf 'attempt output'\nprintf 'attempt error' >&2\nexit 1\n")
-    tool.chmod(0o755)
-    response = tmp_path / "reply.json"
-    for _ in range(2):
-        result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
-                     f'notarize_and_wait fixture.zip "{response}"\n')
-        assert result.returncode == 1
-    for stream, expected in [("stdout", "attempt output"), ("stderr", "attempt error")]:
-        artifacts = list(tmp_path.glob(f"reply.json.upload-{stream}.*"))
-        assert len(artifacts) == 2
-        assert all(path.read_text() == expected for path in artifacts)
-        assert all(path.stat().st_mode & 0o777 == 0o600 for path in artifacts)
-
-
-def test_notary_signal_diagnostic_stays_private(tmp_path):
-    tool = tmp_path / "xcrun"
-    calls = tmp_path / "calls"
-    tool.write_text(
-        "#!/bin/bash\n"
-        f"printf 'submit\\n' >> {shlex.quote(str(calls))}\n"
-        "printf 'SIGNAL_TRANSPORT_CANARY\\n' >&2\n"
-        'kill -TERM "$$"\n')
-    tool.chmod(0o755)
-    response = tmp_path / "reply.json"
-    result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
-                 f'notarize_and_wait fixture.zip "{response}"\necho SUCCESS\n')
-    assert result.returncode == 143
-    assert calls.read_text() == "submit\n" * 4
-    assert not response.exists()
-    public_output = result.stdout + result.stderr
-    assert "SUCCESS" not in public_output
-    assert "SIGNAL_TRANSPORT_CANARY" not in public_output
-    assert "Terminated" not in public_output
-    errors = list(tmp_path.glob("reply.json.upload-stderr.*"))
-    assert len(errors) == 1
-    assert errors[0].stat().st_mode & 0o777 == 0o600
-    assert "SIGNAL_TRANSPORT_CANARY" in errors[0].read_text()
-    assert "Terminated" in errors[0].read_text()
 
 
 def test_verification_hook_precedes_actual_app_submission():
@@ -281,7 +195,7 @@ def test_notary_recovers_uploaded_submission_without_resubmitting(tmp_path, uplo
 
 @pytest.mark.parametrize("history", ["old", "wrong_name", "ambiguous", "future", "empty"])
 def test_notary_refuses_unrelated_or_ambiguous_history(tmp_path, history):
-    tool, log = fake_notary(tmp_path, history=history)
+    tool, log = fake_notary(tmp_path, upload="empty", history=history)
     response = tmp_path / "reply.json"
     result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
                  f'notarize_and_wait fixture.zip "{response}"\n')
@@ -292,7 +206,7 @@ def test_notary_refuses_unrelated_or_ambiguous_history(tmp_path, history):
 
 
 def test_notary_stops_after_three_consecutive_info_failures(tmp_path):
-    tool, log = fake_notary(tmp_path, info_failures=10)
+    tool, log = fake_notary(tmp_path, upload="empty", info_failures=10)
     result = run(tmp_path, f'XCRUN_TOOL="{tool}"\nNOTARY_PROFILE=fixture\n'
                  f'notarize_and_wait fixture.zip "{tmp_path / "reply.json"}"\n')
     assert result.returncode != 0

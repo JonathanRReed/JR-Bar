@@ -92,6 +92,20 @@ The builder looks in the login keychain and says what it found:
 `ALLOW_UNSIGNED=1` skips the keychain entirely (ad-hoc, no notarization, no
 feed): the local-only mode the contract tests use.
 
+Notary uploads disable S3 acceleration by default. Set
+`NOTARY_NO_S3_ACCELERATION=0` to use acceleration. A crashed upload gets one
+retry without acceleration, unless Apple already returned a terminal verdict
+for its recovered submission. A history entry marked `In Progress` does not
+prove the upload finished. A lost response without a crash still recovers a
+unique submission by filename and upload time.
+
+`NOTARY_TIMEOUT_SECONDS` defaults to 1800. One deadline covers both app and
+package notarization, including uploads, recovery, polling and log retrieval.
+The script keeps private command receipts and prints their paths and known
+submission IDs. A timeout stops the build; Apple may continue processing.
+Inspect those IDs before starting another build. The initial profile check
+has a separate 60-second limit.
+
 Requirements on the build Mac: Command Line Tools (Swift 6.2+, clang),
 Python 3.12 (`/opt/homebrew/bin/python3.12`, `python3.12` on `PATH`, or
 `BUILD_PYTHON`), the full git history (the build number is the commit count;
