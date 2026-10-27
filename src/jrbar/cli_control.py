@@ -1,6 +1,8 @@
 """Control verbs for the running JR-Bar: ``jrbar status | quiet | snooze |
 set | get | confetti`` over the core socket, and ``jrbar toggle | awake |
-open`` through the app's ``jrbar://`` links.
+open`` through the app's ``jrbar://`` links. ``jrbar awake -- <command>``
+and ``jrbar awake --pid N`` talk to the core socket too: only the daemon
+can watch a process exit.
 
 The install and diagnose commands already existed; nothing let a script,
 a Raycast Script Command, an Alfred workflow, cron or a Makefile *drive*
@@ -470,6 +472,138 @@ def cmd_awake(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
     return 0
 
 
+#: The system's own keep-awake tool, for when the monitor is not running.
+#: ``-i`` holds the computer, never the display; ``-w`` lets go when the
+#: process ends.
+CAFFEINATE_WHILE = ("/usr/bin/caffeinate", "-i", "-w")
+
+
+def _hold_while(
+    pid: int,
+    label: str | None,
+    connect: Callable[[], CoreConnection],
+) -> dict[str, Any]:
+    """Ask the monitor to hold the Mac awake while ``pid`` runs."""
+    body: dict[str, Any] = {"pid": pid, "source": "cli"}
+    if label:
+        body["label"] = label
+    with connect() as core:
+        return core.command("hold_awake", body)
+
+
+def _exit_status(returncode: int) -> int:
+    """A child's status as a shell reports it: 128 + the signal that ended it."""
+    return 128 - returncode if returncode < 0 else returncode
+
+
+def cmd_awake_while(
+    command: list[str],
+    connect: Callable[[], CoreConnection],
+    *,
+    spawn: Callable[..., Any] = subprocess.Popen,
+    ignore_interrupts: Callable[[], Callable[[], None]] | None = None,
+) -> int:
+    """``jrbar awake -- <command…>``: run the command with the Mac held
+    awake until it exits, and exit with its status. The monitor holds it
+    (one lease, its exit heard from the kernel); without the monitor the
+    system's ``caffeinate -i -w`` holds it instead. Only the command's
+    name is ever shown or sent, never its arguments."""
+    if not command:
+        raise ControlError("give the command to run after --, e.g. jrbar awake -- swift test", 2)
+    label = Path(command[0]).name
+    try:
+        child = spawn(command)
+    except FileNotFoundError:
+        print(f"jrbar awake: {command[0]}: command not found", file=sys.stderr)
+        return 127
+    except OSError as exc:
+        print(f"jrbar awake: {command[0]}: {exc.strerror or exc}", file=sys.stderr)
+        return 126
+    fallback = None
+    try:
+        _hold_while(child.pid, label, connect)
+        print(f"jrbar awake: holding the Mac awake while {label} runs", file=sys.stderr)
+    except ControlError as exc:
+        if exc.status == EXIT_NO_CORE:
+            try:
+                fallback = spawn(
+                    [*CAFFEINATE_WHILE, str(child.pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print(
+                    f"jrbar awake: the monitor is not running; caffeinate holds the Mac awake while {label} runs",
+                    file=sys.stderr,
+                )
+            except OSError as spawn_error:
+                print(f"jrbar awake: nothing could hold the Mac awake: {spawn_error}", file=sys.stderr)
+        else:
+            print(f"jrbar awake: {exc}; {label} runs without a hold", file=sys.stderr)
+    # Ctrl-C reaches the command through the terminal; this process waits
+    # for it to finish and reports its status rather than dying first.
+    restore = (ignore_interrupts or _ignore_interrupts)()
+    try:
+        returncode = child.wait()
+    finally:
+        restore()
+    if fallback is not None:
+        try:
+            fallback.wait(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            fallback.kill()
+    return _exit_status(int(returncode))
+
+
+def _ignore_interrupts() -> Callable[[], None]:
+    import signal
+
+    previous = {
+        number: signal.signal(number, signal.SIG_IGN)
+        for number in (signal.SIGINT, signal.SIGQUIT)
+    }
+
+    def restore() -> None:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+    return restore
+
+
+def cmd_awake_pid(
+    pid: int,
+    connect: Callable[[], CoreConnection],
+    *,
+    spawn: Callable[..., Any] = subprocess.Popen,
+) -> int:
+    """``jrbar awake --pid N``: hold the Mac awake until that process exits.
+    Returns at once; the monitor (or, without it, ``caffeinate -i -w``)
+    keeps holding."""
+    if pid <= 1:
+        raise ControlError("--pid needs a process id above 1", 2)
+    try:
+        result = _hold_while(pid, None, connect)
+    except ControlError as exc:
+        if exc.status != EXIT_NO_CORE:
+            raise
+        try:
+            spawn(
+                [*CAFFEINATE_WHILE, str(pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as spawn_error:
+            raise ControlError(f"nothing could hold the Mac awake: {spawn_error}", 1) from None
+        print(f"the monitor is not running; caffeinate holds the Mac awake until process {pid} exits")
+        return 0
+    lease = result.get("lease") if isinstance(result.get("lease"), dict) else {}
+    label = lease.get("label") if isinstance(lease.get("label"), str) else f"process {pid}"
+    print(f"holding the Mac awake while {label} (pid {pid}) runs")
+    return 0
+
+
 def cmd_deepwork(args: argparse.Namespace, opener: Callable[[str], None]) -> int:
     """Asks-only quiet for a focused stretch (25 min by default); the app
     says what the agents did meanwhile when it ends. ``off`` ends it."""
@@ -534,9 +668,16 @@ def build_parser() -> argparse.ArgumentParser:
     toggle.add_argument("name", help=", ".join(TOGGLE_NAMES))
     toggle.add_argument("state", nargs="?", choices=("flip", "on", "off"), default="flip")
 
-    awake = commands.add_parser("awake", help="Keep the Mac awake (the app's hold): 2h, 30m, off.")
+    awake = commands.add_parser(
+        "awake",
+        help="Keep the Mac awake (the app's hold): 2h, 30m, off; -- <command> while it runs.",
+        description="Keep the Mac awake. jrbar awake -- <command…> runs the command and holds "
+        "the Mac awake until it exits, with its exit status; --pid holds until a running "
+        "process exits. The display may still sleep.",
+    )
     awake.add_argument("duration", nargs="?", help="omit to hold until turned off")
     awake.add_argument("--until", help="a time of day instead: 8am, 20:30")
+    awake.add_argument("--pid", type=int, help="hold until this running process exits")
 
     deep = commands.add_parser("deepwork", help="Asks-only quiet for a stretch, then what the agents did (off ends it).")
     deep.add_argument("duration", nargs="?", help="25m (default), 50m, 1h, or off")
@@ -553,6 +694,12 @@ def main(
     socket_path: Path | None = None,
     opener: Callable[[str], None] | None = None,
 ) -> int:
+    # ``jrbar awake -- swift test``: everything after the first ``--`` is the
+    # command, word for word, so its own flags never reach this parser.
+    held_command: list[str] | None = None
+    if argv[:1] == ["awake"] and "--" in argv:
+        split = argv.index("--")
+        argv, held_command = argv[:split], argv[split + 1 :]
     args = build_parser().parse_args(argv)
     path = socket_path or default_socket_path()
 
@@ -576,6 +723,14 @@ def main(
         if args.command == "toggle":
             return cmd_toggle(args, link)
         if args.command == "awake":
+            if held_command is not None or args.pid is not None:
+                if held_command is not None and args.pid is not None:
+                    raise ControlError("give a command after -- or --pid, not both", 2)
+                if args.duration is not None or args.until is not None:
+                    raise ControlError("a hold while a process runs takes no duration", 2)
+                if held_command is not None:
+                    return cmd_awake_while(held_command, connect)
+                return cmd_awake_pid(args.pid, connect)
             return cmd_awake(args, link)
         if args.command == "deepwork":
             return cmd_deepwork(args, link)

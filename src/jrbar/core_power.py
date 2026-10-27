@@ -134,6 +134,10 @@ def attach(controller: Any) -> PowerLog | None:
     log.load()
     controller._core_power_log = log
     controller._core_power_published = log.events[-1] if log.events else None
+    # A "while this runs" lease hears its process exit on a watch thread;
+    # the lease ends, and the state says so, on the main thread.
+    if hasattr(keep, "on_process_exit"):
+        keep.on_process_exit = lambda: _on_main_later(controller, lambda: _resync(controller))
     keep.attach_store(state_dir, power_log=log)
     lid = getattr(controller, "closed_lid_awake", None)
     if lid is not None and callable(getattr(lid, "configure_sleep_on_release", None)):
@@ -183,6 +187,9 @@ def observe_environment(
     # The raw reading: the hold consults the lid only while it holds, and
     # a hold keeps the lid poll running.
     lid = getattr(controller, "last_lid_closed", None)
+    # Whether a display is still on matters only with the lid shut: then a
+    # display hold is kept for an external screen and dropped otherwise.
+    external = lid_sleep_module.external_display_is_active() if lid is True else None
     observe(
         # Last-known pending rows protect only an existing manual lease;
         # admission and automatic demand still use fresh sessions.
@@ -196,6 +203,7 @@ def observe_environment(
             getattr(getattr(controller, "settings", None), "keep_awake_yield_low_power_mode", True)
             and keep_awake_module.read_low_power_mode()
         ),
+        external_display=external,
     )
 
 
@@ -282,6 +290,16 @@ def after_keep_awake_sync(controller: Any) -> None:
         )
 
 
+def _on_main_later(controller: Any, callable_: Callable[[], None]) -> None:
+    """Hand ``callable_`` to the main thread without waiting for it; a
+    controller without the hop (a test harness) runs it here."""
+    later = getattr(controller, "_core_on_main_later", None)
+    if callable(later):
+        later(callable_)
+    else:
+        callable_()
+
+
 def _resync(controller: Any) -> None:
     """Apply a lease change now, not at the next refresh: the hold takes
     (or drops) its assertion, and the state document says so."""
@@ -309,8 +327,14 @@ def hold_awake(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     ):
         return release_awake(controller, {})
     pending, _working = session_facts(getattr(controller, "last_snapshot", None))
+    identify = getattr(keep, "process_identity", None)
     try:
-        lease = lease_from_args(args, now=time.time(), pending_ids=pending)
+        lease = lease_from_args(
+            args,
+            now=time.time(),
+            pending_ids=pending,
+            **({"identify": identify} if callable(identify) else {}),
+        )
     except LeaseRefusedError as error:
         raise _command_error("refused", str(error)) from error
     except ValueError as error:
