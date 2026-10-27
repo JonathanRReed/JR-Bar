@@ -1028,6 +1028,10 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 
+    /// How long the GPU spent on the last `render(to:size:)`, in seconds:
+    /// the proof harness's per-frame cost.
+    private(set) var lastRenderGPUTime: Double = 0
+
     /// Renders the room into an offscreen texture — the proof harness
     /// and tests draw without an MTKView. Synchronous: waits for the
     /// GPU before returning, and returns false on any failure.
@@ -1049,6 +1053,7 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
         encoder.endEncoding()
         command.commit()
         command.waitUntilCompleted()
+        lastRenderGPUTime = command.gpuEndTime - command.gpuStartTime
         return command.status == .completed
     }
 }

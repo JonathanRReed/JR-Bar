@@ -49,26 +49,29 @@ struct FoldRenderProofTests {
     // MARK: The desktop
 
     /// Draws the synthetic desktop (or, `wallpaperOnly`, what the Room's
-    /// far stream sees: the wallpaper alone) into a capture-shaped frame.
-    static func desktop(wallpaperOnly: Bool = false) throws -> CVPixelBuffer {
+    /// far stream sees: the wallpaper alone) into a capture-shaped frame,
+    /// `scale` pixels to the point: 2 is the Retina capture.
+    static func desktop(wallpaperOnly: Bool = false, scale: Int = 1) throws -> CVPixelBuffer {
         var maybeBuffer: CVPixelBuffer?
         let attrs: [String: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
             kCVPixelBufferMetalCompatibilityKey as String: true,
         ]
-        #expect(CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+        let pixelsWide = width * scale
+        let pixelsHigh = height * scale
+        #expect(CVPixelBufferCreate(kCFAllocatorDefault, pixelsWide, pixelsHigh, kCVPixelFormatType_32BGRA,
                                     attrs as CFDictionary, &maybeBuffer) == kCVReturnSuccess)
         let buffer = try #require(maybeBuffer)
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         let ctx = try #require(CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
+            data: CVPixelBufferGetBaseAddress(buffer), width: pixelsWide, height: pixelsHigh,
             bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: info))
         // Top-left origin, like the capture.
-        ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
+        ctx.translateBy(x: 0, y: CGFloat(pixelsHigh))
+        ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
         drawWallpaper(ctx)
         guard !wallpaperOnly else { return buffer }
         drawTextWindow(ctx)
@@ -192,7 +195,8 @@ struct FoldRenderProofTests {
                    queue: try #require(device.makeCommandQueue()))
     }
 
-    static func makeTarget(_ device: MTLDevice) throws -> MTLTexture {
+    static func makeTarget(_ device: MTLDevice, width: Int = width,
+                           height: Int = height) throws -> MTLTexture {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         desc.usage = [.shaderRead, .renderTarget]
@@ -652,6 +656,98 @@ struct FoldRenderProofTests {
             + "the fold follows for 1 s of stillness, then 104° is the rest and it unwinds"
         let url = dir.appendingPathComponent("fold-duo-reopen-settle-strip.png")
         try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
+    }
+
+    /// What one Duo frame costs the GPU, drawn at the 14-inch panel's own
+    /// size (3024×1964, the overlay's drawable) from the 1x picture the
+    /// capture used to film and from the Retina one it films now: the
+    /// median of 40 draws at each lid angle, after a warm-up. Written to
+    /// `fold-duo-gpu.txt`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to measure the Duo's GPU cost"))
+    func duoGPUCost() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let panelWidth = 3024, panelHeight = 1964
+        var lines: [String] = []
+        for scale in [1, 2] {
+            let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
+            renderer.look = .duo
+            #expect(renderer.setFullFrame(try Self.desktop(scale: scale)))
+            let out = try Self.makeTarget(renderer.device, width: panelWidth, height: panelHeight)
+            let size = CGSize(width: panelWidth, height: panelHeight)
+            var medians: [String] = []
+            for angle in [100.0, 90, 75, 60] {
+                FoldDuoModel.apply(to: &renderer.params, reference: Self.rest, theta: angle, hold: 1,
+                                   perspective: 0.6, blur: 0.6, shade: 0.67, fadeLength: 0.55,
+                                   reduceMotion: false)
+                for _ in 0..<5 { #expect(renderer.render(to: out, size: size)) }
+                var times: [Double] = []
+                for _ in 0..<40 {
+                    #expect(renderer.render(to: out, size: size))
+                    times.append(renderer.lastRenderGPUTime * 1000)
+                }
+                times.sort()
+                medians.append(String(format: "%.0f° %.3f ms", angle, times[times.count / 2]))
+            }
+            let picture = "\(Self.width * scale)x\(Self.height * scale)"
+            let pyramid = renderer.duoPyramid.map { "\($0.mipmapLevelCount) levels, \($0.allocatedSize / 1_000_000) MB" } ?? "none"
+            lines.append("picture \(picture) (pyramid \(pyramid)) drawn at \(panelWidth)x\(panelHeight): "
+                         + medians.joined(separator: ", "))
+        }
+        let report = lines.joined(separator: "\n") + "\n"
+        print("fold proof: GPU per Duo frame\n" + report)
+        try report.write(to: dir.appendingPathComponent("fold-duo-gpu.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// The checker window as the seated eye sees it mid-fold: its mean
+    /// brightness, 0…255, over the cells (its title bar left out). Sharp,
+    /// its 20 and 250 cells average 135 in the numbers and about 184 in
+    /// light, which is where a blur that mixes light lands it.
+    static func checkerMean(_ px: Pixels) -> Double {
+        let m = Double(margin)
+        let scale = 1 / (1 + 2 * m)
+        let box = CGRect(x: checkerWindow.minX + 20, y: checkerWindow.minY + 40,
+                         width: checkerWindow.width - 40, height: checkerWindow.height - 60)
+        let x0 = Int(((box.minX - Double(width) / 2) * scale + Double(width) / 2).rounded())
+        let x1 = Int(((box.maxX - Double(width) / 2) * scale + Double(width) / 2).rounded())
+        let y0 = Int(((box.minY + m * Double(height)) * scale).rounded())
+        let y1 = Int(((box.maxY + m * Double(height)) * scale).rounded())
+        var sum = 0.0, n = 0.0
+        for y in y0..<y1 {
+            for x in x0..<x1 {
+                let c = px.rgb(x, y)
+                sum += (c.r + c.g + c.b) / 3
+                n += 1
+            }
+        }
+        return sum / max(1, n)
+    }
+
+    /// The checker window's mean brightness as the seated eye sees it, at
+    /// rest and mid-fold, with the default Shade and with Shade 0 (blur
+    /// alone). Written to `fold-duo-checker.txt`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to measure the checker window"))
+    func checkerMeasurement() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        var lines: [String] = []
+        for shade in [0.67, 0] {
+            var cells: [String] = []
+            for angle in [110.0, 90, 80, 75] {
+                let panel = try Self.renderPanel(rig, angle: angle, shade: shade)
+                let seen = Self.pixels(try Self.renderObserver(rig, panel: panel, angle: angle))
+                cells.append(String(format: "%.0f° %.1f", angle, Self.checkerMean(seen)))
+            }
+            lines.append(String(format: "shade %.2f: ", shade) + cells.joined(separator: ", "))
+        }
+        let report = lines.joined(separator: "\n") + "\n"
+        print("fold proof: checker window mean as the eye sees it\n" + report)
+        try report.write(to: dir.appendingPathComponent("fold-duo-checker.txt"), atomically: true, encoding: .utf8)
     }
 
     /// A Settings search that lands on a row the current look hides —
