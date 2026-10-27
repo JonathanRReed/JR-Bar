@@ -50,6 +50,7 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "final-test.sh").write_text((ROOT / "scripts/final-test.sh").read_text())
+    (scripts / "python-env.sh").write_text((ROOT / "scripts/python-env.sh").read_text())
     (tmp_path / ".gitignore").write_text(
         ".venv/\n.jrbar-verification/\nfake-bin/\nmake-calls.txt\n"
     )
@@ -102,7 +103,7 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
 def test_final_command_runs_the_swift_suites_but_the_fast_gate_does_not():
     makefile = (ROOT / "Makefile").read_text()
     target = makefile.split("\nswift-test:\n", 1)[1].split("\n\n", 1)[0]
-    assert target.strip() == "$(PYTHON) scripts/check_temp_leaks.py --swift"
+    assert target.strip() == '"$(PYTHON)" scripts/check_temp_leaks.py --swift'
     fast = makefile.split("\nfast:\n", 1)[1].split("\n\n", 1)[0]
     assert "swift" not in fast
     assert "make swift-test" in (ROOT / "scripts/final-test.sh").read_text()
