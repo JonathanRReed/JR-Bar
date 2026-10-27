@@ -340,6 +340,7 @@ final class UsageCenterStore {
     @ObservationIgnored var readHistory: (String, UsageHistoryRange) async throws -> UsageHistory
     @ObservationIgnored var readHistoryStatus: (String, UsageHistoryRange) async throws -> UsageHistory
     @ObservationIgnored var readProviderRows: () async throws -> [ProviderRow]
+    @ObservationIgnored var readBurnerUsage: ([String], Double) async throws -> SessionUsageDocument
     @ObservationIgnored var revokeProviderConsent: (ConsentRevocation) async throws -> CoreReply
     @ObservationIgnored var scheduleColdRetry: (@escaping @MainActor () -> Void) -> Void = { retry in
         DispatchQueue.main.asyncAfter(deadline: .now() + UsageCenterStore.coldRetryDelay) {
@@ -365,6 +366,7 @@ final class UsageCenterStore {
         readHistory = { try await core.usageHistory(provider: $0, range: $1) }
         readHistoryStatus = { try await core.usageHistory(provider: $0, range: $1, observe: true) }
         readProviderRows = { try await core.listProviders() }
+        readBurnerUsage = { try await core.sessionUsage(ids: $0, since: $1) }
         revokeProviderConsent = { request in
             try await core.providerConsent(action: "revoke", provider: request.provider,
                 browser: request.browser, profile: request.profile, instance: request.instance)
@@ -889,9 +891,13 @@ final class UsageCenterStore {
         return SessionAwarePace.adjust(forecast, working: workingAgents(provider: provider.id, core: core))
     }
 
-    /// This Mac's sessions of `provider` that are working right now.
+    /// Every local worker spends its own provider's quota, including across groups.
     static func workingAgents(provider: String, core: CoreModel) -> Int {
-        core.sessions.filter { $0.provider == provider && !$0.isRemote && SessionActivity.reduce($0) == .working }.count
+        localQuotaSessions(provider: provider, core: core).filter { !$0.stale && $0.quotaWorking != false && SessionActivity.reduce($0) == .working }.count
+    }
+
+    static func localQuotaSessions(provider: String, core: CoreModel) -> [CoreSession] {
+        core.allSessions.filter { $0.provider == provider && !$0.isRemote }
     }
 
     // MARK: Who is burning the window
@@ -917,24 +923,25 @@ final class UsageCenterStore {
     /// A reply still `reading` a session keeps the ranking it had (one
     /// missing that session would misstate every share) and asks again
     /// soon; a failed one waits the interval like an answer.
-    func loadBurners(for provider: CoreProviderUsage, force: Bool = false) {
+    @discardableResult
+    func loadBurners(for provider: CoreProviderUsage, force: Bool = false) -> Task<Void, Never>? {
         guard core.isLive, let window = Self.featuredWindow(of: provider),
               let resetsAt = window.resetsAt,
-              let span = UsageWindowLabel.windowSpan(id: window.key, name: window.name) else { return }
+              let span = UsageWindowLabel.windowSpan(id: window.key, name: window.name) else { return nil }
         let identity = provider.identity
-        if !force, let at = burnersFetchedAt[identity], now.timeIntervalSince(at) < Self.burnersInterval { return }
-        let sessions = core.sessions.filter { $0.provider == provider.id && !$0.isRemote }
+        if !force, let at = burnersFetchedAt[identity], now.timeIntervalSince(at) < Self.burnersInterval { return nil }
+        let sessions = Self.localQuotaSessions(provider: provider.id, core: core)
         guard !sessions.isEmpty else {
             burners[identity] = []
-            return
+            return nil
         }
         burnersFetchedAt[identity] = now
         let since = resetsAt - span
         let labels = Dictionary(sessions.map { ($0.id, $0.displayLabel) }, uniquingKeysWith: { first, _ in first })
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let document = try await self.core.sessionUsage(ids: Array(labels.keys.prefix(SessionUsageStore.batchLimit)), since: since)
+                let document = try await self.readBurnerUsage(Array(labels.keys.prefix(SessionUsageStore.batchLimit)), since)
                 if Self.burnersStillReading(document.gaps) {
                     self.burnersFetchedAt[identity] = self.now.addingTimeInterval(SessionUsageStore.readingRetry - Self.burnersInterval)
                     return

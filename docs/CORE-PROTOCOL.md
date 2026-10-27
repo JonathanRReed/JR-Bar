@@ -111,6 +111,12 @@ an actionable ask. An unlinked worker always shows its ask, even when
 sub-agent asks are off. That preference applies only to linked workers.
 Resolved child sessions have `kind: "worker"` and `parent` set to the root
 session ID, including children whose provider differs from their root.
+Quota pace counts every non-stale local session under its own provider, including
+workers in another provider's group. Optional `quota_working: false` marks a root
+whose working state only summarizes its workers. It does not spend its own
+provider's quota. When absent, quota readers use the session's activity and
+staleness. Group counts and light shares still count the root once.
+
 The root's `workers` counts its live workers, excluding stale members. Asks keep their own
 session IDs and remain individually answerable. The group root shows the
 most urgent member state and shows Working while any member works, even

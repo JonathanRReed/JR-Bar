@@ -1486,7 +1486,7 @@ final class SettingsStore {
         return facts.live
     }
 
-    /// Providers with a main session running now.
+    /// Providers with a retained session, including workers.
     var runningProviders: Set<String> {
         refreshFacts()
         _ = runningMirror.value
@@ -2348,7 +2348,7 @@ struct SettingsCoreFacts: Equatable {
             if let status = health?["hooks"]?[provider]?.stringValue { hookStatuses[provider] = status }
             if let found = health?["detected"]?[provider]?.boolValue { hookDetections[provider] = found }
         }
-        runningProviders = Set((state?.mainSessions ?? []).map(\.provider))
+        runningProviders = Set((state?.sessions ?? []).map(\.provider))
         let all = state?.devices ?? []
         for device in all where devices[device.id] == nil {
             var still = device

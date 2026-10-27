@@ -55,7 +55,7 @@ final class AgentUtility: Toy {
     }
 
     static func snapshot(of core: CoreModel) -> Snapshot {
-        var reporting = Set(core.sessions.filter { !$0.isRemote }.map(\.provider))
+        var reporting = Set(core.allSessions.filter { !$0.isRemote }.map(\.provider))
         if let hooks = core.state?.health?["hooks"]?.objectValue {
             reporting.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
         }

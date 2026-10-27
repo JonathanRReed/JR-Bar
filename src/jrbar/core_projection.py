@@ -1219,6 +1219,8 @@ def session_document(
             acknowledged=acknowledged,
         ),
     }
+    if getattr(status, "quota_working", None) is False:
+        document["quota_working"] = False
     work_key = getattr(status, "work_key", None)
     if type(work_key) is WorkKey and work_key.source_key.adapter_id == "t3code":
         document["source_integration"] = "t3code"
@@ -1612,9 +1614,12 @@ def _apply_agent_group_rows(rows, group_statuses, group_resolution, ask_ids, qui
             if not is_child:
                 if quiet_worker_ids is not None:
                     row["workers_waiting"] = len(live_workers & quiet_worker_ids)
-                if (row["id"] not in ask_ids and row["mode"] not in {mode.value for mode in _WORKING_MODES}
+                if (row["id"] not in ask_ids
+                        and (row["stale"] or row["mode"] not in {mode.value for mode in _WORKING_MODES})
                         and row["mode"] != AgentMode.BLOCKED_ERROR.value
                         and group.id in working_groups):
+                    # Group activity must not charge an idle root's provider.
+                    row["quota_working"] = False
                     row["mode"] = AgentMode.WORKING.value
                     row["lifecycle"] = "active"
                     row["stale"] = False

@@ -90,11 +90,11 @@ extension PanelStore {
     var panelAgents: [PanelAgent] {
         guard isLive else { return [] }
         let sessions = core.sessions
-        let inputs = PanelAgentsInputs(sessions: sessions, groups: core.state?.agentGroups ?? [],
+        let inputs = PanelAgentsInputs(sessions: core.allSessions, groups: core.state?.agentGroups ?? [],
                                        settings: core.settings, usage: sessionUsage.usage,
                                        asks: askRows.compactMap(\.ask), query: trimmedFindQuery)
         if let memo = panelAgentsMemo, memo.inputs == inputs { return memo.agents }
-        let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(inputs.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let askingRows = Dictionary(askRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let asks = Set(askingRows.keys)
         var claimed = Set<String>()
