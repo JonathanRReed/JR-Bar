@@ -198,8 +198,14 @@ Closing the lid folds the desktop. Two looks, picked on the card:
 
 Both fold from wherever the lid rests by default (the Duo reacts from the
 first degree), or from a set angle. Clean-room; no Lid Plane (GPL-3) or
-Bendy code; the Duo's numbers come from the public chuspeeism/iphone-duo
-study of Apple's own model (MIT).
+Bendy code. Apple has published no numbers for the Duo's transition, so
+the Duo's are estimates. The darkening and the classic blur come from
+chuspeeism/iphone-duo (MIT), an independent animation study that guessed
+them against the community's 3D model of the device, not anything Apple
+released. The blur's shape since 0.10.1 follows a third-party replay of
+the shaders on Apple's iPhone Duo product page (bravohenry's motion study)
+and a frame-by-frame review of real footage (jal-co/iphone-duo). Credits
+and commits are in [PRIOR-ART.md](PRIOR-ART.md).
 
 - **Sensor** `LidAngleSensor` (`JRBarApp/Toys/Fold/LidAngleSensor.swift`):
   IOKit HID, match usage page `0x20` (Sensor), usage `0x8A` (Orientation),

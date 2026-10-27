@@ -462,6 +462,43 @@ uses a held-plane model. This comparison does not establish visual parity;
 animation changes require rendered and physical checks. No Mac Duo code was
 copied into JR-Bar.
 
+## Fold capture and blur, 2026-10-27
+
+Studied for the 0.10.1 Fold pass: the Duo's capture at the panel's own
+pixels and colour, its blur in linear light, and the front-shaped blur.
+JR-Bar reimplements each idea in its own code; nothing was copied, and the
+GPL-3.0 projects in the research (Lid Plane, NUEM) were read only as far as
+their READMEs.
+
+- [Mac-Duo](https://github.com/sumimakito/Mac-Duo) by sumimakito,
+  Apache-2.0, at
+  [`2a9fa18b`](https://github.com/sumimakito/Mac-Duo/commit/2a9fa18bea0e92293bf59227b539fe3de0e91328):
+  capturing at `contentRect × pointPixelScale` with the best capture
+  resolution, filming and tagging the layer in Display P3, and keeping the
+  blur pyramid in an sRGB format so it filters light.
+- [iphone-duo-motion-study](https://github.com/bravohenry/iphone-duo-motion-study)
+  by bravohenry, no licence (all rights reserved), at
+  [`6dcc18fe`](https://github.com/bravohenry/iphone-duo-motion-study/commit/6dcc18feb73ac6a725589ec04e08cca0aec90ff2):
+  its replay of the Wipe on Apple's iPhone Duo product page, where the
+  pyramid level rises in a straight line with distance from the hinge and
+  with progress, saturating, so the blur clears as a front. Only the shape
+  was taken, as numbers in our own model; none of its shader code.
+- [iphone-duo](https://github.com/jal-co/iphone-duo) by jal-co, MIT, at
+  [`3674f334`](https://github.com/jal-co/iphone-duo/commit/3674f3343d20a72fd6c7277bdd5cfeffc9216f7d):
+  its frame-by-frame review of real footage, which describes the focus
+  boundary moving across the display with the hinge side readable first.
+- Empirical Health's
+  [technical notes](https://www.empirical.health/blog/iphone-duo-comparison/technical-notes.html)
+  on their fit to filmed footage (σ ∝ sin θ · d³): independent support for
+  a sharp hinge side and a heavily blurred outer band.
+- [iphone-duo](https://github.com/chuspeeism/iphone-duo) by chuspeeism
+  (© 2026 jadon7), MIT, at
+  [`2662ebbe`](https://github.com/chuspeeism/iphone-duo/commit/2662ebbeb6aa844cd4f6888f7d6f8958662249fd):
+  an independent animation study against the community's 3D model of the
+  device, and the source of the Duo's darkening and its classic blur
+  (`72·motion·e^1.35`, darkening at twice the motion past a 0.2 dead
+  zone). Its numbers are that study's estimates, not Apple's.
+
 ## Notch island motion, 2026-10-07
 
 Studied to find out why the island did not feel like Alcove. Behaviour and
