@@ -56,7 +56,7 @@ struct BuddyPalCardTests {
         #expect(BuddyPalCard.make(care: care, now: t0).longestAsk == "Longest ask sat through: 5m")
         #expect(BuddyPalCard.duration(42) == "42s")
         #expect(BuddyPalCard.duration(7_500) == "2h 05m")
-        #expect(BuddyPalCard.duration(7_200) == "2h 00m")
+        #expect(BuddyPalCard.duration(7_200) == "2h")
         // A hand-edited care log can hold any finite number; the card
         // must not trap converting it.
         #expect(BuddyPalCard.duration(1e300) == BuddyPalCard.duration(BuddyPalCard.maxDuration))

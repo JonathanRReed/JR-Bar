@@ -24,7 +24,36 @@ extension DockUtility: Toy {
         if !enhance.accessibilityTrusted {
             return .needsPermission("Needs Accessibility")
         }
-        return enhance.running || switcher.running ? .on : .paused("Parked")
+        if enhance.running || switcher.running { return .on }
+        let current = settings()
+        return Self.idleChip(previewsOn: current.enhance.hoverPreviews, switcherOn: current.switcherWanted)
+    }
+
+    /// The chip while JR-Bar has the Dock and neither half runs: that both
+    /// halves are switched off, or that they are still starting, never
+    /// "Parked". A counterpart's chip is `providerStatus`.
+    nonisolated static func idleChip(previewsOn: Bool, switcherOn: Bool) -> ToyStatus {
+        if !previewsOn && !switcherOn { return .note("Previews and switcher are off") }
+        return .paused("Starting")
+    }
+
+    /// What the Dock costs right now, measured where the work happens.
+    func cost(at now: TimeInterval) -> String? {
+        guard isOn else { return UtilityCost.off }
+        return Self.costLine(watching: enhance.running, switcher: switcher.running,
+                             previews: UtilityCost.dockPreviews.count(at: now),
+                             captures: UtilityCost.dockCaptures.count(at: now))
+    }
+
+    nonisolated static func costLine(watching: Bool, switcher: Bool, previews: Int, captures: Int) -> String {
+        var parts: [String] = []
+        if watching {
+            parts.append("Watching the Dock through Accessibility")
+            parts.append("\(UtilityCost.count(previews, "preview")), \(UtilityCost.count(captures, "capture")) in the last minute")
+        }
+        if switcher { parts.append("one key tap for the switcher chords") }
+        if parts.isEmpty { return "Nothing running · the Dock is someone else's or switched off" }
+        return parts.joined(separator: " · ")
     }
 
     var controls: AnyView { AnyView(DockUtilityControls(utility: self)) }
@@ -105,6 +134,8 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Window thumbnails",
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
+
+            nativePreviews
 
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
@@ -237,6 +268,7 @@ struct DockUtilityControls: View {
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss")
+                .accessibilityLabel("Dismiss")
             }
             .padding(.bottom, SettingsMetrics.xs)
         }
@@ -514,6 +546,27 @@ struct DockUtilityControls: View {
     private var thumbnails: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.showThumbnails },
                 set: { utility.enhance.preferences.showThumbnails = $0 })
+    }
+    private var nativePreviews: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle(isOn: calendarPreview) {
+                SettingLabel(title: "Calendar preview",
+                             subtitle: "Show upcoming events when you hover Calendar.")
+            }
+            Toggle(isOn: mediaPreview) {
+                SettingLabel(title: "Media preview",
+                             subtitle: "Show playback controls when you hover the app playing audio.")
+            }
+        }
+    }
+
+    private var calendarPreview: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.calendarPreview },
+                set: { utility.enhance.preferences.calendarPreview = $0 })
+    }
+    private var mediaPreview: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.mediaPreview },
+                set: { utility.enhance.preferences.mediaPreview = $0 })
     }
     private var largePreviews: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.largePreviews },

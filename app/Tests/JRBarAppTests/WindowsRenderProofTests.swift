@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import JRBarTestSupport
 import SwiftUI
 import Testing
 import JRBarUI
@@ -317,8 +318,9 @@ struct WindowsRenderProofTests {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("scripts/mock-core.py")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", script.path, "--socket", socket, "--step", "600", "--hot-history",
+        let python = MockCorePython.command(appDirectory: script.deletingLastPathComponent().deletingLastPathComponent())
+        process.executableURL = python.executable
+        process.arguments = python.leading + [script.path, "--socket", socket, "--step", "600", "--hot-history",
                              "--start-at", "\(startAt)", "--deck", deck,
                              "--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"] + extra
         process.standardOutput = FileHandle.nullDevice

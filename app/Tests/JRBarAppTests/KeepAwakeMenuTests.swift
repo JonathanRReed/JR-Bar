@@ -175,7 +175,7 @@ import Testing
                 == KeepAwakeMenu.maxDurations)
         #expect(KeepAwakeMenu.title(seconds: 5400) == "1 hour 30 minutes")
         #expect(KeepAwakeMenu.shortTitle(seconds: 900) == "15m")
-        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2h 00m")
+        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2h")
     }
 
     @Test func theCardSwitchIsThePersonsHold() async throws {
@@ -252,7 +252,8 @@ import Testing
             let json = "{\"state\":\"manual\",\"active\":false,\"lease\":" + lease + "}"
             state.noteDaemonHold(try JSONDecoder().decode(CoreAwakeHold.self, from: Data(json.utf8)), live: true)
             #expect(utility.isOn, "the manual request is still in force")
-            #expect(utility.status == .failed("Not held"))
+            #expect(utility.status == .failed("Couldn't hold the Mac awake"))
+            #expect(store.canRetryAwake, "the card offers Try again")
         }
     }
 

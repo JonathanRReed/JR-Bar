@@ -246,10 +246,10 @@ struct OverviewSessionInspector: View {
             // S7.3: every fact names its evidence class — what the provider
             // reported vs what the daemon derived vs what nobody can say.
             OverviewFactRow(name: "State", value: Self.stateWord(activity, ask: session.ask), evidence: .derived)
-            OverviewFactRow(name: "Outcome", value: entry.axes?.outcome ?? "—", evidence: .derived)
-            OverviewFactRow(name: "Review", value: entry.axes?.review ?? "—", evidence: .derived)
-            OverviewFactRow(name: "Freshness", value: entry.axes?.freshness ?? (session.stale ? "stale" : "live"), evidence: .derived)
-            OverviewFactRow(name: "Harness", value: session.provider, evidence: .reported)
+            OverviewFactRow(name: "Outcome", value: entry.axes?.outcome?.capitalized ?? "—", evidence: .derived)
+            OverviewFactRow(name: "Review", value: entry.axes?.review?.capitalized ?? "—", evidence: .derived)
+            OverviewFactRow(name: "Freshness", value: (entry.axes?.freshness ?? (session.stale ? "stale" : "live")).capitalized, evidence: .derived)
+            OverviewFactRow(name: "Provider", value: ProviderPalette.displayName(for: session.provider), evidence: .reported)
             if let origin = session.origin?.label { OverviewFactRow(name: "Origin", value: origin, evidence: .reported) }
             if let project = session.projectName {
                 OverviewFactRow(name: "Project", value: project, evidence: .derived)

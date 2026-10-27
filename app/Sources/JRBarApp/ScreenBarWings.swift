@@ -470,6 +470,9 @@ struct ScreenBarEarMarks: Equatable {
             }
         case "agents":
             text = "Held awake until the agents finish"
+        case "process":
+            let name = lease.label.flatMap { $0.isEmpty ? nil : $0 } ?? "a command"
+            text = "Held awake while \(name) runs"
         default:
             text = "Held awake until you turn it off"
         }

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .models import HookEvent, parse_datetime
+from .transcript_tail import TranscriptTail, transcript_rows
 
 PI_TRANSCRIPT_PROVIDER: Final = "pi-transcripts"
 GEMINI_TRANSCRIPT_PROVIDER: Final = "gemini-transcripts"
@@ -144,7 +145,7 @@ def pi_session_header(path: Path) -> dict[str, Any] | None:
     return row
 
 
-def iter_pi_transcript_file(path: Path) -> Iterable[HookEvent]:
+def iter_pi_transcript_file(path: Path, *, tail: TranscriptTail | None = None) -> Iterable[HookEvent]:
     header = pi_session_header(path)
     if header is None:
         return
@@ -156,11 +157,9 @@ def iter_pi_transcript_file(path: Path) -> Iterable[HookEvent]:
         return
     cwd = _string(header.get("cwd"))
     previous = _stamp(header.get("timestamp"), _mtime(path))
-    for line in _recent_lines(path, TRANSCRIPT_MAX_LINES):
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
+    lines = tail.lines(TRANSCRIPT_MAX_LINES, legacy=True) if tail else _recent_lines(path, TRANSCRIPT_MAX_LINES)
+    for item in transcript_rows(lines, tail):
+        row = item.value
         if not isinstance(row, dict) or row.get("type") != "message":
             continue
         message = row.get("message")
@@ -221,18 +220,16 @@ def _gemini_message_event(message: dict[str, Any], *, session_id: str, cwd: str 
     return None, at
 
 
-def iter_gemini_transcript_file(path: Path) -> Iterable[HookEvent]:
+def iter_gemini_transcript_file(path: Path, *, tail: TranscriptTail | None = None) -> Iterable[HookEvent]:
     header = gemini_chat_header(path)
     if header is None:
         return
     session_id = header["sessionId"]
     cwd = None
     previous = _stamp(header.get("startTime"), _mtime(path))
-    for line in _recent_lines(path, TRANSCRIPT_MAX_LINES):
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
+    lines = tail.lines(TRANSCRIPT_MAX_LINES, legacy=True) if tail else _recent_lines(path, TRANSCRIPT_MAX_LINES)
+    for item in transcript_rows(lines, tail):
+        row = item.value
         if not isinstance(row, dict):
             continue
         messages: list[Any] = []

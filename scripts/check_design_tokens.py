@@ -28,13 +28,30 @@ PATTERNS = {
     "missing-clock-minutes": re.compile(r'setLocalizedDateFormatFromTemplate\("EEEj"\)'),
     "currency-table": re.compile(r'\bfunc\s+currencySymbol\b|"(?:EUR|GBP)"\s*:'),
     "token-math": re.compile(r"/\s*1_000(?:_000)*(?![\d_])"),
-    "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)'),
+    "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)|[Dd]isconnected · |Monitor Not Connected|"Monitor: '),
     "ui-name": re.compile(r'"[^"\n]*(?:Effect Studio|Lights Studio|One at a Time|Status Only|Global Mix|Blend mode)[^"\n]*"|"Blend"'),
     "usage-direction": re.compile(r'% left|percent[^"\n]*\) left'),
     "quota-tone": re.compile(r'JRBarTokens\.Ink\.attention'),
     "secondary-button": re.compile(r'\bPillButton(?:Style|Body)\b'),
     "block-meter": re.compile(r"[\u2580-\u259f\u25a0\u25a1\u25b0\u25b1]+"),
+    # Settings pages that no longer exist; the same list as
+    # check_doc_links.RETIRED_PAGES.
+    "retired-page": re.compile(
+        r"Agents &\s+Usage|Devices &\s+Lighting|Effect Studio|Show a Demo Ask"
+        r"|Settings\s+[\u203a>]\s+General\s+[\u203a>]\s+(?:Power|Advanced)|Setup \(Settings\s+[\u203a>]\s+General\)"
+    ),
+    # A thrown error reaches people as `MonitorWords.reason(error)` or a
+    # reply's `sentence`, never as a type dump, a reply code or Swift's
+    # "The operation couldn't be completed".
+    "error-words": re.compile(r'toast: error\.localizedDescription|String\(describing: error\)|\.message \?\? [\w$?.]*\.code\b|: \\\(error\)"'),
+    # A reason code is a key into the daemon's sentences, never words on
+    # its own: "cli_session_unavailable" must not become "cli session unavailable".
+    "reason-code-words": re.compile(r'\breason\??\.replacingOccurrences\(of: "_"'),
 }
+#: A button whose label is a bare SF Symbol: VoiceOver needs a name, and
+#: `.help` is only a hint. Text or Label in the label names it.
+ICON_BUTTON = re.compile(r'(?:\blabel:\s*\{|\bButton\s*(?:\(action:[^)\n]*\))?\s*\{)\s*Image\(systemName:')
+ICON_BUTTON_LINES = 14
 
 
 def swift_regions(source: str) -> tuple[str, str]:
@@ -120,6 +137,14 @@ def offenders(source: str, path: str = "") -> Counter[str]:
                 contexts.append(declaration[1])
         if allowed is None or allowed not in contexts:
             found[f"art-glyph: {match[1]} outside its figure"] += 1
+    for match in ICON_BUTTON.finditer(text):
+        body = text[match.end():text.find("}", match.end())]
+        following = text[match.start():].split("\n")[:ICON_BUTTON_LINES]
+        if re.search(r"\b(?:Text|Label)\(", body) or any("accessibilityLabel" in line for line in following):
+            continue
+        if source.count("\n", 0, match.start()) in exception_lines:
+            continue
+        found["icon-label: Image(systemName:) button without accessibilityLabel"] += 1
     for kind, pattern in PATTERNS.items():
         if kind in {"semantic-font", "semantic-small", "font-floor", "status-colour", "elapsed-unit"} and "/Notch/" in path:
             continue
@@ -135,7 +160,7 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
             continue
-        text_checks = {"block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        text_checks = {"retired-page", "error-words", "reason-code-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

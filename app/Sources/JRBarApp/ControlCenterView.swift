@@ -33,7 +33,7 @@ struct ControlCenterView: View {
         .onChange(of: store.sheet) { _, sheet in
             if sheet == nil { store.closeSheet() }
         }
-        .animation(.easeInOut(duration: 0.15), value: store.status == nil && store.lastError == nil)
+        .animation(store.reduceMotion ? nil : .easeInOut(duration: 0.15), value: store.status == nil && store.lastError == nil)
     }
 
     private var content: some View {
@@ -371,6 +371,8 @@ struct KeyCap: View {
     @Bindable var store: DeckStore
     let slot: DeckSlot
     @ViewState private var pressed = false
+    @FocusState private var keyboardFocused: Bool
+    @FocusState private var pinFocused: Bool
 
     private var color: Color { Color(nsColor: store.color(for: slot)) }
     private var lit: Bool { store.isLit(slot.index) }
@@ -402,15 +404,21 @@ struct KeyCap: View {
             if !slot.isEmpty { pinButton }
         }
         .frame(width: PadIllustration.keySize.width, height: PadIllustration.keySize.height)
-        .scaleEffect(pressed ? 0.97 : (targeted ? 1.03 : 1))
+        .scaleEffect(store.reduceMotion ? 1 : (pressed ? 0.97 : (targeted ? 1.03 : 1)))
         .contentShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous))
         .onHover { store.hoveredSlot = $0 ? slot.index : (store.hoveredSlot == slot.index ? nil : store.hoveredSlot) }
-        .onTapGesture {
-            guard slot.navigable else { return }
-            pressed = true
-            store.press(index: slot.index)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { pressed = false }
+        .onTapGesture(perform: activate)
+        .focusable(slot.navigable)
+        .focused($keyboardFocused)
+        .onKeyPress(.space) {
+            guard keyboardFocused else { return .ignored }
+            activate(); return .handled
         }
+        .onKeyPress(.return) {
+            guard keyboardFocused else { return .ignored }
+            activate(); return .handled
+        }
+        .accessibilityAction { activate() }
         .dropDestination(for: String.self) { items, _ in
             guard let session = items.first else { return false }
             store.drop(session: session, on: slot.index)
@@ -418,9 +426,9 @@ struct KeyCap: View {
         } isTargeted: { over in
             store.dropTarget = over ? slot.index : (store.dropTarget == slot.index ? nil : store.dropTarget)
         }
-        .animation(.easeOut(duration: 0.12), value: pressed)
-        .animation(.easeOut(duration: 0.15), value: targeted)
-        .animation(store.reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.2), value: lit)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.12), value: pressed)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.15), value: targeted)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.2), value: lit)
         .help("\(slot.title) · \(subtitle)" + (slot.pinned ? " · pinned" : ""))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
@@ -430,6 +438,13 @@ struct KeyCap: View {
         .accessibilityAction(named: slot.pinned ? "Unpin" : "Pin") {
             if !slot.isEmpty { store.togglePin(index: slot.index) }
         }
+    }
+
+    private func activate() {
+        guard slot.navigable else { return }
+        pressed = !store.reduceMotion
+        store.press(index: slot.index)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { pressed = false }
     }
 
     /// The key's open ask, when this key is asking: the one its second
@@ -509,14 +524,15 @@ struct KeyCap: View {
                         .background(Color.white.opacity(slot.pinned ? 0.18 : 0.1), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .opacity(hovered || slot.pinned ? 1 : 0)
+                .focused($pinFocused)
+                .opacity(hovered || keyboardFocused || pinFocused || slot.pinned ? 1 : 0)
                 .help(slot.pinned ? "Unpin: the slot may be cleared when its session is absent" : "Pin: keep \(slot.title) on this key through Clear absent")
                 .accessibilityLabel(slot.pinned ? "Unpin" : "Pin")
             }
             Spacer()
         }
         .padding(7)
-        .animation(.easeOut(duration: 0.12), value: hovered)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
     }
 }
 
@@ -631,7 +647,7 @@ struct DialControl: View {
         .padding(.horizontal, 12)
         .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous).fill(cardFill))
         .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.panel, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
-        .animation(.easeOut(duration: 0.2), value: lit)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.2), value: lit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
@@ -679,7 +695,7 @@ struct JoystickControl: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(8)
         }
-        .animation(.easeOut(duration: 0.2), value: lit)
+        .animation(store.reduceMotion ? nil : .easeOut(duration: 0.2), value: lit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Joystick: " + sectors.map { "\($0.label) \($0.mappingLabel ?? "not configured")" }.joined(separator: ", "))
     }
@@ -701,6 +717,7 @@ struct BankPager: View {
             .disabled(!banks.hasMultiple)
             .keyboardShortcut(.leftArrow, modifiers: [])
             .help("Previous bank (wraps)")
+            .accessibilityLabel("Previous bank")
             HStack(spacing: 7) {
                 ForEach(0..<banks.count, id: \.self) { index in
                     Circle()
@@ -708,7 +725,7 @@ struct BankPager: View {
                         .frame(width: index == banks.index ? 7 : 6, height: index == banks.index ? 7 : 6)
                 }
             }
-            .animation(.easeOut(duration: 0.15), value: banks.index)
+            .animation(store.reduceMotion ? nil : .easeOut(duration: 0.15), value: banks.index)
             Button { store.bank(delta: 1) } label: {
                 Image(systemName: "chevron.right").font(JRBarTokens.TypeStyle.caption.font.weight(.semibold))
             }
@@ -717,6 +734,7 @@ struct BankPager: View {
             .disabled(!banks.hasMultiple)
             .keyboardShortcut(.rightArrow, modifiers: [])
             .help("Next bank (wraps)")
+            .accessibilityLabel("Next bank")
             Text(banks.title)
                 .jrbarType(.caption)
                 .foregroundStyle(.secondary)
@@ -728,6 +746,7 @@ struct BankPager: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Previous board scope (wraps)")
+                .accessibilityLabel("Previous board scope")
             }
             Text("Board: \(store.scopeName(store.scope))")
                 .jrbarType(.caption).fontWeight(.medium)
@@ -743,6 +762,7 @@ struct BankPager: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Next board scope (wraps)")
+                .accessibilityLabel("Next board scope")
             }
         }
         .accessibilityElement(children: .contain)

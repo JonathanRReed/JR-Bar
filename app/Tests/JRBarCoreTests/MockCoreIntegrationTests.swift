@@ -26,9 +26,10 @@ struct MockCoreIntegrationTests {
     /// The mock watches this test process, so a killed run leaves none behind.
     static func launchMock(socket: String, extraArguments: [String] = ["--once"]) throws -> Process {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        let python = MockCorePython.command(appDirectory: scriptURL.deletingLastPathComponent().deletingLastPathComponent())
+        process.executableURL = python.executable
         let watch = ["--parent-pid", "\(ProcessInfo.processInfo.processIdentifier)"]
-        process.arguments = ["python3", scriptURL.path, "--socket", socket] + watch + extraArguments
+        process.arguments = python.leading + [scriptURL.path, "--socket", socket] + watch + extraArguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.standardError
         try process.run()
@@ -274,5 +275,30 @@ struct MockCoreIntegrationTests {
         } else {
             Issue.record("expected to still be connecting, got \(model.connection)")
         }
+    }
+}
+
+@Suite("Mock core interpreter")
+struct MockCorePythonTests {
+    private let app = URL(fileURLWithPath: "/repo/app")
+
+    @Test func anExplicitInterpreterWins() {
+        let chosen = MockCorePython.command(appDirectory: app, environment: ["JRBAR_MOCK_PYTHON": "/opt/py"],
+                                            fileExists: { _ in true })
+        #expect(chosen.executable.path == "/opt/py")
+        #expect(chosen.leading.isEmpty)
+    }
+
+    @Test func theRepositoryVenvComesBeforePath() {
+        let chosen = MockCorePython.command(appDirectory: app, environment: [:],
+                                            fileExists: { $0 == "/repo/.venv/bin/python" })
+        #expect(chosen.executable.path == "/repo/.venv/bin/python")
+    }
+
+    @Test func pathIsTheLastResort() {
+        let chosen = MockCorePython.command(appDirectory: app, environment: ["JRBAR_MOCK_PYTHON": "/missing"],
+                                            fileExists: { _ in false })
+        #expect(chosen.executable.path == "/usr/bin/env")
+        #expect(chosen.leading == ["python3"])
     }
 }

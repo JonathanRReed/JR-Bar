@@ -7,6 +7,13 @@ import Testing
 
 @MainActor
 enum DesignFixBProof {
+    /// The daemon's real light programs, exported beside the proofs. A run
+    /// without that export skips the check that needs it instead of failing.
+    nonisolated static var hasDaemonPrograms: Bool {
+        let directory = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-dfix-b-proof"
+        return FileManager.default.fileExists(atPath: directory + "/daemon-programs.json")
+    }
+
     static var directory: URL {
         URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-dfix-b-proof")
     }

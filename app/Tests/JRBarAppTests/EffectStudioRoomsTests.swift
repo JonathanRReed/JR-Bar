@@ -56,7 +56,7 @@ struct EffectStudioRoomsTests {
         let unknown = LEDSStudioModel.burnFailure(CoreReplyError(code: "unknown_command", message: "no such command: burn_init"))
         #expect(unknown.contains("nothing was written"))
         let refused = LEDSStudioModel.burnFailure(CoreReplyError(code: "not_found", message: "no strip connected"))
-        #expect(refused == "Burn refused: no strip connected")
+        #expect(refused == "Burn refused: No strip connected.")
     }
 
     @Test func onlyAWrittenDeviceIsCalledBurned() {

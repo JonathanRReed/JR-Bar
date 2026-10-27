@@ -64,8 +64,18 @@ extension SettingsStore {
 
     var creatorMicroConnection: DeviceConnectionState { .creatorMicro(deck, live: isLive) }
 
-    var screenBarConnection: DeviceConnectionState {
-        .screenBar(deviceFacts("screen-bar"), enabled: values.bool("virtual_status_device_enabled"), live: isLive)
+    var screenBarStatus: String {
+        let status = ScreenBarLiveStatus.shared
+        return Self.screenBarStatus(enabled: values.bool("virtual_status_device_enabled") ?? true,
+                                    hiddenForApp: status.steppedAsideForApp,
+                                    hiddenForVideo: status.steppedAsideForVideo)
+    }
+
+    static func screenBarStatus(enabled: Bool, hiddenForApp: String?, hiddenForVideo: Bool) -> String {
+        guard enabled else { return "Off" }
+        if let name = hiddenForApp { return "Hidden for \(name)" }
+        if hiddenForVideo { return "Hidden in full screen" }
+        return "Shown"
     }
 
     func streamDeckConnection(running: Bool?) -> DeviceConnectionState {

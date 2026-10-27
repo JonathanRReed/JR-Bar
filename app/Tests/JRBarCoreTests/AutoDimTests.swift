@@ -198,7 +198,7 @@ struct AutoDimMockTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.settings != nil && model.lights != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.settings != nil && model.lights != nil })
 
         let seeded = AutoDimSettings(document: SettingsDocument(try #require(model.settings).document))
         #expect(seeded == AutoDimSettings.defaults, "the mock seeds the daemon's defaults")

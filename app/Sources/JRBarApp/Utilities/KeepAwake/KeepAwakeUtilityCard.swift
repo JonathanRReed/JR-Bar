@@ -43,14 +43,20 @@ final class KeepAwakeUtility: Toy {
 
     var status: ToyStatus {
         let reading = reading
-        if reading.releaseFailed { return .paused("Still held") }
+        if reading.releaseFailed { return .failed("Couldn't let go") }
         if let why = reading.suspendedWords { return .paused("Paused · \(why)") }
-        if reading.holdFailed { return .failed("Not held") }
+        if reading.holdFailed || toggles.canRetryAwake { return .failed("Couldn't hold the Mac awake") }
         switch reading.state {
         case .off:
             return .off
         case .agents(let count):
-            return .note(count == 1 ? "1 agent holds it" : count > 0 ? "\(count) agents hold it" : "Agents' grace")
+            if count > 0 { return .note(count == 1 ? "1 agent holds it" : "\(count) agents hold it") }
+            // The grace after the agents stop, named by when it ends.
+            guard let words = reading.footerLine(now: toggles.state.awakeClock), words.short != "Awake"
+            else { return .note("Letting go soon") }
+            return .note("Lets go at \(words.short)")
+        case .lease(.whileRunning(let name)):
+            return .note("While \(name) runs")
         case .lease(.until):
             // The footer's own compact words ("42m"), rounded the same way.
             guard let words = reading.footerLine(now: toggles.state.awakeClock), words.short != "Awake"
@@ -63,17 +69,39 @@ final class KeepAwakeUtility: Toy {
         }
     }
 
-    /// Retry the same manual lease, preserving its deadline and kind.
-    func retryHold(now: Date) {
-        guard reading.holdFailed, !toggles.state.applying.contains(.keepAwake) else { return }
-        switch reading.state {
-        case .lease(.until(let end)):
-            let remaining = Int(ceil(end.timeIntervalSince(now)))
-            if remaining > 0 { toggles.holdAwake(seconds: remaining) }
-        case .lease(.agentsFinish): toggles.holdAwakeUntilAgentsFinish()
-        case .lease(.indefinite): toggles.holdAwake(seconds: nil)
-        case .off, .agents: break
+    /// What Keep Awake costs right now, read from the hold itself: the one
+    /// assertion and whose it is, the countdown's clock while one shows,
+    /// the heads-up waiting to fire.
+    func cost(at now: TimeInterval) -> String? {
+        let state = toggles.state
+        return Self.costLine(reading: reading, appHolds: state.awake.held, clockRunning: state.awakeClockRunning,
+                             headsUpAt: state.headsUp.isArmed ? state.headsUp.armed?.fireAt : nil)
+    }
+
+    /// Pure, so the words are pinned without a hold.
+    nonisolated static func costLine(reading: KeepAwakeReading, appHolds: Bool, clockRunning: Bool,
+                                     headsUpAt: Date?, locale: Locale = .current,
+                                     timeZone: TimeZone = .current) -> String {
+        var parts: [String] = []
+        if reading.holding {
+            let kind = reading.display ? "the Mac and its display" : "the computer only, the display may sleep"
+            parts.append("One power assertion, \(kind)")
+            parts.append(appHolds ? "held by this app" : "held by the monitor")
+        } else {
+            parts.append("No power assertion")
         }
+        if case .lease(.whileRunning) = reading.state {
+            parts.append("the monitor hears the command exit; nothing polls")
+        }
+        if clockRunning { parts.append("the countdown redraws every 20 s") }
+        if let headsUpAt {
+            let clock = UsageTime.clock(headsUpAt.timeIntervalSince1970, locale: locale, timeZone: timeZone)
+            parts.append("one heads-up at \(clock)")
+        }
+        // Asked for and not taken: nothing is held, but the session is not off.
+        if !reading.holding && reading.leaseInForce { return "No power assertion · the hold didn't take" }
+        if !reading.holding && !clockRunning && headsUpAt == nil { return UtilityCost.off }
+        return parts.joined(separator: " · ")
     }
 
     /// Fixed holders for a render proof of the real Utilities page, so no
@@ -103,6 +131,8 @@ struct KeepAwakeUtilityControls: View {
     @ViewState private var durations: [Int] = KeepAwakeMenu.durations()
     @ViewState private var newMinutes = "45"
     @ViewState private var editingPresets = false
+    @ViewState private var headsUpOn = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var toggles: SystemTogglesStore { utility.toggles }
 
@@ -118,7 +148,15 @@ struct KeepAwakeUtilityControls: View {
             Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
                                  set: { toggles.setAwakeKeepsDisplay($0) })) {
                 SettingLabel(title: "Keep the display on",
-                             subtitle: KeepAwakeReading.displaySleepHelp)
+                             subtitle: KeepAwakeReading.displayChoiceHelp)
+            }
+            Toggle(isOn: Binding(get: { headsUpOn }, set: { on in
+                headsUpOn = on
+                toggles.state.headsUp.enabled = on
+                toggles.state.syncAwakeChip()
+            })) {
+                SettingLabel(title: "Heads-up before it ends",
+                             subtitle: "Five minutes before a timed session lets go, one notice with +30 min. Focus and quiet hours hold it.")
             }
             if let settings {
                 agentRows(settings)
@@ -127,6 +165,7 @@ struct KeepAwakeUtilityControls: View {
             othersRows
         }
         .task { await refreshHolders() }
+        .onAppear { headsUpOn = toggles.state.headsUp.enabled }
     }
 
     // MARK: Right now
@@ -135,15 +174,18 @@ struct KeepAwakeUtilityControls: View {
         let reading = toggles.state.awakeReading
         let at = now ?? toggles.state.awakeClock
         let words = reading.footerLine(now: at)?.full ?? "JR-Bar is not preventing idle sleep."
+        let steam = reading.steam(now: at)
         return HStack(spacing: SettingsMetrics.s) {
-            Image(systemName: reading.holding ? "cup.and.saucer.fill" : "cup.and.saucer")
-                .foregroundStyle(reading.holding ? Color.accentColor : .secondary)
+            KeepAwakeCup(steam: steam)
+                .animation(reduceMotion ? nil : JRBarTokens.Motion.rowChange.animation, value: steam)
             Text(words)
                 .monospacedDigit()
             Spacer(minLength: 0)
-            if reading.holdFailed && reading.leaseInForce {
-                Button("Try again") { utility.retryHold(now: at) }
+            if toggles.canRetryAwake {
+                Button("Try again") { toggles.retryAwake() }
+                    .controlSize(.small)
                     .disabled(toggles.state.applying.contains(.keepAwake))
+                    .help("Ask for the same hold again.")
             }
         }
         .jrbarType(.callout)
@@ -310,6 +352,29 @@ struct KeepAwakeUtilityControls: View {
         hasReadHolders = true
         holdersReadFailed = result == nil
         if let result { readHolders = result }
+    }
+}
+
+/// The Keep Awake cup with its steam: heat waves while a session holds,
+/// fading in steps as a countdown runs out (`KeepAwakeSteam`), and the
+/// plain outlined cup while nothing holds the Mac.
+struct KeepAwakeCup: View {
+    let steam: KeepAwakeSteam
+
+    var body: some View {
+        Group {
+            if steam == .none {
+                Image(systemName: "cup.and.saucer")
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: steam.symbol)
+                    .symbolRenderingMode(.palette)
+                    // The symbol's first layer is the cup, its second the
+                    // waves: the cup stays solid and only the steam thins.
+                    .foregroundStyle(Color.accentColor, Color.accentColor.opacity(steam.opacity))
+            }
+        }
+        .accessibilityLabel("Keep Awake, \(steam.words)")
     }
 }
 

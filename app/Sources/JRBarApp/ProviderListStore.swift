@@ -207,7 +207,6 @@ final class ProviderListStore {
     }
 
     private static func words(_ error: Error) -> String {
-        if let reply = error as? CoreReplyError { return reply.message ?? reply.code }
-        return String(describing: error)
+        MonitorWords.reason(error)
     }
 }

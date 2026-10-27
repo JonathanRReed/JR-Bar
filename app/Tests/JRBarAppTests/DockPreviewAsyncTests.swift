@@ -148,7 +148,9 @@ private final class Bench {
         let hold = DockAutohideHold(driver: nil, persistence: defaults, fallbackWrite: { _ in })
         let switcher = DockSwitcherController(tap: SwitcherKeyTap())
         controller = DockEnhanceController(autohideHold: hold, switcher: switcher)
-        controller.preferences.read = { DockEnhanceSettings(showThumbnails: false) }
+        controller.preferences.read = {
+            DockEnhanceSettings(showThumbnails: false, calendarPreview: false, mediaPreview: false)
+        }
         controller.agentMarks = { agents }
         let ax = self.ax
         controller.ax = DockPreviewAX(

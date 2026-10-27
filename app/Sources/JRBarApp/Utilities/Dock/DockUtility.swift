@@ -92,7 +92,7 @@ final class DockUtility {
     @ObservationIgnored private var providerObservers: [NSObjectProtocol] = []
 
     /// The picked counterpart's probe — nil while JR-Bar renders.
-    private var externalProbe: ExternalAppProbe? {
+    var externalProbe: ExternalAppProbe? {
         switch settings().provider {
         case .jrbar: return nil
         case .dockDoor: return ExternalProviders.dockDoor
@@ -137,12 +137,12 @@ final class DockUtility {
         let name = providerName
         if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
         return probe.running
-            ? "\(name) is rendering the previews — ours are parked"
-            : "\(name) isn't running — ours stay parked"
+            ? "\(name) draws the previews, so JR-Bar shows none"
+            : "\(name) isn't running, so no previews show — open it or pick JR-Bar"
     }
 
-    /// The picked counterpart's display name for the note.
-    private var providerName: String {
+    /// The picked counterpart's display name for the note and the chip.
+    var providerName: String {
         switch settings().provider {
         case .jrbar: return "JR-Bar"
         case .dockDoor: return "DockDoor"
@@ -211,8 +211,8 @@ final class DockUtility {
             let name = Self.displayName(current.switcherProvider)
             if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
             return probe.running
-                ? "\(name) owns the switcher — ours is parked"
-                : "\(name) isn't running — ours stays parked"
+                ? "\(name) answers the switcher keys, so JR-Bar leaves them alone"
+                : "\(name) isn't running, so the switcher keys do nothing — open it or pick JR-Bar"
         }
         guard current.switcherWanted else { return nil }
         let running = Self.chordRivals.filter { $0.probe.running }.map(\.name)
@@ -386,6 +386,7 @@ final class DockUtility {
         // A trigger or scroll edit re-seats the icon gestures' monitors
         // on a watcher that was already running.
         enhance.installGestureMonitors()
+        enhance.syncNativePreviews()
         if wanted.tap { switcher.start() } else { switcher.stop() }
         // The tap can't read main-actor settings mid-callback; mirror
         // the chord switches into it on every apply.

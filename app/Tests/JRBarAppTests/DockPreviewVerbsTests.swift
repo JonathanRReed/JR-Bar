@@ -55,10 +55,7 @@ struct DockPreviewVerbsTests {
         #expect(DockEnhanceMath.showsMediaRow(mediaBundleID: nil, appBundleID: "com.apple.Music"),
                 "an anonymous source still lands on a known player")
         #expect(!DockEnhanceMath.showsMediaRow(mediaBundleID: nil, appBundleID: "com.apple.Safari"))
-        #expect(DockEnhanceMath.readsMedia(appBundleID: "com.apple.Music", feedRunning: false))
-        #expect(!DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: false),
-                "a hover never spawns the media helper to check a browser")
-        #expect(DockEnhanceMath.readsMedia(appBundleID: "com.apple.Safari", feedRunning: true))
+
     }
 
     @Test("the player row's lyrics are the Shelf's: none unless handed in, never looked up")

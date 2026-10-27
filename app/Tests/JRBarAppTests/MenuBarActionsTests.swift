@@ -863,7 +863,7 @@ struct MenuBarActionsTests {
         let rule = { (action: MenuBarTriggerAction) in
             MenuBarTriggerRule(id: "r", trigger: .chargerConnected, action: action).summary
         }
-        #expect(rule(.holdAwake(seconds: 7200)) == "when the charger connects → keep the Mac awake for 2h 00m")
+        #expect(rule(.holdAwake(seconds: 7200)) == "when the charger connects → keep the Mac awake for 2h")
         #expect(rule(.holdAwake(seconds: 2700)) == "when the charger connects → keep the Mac awake for 45m")
         #expect(rule(.holdAwake(seconds: nil)) == "when the charger connects → keep the Mac awake until released")
         #expect(rule(.releaseAwake) == "when the charger connects → let the Mac sleep again")

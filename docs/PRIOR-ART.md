@@ -887,3 +887,17 @@ Factory retains all rights. JR-Bar uses the emblem to identify Factory,
 with the upstream wordmark and attribution retained in the provider assets.
 Kimi and Kilo use the existing LobeHub Icons source at
 `49a2130df7bfa5eb1b088261bff20a37e2967789`, under its MIT licence.
+
+## DockDoor native app previews, 2026-10-27
+
+Studied DockDoor 1.41.0, commit
+[`3d6a3cbaa9bbee17959122da7f0a349ca43056d0`](https://github.com/ejbills/DockDoor/commit/3d6a3cbaa9bbee17959122da7f0a349ca43056d0),
+GPL-3.0. Read only its
+[README](https://github.com/ejbills/DockDoor/blob/1.41.0/README.md),
+[website](https://dockdoor.net/), and
+[release notes](https://github.com/ejbills/DockDoor/releases/tag/1.41.0).
+The website identifies the licence and describes independent widget switches.
+The README describes Calendar events and a player on the app playing audio.
+These behaviors informed JR-Bar's Dock cards and their separate switches.
+JR-Bar reuses its shelf calendar reader and shared Alcove MediaRemote feed.
+No DockDoor implementation source or assets were read or copied.

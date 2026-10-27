@@ -417,7 +417,7 @@ struct OverviewView: View {
                         } ?? (entry.session.cwd ?? ""))
                     }
                     .width(min: 70, ideal: 120)
-                    TableColumn("Harness", value: \.session.provider) { entry in
+                    TableColumn("Provider", value: \.session.provider) { entry in
                         HStack(spacing: 5) {
                             ProviderTile(style: ProviderStyle.style(for: entry.session.provider), size: 14)
                             Text(ProviderStyle.style(for: entry.session.provider).name).foregroundStyle(.secondary)
@@ -572,7 +572,7 @@ struct OverviewView: View {
             if word != "live" {
                 Image(systemName: "clock.badge.exclamationmark").jrbarType(.caption)
             }
-            Text(word).foregroundStyle(word == "live" ? Color.secondary : Tone.neutral.color)
+            Text(word.capitalized).foregroundStyle(word == "live" ? Color.secondary : Tone.neutral.color)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Freshness: \(word)")
@@ -839,10 +839,9 @@ struct CompareRunsSheet: View {
         }
     }
 
-    /// Whole minutes and seconds under an hour and a half: a formatted
-    /// `seconds / 60` rounds, so 119 s would read "2m 59s".
+    /// Keep seconds under a minute, then hold the whole-minute value.
     static func durationText(_ seconds: Double) -> String {
-        UsageTime.duration(seconds)
+        UsageTime.duration(seconds >= 60 ? floor(seconds / 60) * 60 : seconds)
     }
 
     private static func gapText(_ gap: String) -> String {

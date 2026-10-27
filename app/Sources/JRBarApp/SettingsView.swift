@@ -381,6 +381,7 @@ struct SettingToggle: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.fallback = fallback
     }
 
@@ -411,6 +412,7 @@ struct SettingSlider: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.range = range
         self.step = step
         self.fallback = fallback
@@ -458,6 +460,7 @@ struct SettingPicker: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.options = options
         self.fallback = fallback
         self.segmented = segmented
@@ -495,6 +498,7 @@ struct SettingIntPicker: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.options = options
         self.fallback = fallback
     }
@@ -529,6 +533,7 @@ struct SettingStepper: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.range = range
         self.step = step
         self.fallback = fallback
@@ -565,6 +570,7 @@ struct SettingTextField: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.prompt = prompt
         self.monospaced = monospaced
     }
@@ -612,6 +618,7 @@ struct SettingNumberField: View {
         self.title = title
         self.subtitle = subtitle
         self.path = path
+        store.noteControlTitle(title, for: path)
         self.range = range
         self.fallback = fallback
         self.unit = unit

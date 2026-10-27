@@ -17,9 +17,9 @@ struct UsageCenterStoreTests {
     func refusal() {
         #expect(UsageCenterStore.refusal(CoreReply(id: "1", ok: true)) == nil)
         let refused = CoreReply(id: "1", ok: false, error: CoreReplyError(code: "invalid_args", message: "usage_graph_days must be 7, 30, 90 or 365"))
-        #expect(UsageCenterStore.refusal(refused) == "usage_graph_days must be 7, 30, 90 or 365")
-        #expect(UsageCenterStore.refusal(CoreReply(id: "1", ok: false, error: CoreReplyError(code: "busy"))) == "busy")
-        #expect(UsageCenterStore.refusal(CoreReply(id: "1", ok: false)) == "refused")
+        #expect(UsageCenterStore.refusal(refused) == "usage_graph_days must be 7, 30, 90 or 365.")
+        #expect(UsageCenterStore.refusal(CoreReply(id: "1", ok: false, error: CoreReplyError(code: "busy"))) == "The monitor is busy. Try again in a moment.")
+        #expect(UsageCenterStore.refusal(CoreReply(id: "1", ok: false)) == "The monitor refused that.")
     }
 
     @Test("two rows claiming one identity keep the first instead of trapping")

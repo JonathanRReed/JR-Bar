@@ -89,8 +89,10 @@ final class DockPreviewActions {
     /// The synced lyrics the notch Shelf already holds for the playing
     /// track — read, never fetched: nil unless the Shelf has them.
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
-    /// The calendar row's "Show events" — asks for the grant.
+    /// Calendar access uses Setup's existing permission action.
     var onCalendarAuth: (@MainActor () -> Void)?
+    var onCalendarOpen: (@MainActor () -> Void)?
+    var onNativeWindowsChange: (@MainActor () -> Void)?
     /// The calendar row's "Join" — opens the meeting link.
     var onCalendarJoin: (@MainActor (URL?) -> Void)?
     /// A document card dropped on another app's preview — the
@@ -467,23 +469,24 @@ struct DockPreviewView: View {
                     }
                 }
             }
+            if content.mediaPending, content.windows.isEmpty, !content.hasNativeCard {
+                Text("Loading playback…").jrbarType(.callout).foregroundStyle(.secondary)
+            }
             if let media = content.media {
                 rule
                 DockMediaRow(media: media, actions: actions)
             }
-            if !content.calendarEvents.isEmpty || content.calendarNeedsAuth {
+            if let state = content.calendarState {
                 rule
-                DockCalendarRow(events: content.calendarEvents,
-                                freeUntil: content.calendarFreeUntil,
-                                needsAuth: content.calendarNeedsAuth,
-                                actions: actions)
+                DockCalendarCard(state: state, now: content.calendarNow, actions: actions,
+                                 isCalendarApp: content.bundleID == DockEnhanceMath.calendarBundleID)
             }
             if content.folderURL != nil {
                 rule
                 folder
             } else if !content.windows.isEmpty {
                 rule
-                windows
+                windowSection
             }
         }
         .padding(metrics.panelInset)
@@ -507,6 +510,23 @@ struct DockPreviewView: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    @ViewBuilder
+    private var windowSection: some View {
+        if content.hasNativeCard {
+            Button {
+                content.selectedWindowID = nil
+                content.nativeWindowsExpanded.toggle()
+                actions.onNativeWindowsChange?()
+            } label: {
+                Label("Windows (\(content.windows.count))",
+                      systemImage: content.showsWindows ? "chevron.down" : "chevron.right")
+            }
+            .buttonStyle(DockCapsuleButtonStyle())
+            .accessibilityValue(content.showsWindows ? "Expanded" : "Collapsed")
+        }
+        if content.showsWindows { windows }
     }
 
     /// The hairline between sections — at the tighter scales the air
@@ -1954,93 +1974,5 @@ private struct DockMediaScrubber: View {
             .foregroundStyle(.secondary)
         }
         .help("Drag to seek")
-    }
-}
-
-/// The calendar row — DockDoor's calendar widget, HyperDock's list.
-/// On the Calendar tile: the rest of today (up to three, each with its
-/// own Join) and a quiet "Free until 3:30" when nothing is on now; on a
-/// meeting app's tile, the one event whose link opens there. The row
-/// only exists when the grant already covers it or is still unasked
-/// ("Show Events" is the explicit opt-in, never a prompt from a bare
-/// hover).
-private struct DockCalendarRow: View {
-    let events: [ShelfCalendarModel.Event]
-    let freeUntil: Date?
-    let needsAuth: Bool
-    let actions: DockPreviewActions
-
-    var body: some View {
-        if needsAuth {
-            HStack(spacing: 10) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.accentColor.opacity(0.14)))
-                Text("See what's next on your calendar")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 10)
-                Button("Show Events") { actions.onCalendarAuth?() }
-                    .buttonStyle(DockCapsuleButtonStyle(prominent: true))
-                    .help("Allow calendar access to preview upcoming events")
-            }
-        } else if !events.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                if let freeUntil {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Tone.done.color)
-                            .frame(width: 6, height: 6)
-                        Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                }
-                ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                    eventRow(event)
-                }
-            }
-            .frame(minWidth: 280)
-        }
-    }
-
-    private func eventRow(_ event: ShelfCalendarModel.Event) -> some View {
-        let now = event.start <= Date()
-        return HStack(spacing: 9) {
-            Capsule()
-                .fill(now ? Tone.done.color : Color.accentColor)
-                .frame(width: 3, height: 28)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(event.title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .lineLimit(1)
-                Text(timeLine(event))
-                    .font(.system(size: 11))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 10)
-            if let url = event.url {
-                Button { actions.onCalendarJoin?(url) } label: {
-                    Label("Join", systemImage: "video.fill")
-                        .imageScale(.small)
-                }
-                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: Tone.done.color))
-                .help("Join the meeting link")
-            }
-        }
-    }
-
-    /// "Now – 3:30 PM" for what's on, "2:00 – 2:30 PM" otherwise; a
-    /// tomorrow event says so.
-    private func timeLine(_ event: ShelfCalendarModel.Event) -> String {
-        let now = Date()
-        let end = event.end.formatted(date: .omitted, time: .shortened)
-        if event.start <= now { return "Now – \(end)" }
-        let start = event.start.formatted(date: .omitted, time: .shortened)
-        let prefix = Calendar.current.isDateInToday(event.start) ? "" : "Tomorrow "
-        return "\(prefix)\(start) – \(end)"
     }
 }

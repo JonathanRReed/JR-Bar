@@ -51,7 +51,7 @@ struct MockDismissAskRoundTripTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.isLive && model.state != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.isLive && model.state != nil })
 
         // No ask is open on the mock's quiet start: nothing to dismiss.
         let missing = try await model.dismissAsk(session: "codex:session:none")

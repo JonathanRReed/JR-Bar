@@ -1,6 +1,6 @@
 """`provider_status_feeds_enabled`: off by default, and only a real true turns it on.
 
-The daemon's own settings key for Settings > Agents & Usage > Provider status pages. The
+The daemon's own settings key for Settings > Providers > Provider status pages. The
 behaviour it gates is in test_status_feeds_optin.py.
 """
 

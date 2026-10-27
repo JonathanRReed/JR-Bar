@@ -32,8 +32,9 @@ struct UsageStaleRenderProofTests {
         let observed = try #require(claude.observedAt)
         #expect(observed - read > 5 * 3600, "the numbers are hours older than the last attempt")
         let stale = UsageCardCopy.readingAgeText(claude, now: store.now)
-        #expect(stale?.hasPrefix("read 5h") == true, "\(stale ?? "nil")")
-        #expect(UsageCardCopy.readingAgeText(codex, now: store.now) == "read 1m ago")
+        // A standalone line is capitalised; the case is the row's business.
+        #expect(stale?.lowercased().hasPrefix("read 5h") == true, "\(stale ?? "nil")")
+        #expect(UsageCardCopy.readingAgeText(codex, now: store.now)?.lowercased() == "read 1m ago")
         let savedSelection = UserDefaults.standard.object(forKey: "usageCenter.provider")
         defer {
             if let savedSelection { UserDefaults.standard.set(savedSelection, forKey: "usageCenter.provider") }

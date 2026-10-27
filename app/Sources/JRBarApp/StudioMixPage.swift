@@ -141,7 +141,7 @@ private struct StudioMixCard: View {
                     .frame(maxWidth: .infinity)
                     .accessibilityLabel("\(mix.name) daemon preview")
                 if mix.id == "classic" || mix.id == "color_blend" {
-                    Text("Holds still. Asks still blink.").jrbarType(.caption).foregroundStyle(.secondary)
+                    Text(mix.id == "color_blend" ? "One colour mixed from the working providers. Holds still. Asks still blink." : "The state colour only. Holds still. Asks still blink.").jrbarType(.caption).foregroundStyle(.secondary)
                 }
                 if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")

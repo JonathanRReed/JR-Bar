@@ -1098,7 +1098,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             if not enabled:
                 print(
                     "jrbar serve: warning: answering is off; status is still served. "
-                    "Check consent in Settings > Devices & Lighting > Stream Deck",
+                    "Check consent in Settings > Devices > Stream Deck",
                     file=sys.stderr,
                 )
     try:
@@ -1770,7 +1770,8 @@ def format_duration(seconds: float) -> str:
     if minutes < 60:
         return f"{minutes}m{rest:02d}s"
     hours, minutes = divmod(minutes, 60)
-    return f"{hours}h{minutes:02d}m"
+    # A whole hour drops its zeros, the app's rule (duration_words).
+    return f"{hours}h" if minutes == 0 else f"{hours}h{minutes:02d}m"
 
 
 def should_use_color(no_color: bool) -> bool:

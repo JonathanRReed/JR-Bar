@@ -116,7 +116,7 @@ struct SettingsMockTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.settings != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.settings != nil })
         let document = SettingsDocument(try #require(model.settings).document)
 
         let missing = SettingsKey.all.filter { !$0.isProvided(in: document) }.map(\.path)
@@ -154,7 +154,7 @@ struct SettingsMockTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.isLive && model.settings != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.isLive && model.settings != nil })
         let before = try #require(model.settings).generation
 
         // A top-level bool.

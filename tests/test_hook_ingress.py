@@ -705,7 +705,7 @@ def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
     tmp_path: Path,
 ) -> None:
     """`jrbar hooks doctor` (and the daemon's own hooks_doctor command, which
-    Settings > Agents & Usage runs each time it shows) connects to the ingress socket
+    Settings > Providers runs each time it shows) connects to the ingress socket
     and closes. That is a liveness probe, not a refused frame: it must not
     count as refused_invalid or add a line to the rejection log."""
     service, rejection_path = _probe_service(tmp_path)
@@ -727,10 +727,15 @@ def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
         assert len(lines) == 1
         document = json.loads(lines[0])
         assert document["reason"] == "refused_invalid"
+        assert document["detail"] == "bad_lengths"
+        assert document["provider"] == "claude"
+        assert document["bytes"] == len(truncated)
         assert frozenset(document) == {
             "recorded_at",
             "provider",
             "reason",
+            "detail",
+            "bytes",
             "sequence",
             "version",
         }

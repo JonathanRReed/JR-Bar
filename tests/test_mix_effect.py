@@ -65,7 +65,19 @@ def test_one_provider_keeps_its_animation_for_any_number_of_groups(sessions):
     assert len(selected) == 1
     plan = plan_agent_mix(_active_agents(rows, settings), settings)
     assert plan.played == "kitt"
-    assert "only working provider" in plan.reason
+    assert plan.reason == "Codex is the only working provider."
+
+
+def test_mix_reasons_and_warnings_use_display_names():
+    from jrbar.light_mix import _name_list
+
+    assert _name_list(["Claude"]) == "Claude"
+    assert _name_list(["Claude", "Codex"]) == "Claude and Codex"
+    assert _name_list(["Claude", "Codex", "Gemini"]) == "Claude, Codex and Gemini"
+    settings = ColorSettings.defaults().with_agent_animation("codex", "kitt")
+    plan = plan_agent_mix(_active_agents(statuses(1), settings), settings)
+    for words in (plan.reason, *plan.warnings):
+        assert "codex" not in words and "kitt" not in words, words
 
 
 def test_a_provider_uses_its_most_urgent_state_but_asks_stay_individual():

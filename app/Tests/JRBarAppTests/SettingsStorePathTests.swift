@@ -337,7 +337,7 @@ struct SettingsStorePathTests {
         #expect(store.openFolds.isEmpty)
         store.reveal(SettingsSearchEntry(.devices, "Creator Micro", "Session keys"))
         #expect(store.isFoldOpen(SettingsFold.creatorMicro))
-        store.reveal(SettingsSearchEntry(.devices, "Stream Deck", "Status URL"))
+        store.reveal(SettingsSearchEntry(.devices, "Stream Deck", "Status link"))
         #expect(store.isFoldOpen(SettingsFold.streamDeck))
         let colours = SettingsSearch.search("provider colours", in: SettingsSearch.rows).first
         #expect(colours?.chapter == .lighting)

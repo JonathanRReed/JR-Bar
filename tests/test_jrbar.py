@@ -4559,16 +4559,16 @@ for (const event of [
                 stale_after_seconds=3600,
             )
             calls: list[Path] = []
-            original_read_recent_lines = collector_module.read_recent_lines
+            original_open = Path.open
 
-            def counting_read_recent_lines(read_path: Path, max_lines: int) -> list[str]:
-                if read_path == path:
+            def counting_transcript_open(read_path: Path, mode="r", *args, **kwargs):
+                if read_path == path and mode == "rb":
                     calls.append(read_path)
-                return original_read_recent_lines(read_path, max_lines)
+                return original_open(read_path, mode, *args, **kwargs)
 
             with patch(
-                "jrbar.collector.read_recent_lines",
-                side_effect=counting_read_recent_lines,
+                "pathlib.Path.open",
+                new=counting_transcript_open,
             ):
                 self.assertEqual(monitor.snapshot().aggregate.mode, AgentMode.TOOL_RUNNING)
                 self.assertEqual(monitor.snapshot().aggregate.mode, AgentMode.TOOL_RUNNING)

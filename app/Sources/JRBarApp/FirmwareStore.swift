@@ -230,7 +230,7 @@ final class FirmwareStore {
 
     private static func sentence(_ error: Error?, fallback: String) -> String {
         if let reply = error as? CoreReplyError {
-            return reply.message ?? reply.code
+            return reply.sentence
         }
         return fallback
     }

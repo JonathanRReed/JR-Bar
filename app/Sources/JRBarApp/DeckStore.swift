@@ -629,7 +629,6 @@ final class DeckStore {
                 return DeckReceiptMessages.message(for: reply.code)
             }
         }
-        if let client = error as? CoreClientError { return "\(client)" }
         return error.localizedDescription
     }
 }

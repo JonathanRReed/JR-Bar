@@ -960,7 +960,7 @@ def test_a_sign_in_click_on_a_provider_that_is_off_is_refused_before_it_reads_an
         with pytest.raises(CommandError) as error:
             command(controller, args)
         assert error.value.code == "usage_off"
-        assert "Settings > Agents & Usage" in str(error.value)
+        assert "Settings > Providers" in str(error.value)
     assert controller.refresh == []
 
 

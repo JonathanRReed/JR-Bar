@@ -129,6 +129,7 @@ from .transcript_sessions import (
     iter_gemini_transcript_file,
     iter_pi_transcript_file,
 )
+from .transcript_tail import TranscriptTail, transcript_rows
 
 CODEX_TRANSCRIPT_PROVIDER = "codex-transcripts"
 CLAUDE_TRANSCRIPT_PROVIDER = "claude-transcripts"
@@ -247,6 +248,38 @@ def _transcript_retained_bytes(records: tuple[HookEvent, ...]) -> int:
     return _transcript_object_bytes(records, {})
 
 
+def _transcript_metadata(record: HookEvent) -> HookEvent:
+    if "tool_response" not in record.raw:
+        return record
+    return replace(record, raw={key: value for key, value in record.raw.items() if key != "tool_response"})
+
+
+def _transcript_cached_bytes(
+    records: tuple[HookEvent, ...],
+    previous: dict[int, tuple[HookEvent, int]],
+) -> tuple[int, dict[int, tuple[HookEvent, int]]]:
+    sizes = {}
+    total = sys.getsizeof(records)
+    for record in records:
+        identity = id(record)
+        entry = previous.get(identity)
+        if entry is None or entry[0] is not record:
+            entry = (record, _transcript_object_bytes(record, {}))
+        sizes[identity] = entry
+        total += entry[1]
+    return total, sizes
+
+
+def _transcript_context_bytes(value: object) -> int:
+    # Cached events are counted in records. Include the parser's surrounding
+    # state without charging a second copy of the same event bodies.
+    if isinstance(value, HookEvent):
+        return 0
+    if isinstance(value, tuple):
+        return sys.getsizeof(value) + sum(_transcript_context_bytes(item) for item in value)
+    return _transcript_object_bytes(value, {})
+
+
 def _transcript_object_bytes(value: object, sizes: dict[int, int]) -> int:
     identity = id(value)
     cached = sizes.get(identity)
@@ -270,6 +303,10 @@ class CachedTranscriptRecords:
     size: int
     records: tuple[HookEvent, ...]
     retained_bytes: int = 0
+    tail: TranscriptTail | None = None
+    identity: tuple[int, int] | None = None
+    mtime_ns: int = 0
+    record_bytes: dict[int, tuple[HookEvent, int]] | None = None
 
 
 @dataclass(frozen=True)
@@ -1207,7 +1244,7 @@ class AgentMonitor(LiveSessionMemory):
         *,
         limit: int,
         provider: str,
-    ) -> tuple[tuple[str, tuple[float, int] | None], ...]:
+    ) -> tuple[tuple[str, tuple[int, int, int, int] | None], ...]:
         return tuple(
             (str(path), file_signature(path))
             for path in self._recent_transcript_files(
@@ -1349,18 +1386,52 @@ class AgentMonitor(LiveSessionMemory):
 
         key = (provider, str(path))
         cached = self._transcript_records_cache.get(key)
-        if cached is not None and cached.mtime == stat.st_mtime and cached.size == stat.st_size:
+        identity = (stat.st_dev, stat.st_ino)
+        if (cached is not None and cached.identity == identity
+                and cached.mtime_ns == stat.st_mtime_ns and cached.size == stat.st_size):
             return cached.records
 
+        incremental = parser in {
+            iter_claude_transcript_file, iter_codex_transcript_file,
+            iter_pi_transcript_file, iter_gemini_transcript_file,
+        }
+        tail = None
+        if incremental:
+            tail = cached.tail if cached is not None else None
+            if tail is None:
+                legacy = parser in {iter_pi_transcript_file, iter_gemini_transcript_file}
+                tail = TranscriptTail(256 * 1024 * 8 + 64 * 1024 if legacy else RECENT_LINES_MAX_BYTES)
+            tail.update(path)
+        parsed = parser(path, tail=tail) if incremental else parser(path)
         # Tool results have already determined the event's success/failure.
         # Status reduction needs their metadata, not their message bodies.
-        records = tuple(replace(record, raw={key: value for key, value in record.raw.items()
-                                            if key != "tool_response"}) for record in parser(path))
+        records = tuple(_transcript_metadata(record) for record in parsed)
+        previous_record_bytes = cached.record_bytes if cached is not None else None
+        retained_bytes, record_bytes = _transcript_cached_bytes(records, previous_record_bytes or {})
+        retained_bytes += sys.getsizeof(record_bytes) + sum(
+            sys.getsizeof(identity) + sys.getsizeof(entry) + sys.getsizeof(entry[1])
+            for identity, entry in record_bytes.items()
+        )
+        if tail is not None:
+            retained_bytes += _transcript_object_bytes(vars(tail), {})
+            for row in tail.rows.values():
+                if row.retained_bytes is None:
+                    row.retained_bytes = (
+                        # The tail's row dictionary already counts its text key.
+                        sys.getsizeof(vars(row))
+                        + _transcript_object_bytes((row.decoded, row.context), {})
+                        + _transcript_context_bytes(row.result)
+                    )
+                retained_bytes += row.retained_bytes
         self._transcript_records_cache[key] = CachedTranscriptRecords(
             mtime=stat.st_mtime,
             size=stat.st_size,
             records=records,
-            retained_bytes=_transcript_retained_bytes(records),
+            retained_bytes=retained_bytes,
+            tail=tail,
+            identity=identity,
+            mtime_ns=stat.st_mtime_ns,
+            record_bytes=record_bytes,
         )
         self._bound_record_caches()
         while len(self._transcript_records_cache) > self.transcript_records_cache_max_entries:
@@ -2950,15 +3021,15 @@ def safe_mtime(path: Path) -> float:
         return 0.0
 
 
-def file_signature(path: Path) -> tuple[float, int] | None:
+def file_signature(path: Path) -> tuple[int, int, int, int] | None:
     try:
         stat = path.stat()
     except OSError:
         return None
-    return (stat.st_mtime, stat.st_size)
+    return (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
 
-def iter_codex_transcript_file(path: Path) -> Iterable[HookEvent]:
+def iter_codex_transcript_file(path: Path, *, tail: TranscriptTail | None = None) -> Iterable[HookEvent]:
     session_id = codex_session_id_from_path(path)
     if session_id is None:
         return
@@ -2966,34 +3037,28 @@ def iter_codex_transcript_file(path: Path) -> Iterable[HookEvent]:
     cwd = None
     turn_id = None
     previous_stamp = _transcript_mtime_fallback(path)
-    for line in read_recent_lines(path, CODEX_TRANSCRIPT_MAX_LINES):
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    lines = tail.lines(CODEX_TRANSCRIPT_MAX_LINES) if tail else read_recent_lines(path, CODEX_TRANSCRIPT_MAX_LINES)
+    for item in transcript_rows(lines, tail):
+        context = (previous_stamp, cwd, turn_id)
+        def parse(row):
+            stamp, next_cwd, next_turn = context
+            if not isinstance(row, dict):
+                return context, None
+            stamp = parse_transcript_timestamp(row, fallback=stamp)
+            payload = row.get("payload")
+            event = None
+            if isinstance(payload, dict):
+                if row.get("type") == "turn_context":
+                    next_cwd = _string_or_none(payload.get("cwd")) or next_cwd
+                    next_turn = _string_or_none(payload.get("turn_id")) or next_turn
+                else:
+                    event = codex_transcript_event(payload, session_id=session_id, turn_id=next_turn,
+                                                   cwd=next_cwd, timestamp=stamp, path=path)
+            if event is not None and tail is not None:
+                event = _transcript_metadata(event)
+            return (stamp, next_cwd, next_turn), event
 
-        timestamp = parse_transcript_timestamp(row, fallback=previous_stamp)
-        previous_stamp = timestamp
-        row_type = row.get("type")
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-
-        if row_type == "turn_context":
-            cwd = _string_or_none(payload.get("cwd")) or cwd
-            turn_id = _string_or_none(payload.get("turn_id")) or turn_id
-            continue
-
-        event = codex_transcript_event(
-            payload,
-            session_id=session_id,
-            turn_id=turn_id,
-            cwd=cwd,
-            timestamp=timestamp,
-            path=path,
-        )
+        (previous_stamp, cwd, turn_id), event = item.memo(context, parse)
         if event is not None:
             yield event
 
@@ -3249,7 +3314,7 @@ def codex_usage_limit_terminal(payload: Mapping[str, Any]) -> bool:
     )
 
 
-def iter_claude_transcript_file(path: Path) -> Iterable[HookEvent]:
+def iter_claude_transcript_file(path: Path, *, tail: TranscriptTail | None = None) -> Iterable[HookEvent]:
     session_id = claude_session_id_from_path(path)
     if session_id is None:
         return
@@ -3259,23 +3324,19 @@ def iter_claude_transcript_file(path: Path) -> Iterable[HookEvent]:
     last_cwd = None
     emitted_event = False
     previous_stamp = _transcript_mtime_fallback(path)
-    for line in read_recent_lines(path, CLAUDE_TRANSCRIPT_MAX_LINES):
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    lines = tail.lines(CLAUDE_TRANSCRIPT_MAX_LINES) if tail else read_recent_lines(path, CLAUDE_TRANSCRIPT_MAX_LINES)
+    for item in transcript_rows(lines, tail):
+        def parse(row):
+            if not isinstance(row, dict):
+                return previous_stamp, None, None
+            stamp = parse_transcript_timestamp(row, fallback=previous_stamp)
+            event = claude_transcript_event(row, session_id=session_id, timestamp=stamp, path=path)
+            if event is not None and tail is not None:
+                event = _transcript_metadata(event)
+            return stamp, _string_or_none(row.get("cwd")), event
 
-        last_cwd = _string_or_none(row.get("cwd")) or last_cwd
-        timestamp = parse_transcript_timestamp(row, fallback=previous_stamp)
-        previous_stamp = timestamp
-        event = claude_transcript_event(
-            row,
-            session_id=session_id,
-            timestamp=timestamp,
-            path=path,
-        )
+        previous_stamp, row_cwd, event = item.memo(previous_stamp, parse)
+        last_cwd = row_cwd or last_cwd
         if event is not None:
             emitted_event = True
             last_event_at = event.logged_at

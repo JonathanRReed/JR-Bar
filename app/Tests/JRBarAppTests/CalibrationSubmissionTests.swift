@@ -45,7 +45,7 @@ struct CalibrationSubmissionTests {
         }
         #expect(!refused)
         #expect(!submission.isApplying)
-        #expect(submission.error == "The synthetic device disconnected")
+        #expect(submission.error == "The synthetic device disconnected.")
         let retried = await submission.apply { CoreReply(id: "retry", ok: true) }
         #expect(retried)
         #expect(submission.error == nil)
@@ -57,6 +57,6 @@ struct CalibrationSubmissionTests {
         let saved = await submission.apply { throw CoreClientError.notConnected }
         #expect(!saved)
         #expect(!submission.isApplying)
-        #expect(submission.error?.hasPrefix("Apply failed:") == true)
+        #expect(submission.error == "Apply failed. The monitor is not connected.")
     }
 }

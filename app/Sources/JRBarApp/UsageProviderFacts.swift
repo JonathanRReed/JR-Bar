@@ -26,7 +26,8 @@ struct UsageProviderFacts {
     var credits: String? {
         var parts: [String] = []
         if let balance = provider.creditsRemaining, balance.isFinite, balance >= 0 {
-            parts.append("\(UsageFormat.grouped(balance)) credits available")
+            let amount = balance < 10 && balance != balance.rounded() ? String(format: "%.1f", balance) : UsageFormat.grouped(balance)
+            parts.append("\(amount) \(balance == 1 ? "credit" : "credits") available")
         }
         if let resets = UsageSourceNotes.resetCreditsText(provider.resetCredits) { parts.append(resets) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -35,6 +36,12 @@ struct UsageProviderFacts {
         guard !provider.isSignedOut, let tokens = provider.tokens, tokens.total > 0 else { return nil }
         var text = "\(UsageFormat.tokens(tokens.total)) tokens at last reading"
         if tokens.cachedInput > 0 { text += " · \(UsageFormat.tokens(tokens.cachedInput)) from cache" }
+        return text
+    }
+    var spokenCounters: String? {
+        guard let tokens = provider.tokens else { return nil }
+        var text = "\(tokens.total) tokens at last reading"
+        if tokens.cachedInput > 0 { text += ". \(tokens.cachedInput) from cache" }
         return text
     }
     var estimatedCost: String? {
@@ -58,9 +65,12 @@ struct UsageProviderFactsView: View {
             if !facts.account.isEmpty { Text(facts.account).textSelection(.enabled).help(facts.accountHelp ?? "") }
             if let text = facts.noQuota { Text(text) }
             if let text = facts.constraint { Text(text) }
-            if let text = facts.readingAge { Text(text) }
+            if let text = facts.readingAge {
+                Text(text).accessibilityLabel(UsageGaugeReading.spokenAge(provider: facts.provider,
+                    now: facts.now.timeIntervalSince1970, snapshotReceivedAt: facts.now.timeIntervalSince1970))
+            }
             if let text = facts.credits { Text(text) }
-            if let text = facts.counters { Text(text) }
+            if let text = facts.counters { Text(text).accessibilityLabel(facts.spokenCounters ?? text) }
             if showCost, let text = facts.estimatedCost { Text(text) }
             if let text = facts.headroom { Text(text) }
         }
@@ -101,6 +111,10 @@ struct UsageBurnersView: View {
             Spacer(minLength: 8)
             Text("\(UsageNumber.percent((burner.share * 100).rounded())) · \(UsageFormat.tokens(burner.tokens))")
                 .monospacedDigit().fixedSize()
-        }.contentShape(Rectangle())
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(burner.label)
+        .accessibilityValue("\(Int((burner.share * 100).rounded())) percent of this Mac's tokens, \(burner.tokens) tokens in this window")
     }
 }

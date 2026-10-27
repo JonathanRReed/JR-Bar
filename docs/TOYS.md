@@ -1404,9 +1404,9 @@ turned off alone.
   set's mark beside the Utilities & Toys header.
 - **Dates.** From the person's calendars when they list the day: the
   holiday calendars (any calendar named for holidays) and Birthdays, read
-  through the app's one EventKit store (`SharedEventStore`), the same one
-  the notch's glance and meeting heads-up read, under the same Calendar
-  grant. Seasonal touches never asks for it. Any holiday the calendars
+  through the app's one EventKit store (`ShelfCalendarReader`), the same
+  one the notch's glance, its meeting heads-up and the Dock's calendar
+  preview read, under the same Calendar grant. Seasonal touches never asks for it. Any holiday the calendars
   don't list, and all of them while access is off, follow JR-Bar's own
   rules: the Easter computus, Foundation's Hebrew, Umm al-Qura and
   Chinese calendars for Hanukkah, Ramadan and Eid, and Lunar New Year,

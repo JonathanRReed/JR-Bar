@@ -55,6 +55,16 @@ In Settings > Utilities & Toys:
 - **Keep Awake:** enter 1 to 1,440 minutes under Custom duration and click
   Start for a one-time session. This replaces the current manual session
   without saving a preset. Add preset keeps the duration in the Awake menus.
+  A hold keeps the Mac running and lets the display sleep. With the lid
+  closed the screen goes off while the Mac stays on. Keep the display on
+  (for your sessions) and Keep display awake (for the agents) hold the
+  screen too. Both are off by default, and 0.10.1 turns them off once for
+  everyone, so turn them back on if you want them. Five minutes before a
+  timed session ends, one notice says so, and +30 min carries on. Turn off
+  Heads-up before it ends if you'd rather not get it. Focus and quiet hours
+  hold the notice the way they hold other banners. The cup's steam thins as
+  the time runs out. If a hold doesn't take, the card says "Couldn't hold
+  the Mac awake" and offers Try again.
 - **Dock:** Never preview hides an app's Dock previews. Never switch to
   excludes it from JR-Bar's ⌥⇥ window switcher and ⌘⇥ app switcher. The two
   lists are separate; excluding an app from a switcher leaves its previews
@@ -128,7 +138,7 @@ the other items alone.
 
 ## Sweep background
 
-Open Effect Studio under Devices & Lighting. Knight Rider, Scanner and
+Open Studio from **Settings › Devices › Open Studio**. Knight Rider, Scanner and
 Pendulum have a **Background glow** slider. At 0%, the space behind the
 moving head is dark. Raise it to keep a dim background. Assign the effect
 to save the change. Pendulum's **Swing width** controls the head's width.

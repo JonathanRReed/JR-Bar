@@ -40,6 +40,8 @@ public struct UsageGaugeReading: Equatable, Sendable {
          forecast.flatMap { SessionAwarePace.roomText($0, now: timestamp) },
          resetFootnote.isEmpty ? nil : (elapsed ? resetFootnote : "Resets \(resetFootnote)")].compactMap { $0 }.joined(separator: ". ")
     }
+    private let spokenTitle: String
+    private let resetAt: Double?
     private let timestamp: Double
     private let locale: Locale
     private let timeZone: TimeZone
@@ -47,11 +49,13 @@ public struct UsageGaugeReading: Equatable, Sendable {
     public init(window: CoreUsageWindow, provider: CoreProviderUsage, now: Double, connected: Bool = true,
                 locale: Locale = .current, timeZone: TimeZone = .current, forecast: UsageForecast? = nil,
                 abbreviatesMinutes: Bool = false) {
+        resetAt = window.resetsAt
         timestamp = now
         self.locale = locale
         self.timeZone = timeZone
         id = window.id
         title = window.name
+        spokenTitle = window.longName
         elapsed = window.elapsed || (window.resetsAt.map { $0 <= now } ?? false)
         stale = !connected || provider.isStale || ["missing_recent", "source_idle", "failing"].contains(provider.availability)
         let suppressed = ["absent", "not_found"].contains(provider.availability) || provider.usageIsOff || !provider.quotaSource
@@ -77,7 +81,42 @@ public struct UsageGaugeReading: Equatable, Sendable {
     public static func age(provider: CoreProviderUsage, now: Double, snapshotReceivedAt: Double) -> String {
         let seconds = provider.readingAt.map { now - $0 }
             ?? provider.lastGoodAgeSeconds.map { $0 + max(0, now - snapshotReceivedAt) }
-        return seconds.map { "Read \(UsageTime.ago($0))" } ?? "Reading age unknown"
+        return seconds.map { "Read \(UsageTime.ago($0 >= 60 ? floor($0 / 60) * 60 : $0))" } ?? "Reading age unknown"
+    }
+
+    public static func spokenAge(provider: CoreProviderUsage, now: Double, snapshotReceivedAt: Double) -> String {
+        let seconds = provider.readingAt.map { now - $0 }
+            ?? provider.lastGoodAgeSeconds.map { $0 + max(0, now - snapshotReceivedAt) }
+        return seconds.map { "Read \(UsageTime.spokenAge($0)) ago" } ?? "Reading age unknown"
+    }
+
+    public var accessibilityLabel: String {
+        let amount = percentUsed.map { UsageWindowLabel.spoken($0) }
+            ?? (elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)
+        var parts = [spokenTitle, amount]
+        if stale { parts.append(UsageStatus.stale.word) }
+        if let resetAt, resetAt.isFinite, resetAt > 0,
+           resetAt <= Date.distantFuture.timeIntervalSince1970 {
+            let remaining = resetAt - timestamp
+            if remaining > 0 {
+                parts.append("Resets in \(UsageTime.spokenMinutes(Int(saturating: ceil(remaining / 60))))")
+            } else {
+                parts.append("Reset \(UsageTime.spokenAge(-remaining)) ago")
+            }
+        }
+        switch forecast?.verdict {
+        case .runsOut(let at)?:
+            if forecast?.runOutStyle == .clock {
+                let when = UsageTime.runOutWhen(at: at, now: timestamp, locale: locale, timeZone: timeZone, style: .clock)
+                parts.append("Runs out \(when) at this pace")
+            } else {
+                let minutes = Int(saturating: max(1, ceil((at - timestamp) / 60)))
+                parts.append("Runs out in \(UsageTime.spokenMinutes(minutes)) at this pace")
+            }
+        case .exhausted?: parts.append(UsageStatus.usedUp.word)
+        default: break
+        }
+        return parts.joined(separator: ". ")
     }
 
     static func interval(_ seconds: Double) -> String {
@@ -196,12 +235,12 @@ public struct UsageGaugeRow: View {
     private var status: String? {
         if !connected && !suppressDisconnectedStatus { return MonitorWords.label }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
-        if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
+        if provider.usageIsOff { return UsageStatus.off.word }
         if !provider.quotaSource { return UsageStatus.noQuotaSource.word }
         if let status = provider.statusText { return status }
         if isStale && showsWindows { return UsageStatus.stale.word }
-        let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
-        return showsWindows || hasCompactPlaceholders ? nil : UsageStatus.noReading.word
+        let hasReading = showsWindows && provider.windows.contains { reading(for: $0).percentUsed != nil || reading(for: $0).elapsed }
+        return hasReading ? nil : UsageStatus.noReading.word
     }
 
     public var body: some View {
@@ -239,6 +278,7 @@ public struct UsageGaugeRow: View {
                     Text(UsageGaugeReading.age(provider: provider, now: now, snapshotReceivedAt: snapshotReceivedAt ?? fallbackSnapshotAt))
                 }
                 .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.stale).lineLimit(1)
+                .accessibilityLabel(spokenReadingAge)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -266,11 +306,15 @@ public struct UsageGaugeRow: View {
                             .contentShape(Rectangle())
                     }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(name)
+                        .accessibilityValue(accessibilityValue)
                         .accessibilityHint("Show provider usage")
                 } else {
                     compactWindows
                 }
-                if status != nil || (isStale && showsWindows) { compactReadingStatus.padding(.leading, 30) }
+                if (status != nil && status != UsageStatus.noReading.word) || (isStale && showsWindows) {
+                    compactReadingStatus.padding(.leading, 30)
+                }
                 actions.padding(.leading, 30)
             }
         }
@@ -285,7 +329,10 @@ public struct UsageGaugeRow: View {
             HStack(spacing: 10) {
                 ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: ["not_found", "absent"].contains(provider.availability))
                 compactIdentity.frame(width: Self.compactIdentityWidth - 30)
-                if !windowNames.isEmpty {
+                if status == UsageStatus.noReading.word {
+                    Text(UsageStatus.noReading.word).font(JRBarTokens.TypeStyle.caption.font)
+                        .foregroundStyle(neutralInk.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                } else if !windowNames.isEmpty {
                     ForEach(windowNames, id: \.self) { column($0, compact: true) }
                 }
             }
@@ -308,13 +355,40 @@ public struct UsageGaugeRow: View {
         }
     }
 
-    @ViewBuilder private var compactIdentity: some View {
-        if status != nil || (isStale && showsWindows) {
-            Text(name).font(JRBarTokens.TypeStyle.callout.font).lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            identity
+    private var compactIdentity: some View {
+        let parts = name.components(separatedBy: " · ")
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                Text(parts[0]).font(JRBarTokens.TypeStyle.callout.font).lineLimit(1)
+                if let incident = provider.incident, !incident.isEmpty {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(Tone.failure.color)
+                        .accessibilityLabel("Incident").help(incident)
+                }
+            }
+            if parts.count > 1 {
+                Text(parts.dropFirst().joined(separator: " · "))
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(neutralInk.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(name)
+    }
+
+    private var spokenReadingAge: String {
+        UsageGaugeReading.spokenAge(provider: provider, now: now, snapshotReceivedAt: snapshotReceivedAt ?? fallbackSnapshotAt)
+    }
+
+    public var accessibilityValue: String {
+        var parts = [String]()
+        if let status { parts.append(status) }
+        if showsWindows {
+            parts += provider.windows.map { reading(for: $0).accessibilityLabel }
+        }
+        if isStale && showsWindows { parts.append(spokenReadingAge) }
+        if let incident = provider.incident, !incident.isEmpty { parts.append(incident) }
+        return parts.joined(separator: ". ")
     }
 
     private var compactReadingStatus: some View {
@@ -331,7 +405,7 @@ public struct UsageGaugeRow: View {
             }
             if isStale && showsWindows {
                 Label(age, systemImage: "clock").foregroundStyle(neutralInk.stale)
-                    .fixedSize().help(age)
+                    .fixedSize().help(age).accessibilityLabel(spokenReadingAge)
             }
             Spacer(minLength: 0)
         }
@@ -385,6 +459,8 @@ public struct UsageGaugeRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Inspect \(window.longName) window")
+                        .accessibilityLabel(reading.accessibilityLabel)
+                        .accessibilityHint("Inspect usage window")
                     } else {
                         UsageGaugeColumn(reading: reading, accent: accent, compact: false, pace: pace[name])
                     }
@@ -440,7 +516,7 @@ private struct CompactUsageGaugeColumn: View {
         .frame(maxWidth: .infinity)
         .help(reading.forecastHelp)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { UsageWindowLabel.spoken($0) } ?? (reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)), \(reading.footnote). \(reading.forecastHelp)")
+        .accessibilityLabel(reading.accessibilityLabel)
     }
 
     private var captionColor: Color {
@@ -480,6 +556,6 @@ private struct UsageGaugeColumn: View {
         }
         .frame(maxWidth: .infinity, alignment: compact ? .trailing : .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { UsageWindowLabel.spoken($0) } ?? (reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)), \(reading.resetFootnote)")
+        .accessibilityLabel(reading.accessibilityLabel)
     }
 }

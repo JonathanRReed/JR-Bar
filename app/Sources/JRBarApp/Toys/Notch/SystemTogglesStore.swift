@@ -79,6 +79,14 @@ final class SystemTogglesStore {
         var lockDelay: SystemToggle.ScreenLockDelay?
         /// When a timed keep-awake lets go; nil while indefinite or off.
         var awakeUntil: Date?
+        /// When the app's own timed hold began, for the cup's steam.
+        @ObservationIgnored var awakeStarted: Date?
+        /// The app's own last hold, for Try again: seconds, or nil for
+        /// until turned off.
+        @ObservationIgnored private var lastLocalSeconds: Int?
+        /// The five-minute heads-up before a timed session ends: one
+        /// scheduled event, re-planned only when the hold moves.
+        @ObservationIgnored let headsUp: KeepAwakeHeadsUpScheduler
         /// "Awake" holds the display on too (no screen saver, no lock)
         /// rather than only the Mac. App-local, remembered.
         var awakeKeepsDisplay: Bool
@@ -148,7 +156,8 @@ final class SystemTogglesStore {
         /// held out of sight of the switch that lets it go.
         var awakeReading: KeepAwakeReading {
             if daemonLive && !awake.held { return KeepAwakeReading(hold: daemonHold) }
-            var reading = KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay)
+            var reading = KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay,
+                                           startedAt: awakeUntil == nil ? nil : awakeStarted)
             reading.releaseFailed = awakeReleaseFailed
             return reading
         }
@@ -185,7 +194,9 @@ final class SystemTogglesStore {
             self.dockDriver = dockDriver
             self.defaults = defaults
             self.strip = SystemTogglesStore.loadStrip(defaults: defaults)
+            SystemTogglesStore.migrateAwakeDisplay(defaults)
             self.awakeKeepsDisplay = defaults.bool(forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
+            self.headsUp = KeepAwakeHeadsUpScheduler(defaults: defaults)
         }
 
         /// Take or drop the app's own keep-awake assertion — the fallback
@@ -204,7 +215,7 @@ final class SystemTogglesStore {
                     awakeReleaseFailed = false
                     if lastError?.hasPrefix("Awake:") == true { lastError = nil }
                 } else {
-                    lastError = "Awake: the power assertion was refused."
+                    lastError = Self.refusedAssertion
                 }
             } else if !hold && awake.held {
                 _ = releaseLocalAwake()
@@ -321,8 +332,10 @@ final class SystemTogglesStore {
                 setAwake(false)
                 return
             }
+            lastLocalSeconds = seconds
             setAwake(true)
             guard let seconds, awake.held else { return }
+            awakeStarted = Date()
             awakeUntil = Date().addingTimeInterval(TimeInterval(seconds))
             awakeTimer = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
@@ -385,10 +398,55 @@ final class SystemTogglesStore {
             case "agents":
                 let sessions = lease.sessions ?? []
                 return .untilAgentsFinish(sessions: sessions.isEmpty ? nil : sessions)
+            case "process":
+                return lease.pid.map { .whileRunning(pid: $0, label: lease.label) } ?? .indefinite
             default:
                 return .indefinite
             }
         }
+
+        // MARK: Extend and try again
+
+        /// "+30 min" on the heads-up: the same countdown, ending later, on
+        /// whichever hold has it — the daemon's lease or the app's own.
+        /// Kept inside one lease's day.
+        func extendAwake(now: Date = Date()) {
+            guard case .lease(.until(let end)) = awakeReading.state else { return }
+            let newEnd = KeepAwakeHeadsUp.extendedEnd(from: end, now: now)
+            // The app's own countdown runs on the wall clock: measure the
+            // new end from it, so the session ends where the notice said.
+            let seconds = max(60, Int(newEnd.timeIntervalSinceNow.rounded()))
+            if !handingOver, daemonLive, sendLease != nil, !leaseUnsupported, !awake.held {
+                let display = daemonHold?.lease?.display ?? awakeKeepsDisplay
+                lease(CoreAwakeRequest(.until(newEnd.timeIntervalSince1970), display: display, source: "heads_up"),
+                      fallback: { [weak self] in self?.holdLocally(seconds: seconds) })
+                return
+            }
+            let started = awakeStarted
+            holdLocally(seconds: seconds)
+            // The same session carries on: its steam keeps its own start.
+            if awake.held, let started { awakeStarted = started }
+            syncAwakeChip()
+        }
+
+        /// The hold the person asked for didn't take. Try again re-asks it:
+        /// the daemon's lease in the same shape, or the app's own assertion.
+        var canRetryAwake: Bool {
+            if awakeReading.holdFailed, awakeReading.leaseInForce, daemonLive, sendLease != nil { return true }
+            return !awake.held && awakeRequested && lastError?.hasPrefix(Self.refusedAssertion) == true
+        }
+
+        func retryAwake() {
+            guard canRetryAwake else { return }
+            if awakeReading.holdFailed, let current = daemonHold?.lease {
+                lease(CoreAwakeRequest(Self.sameShape(current), display: current.display ?? awakeKeepsDisplay,
+                                       source: "retry"), fallback: nil)
+                return
+            }
+            holdLocally(seconds: lastLocalSeconds)
+        }
+
+        nonisolated static let refusedAssertion = "Awake: the power assertion was refused."
 
         // MARK: The daemon's hold
 
@@ -534,6 +592,7 @@ final class SystemTogglesStore {
         func syncAwakeChip() {
             let reading = awakeReading
             if isOn[.keepAwake] != reading.leaseInForce { isOn[.keepAwake] = reading.leaseInForce }
+            headsUp.sync(reading: reading, now: Date())
             if reading.showsCountdown {
                 guard awakeTick == nil else { return }
                 awakeClock = Date()
@@ -611,12 +670,29 @@ final class SystemTogglesStore {
     }
 
     nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
+    /// 1: a manual session holds the computer, not the display, until the
+    /// person turns "Keep the display on" on again.
+    nonisolated static let awakeDisplayMigrationKey = "keepAwakeDisplayMigration"
+    nonisolated static let awakeDisplayMigrationVersion = 1
+
+    /// Once, ever: a session held the display before, so it starts this
+    /// build holding the computer only. A choice made after the stamp stands.
+    nonisolated static func migrateAwakeDisplay(_ defaults: UserDefaults) {
+        guard defaults.integer(forKey: awakeDisplayMigrationKey) < awakeDisplayMigrationVersion else { return }
+        defaults.removeObject(forKey: awakeDisplayDefaultsKey)
+        defaults.set(awakeDisplayMigrationVersion, forKey: awakeDisplayMigrationKey)
+    }
 
     /// Keep awake for `seconds`, indefinitely (nil), or let go (0).
     func holdAwake(seconds: Int?) { state.holdAwake(seconds: seconds) }
     /// Keep awake until the agents working now finish.
     func holdAwakeUntilAgentsFinish() { state.holdAwakeUntilAgentsFinish() }
     func setAwakeKeepsDisplay(_ on: Bool) { state.setAwakeKeepsDisplay(on) }
+    /// "+30 min" on the five-minute heads-up.
+    func extendAwake() { state.extendAwake() }
+    /// Re-ask a hold that didn't take.
+    var canRetryAwake: Bool { state.canRetryAwake }
+    func retryAwake() { state.retryAwake() }
 
     /// A link's or a Shortcut's `on=` for Awake: the person's lease, on
     /// or off, left alone when it is already there. The agents' own hold

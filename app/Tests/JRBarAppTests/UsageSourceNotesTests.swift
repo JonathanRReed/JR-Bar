@@ -104,7 +104,7 @@ struct UsageSourceNotesTests {
         let metered = CoreProviderUsage(id: "opencode", fidelity: "official", state: "ready",
                                         account: UsageAccount(plan: "Go"))
         #expect(UsageCenterStore.accountLine(none, history: nil) == "")
-        #expect(UsageCenterStore.accountLine(metered, history: nil) == "Go · Official")
+        #expect(UsageCenterStore.accountLine(metered, history: nil) == "Go · Official reading")
     }
 
     @Test func aStandInSourceIsNamed() {

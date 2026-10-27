@@ -15,8 +15,8 @@ struct SeasonalReading: Equatable, Sendable {
     var ownBirthday: DateComponents?
 }
 
-/// Where seasonal touches read from. The app's reader goes through the
-/// shared EventKit store under the notch's existing Calendar grant and the
+/// Where seasonal touches read from. The app's reader borrows the one
+/// EventKit store (`ShelfCalendarReader`) under the existing Calendar grant and the
 /// Me card under a Contacts grant; neither ever asks. Tests hand in their
 /// own, so nothing here touches a real calendar or contact.
 struct SeasonalSource: Sendable {
@@ -64,7 +64,7 @@ struct SeasonalSource: Sendable {
         var reading = SeasonalReading()
         if EKEventStore.authorizationStatus(for: .event) == .fullAccess {
             let today = Calendar.current.startOfDay(for: now)
-            reading.entries = SharedEventStore.shared.read { store in
+            reading.entries = ShelfCalendarReader.shared.read { store in
                 let calendars = store.calendars(for: .event)
                 let holidays = calendars.filter {
                     $0.type != .birthday && $0.title.localizedCaseInsensitiveContains("holiday")

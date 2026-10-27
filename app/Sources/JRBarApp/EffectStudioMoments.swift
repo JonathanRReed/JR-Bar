@@ -324,6 +324,7 @@ private struct MomentRow: View {
                         .buttonStyle(.borderless)
                         .disabled(!store.isLive)
                         .help("Play the sketch on the Screen Bar for a few seconds")
+                        .accessibilityLabel("Preview \(moment.name)")
                     }
                 }
             }
@@ -601,6 +602,7 @@ struct FinishMomentsSection: View {
     /// Where the looks come from; nil asks the monitor (`list_finish_looks`).
     var loader: (@MainActor () async -> FinishLookList?)? = nil
     @ViewState private var loaded: FinishLookList?
+    @FocusState private var focusedLook: String?
 
     private var list: FinishLookList? { loaded ?? seed }
 
@@ -661,11 +663,23 @@ struct FinishMomentsSection: View {
             .buttonStyle(.borderless)
             .disabled(!store.isLive)
             .help("Play \(look.label) on the Screen Bar")
+            .accessibilityLabel("Preview \(look.label)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture { pick(look) }
+        .focusable()
+        .focused($focusedLook, equals: look.id)
+        .onKeyPress(.space) {
+            guard focusedLook == look.id else { return .ignored }
+            pick(look); return .handled
+        }
+        .onKeyPress(.return) {
+            guard focusedLook == look.id else { return .ignored }
+            pick(look); return .handled
+        }
+        .accessibilityAction { pick(look) }
         .accessibilityAddTraits(picked ? [.isButton, .isSelected] : .isButton)
     }
 

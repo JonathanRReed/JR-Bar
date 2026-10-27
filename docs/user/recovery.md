@@ -36,7 +36,7 @@ a fresh reading.
 
 ## Hooks are missing
 
-Open **Settings > Agents & Usage** and install or reinstall the affected provider.
+Open **Settings > Providers** and install or reinstall the affected provider.
 Then run:
 
 ```sh
@@ -136,9 +136,8 @@ check, in this order:
 
 - A quiet period changes the light on purpose. `jrbar status` shows it, and
   `jrbar quiet off` ends it.
-- **Settings > Devices & Lighting > Dimming > Maximum brightness** caps every light.
-  (General's Brightness group only links there.)
-- **Settings > Devices & Lighting** has a **Colour calibration** row per
+- **Settings > Devices > Brightness > Maximum brightness** caps every light.
+- **Settings > Devices** has a **Colour calibration** row per
   device and for the Screen Bar. A device that is not "Uncalibrated" is
   being tinted by its gains; open **Calibrate...** and choose **Reset to
   default**.
@@ -175,7 +174,7 @@ and the hush that held it: `call`, `focus`, `quiet` or `fullscreen`.
 
 ## Moving or restoring settings
 
-**Settings > General > Advanced > Transfer** exports the monitor's settings, devices,
+**Settings > Advanced > Transfer** exports the monitor's settings, devices,
 Utilities, Toys, shortcuts and sounds as one private JSON file, and imports
 one with a checklist of what to take. An import never turns on a request that
 leaves the Mac (remote machines, cloud ingest, status feeds, update checks,
@@ -195,7 +194,7 @@ overwrite it. It moves the file aside as `<name>.corrupt-<date and time>`
 that list empty. If only some rows were damaged, it keeps the good rows and
 leaves a copy of the original beside them. The three newest copies of each
 file are kept, and each is private to you. The Core log on **Settings >
-General > Advanced** has one line saying which file was set aside.
+Advanced** has one line saying which file was set aside.
 
 To get a file back, quit JR-Bar, copy the `.corrupt-` file over the original
 name, and open JR-Bar again. If it is still unreadable it will be set aside
@@ -250,7 +249,7 @@ the file. A protected setting you changed while it was unsealed may show up as
 ignored the next time the key is back; press **Keep the change** if it is
 yours.
 
-**Reset protection** (Settings > General > Advanced > Protected settings) seals the
+**Reset protection** (Settings > Advanced > Protected settings) seals the
 protected settings as they are in JR-Bar right now and drops any ignored edit.
 To rotate the key itself, quit JR-Bar, delete the Keychain item named
 **JR-Bar settings seal** in Keychain Access, and open JR-Bar: it makes a new
@@ -270,6 +269,6 @@ update leaves it on its old firmware. Read the result in the sheet, or run
   JR-Bar's to remove (it names them). Delete the ones you do not need in
   Finder, eject and reconnect the device, and try again.
 - **The lights look off after an update:** a Pro on firmware 1.1.0 balances
-  colour itself; re-run colour calibration in **Settings > Devices & Lighting**.
+  colour itself; re-run colour calibration in **Settings > Devices**.
 
 [The whole procedure](firmware.md).

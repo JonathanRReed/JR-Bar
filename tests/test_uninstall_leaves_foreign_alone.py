@@ -1,6 +1,6 @@
 """Uninstalling hooks that were never installed touches nothing.
 
-`agent-monitor uninstall all` (and Settings > Agents & Usage > Remove Hooks) used to read every
+`agent-monitor uninstall all` (and Settings > Providers > Remove Hooks) used to read every
 agent's config with the installer's tightening on, so on a Mac with no JR-Bar hooks it still
 created `~/.cursor`, `~/.hermes`, `~/.gemini` and the rest, and tightened folders and
 files the agents own to 0700/0600.

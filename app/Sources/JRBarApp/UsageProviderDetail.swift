@@ -190,6 +190,7 @@ struct UsageSessionContext: View {
                 if let tokens = reading?.contextTokens, let window = reading?.contextWindow, window > 0 {
                     Text("\(UsageFormat.tokens(tokens)) / \(UsageFormat.tokens(window))")
                         .monospacedDigit().foregroundStyle(JRBarTokens.Ink.secondary)
+                        .accessibilityLabel("Context: \(tokens) of \(window) tokens")
                 } else {
                     Text(gap ?? "No context reading").font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(JRBarTokens.Ink.secondary)
@@ -209,10 +210,12 @@ struct UsageForecastSummary: View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             HStack(spacing: JRBarTokens.Space.sm) {
                 Text(inspection.window.longName).font(JRBarTokens.TypeStyle.headline.font)
-                StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
-                    .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".verdict": inspection.displayForecast])
+                if inspection.showsVerdict {
+                    StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
+                        .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".verdict": inspection.displayForecast])
+                }
             }
-            Text(inspection.explanation).font(JRBarTokens.TypeStyle.callout.font)
+            Text(inspection.summaryText).font(JRBarTokens.TypeStyle.callout.font)
                 .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".headline": inspection.displayForecast])
                 .fixedSize(horizontal: false, vertical: true)
             if let projected = inspection.projectedText {

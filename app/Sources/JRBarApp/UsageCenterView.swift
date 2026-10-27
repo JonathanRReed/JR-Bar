@@ -61,18 +61,20 @@ struct UsageCenterView: View {
         .font(JRBarTokens.TypeStyle.body.font)
         .frame(minWidth: 800, minHeight: 480)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Range", selection: $store.range) {
-                    ForEach(UsageHistoryRange.allCases) { Text($0.label).tag($0) }
-                }.pickerStyle(.segmented).disabled(!store.isLive || visibleSelection == "overview")
+            if visibleSelection != "overview" {
+                ToolbarItem(placement: .principal) {
+                    Picker("Range", selection: $store.range) {
+                        ForEach(UsageHistoryRange.allCases) { Text($0.label).tag($0) }
+                    }.pickerStyle(.segmented).disabled(!store.isLive)
+                }
             }
             ToolbarItem {
                 Toggle("Estimated cost", isOn: $showCost)
             }
-            if visibleSelection != "overview", showCost {
+            if visibleSelection != "overview" {
                 ToolbarItem {
-                    Picker("Chart", selection: $store.metric) {
-                        ForEach(UsageCenterStore.Metric.allCases) { Text($0.label).tag($0) }
+                    Picker("Chart", selection: Binding(get: { showCost ? store.metric : .tokens }, set: { store.metric = $0 })) {
+                        ForEach(UsageCenterStore.Metric.allCases.filter { showCost || $0 == .tokens }) { Text($0.label).tag($0) }
                     }.pickerStyle(.segmented)
                 }
             }
@@ -195,7 +197,8 @@ struct UsageProviderConnection: View {
 enum UsageCardCopy {
     nonisolated static func readingAgeText(_ provider: CoreProviderUsage, now: Date) -> String? {
         guard let readingAt = provider.readingAt else { return nil }
-        return "Read \(UsageTime.ago(now.timeIntervalSince1970 - readingAt))"
+        let seconds = now.timeIntervalSince1970 - readingAt
+        return "Read \(UsageTime.ago(seconds >= 60 ? floor(seconds / 60) * 60 : seconds))"
     }
 
     static func pricingDisclosure(_ history: UsageHistory) -> String {

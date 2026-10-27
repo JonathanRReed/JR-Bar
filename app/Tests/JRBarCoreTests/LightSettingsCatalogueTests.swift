@@ -66,7 +66,7 @@ struct LightDocumentsMockTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.settings != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.settings != nil })
         let document = SettingsDocument(try #require(model.settings).document)
         let missing = personalLightDocumentPaths.filter { !document.contains(SettingsPath($0)) }
         #expect(missing.isEmpty, "missing from the mock document: \(missing)")

@@ -291,18 +291,27 @@ private struct ToyCostLine: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             if let line = toy.cost(at: ToyMeter.uptime) {
-                Label(line, systemImage: "gauge.with.dots.needle.33percent")
-                    .jrbarType(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, SettingsMetrics.s)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.primary.opacity(0.05)))
-                    .padding(.bottom, SettingsMetrics.xs)
-                    .accessibilityLabel("Cost: \(line)")
+                ToyCostCapsule(line: line)
             }
         }
+    }
+}
+
+/// The cost line's look: the gauge and the words in a quiet capsule.
+struct ToyCostCapsule: View {
+    let line: String
+
+    var body: some View {
+        Label(line, systemImage: "gauge.with.dots.needle.33percent")
+            .jrbarType(.caption)
+            .foregroundStyle(.secondary)
+            .labelStyle(.titleAndIcon)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, SettingsMetrics.s)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+            .padding(.bottom, SettingsMetrics.xs)
+            .accessibilityLabel("Cost: \(line)")
     }
 }

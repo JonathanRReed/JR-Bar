@@ -47,17 +47,15 @@ struct DevicePresentationTests {
         #expect(device.id == "screen-bar")
         #expect(device.enabled == true)
         #expect(store.deviceEntries.first?.id == "virtual:status-bar")
-        #expect(DevicesPage.screenBarStatus(device: device, live: store.isLive) == "Connected")
+        #expect(store.screenBarStatus == "Shown")
         #expect(store.deviceLastWrite("virtual:status-bar") == 1_800_000_001)
         #expect(store.deviceSurface("virtual:status-bar") == surface)
         store.core.stop()
-        #expect(DevicesPage.screenBarStatus(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
-            == "Monitor not connected")
+        #expect(store.screenBarStatus == "Shown")
         store.core.handle(.connected)
         store.core.apply(.state(CoreState(devices: [])))
         #expect(store.deviceFacts("virtual:status-bar") == nil)
-        #expect(DevicesPage.screenBarStatus(device: store.deviceFacts("virtual:status-bar"), live: store.isLive)
-            == "Not connected")
+        #expect(store.screenBarStatus == "Shown")
     }
 
     @Test func screenBarHasOneSettingsSeatWithoutChangingDeviceIndexes() throws {
@@ -79,17 +77,11 @@ struct DevicePresentationTests {
         #expect(DevicesPage.Layout(entries: []).devices.isEmpty)
     }
 
-    @Test func screenBarHeaderNeverPresentsCachedVisibilityAsLive() {
-        let shown = CoreDevice(id: "screen-bar", kind: "screen_bar", enabled: true)
-        let hidden = CoreDevice(id: "screen-bar", kind: "screen_bar", enabled: false)
-        let unknown = CoreDevice(id: "screen-bar", kind: "screen_bar")
-        #expect(DevicesPage.screenBarStatus(device: shown, live: true) == "Connected")
-        #expect(DevicesPage.screenBarStatus(device: hidden, live: true) == "Off")
-        #expect(DevicesPage.screenBarStatus(device: nil, live: true) == "Not connected")
-        #expect(DevicesPage.screenBarStatus(device: unknown, live: true) == "Not connected")
-        #expect(DevicesPage.screenBarStatus(device: shown, live: false) == "Monitor not connected")
-        #expect(DevicesPage.screenBarStatus(device: hidden, live: false) == "Monitor not connected")
-        #expect(DevicesPage.screenBarStatus(device: nil, live: false) == "Monitor not connected")
+    @Test func screenBarHeaderUsesAppVisibility() {
+        #expect(SettingsStore.screenBarStatus(enabled: true, hiddenForApp: nil, hiddenForVideo: false) == "Shown")
+        #expect(SettingsStore.screenBarStatus(enabled: false, hiddenForApp: nil, hiddenForVideo: false) == "Off")
+        #expect(SettingsStore.screenBarStatus(enabled: true, hiddenForApp: "Video Player", hiddenForVideo: false) == "Hidden for Video Player")
+        #expect(SettingsStore.screenBarStatus(enabled: true, hiddenForApp: nil, hiddenForVideo: true) == "Hidden in full screen")
     }
 
     @Test func screenBarBrightnessAndCalibrationKeepTheirConfiguredWritePath() throws {

@@ -28,9 +28,15 @@ public struct KeepAwakeReading: Equatable, Sendable {
         case agentsFinish
         /// Until the person lets go.
         case indefinite
+        /// While one process runs (`jrbar awake -- swift test`), by its
+        /// short name — never its arguments.
+        case whileRunning(String)
     }
 
     public var state: State
+    /// When the person's lease began (`lease.started_at`, or the app's own
+    /// hold's start): a countdown's steam fades against its whole length.
+    public var startedAt: Date?
     /// `thermal` or `battery` while a yield has taken the hold away.
     public var suspended: String?
     /// Prevent idle display sleep too; this does not override lock policy.
@@ -93,6 +99,8 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 state = .lease(hold.lease?.until.map { .until(Date(timeIntervalSince1970: $0)) } ?? .indefinite)
             case "agents":
                 state = .lease(.agentsFinish)
+            case "process":
+                state = .lease(.whileRunning(Self.processName(hold.lease?.label)))
             default:
                 state = .lease(.indefinite)
             }
@@ -110,16 +118,25 @@ public struct KeepAwakeReading: Equatable, Sendable {
         }
         holdFailed = state != .off && self.suspended == nil && hold.active == false
         releaseFailed = hold.releaseFailed == true && hold.active == true
+        startedAt = hold.lease?.startedAt.map { Date(timeIntervalSince1970: $0) }
+    }
+
+    /// A process's name as the words carry it; the daemon already keeps it
+    /// short, and an empty one is said plainly.
+    static func processName(_ label: String?) -> String {
+        let name = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "a command" : String(name.prefix(32))
     }
 
     /// The app's own assertion, the fallback while the daemon is away: a
     /// countdown or until turned off.
-    public init(localHeld: Bool, until: Date?, display: Bool) {
+    public init(localHeld: Bool, until: Date?, display: Bool, startedAt: Date? = nil) {
         guard localHeld else {
             self.init(state: .off, display: display)
             return
         }
         self.init(state: .lease(until.map(Lease.until) ?? .indefinite), display: display)
+        self.startedAt = startedAt
     }
 
     /// The person's lease is in force: the chip's light, and what a tap
@@ -143,6 +160,9 @@ public struct KeepAwakeReading: Equatable, Sendable {
 
     /// Shared by the card and chip so neither promises to bypass security policy.
     public static let displaySleepHelp = "Prevents idle display sleep. Manual locking and system security policies still apply."
+    /// Under a "keep the display on" switch: what off means, since off is
+    /// the default.
+    public static let displayChoiceHelp = "Off, the Mac stays awake and the display sleeps as usual; with the lid closed the screen goes off. On also prevents idle display sleep, except with the lid closed and no external display."
     public static let agentSleepHelp = "Prevents idle system sleep while agents run. Power and thermal safeguards can pause the hold."
     public static let manualSessionHelp = "Turning this off ends only your manual session. Automatic agent holds and other apps may still keep the Mac awake."
 
@@ -174,6 +194,9 @@ public struct KeepAwakeReading: Equatable, Sendable {
             return count > 1 ? "\(count) agents" : count == 1 ? "1 agent" : "Agents"
         case .lease(.agentsFinish):
             return "Agents"
+        case .lease(.whileRunning(let name)):
+            // A chip's worth: the name when it is short, else the word.
+            return name.count <= 8 ? name : "Awake"
         case .lease(.until(let end)):
             let left = end.timeIntervalSince(now)
             return left > 0 ? Self.compact(left) : "Awake"
@@ -202,7 +225,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 : "Keep the Mac awake (the display may still sleep and lock)."
         case .agents(let count):
             if count > 0 {
-                text = "Held awake while \(Self.agents(count)) work — their own switch, under Settings › General › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
+                text = "Held awake while \(Self.agents(count)) work — their own switch, under Utilities & Toys › Keep Awake. It lets go a few minutes after they stop. Click to keep it awake after that too."
             } else if let end = graceEnd(now: now) {
                 text = "Held awake until \(clock(end)), a few minutes after the agents stopped. Click to keep it awake."
             } else {
@@ -215,6 +238,8 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 : "Keeping the Mac awake — click to end your manual session."
         case .lease(.agentsFinish):
             text = "Keeping the Mac awake until the agents finish — click to end your manual session."
+        case .lease(.whileRunning(let name)):
+            text = "Keeping the Mac awake while \(name) runs — click to end your manual session."
         case .lease(.indefinite):
             text = "Keeping the Mac awake until you turn it off — click to end your manual session."
         }
@@ -233,7 +258,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public func footerLine(now: Date) -> (full: String, short: String)? {
         if releaseFailed { return ("Keep Awake could not stop its hold", "Still held") }
         if let why = suspendedWords { return ("Awake paused · \(why)", "Paused") }
-        if holdFailed { return ("Awake hold didn't start", "Not held") }
+        if holdFailed { return ("Couldn't hold the Mac awake", "Not held") }
         // A run the battery or the charger will not carry outranks the
         // hold's own words: it is the one thing to act on. Only while
         // something holds the Mac, though — the daemon's charger verdict
@@ -259,6 +284,8 @@ public struct KeepAwakeReading: Equatable, Sendable {
             return ("Awake · \(Self.long(left)) left", Self.compact(left))
         case .lease(.agentsFinish):
             return ("Awake until the agents finish", "Awake")
+        case .lease(.whileRunning(let name)):
+            return ("Awake while \(name) runs", "Awake")
         case .lease(.indefinite):
             return ("Awake until you turn it off", "Awake")
         }
@@ -332,6 +359,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
         case nil, "": return nil
         case "expired": return "time up"
         case "finished", "agents_idle": return "the agents finished"
+        case "exited": return "the command finished"
         case "thermal": return "too warm"
         case "battery": return "battery low"
         case "low_power": return "Low Power Mode"

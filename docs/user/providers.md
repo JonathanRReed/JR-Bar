@@ -8,7 +8,7 @@ in [NATIVE-PROVIDERS.md](../NATIVE-PROVIDERS.md).
 ## Hooks
 
 The app detects provider configs without editing them. In **Settings >
-Agents & Usage**, install, reinstall, or remove hooks one provider at a time. A later
+Providers**, install, reinstall, or remove hooks one provider at a time. A later
 upgrade refreshes only detector-proven JR-Bar-managed hooks. It preserves
 inactive flags and custom managed log paths.
 
@@ -25,7 +25,7 @@ checked that version yet.
 
 ### Recheck hooks in the app
 
-In Settings > Agents & Usage, click **Recheck hooks** after a provider turn
+In Settings > Providers, click **Recheck hooks** after a provider turn
 or a hook repair. It reads local hook settings, the hook receiver's status,
 the last event arrival and queued event counts. It does not install hooks,
 update providers or answer an ask. The button waits while a check is running
@@ -68,12 +68,12 @@ when JR-Bar started shows as a session of its own until it ends.
 ## OpenCode
 
 OpenCode reports through a small plugin in `~/.config/opencode/plugins/`,
-installed from **Settings > Agents & Usage**. It forwards session state and asks and
+installed from **Settings > Providers**. It forwards session state and asks and
 nothing else: no prompts, file paths or tool output. A permission prompt or a
 question shows as Needs You and clears when you answer it. A plugin installed
 by an earlier version keeps working and is still recognised, but it cannot
 show a question as an ask. The app updates it the next time it refreshes its
-hooks after an upgrade, or you can reinstall it from Settings > Agents & Usage.
+hooks after an upgrade, or you can reinstall it from Settings > Providers.
 
 OpenCode sub-agents group under their session, and their asks follow the
 Sub-agent asks setting. With it off, a sub-agent's approval raises no card,
@@ -108,7 +108,7 @@ A card, or a line of `jrbar usage`, is in one of these states:
 
 | state | what it means | what to do |
 | --- | --- | --- |
-| off (not turned on) | you have not turned this provider's usage on; nothing was asked | turn it on in Settings > Agents & Usage, or `jrbar providers usage <provider> on` |
+| off (not turned on) | you have not turned this provider's usage on; nothing was asked | turn it on in Settings > Providers, or `jrbar providers usage <provider> on` |
 | ready | a fresh reading | nothing |
 | stale | the last good reading, kept while a new one fails | usually nothing; it clears on the next good read |
 | sign-in required | the provider's login is missing or expired | sign in with the provider's own CLI |
@@ -205,7 +205,7 @@ through the CLI.
 
 ## Update a provider's CLI
 
-**Settings > Agents & Usage** shows each installed agent CLI's version with an
+**Settings > Providers** shows each installed agent CLI's version with an
 **Update** button. Claude, Grok, Devin and OpenCode use their own updaters.
 Codex and Gemini use the trusted global npm or Homebrew installation that owns
 the CLI. npm keeps the original installation prefix. Unknown or project-local
@@ -225,7 +225,7 @@ its registry to download the update. Background version checks are separate.
 ### Update available
 
 A row can also say "2.1.290 available". That needs one more request, so it is
-off. Turn on **Check for agent updates** in Settings > Agents & Usage and JR-Bar will ask
+off. Turn on **Check for agent updates** in Settings > Providers and JR-Bar will ask
 `registry.npmjs.org` for the latest version of each installed CLI that has an npm
 package: Claude Code, Codex, Grok, Gemini CLI and OpenCode (Devin has none). It
 asks every 6 hours and when you refresh the Agents page, with one plain request

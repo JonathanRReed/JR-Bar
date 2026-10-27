@@ -1599,8 +1599,10 @@ public struct CoreClosedLid: Codable, Hashable, Sendable {
 
 /// The person's own keep-awake request (`state.power.hold.lease`): for a
 /// duration (`until` is its end), until the named sessions finish
-/// (`kind == "agents"`, `until` is the backstop), or until turned off
-/// (`kind == "indefinite"`, no `until`).
+/// (`kind == "agents"`, `until` is the backstop), until turned off
+/// (`kind == "indefinite"`, no `until`), or while one process runs
+/// (`kind == "process"`: `pid`, and `label`, its short name — never its
+/// arguments; `until` is the day-long backstop).
 public struct CoreAwakeLease: Codable, Hashable, Sendable {
     public var kind: String?
     public var startedAt: Double?
@@ -1608,13 +1610,29 @@ public struct CoreAwakeLease: Codable, Hashable, Sendable {
     public var sessions: [String]?
     public var display: Bool?
     public var source: String?
+    public var pid: Int?
+    public var label: String?
 
     enum CodingKeys: String, CodingKey {
-        case kind, until, sessions, display, source
+        case kind, until, sessions, display, source, pid, label
         case startedAt = "started_at"
     }
 
+    public init(kind: String? = nil, startedAt: Double? = nil, until: Double? = nil,
+                sessions: [String]? = nil, display: Bool? = nil, source: String? = nil,
+                pid: Int? = nil, label: String? = nil) {
+        self.kind = kind
+        self.startedAt = startedAt
+        self.until = until
+        self.sessions = sessions
+        self.display = display
+        self.source = source
+        self.pid = pid
+        self.label = label
+    }
+
     public var waitsOnAgents: Bool { kind == "agents" }
+    public var waitsOnProcess: Bool { kind == "process" }
 
     /// Seconds left on a duration lease; nil for the other two shapes,
     /// whose end is not a countdown.
@@ -1749,6 +1767,8 @@ public struct CoreAwakeRequest: Hashable, Sendable {
         /// Every main session running now, or the named ones.
         case untilAgentsFinish(sessions: [String]?)
         case indefinite
+        /// While this process runs (`jrbar awake -- …`), named by `label`.
+        case whileRunning(pid: Int, label: String?)
     }
 
     public var shape: Shape
@@ -1771,6 +1791,9 @@ public struct CoreAwakeRequest: Hashable, Sendable {
             args["until_agents_idle"] = .bool(true)
             if let sessions { args["sessions"] = .array(sessions.map(JSONValue.string)) }
         case .indefinite: args["indefinite"] = .bool(true)
+        case .whileRunning(let pid, let label):
+            args["pid"] = .number(Double(pid))
+            if let label { args["label"] = .string(label) }
         }
         return args
     }
@@ -2701,12 +2724,43 @@ public struct CoreSettings: Codable, Hashable, Sendable {
 
 // MARK: - reply
 
-public struct CoreReplyError: Codable, Hashable, Sendable, Error {
+public struct CoreReplyError: Codable, Hashable, Sendable, Error, LocalizedError {
     public static let tokenHistoryOffMessage = "Token history is off"
     public var isTokenHistoryDisabled: Bool { code == "disabled" }
 
     public var code: String
     public var message: String?
+
+    /// What a person reads: the daemon's own message as a sentence, else
+    /// plain words for the code. Never the code itself.
+    public var sentence: String {
+        if let message = message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
+            // A message that opens with a setting key keeps its case.
+            let opener = message.prefix(while: { !$0.isWhitespace })
+            let keyed = opener.contains("_") || opener.contains(".")
+            let first = keyed ? message : message.prefix(1).uppercased() + message.dropFirst()
+            return ".!?…".contains(first.last ?? " ") ? first : first + "."
+        }
+        return Self.codeWords[code] ?? "The monitor refused that. Details are in the log."
+    }
+
+    public var errorDescription: String? { sentence }
+
+    /// Plain words for the reply codes that can arrive without a message.
+    static let codeWords: [String: String] = [
+        "not_found": "That is no longer there.",
+        "invalid_args": "The monitor did not accept that value.",
+        "invalid_value": "The monitor did not accept that value.",
+        "bad_command": "This monitor does not know that command. Update JR-Bar.",
+        "unknown_command": "This monitor does not know that command. Update JR-Bar.",
+        "busy": "The monitor is busy. Try again in a moment.",
+        "unauthenticated": "The monitor did not accept this app. Restart the monitor from the panel.",
+        "disabled": "That is turned off.",
+        "provider_unavailable": "That provider's usage source is not available.",
+        "frame_too_large": "That request was too large for the monitor.",
+        "internal": "The monitor hit an error. Details are in the log.",
+        "timeout": "The monitor did not answer in time. Try again.",
+    ]
 
     public init(code: String, message: String? = nil) {
         self.code = code

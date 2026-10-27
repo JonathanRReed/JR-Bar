@@ -463,10 +463,6 @@ struct DevicesPage: View {
         }
     }
 
-    static func screenBarStatus(device: CoreDevice?, live: Bool) -> String {
-        live ? DeviceConnectionState.screenBar(device, live: live).rawValue : MonitorWords.label
-    }
-
     var body: some View {
         SettingGroup("Brightness") {
             SettingSlider(store, "Maximum brightness", path: "global_brightness_scale", in: 0.05...1,
@@ -517,8 +513,8 @@ struct ScreenBarSettingsCard: View {
         } header: {
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
-                                pill: store.screenBarConnection.badgeWord(live: store.isLive),
-                                pillTint: store.screenBarConnection.tone.color)
+                                pill: store.screenBarStatus,
+                                pillTint: Tone.neutral.color)
         }
     }
 }
@@ -947,7 +943,7 @@ struct ScreenBarCard: View {
     /// notched MacBook — so the named models agree; the picker is for
     /// the odd panel, not for flavour.
     private var notchShapeSubtitle: String {
-        "The tray's bottom corners copy this notch's radius. Detected: \(NotchProfile.machineFamily)."
+        "The tray's bottom corners follow the notch's shape."
     }
 }
 
@@ -1071,5 +1067,5 @@ enum AskLifetimeCopy {
 /// The words under the Agents page's "Sub-agent asks" switch, shared with
 /// the Settings search index so the two can never disagree.
 enum SubagentAsksCopy {
-    nonisolated static let subtitle = "Sub-agent alerts are off by default. Agent prompts stay visible."
+    nonisolated static let subtitle = "Alert me when a sub-agent asks. The agent still shows its own prompt either way."
 }

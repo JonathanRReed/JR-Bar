@@ -305,6 +305,9 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     /// minute window with margin and costs one IOKit read per pass.
     nonisolated static let pollInterval: TimeInterval = 15
 
+    /// The condition poll is running — the Menu Bar card's cost line.
+    var isPolling: Bool { timer != nil }
+
     func start() {
         guard timer == nil else { return }
         let distributed = DistributedNotificationCenter.default()

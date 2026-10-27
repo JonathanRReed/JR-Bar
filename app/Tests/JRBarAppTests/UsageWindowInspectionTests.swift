@@ -77,6 +77,14 @@ struct UsageWindowInspectionTests {
         #expect(result.readingAge == "Read 1m ago")
     }
 
+    @Test("reset summaries keep recovery instructions as sentences", arguments: [-60.0, 0.3])
+    func expiredSummary(_ offset: Double) {
+        let window = CoreUsageWindow(name: "5h", usedPct: 42, resetsAt: now.timeIntervalSince1970 + offset)
+        let provider = CoreProviderUsage(id: "claude", windows: [window], state: "stale", action: "Retry")
+        let result = inspect(window, provider: provider)
+        #expect(result.summaryText == "Forecasts resume with a fresh quota reading. Retry.")
+    }
+
     @Test("stale and disabled readings cannot present active forecast evidence")
     func inactiveReadings() {
         let window = CoreUsageWindow(name: "5h", usedPct: 42, forecast: CoreUsageForecast(pace: "under", samples: 12, ratePctPerHour: 1))
@@ -87,7 +95,7 @@ struct UsageWindowInspectionTests {
             #expect(result.readingNotice != nil)
             #expect(result.verdictText == "Paused")
             #expect(result.forecastEvidence == nil)
-            #expect(result.readingAge == "Read 1h 00m ago")
+            #expect(result.readingAge == "Read 1h ago")
         }
     }
 

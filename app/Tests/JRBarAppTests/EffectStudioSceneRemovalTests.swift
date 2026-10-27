@@ -219,7 +219,7 @@ struct EffectStudioSceneRemovalTests {
             try await fixture.release(error: "refused")
             try await finish(action, fixture, scene: "calm")
             let prefix = pack ? "Scene pack not changed" : "Scene not changed"
-            #expect(store.lastError == "\(prefix): Synthetic refused")
+            #expect(store.lastError == "\(prefix): Synthetic refused.")
             #expect(store.activeScene == "calm" && store.activeScenePackID == "first-pack")
         }
     }
