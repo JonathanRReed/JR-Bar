@@ -1515,6 +1515,15 @@ final class PanelStore {
         }.sorted()
     }
 
+    /// Whether any provider's hooks are installed. False only when the
+    /// daemon reports hooks and none is live or quiet, so a fresh install
+    /// is told to connect a provider rather than to start an agent. An
+    /// older daemon that reports nothing is given the benefit of the doubt.
+    var hooksConnected: Bool {
+        guard core.isLive, let hooks = core.state?.health?["hooks"]?.objectValue, !hooks.isEmpty else { return true }
+        return hooks.values.contains { [.live, .quiet].contains(HookStatus($0.stringValue)) }
+    }
+
     // MARK: Derived: hook feed health and unseen completions
 
     /// `state.unseen_completions`: ids of rows that finished since the
@@ -2442,8 +2451,13 @@ final class PanelStore {
 
     // MARK: Formatting
 
+    /// "45s" under a minute, then whole minutes ("11m", "1h 05m"): a
+    /// list's ages step once a minute and keep their width.
     nonisolated static func elapsed(since date: Date?, now: Date) -> String? {
-        date.map { UsageTime.duration(now.timeIntervalSince($0)) }
+        date.map { date in
+            let seconds = now.timeIntervalSince(date)
+            return UsageTime.duration(seconds >= 60 ? (seconds / 60).rounded(.down) * 60 : seconds)
+        }
     }
 
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {

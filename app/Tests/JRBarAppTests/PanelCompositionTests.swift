@@ -330,6 +330,47 @@ struct PanelCompositionTests {
         #expect(group.displayMembers.map(\.id) == [root.id, child.id])
     }
 
+    @Test func aFinishedGroupCountsTheWorkersItLists() throws {
+        let root = Self.session("claude:root", group: "group", workers: 0)
+        let done = (0..<3).map { Self.session("codex:done-\($0)", provider: "codex", mode: "done", group: "group", worker: true) }
+        let store = Self.store([root] + done, groups: [Self.group([root.id] + done.map(\.id))])
+        let group = try #require(store.panelAgents.first)
+        #expect(group.listedWorkers == 3, "never \"0 workers\" above three listed ones")
+        #expect(group.workerSummary == nil)
+        let live = Self.session("codex:live", provider: "codex", group: "group", worker: true)
+        let failed = Self.session("codex:failed", provider: "codex", mode: "failed", group: "group", worker: true)
+        let mixedRoot = Self.session("claude:root", group: "group", workers: 1)
+        let mixed = Self.store([mixedRoot, live, failed] + done,
+                               groups: [Self.group([mixedRoot.id, live.id, failed.id] + done.map(\.id))])
+        let summary = try #require(mixed.panelAgents.first)
+        #expect(summary.listedWorkers == 5)
+        #expect(summary.workerSummary == "1 working · 1 failed")
+    }
+
+    @Test func theAgentsViewportEndsAfterAWholeRow() {
+        let root = Self.session("claude:root", group: "group", workers: 7)
+        let members = (0..<7).map { Self.session("codex:member-\($0)", provider: "codex", group: "group", worker: true) }
+        let others = (0..<2).map { Self.session("gemini:other-\($0)", provider: "gemini") }
+        let store = Self.store([root] + members + others, groups: [Self.group([root.id] + members.map(\.id))])
+        store.expandedAgentGroups.insert(root.id)
+        let composition = PanelComposition(store: store)
+        let rows = PanelComposition.agentRowHeights(store: store, earlier: 0)
+        var sums: Set<CGFloat> = [0]
+        var running: CGFloat = 0
+        for row in rows { running += row; sums.insert(running) }
+        #expect(sums.contains(composition.agentsHeight), "\(composition.agentsHeight) cuts a row")
+        #expect(composition.agentsHeight <= PanelComposition.rowHeight * 5)
+    }
+
+    @Test func anEmptyPanelWithNoHooksPointsAtProviders() {
+        let store = Self.store()
+        #expect(store.hooksConnected)
+        store.core.apply(.state(CoreState(generation: 2, health: .object(["hooks": .object(["claude": .string("missing"), "codex": .string("missing")])]))))
+        #expect(!store.hooksConnected)
+        store.core.apply(.state(CoreState(generation: 3, health: .object(["hooks": .object(["claude": .string("ok"), "codex": .string("missing")])]))))
+        #expect(store.hooksConnected)
+    }
+
     @Test func findTrimsTheSameQueryForAgentsAndAsks() {
         let ask = CoreAsk(session: "codex:ask", summary: "Sample request", answerable: true)
         let store = Self.store([Self.session("claude:root")], asks: [ask])
