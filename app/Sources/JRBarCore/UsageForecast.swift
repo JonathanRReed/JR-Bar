@@ -414,8 +414,8 @@ public enum SessionAwarePace {
     /// or the Usage Center's source line.
     public static func roomText(_ forecast: UsageForecast, now: Double) -> String? {
         switch roomForOneMore(forecast, now: now) {
-        case true?: return "room for one more agent"
-        case false?: return "one more agent would run it out before the reset"
+        case true?: return "Room for one more agent"
+        case false?: return "One more agent would run it out before the reset"
         case nil: return nil
         }
     }

@@ -33,6 +33,16 @@ struct WordingTests {
         #expect(UsageTime.runsOut(at: now + 42 * 60, now: now) == "Runs out in 42m")
     }
 
+    @Test func countdownsUseWholeMinutesAndShortColumns() {
+        #expect(UsageTime.resetLine(3418, now: 0) == "in 57m")
+        #expect(UsageTime.resetLine(61, now: 0) == "in 2m")
+        #expect(UsageTime.resetLine(1, now: 0) == "now")
+        #expect(UsageTime.resetLine(30, now: 0) == "in 1m")
+        #expect(UsageWindowLabel.column("7d Fable") == "Fable 7d")
+        #expect(UsageWindowLabel.column("Gemini Weekly") == "Gemini 7d")
+        #expect(UsageWindowLabel.column("Claude + GPT 5-Hour") == "Claude+GPT 5h")
+    }
+
     @Test func everyForecastBranchReportsUsed() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         for verdict in [UsageForecast.Verdict.comfortable, .unknown, .guarded(reason: "insufficient_samples")] {

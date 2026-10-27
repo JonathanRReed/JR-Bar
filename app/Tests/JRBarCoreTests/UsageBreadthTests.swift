@@ -64,7 +64,7 @@ struct UsageBreadthTests {
         #expect(SessionAwarePace.roomForOneMore(two, now: Self.now) == true)
         let tight = SessionAwarePace.adjust(Self.burning(used: 40, rate: 20, resetIn: 3), working: 2)
         #expect(SessionAwarePace.roomForOneMore(tight, now: Self.now) == false)
-        #expect(SessionAwarePace.roomText(tight, now: Self.now) == "one more agent would run it out before the reset")
+        #expect(SessionAwarePace.roomText(tight, now: Self.now) == "One more agent would run it out before the reset")
         let nobody = SessionAwarePace.adjust(Self.burning(), working: 0)
         #expect(SessionAwarePace.roomForOneMore(nobody, now: Self.now) == nil)
         #expect(SessionAwarePace.roomForOneMore(Self.burning(), now: Self.now) == nil)

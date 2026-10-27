@@ -16,6 +16,17 @@ public enum UsageWindowLabel {
         return String(trimmed.prefix(6)).trimmingCharacters(in: .whitespaces)
     }
 
+    /// Table headings keep the cadence beside a short model-pool name.
+    public static func column(_ name: String) -> String {
+        let label = short(id: nil, name: name)
+        if let cadence = cadence(id: nil, name: name) { return "\(label) \(cadence)" }
+        let parts = name.split(separator: " ", maxSplits: 1)
+        if parts.count == 2, ["5h", "7d"].contains(String(parts[0])) {
+            return "\(short(id: nil, name: String(parts[1]))) \(parts[0])"
+        }
+        return label
+    }
+
     private static func pool(_ raw: String) -> (label: String, cadence: String)? {
         let key = raw.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "+" }
         let families = [("gemini4argon", "Argon"), ("geminiargon", "Argon"),
