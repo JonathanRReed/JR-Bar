@@ -36,9 +36,16 @@ public struct AquariumSave: Codable, Equatable, Sendable {
 /// the same directory renamed over the old one), like `AppStateFile`.
 public struct AquariumSaveFile: Sendable {
     public let url: URL
+    private let scratchDirectory: ScratchDirectory?
 
     public init(url: URL = AquariumSaveFile.defaultURL()) {
         self.url = url
+        scratchDirectory = nil
+    }
+
+    public init(scratchDirectory: ScratchDirectory) {
+        self.scratchDirectory = scratchDirectory
+        url = scratchDirectory.url.appendingPathComponent("aquarium-save.json")
     }
 
     /// `$XDG_STATE_HOME/jrbar/aquarium-save.json`, else
