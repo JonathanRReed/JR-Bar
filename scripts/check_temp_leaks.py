@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -53,7 +54,9 @@ def run_swift() -> int:
         )
         return run(
             [swift, "test", "--package-path", str(root / "app"), "--skip-build", "--no-parallel"],
-            environment_overrides={"TMPDIR": tools + "/", "DYLD_INSERT_LIBRARIES": library},
+            # The mock daemon runs on this interpreter, not a system python3.
+            environment_overrides={"TMPDIR": tools + "/", "DYLD_INSERT_LIBRARIES": library,
+                                   "JRBAR_MOCK_PYTHON": os.environ.get("JRBAR_MOCK_PYTHON") or sys.executable},
         )
 
 
