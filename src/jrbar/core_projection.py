@@ -371,6 +371,8 @@ def _looks_like_safe_label(text: str, provider: str) -> bool:
     """True for the collector's content-free fallback ("Claude <work id>",
     "Claude agent <id>"): a provider word, optionally "agent", then one
     id-shaped token. Those carry nothing a person can read."""
+    if re.fullmatch(r"[0-9a-fA-F]{8,}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", text):
+        return True
     parts = text.split()
     if len(parts) not in (2, 3):
         return False
@@ -387,8 +389,8 @@ def _slug_session_id(session_id: str | None) -> str | None:
     """A session id that already IS a name: Devin's ``cubic-class`` or
     ``jrbar-install-probe`` reads fine whole -- truncating it to eight
     characters produced "cubic-cl". Anything that isn't slug-shaped --
-    a UUID, a hex run, a ULID, an underscore id -- earns the short form
-    instead of leaking an opaque id."""
+    a UUID, a hex run, a ULID, an underscore id -- uses the session
+    fallback instead of leaking an opaque id."""
     if not isinstance(session_id, str):
         return None
     text = session_id.strip()
@@ -415,34 +417,37 @@ def session_label(
     extras: SessionExtras | None,
     is_worker: bool = False,
     parent_label: str | None = None,
+    worker_ordinal: int = 1,
 ) -> str:
     """A human label: the provider's own session title, else the display
     name the collector derived (project/prompt), else the working
     directory's last path component, else provider plus the session's
-    slug or short id."""
-    short = short_session_id(agent_id if is_worker else session_id, agent_id) or "?"
+    slug or "session". Untitled workers use their head and group ordinal."""
     provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
+    # Native workers can share their head's session_id. Its cached title is
+    # then the head's title, not the worker's task.
+    owns_title = not is_worker or session_id == agent_id.rsplit(":", 1)[-1]
+    name = extras.name.strip() if owns_title and extras is not None and isinstance(extras.name, str) else ""
+    if _looks_like_safe_label(name, provider):
+        name = ""
+    stripped = strip_session_short_id(display_name or "", session_id)
+    context_labels = {parent_label, session_id, agent_id.rsplit(":", 1)[-1],
+                      (cwd or "").rstrip("/").rsplit("/", 1)[-1]}
+    if (not name and stripped and stripped.lower() not in {"worker", "agent", "session"}
+            and not _looks_like_safe_label(stripped, provider)
+            and not (is_worker and stripped in context_labels)):
+        name = stripped
     if is_worker:
         base = parent_label or provider_label
-        if provider == "devin" and ":agent:sub-" in agent_id:
-            # Devin's synthetic sub-* workers carry the sub-agent's own
-            # task title as their safe label -- that name is the point of
-            # the row.
-            stripped = strip_session_short_id(display_name or "", session_id)
-            if stripped:
-                return stripped
-        return f"{base} worker {short}"
-    if extras is not None and isinstance(extras.name, str) and extras.name.strip():
-        return extras.name.strip()
-    stripped = strip_session_short_id(display_name or "", session_id)
-    if stripped and not _looks_like_safe_label(stripped, provider):
-        return stripped
+        return name or f"{base} worker {worker_ordinal}"
+    if name:
+        return name
     for candidate in ((extras.cwd if extras is not None else None), cwd):
         if isinstance(candidate, str) and candidate.strip():
             tail = candidate.rstrip("/").rsplit("/", 1)[-1]
             if tail:
                 return tail
-    return f"{provider_label} {_slug_session_id(session_id) or short}"
+    return f"{provider_label} {_slug_session_id(session_id) or 'session'}"
 
 
 def usage_window_name(lane_id: str | None, label: str | None, model: str | None = None) -> str:
@@ -1711,7 +1716,27 @@ def project_session_rows(
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
     rows = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
-    _apply_agent_group_rows(rows, statuses, group_resolution or _agent_group_resolution(snapshot, now=now), ask_ids, quiet_worker_ids)
+    resolution = group_resolution or _agent_group_resolution(snapshot, now=now)
+    _apply_agent_group_rows(rows, statuses, resolution, ask_ids, quiet_worker_ids)
+    statuses_by_id = {str(getattr(status, "agent_id", "")): status for status in statuses}
+    for group in resolution.groups:
+        head = documents_by_id.get(group.root_work_key)
+        if head is None:
+            continue
+        # Group membership is canonical and includes ended heads. Sorting by
+        # identity keeps ordinals independent of activity and roster order.
+        workers = sorted(member for member in group.members if member != group.root_work_key)
+        for ordinal, member in enumerate(workers, start=1):
+            status = statuses_by_id.get(member)
+            row = documents_by_id.get(member)
+            if status is None or row is None:
+                continue
+            row["label"] = session_label(
+                provider=row["provider"], session_id=getattr(status, "session_id", None),
+                agent_id=member, display_name=getattr(status, "display_name", None),
+                cwd=row["cwd"], extras=extras_by_id.get(member), is_worker=True,
+                parent_label=head["label"], worker_ordinal=ordinal,
+            )
     return rows, ask_ids
 
 

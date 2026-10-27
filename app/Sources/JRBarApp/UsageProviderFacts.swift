@@ -70,19 +70,34 @@ struct UsageProviderFactsView: View {
 struct UsageBurnersView: View {
     let window: CoreUsageWindow
     let burners: [WindowBurner]
+    var open: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             Text("Burning the \(window.shortName) window here").font(JRBarTokens.TypeStyle.headline.font)
             ForEach(burners) { burner in
-                HStack(spacing: JRBarTokens.Space.md) {
-                    Text(burner.label).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Text("\(Int((burner.share * 100).rounded()))% · \(UsageFormat.tokens(burner.tokens))").monospacedDigit()
+                Group {
+                    if let open {
+                        Button { open(burner.id) } label: { row(burner) }.buttonStyle(.plain)
+                    } else {
+                        row(burner)
+                    }
                 }
+                .help("\(burner.label)\nSession: \(burner.id)")
+                .accessibilityIdentifier("burner.\(burner.id)")
+                .accessibilityHint("Session: \(burner.id)")
             }
         }
         .font(JRBarTokens.TypeStyle.callout.font)
         .help("Shares of the tokens this Mac's sessions spent since the window opened.")
+    }
+
+    private func row(_ burner: WindowBurner) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: JRBarTokens.Space.md) {
+            Text(burner.label).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Text("\(UsageNumber.percent((burner.share * 100).rounded())) · \(UsageFormat.tokens(burner.tokens))")
+                .monospacedDigit().fixedSize()
+        }.contentShape(Rectangle())
     }
 }

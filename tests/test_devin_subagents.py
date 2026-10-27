@@ -676,7 +676,7 @@ def test_slug_session_id_is_shown_whole_not_truncated__and_2_more() -> None:
         extras=None,
     )
     assert label == "Devin cubic-class"
-    # A UUID-shaped id still shortens.
+    # An opaque id is never a session title.
     uuid_label = session_label(
         provider="claude",
         session_id="fca1eb06-1234-4abc-9def-0123456789ab",
@@ -685,7 +685,7 @@ def test_slug_session_id_is_shown_whole_not_truncated__and_2_more() -> None:
         cwd=None,
         extras=None,
     )
-    assert uuid_label == "Claude fca1eb06"
+    assert uuid_label == "Claude session"
 
     # --- scenario: unrelated_devin_events_still_normalize
     record = _normalize(_devin_event("UserPromptSubmit"))

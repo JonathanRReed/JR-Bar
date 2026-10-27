@@ -34,7 +34,10 @@ struct UsageProviderDetail: View {
             }
             let burners = store.burners(for: provider)
             if !burners.isEmpty, let window = UsageCenterStore.featuredWindow(of: provider) {
-                UsageBurnersView(window: window, burners: burners)
+                UsageBurnersView(window: window, burners: burners, open: { store.openBurner($0) })
+                if let note = store.burnerOpenNote {
+                    Text(note).foregroundStyle(JRBarTokens.Ink.secondary)
+                }
             }
             if let row = store.row(for: provider.identity) {
                 DisclosureGroup("Connection") {

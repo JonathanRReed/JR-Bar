@@ -2254,7 +2254,7 @@ extension AppDelegate {
         // itself is awaited, and a refusal after it is said the same way.
         router.openSession = { [weak self] id in
             guard let core = self?.core, core.isLive else { return MonitorWords.sentence }
-            guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
+            guard core.state?.session(withID: id) != nil else { return "That session is no longer being watched." }
             Task { @MainActor [weak self] in
                 if let refusal = await SessionOpener.open(id) { self?.showFeedback(refusal) }
             }

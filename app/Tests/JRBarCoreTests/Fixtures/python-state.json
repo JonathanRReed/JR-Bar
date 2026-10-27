@@ -388,7 +388,7 @@
    "failure_signal_until": null,
    "id": "claude:agent:fca1eb06-f6d1-413e-aa5f-dd19d8e05973-worker-1",
    "kind": "worker",
-   "label": "jr-bar-b7 worker fca1eb06",
+   "label": "jr-bar-b7 worker 1",
    "lifecycle": "active",
    "message": null,
    "mode": "working",

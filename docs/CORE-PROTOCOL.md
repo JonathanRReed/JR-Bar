@@ -537,8 +537,11 @@ Vocabulary:
   `~/.claude/sessions/<pid>.json`, Codex's `thread_name` from
   `~/.codex/session_index.jsonl`), else the collector's derived name with
   its short id stripped (project / first prompt), else the working
-  directory's last path component, else `<Provider> <short id>`; a
-  worker is `<parent label> worker <short id>`. `short_id` is the first 8
+  directory's last path component, else `<Provider> session`. A worker
+  uses its own title or task. Without one it uses `<head label> worker N`,
+  where N is its ordinal among the proven group's workers sorted by id,
+  including ended members. State and roster use the same title rule and
+  group resolver. Ids belong in help or accessibility text. `short_id` is the first 8
   characters of the session id (of the agent id for a worker); `cwd` comes
   from the hook payload as the process registry recorded it, or the
   provider's session record.

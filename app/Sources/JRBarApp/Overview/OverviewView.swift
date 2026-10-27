@@ -285,7 +285,7 @@ struct OverviewView: View {
                 // parent row's label or short id is the name a user
                 // actually recognises.
                 let parentName = store.roster.first { $0.id == parent }
-                    .map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+                    .map { $0.session.displayLabel } ?? "Session"
                 WindowNoticeRow(symbol: "person.2.fill", tint: .accentColor, text: "Workers of \(parentName)") {
                     Button { store.workerFilter = nil } label: {
                         Image(systemName: "xmark.circle.fill").jrbarType(.caption)
@@ -363,8 +363,9 @@ struct OverviewView: View {
         ), sortOrder: $store.sortOrder) {
                     TableColumn("Task", value: \.labelSortKey) { entry in
                         HStack(spacing: 6) {
-                            Text(entry.session.label ?? entry.session.shortId ?? "Session")
+                            Text(entry.session.displayLabel)
                                 .lineLimit(1)
+                                .help("\(entry.session.displayLabel)\nSession: \(entry.id)")
                                 // A row the panel's aging would hide is a
                                 // record, not a live session — muted so
                                 // it never reads as current work.
@@ -1037,7 +1038,7 @@ struct ReplyPromptForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Reply to \(entry.session.label ?? entry.session.shortId ?? "session")")
+            Text("Reply to \(entry.session.displayLabel)")
                 .jrbarType(.body).fontWeight(.semibold)
             if let summary = entry.session.ask?.summary {
                 Text(summary).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(3)

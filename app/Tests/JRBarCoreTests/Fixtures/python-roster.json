@@ -84,7 +84,7 @@
    "group_id": null,
    "id": "claude:agent:w1",
    "kind": "worker",
-   "label": "Claude worker w1",
+   "label": "Claude worker 1",
    "lifecycle": "active",
    "message": null,
    "mode": "working",

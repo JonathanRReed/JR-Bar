@@ -678,6 +678,7 @@ struct HistoryRowView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.displayTitle(privacyMode: store.core.state?.usage?.privacyMode)) \(row.kindWord) at \(HistoryStore.clock(row.date))"
                             + (folded.isEmpty ? "" : ", and \(folded.count) earlier"))
+        .accessibilityHint(row.session.map { "Session: \($0)" } ?? "")
     }
 
     /// "3 earlier: Finished ×2 · Started".

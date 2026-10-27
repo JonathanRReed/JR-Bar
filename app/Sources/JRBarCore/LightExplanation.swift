@@ -618,12 +618,6 @@ extension CoreSession {
         SessionLabel.display(label: label, shortId: shortId, id: id, provider: provider)
     }
 
-    /// The label, or the provider's name when the session has none.
-    public var shortLabel: String {
-        if let label, !label.isEmpty { return label }
-        return providerName
-    }
-
     public var providerName: String { SessionLabel.providerName(provider) }
 
     /// A worker or sub-agent rather than a main session.

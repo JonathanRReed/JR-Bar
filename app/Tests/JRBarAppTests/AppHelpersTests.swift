@@ -72,7 +72,7 @@ import JRBarUI
     @Test func helpComposesTheFactsItHas() {
         // Nothing honest to say → no tooltip at all.
         let quiet = Self.row(CoreSession(id: "s1", provider: "claude", mode: "idle", lifecycle: "active"))
-        #expect(quiet.help(now: Self.now) == nil)
+        #expect(quiet.help(now: Self.now)?.contains("Session: \(quiet.id)") == true)
 
         let placed = Self.row(CoreSession(id: "s2", provider: "claude", cwd: "/work/project",
                                           mode: "idle", lifecycle: "active"))

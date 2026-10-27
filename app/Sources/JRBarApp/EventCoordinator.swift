@@ -343,7 +343,9 @@ final class EventCoordinator {
         apply(delivery, for: event)
         confirmWatching(event, decidedWatching: watching)
         var summary = "event \(event.kind)"
-        if let label = event.label, !label.isEmpty { summary += " · \(label)" }
+        if let label = SessionLabel.eventTitle(event, session: event.session.flatMap { core.state?.session(withID: $0) }) {
+            summary += " · \(label)"
+        }
         if delivery.isSilent { summary += " (quiet)" }
         else {
             var parts: [String] = []

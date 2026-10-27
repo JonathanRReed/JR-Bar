@@ -164,7 +164,7 @@ public enum EventPolicy {
         let providerName = provider.map(LightExplainer.providerName) ?? "An agent"
         let quotaProviderName = QuotaAccountCaption.provider(provider, instance: event.instance,
                                                            label: event.instanceLabel, privacyMode: state?.usage?.privacyMode)
-        let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? providerName
+        let label = SessionLabel.eventTitle(event, session: session) ?? providerName
 
         // Quiet's hold on sounds and banners is `holdingQuiet`, applied on
         // the way out; only the chime needs to know about it here.
