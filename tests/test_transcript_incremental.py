@@ -227,11 +227,13 @@ def test_reused_rows_keep_one_copy_of_each_line(tmp_path):
     path.write_bytes(encoded({"message": "synthetic"}))
     tail = TranscriptTail(8192)
     tail.update(path)
-    first = list(tail.parsed(tail.lines(500)))[0]
+    rows = list(tail.parsed(tail.lines(500)))
+    first = rows[0]
     with path.open("ab") as stream:
         stream.write(encoded({"message": "appended"}))
     tail.update(path)
-    assert list(tail.parsed(tail.lines(500)))[0] is first
+    rows = list(tail.parsed(tail.lines(500)))
+    assert rows[0] is first
     # Cache accounting charges each retained line once, so the lookup key
     # and the parser's source text must refer to the same string.
     assert all(key is row.text for key, row in tail.rows.items())
