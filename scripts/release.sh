@@ -28,8 +28,7 @@
 set -euo pipefail
 
 ROOT_DIR="${JRBAR_RELEASE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
-[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+source "$(dirname "$0")/python-env.sh"
 DRY_RUN=0
 
 case "$#" in

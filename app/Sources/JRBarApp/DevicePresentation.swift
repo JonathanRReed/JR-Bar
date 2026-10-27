@@ -38,6 +38,16 @@ enum DeviceConnectionState: String, CaseIterable {
         return state.help(name: event.label ?? event.detail ?? "Device")
     }
 
+    static func name(kind: String, fallback: String? = nil) -> String {
+        switch kind {
+        case "pro": "SidePulse"
+        case "dot": "PulseDot"
+        case "screen_bar": "Screen Bar"
+        case "deck": "Creator Micro 2"
+        default: fallback ?? "Device"
+        }
+    }
+
     var isConnected: Bool { self == .connected }
     var tone: Tone { isConnected ? .done : .neutral }
     func badgeWord(live: Bool) -> String? { live ? rawValue : nil }

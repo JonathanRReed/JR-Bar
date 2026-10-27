@@ -153,13 +153,11 @@ struct WindowContentLifecycleTests {
         log.stop()
         defer { WindowContentLifecycle.detach(from: window) }
 
-        let minimum = NSSize(width: 720, height: 380)
+        let minimum = NSSize(width: 960, height: 480)
         let undersized = log.sizes.filter { $0.width < minimum.width || $0.height < minimum.height }
         #expect(undersized.isEmpty, "no window folds below the Overview's minimum while it is built: \(undersized)")
         #expect(!window.isVisible, "built, not shown")
-        // AppKit keeps the limit under the titlebar, so the toolbar's
-        // height can come on top of it (it read 720 × 400 before and after
-        // the reorder); it never comes out below the Overview's own.
+        // AppKit may add the toolbar's height to the content minimum.
         #expect(window.minSize.width == minimum.width)
         #expect(window.minSize.height >= minimum.height)
         #expect(window.toolbarStyle == .unified)

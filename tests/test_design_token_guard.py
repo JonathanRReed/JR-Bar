@@ -64,6 +64,32 @@ def test_repository_matches_baseline():
     assert not differences(scan(root), json.loads((root / BASELINE).read_text()))
 
 
+def test_overview_connections_use_shared_state_projections():
+    root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
+    source = (root / "Overview/OverviewLinks.swift").read_text()
+    assert "DeviceConnectionState.device(" in source
+    assert "DeviceConnectionState.screenBar(" in source
+    assert "DeviceConnectionState.creatorMicro(" in source
+    assert "UsageStatus.provider(provider)" in source
+    assert 'state.replacingOccurrences(of: "_", with: " ")' not in source
+    for filename in ["Overview/OverviewStrips.swift", "Overview/OverviewInspector.swift"]:
+        assert "link.tone.color" not in (root / filename).read_text()
+
+
+def test_usage_overview_uses_shared_window_and_time_words():
+    root = Path(__file__).resolve().parents[1] / "app/Sources"
+    source = (root / "JRBarApp/UsageOverviewTable.swift").read_text()
+    assert "UsageGaugeRow.compactWindowNames(" in source
+    assert "UsageWindowLabel.column(" in source
+    row = source.split("struct UsageOverviewProviderRow:", 1)[1].split("struct UsageOverviewHeader:", 1)[0]
+    assert "includeAbsent: true" in row
+    assert 'provider.availability == "absent"' not in row
+    assert "UsageTime" not in source, "The table must not format its own countdowns"
+    gauge = (root / "JRBarUI/UsageGaugeRow.swift").read_text()
+    assert "reading.stale && reading.elapsed" in gauge
+    assert "if status != nil || (isStale && showsWindows)" in gauge
+
+
 def test_typography_migration_cannot_be_reopened_with_an_allowance():
     root = Path(__file__).resolve().parents[1]
     for file, hits in scan(root).items():

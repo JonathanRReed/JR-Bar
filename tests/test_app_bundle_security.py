@@ -644,6 +644,7 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
     shutil.copy2(REPO_ROOT / "pyproject.toml", project)
     project_scripts = project / "scripts"
     project_scripts.mkdir()
+    shutil.copy2(REPO_ROOT / "scripts/python-env.sh", project_scripts)
     shutil.copy2(
         REPO_ROOT / "scripts" / "release_artifact_contract.py",
         project_scripts,

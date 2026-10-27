@@ -94,7 +94,8 @@ public enum UsageTime {
         let remaining = epoch - now
         if remaining < 1, let fix, !fix.isEmpty { return fix }
         if remaining <= 0 { return remaining > -30 ? "Reset now" : "Reset \(ago(-remaining))" }
-        if remaining < 3600 { return relative(to: epoch, now: Date(timeIntervalSince1970: now)) }
+        if remaining < 30 { return "now" }
+        if remaining < 3600 { return runOutWhen(at: epoch, now: now) }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let date = Date(timeIntervalSince1970: epoch)

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
+source "$(dirname "$0")/python-env.sh"
 
 notes_file=""
 case "$#" in

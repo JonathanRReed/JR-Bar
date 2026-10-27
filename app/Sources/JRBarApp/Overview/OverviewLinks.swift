@@ -1,5 +1,6 @@
 import Foundation
 import JRBarCore
+import JRBarUI
 
 /// A labelled fact on a connection's inspector card.
 struct OverviewLinkFact: Hashable, Sendable {
@@ -47,6 +48,7 @@ struct OverviewLink: Identifiable, Hashable, Sendable {
     var subtitle: String?
     var tone: Tone
     var facts: [OverviewLinkFact]
+    var usageStatus: UsageStatus? = nil
 
     /// The tooltip text: title, subtitle, then every fact on its own
     /// line — what `help()` says and VoiceOver repeats.
@@ -86,17 +88,19 @@ enum OverviewLinkage {
         var devices: [CoreDevice] = []
         var providers: [CoreProviderUsage] = []
         var deck: DeckDevice?
+        var deckEnabled: Bool?
     }
 
     static func links(_ s: Snapshot, now: Date = Date()) -> [OverviewLink] {
         var out: [OverviewLink] = [coreLink(s, now: now), localNode(s)]
         out.append(contentsOf: s.peers.map(peerLink))
-        out.append(contentsOf: s.devices.map(deviceLink))
-        if let deck = s.deck { out.append(deckLink(deck)) }
+        out.append(contentsOf: s.devices.map { deviceLink($0, live: s.stateUsable) })
+        if let deck = s.deck { out.append(deckLink(deck, enabled: s.deckEnabled, live: s.stateUsable)) }
         out.append(contentsOf: s.providers.map(providerLink))
         if s.usableState == false {
             for index in out.indices where out[index].group != .core {
                 if out[index].tone == .good { out[index].tone = .warn }
+                if out[index].usageStatus == .ready { out[index].usageStatus = .stale }
                 out[index].facts.append(.init("Reading", "on record; monitor state unavailable"))
             }
         }
@@ -190,17 +194,20 @@ enum OverviewLinkage {
         }
     }
 
-    private static func deviceLink(_ device: CoreDevice) -> OverviewLink {
+    private static func deviceLink(_ device: CoreDevice, live: Bool) -> OverviewLink {
+        let state = device.kind == "screen_bar"
+            ? DeviceConnectionState.screenBar(device, live: live)
+            : DeviceConnectionState.device(device, live: live)
         var facts: [OverviewLinkFact] = [
             .init("Kind", device.kind.replacingOccurrences(of: "_", with: " ")),
-            .init("State", device.isPresent ? "connected" : "disconnected"),
+            .init("State", state.rawValue),
         ]
         if let leds = device.leds { facts.append(.init("LEDs", "\(leds)")) }
         if let fraction = device.brightnessFraction {
             facts.append(.init("Brightness", "\(Int((fraction * 100).rounded()))%"))
         }
         if let linked = device.linked { facts.append(.init("Linked", linked ? "yes" : "no")) }
-        var tone: OverviewLink.Tone = device.isPresent ? .good : .idle
+        var tone: OverviewLink.Tone = state.isConnected ? .good : .idle
         if let error = device.error, !error.isEmpty {
             facts.append(.init("Error", error))
             tone = .warn
@@ -208,19 +215,21 @@ enum OverviewLinkage {
         return OverviewLink(
             id: "device:\(device.id)", group: .devices,
             symbol: deviceSymbol(for: device.kind),
-            title: device.name ?? device.kind.replacingOccurrences(of: "_", with: " ").capitalized,
-            subtitle: device.isPresent ? "connected" : "disconnected",
+            title: DeviceConnectionState.name(kind: device.kind, fallback: device.name),
+            subtitle: state.rawValue,
             tone: tone, facts: facts)
     }
 
-    private static func deckLink(_ device: DeckDevice) -> OverviewLink {
+    private static func deckLink(_ device: DeckDevice, enabled: Bool?, live: Bool) -> OverviewLink {
+        let state = DeviceConnectionState.creatorMicro(
+            DeckState(device: device, settings: DeckSettings(enabled: enabled ?? true)), live: live)
         var facts: [OverviewLinkFact] = [
-            .init("State", device.connected ? "connected" : "disconnected"),
+            .init("State", state.rawValue),
             .init("Approved", device.approved ? "yes" : "no"),
         ]
         if let transport = device.transport { facts.append(.init("Transport", transport.label)) }
         if let serial = device.serial { facts.append(.init("Serial", serial)) }
-        var tone: OverviewLink.Tone = device.connected ? (device.approved ? .good : .warn) : .idle
+        var tone: OverviewLink.Tone = state.isConnected ? (device.approved ? .good : .warn) : .idle
         if let conflict = device.conflict {
             facts.append(.init("Conflict", conflict.replacingOccurrences(of: "_", with: " ")))
             tone = .warn
@@ -228,20 +237,16 @@ enum OverviewLinkage {
         return OverviewLink(
             id: "device:deck", group: .devices,
             symbol: "rectangle.grid.3x2.fill",
-            title: device.name ?? "Deck",
-            subtitle: device.connected
-                ? (device.approved ? "connected" : "awaiting approval")
-                : "disconnected",
+            title: DeviceConnectionState.name(kind: "deck"),
+            subtitle: state.rawValue,
             tone: tone, facts: facts)
     }
 
     // MARK: Providers
 
     private static func providerLink(_ provider: CoreProviderUsage) -> OverviewLink {
-        var facts: [OverviewLinkFact] = []
-        if let state = provider.state, !state.isEmpty {
-            facts.append(.init("State", state.replacingOccurrences(of: "_", with: " ")))
-        }
+        let status = UsageStatus.provider(provider)
+        var facts: [OverviewLinkFact] = [.init("State", status.word)]
         if let fidelity = provider.fidelity { facts.append(.init("Fidelity", fidelity)) }
         if let window = provider.headlineWindow, let pct = window.usedPct {
             var word = "\(UsageWindowLabel.wholeUsed(pct))% used"
@@ -258,28 +263,14 @@ enum OverviewLinkage {
             facts.append(.init("Action", action))
         }
 
-        var tone: OverviewLink.Tone = .idle
-        if provider.incident?.isEmpty == false { tone = .warn }
-        else if provider.isSignedOut { tone = .down }
-        else if let state = provider.state?.lowercased(),
-                state == "error" || state == "failed" { tone = .down }
-        else if !provider.windows.isEmpty || provider.creditsRemaining != nil { tone = .good }
-
+        let tone: OverviewLink.Tone = status == .ready ? .good : .idle
         let style = ProviderStyle.style(for: provider.id)
-        var subtitle = provider.state?.replacingOccurrences(of: "_", with: " ")
-        if let pct = provider.headlineWindow?.usedPct {
-            subtitle = "\(UsageWindowLabel.wholeUsed(pct))% used"
-            // The last good reading stays, marked: an old figure never
-            // reads as a live one.
-            if provider.isStale {
-                subtitle? += " · stale"
-                if tone == .good { tone = .warn }
-            }
-        } else if !provider.quotaSource {
-            subtitle = "no quota source"
-            facts.append(.init("Quota", "no quota source"))
+        var subtitle = status.word
+        if [.ready, .stale].contains(status), let pct = provider.headlineWindow?.usedPct {
+            subtitle = UsageNumber.percent(pct) + " used"
+            if status == .stale { subtitle += " · " + status.word }
         }
-        if provider.incident?.isEmpty == false { subtitle = "incident" }
+        if status == .noQuotaSource { facts.append(.init("Quota", status.word)) }
         // Two accounts of one provider are two chips; the tag says which.
         let title = UsageSourceNotes.rowTag(provider.instance).map { "\(style.name) · \($0)" } ?? style.name
         return OverviewLink(
@@ -287,6 +278,6 @@ enum OverviewLinkage {
             symbol: "gauge.with.dots.needle.67percent",
             title: title,
             subtitle: subtitle,
-            tone: tone, facts: facts)
+            tone: tone, facts: facts, usageStatus: status)
     }
 }

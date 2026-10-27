@@ -83,7 +83,7 @@ struct OverviewConnectionsStrip: View {
         } label: {
             HStack(spacing: 5) {
                 Circle()
-                    .fill(link.tone.color)
+                    .fill(link.color)
                     .frame(width: 5, height: 5)
                 OverviewLinkGlyph(link: link, size: 12)
                 Text(link.title)

@@ -557,6 +557,7 @@ def _publisher_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts" / "publish_release.sh", scripts / "publish_release.sh")
+    shutil.copy2(ROOT / "scripts/python-env.sh", scripts)
     _write_executable(scripts / "verify_macos_release.sh", "exit 0\n")
     dist = root / "dist"
     dist.mkdir()

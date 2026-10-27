@@ -46,7 +46,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
+source "$(dirname "$0")/python-env.sh"
 PERFORMANCE_SOURCE="${JRBAR_PERFORMANCE_EVIDENCE:-}"
 REQUIRED_HARDWARE="${JRBAR_REQUIRED_HARDWARE:-software}"
 SETTINGS_PATH="${JRBAR_SETTINGS_PATH:-$HOME/.config/jrbar/settings.json}"

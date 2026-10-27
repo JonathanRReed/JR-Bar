@@ -77,7 +77,11 @@ final class OverviewStore {
     /// whole two-thousand-row record.
     static let usageRowBudget = 48
 
-    init(core: CoreModel, desk: AskAnswerDesk? = nil, sessionUsage: SessionUsageStore? = nil) {
+    private let localName: String
+
+    init(core: CoreModel, desk: AskAnswerDesk? = nil, sessionUsage: SessionUsageStore? = nil,
+         localName: String = Host.current().localizedName ?? "This Mac") {
+        self.localName = localName
         self.core = core
         self.sessionUsage = sessionUsage ?? SessionUsageStore(core: core)
         self.ownDesk = desk ?? AskAnswerDesk(core: core)
@@ -228,7 +232,7 @@ final class OverviewStore {
             time: time,
             peers: core.state?.peers ?? [], devices: core.devices,
             providers: core.usage,
-            deck: core.deck?.device
+            deck: core.deck?.device, deckEnabled: core.deck?.settings.enabled
         )
         if let cached = linksCache, cached.key == key { return cached.value }
         let value = OverviewLinkage.links(OverviewLinkage.Snapshot(
@@ -238,9 +242,9 @@ final class OverviewStore {
             coreVersion: key.coreVersion, corePID: key.corePID,
             connectedAt: key.connectedAt, inFlight: key.inFlight,
             stateAge: core.stateAge(at: clock), stateStale: time.stale,
-            localName: Host.current().localizedName ?? "This Mac",
+            localName: localName,
             localSessions: key.localSessions, peers: key.peers,
-            devices: key.devices, providers: key.providers, deck: key.deck
+            devices: key.devices, providers: key.providers, deck: key.deck, deckEnabled: key.deckEnabled
         ), now: clock)
         linksCache = (key, value)
         return value
@@ -261,6 +265,7 @@ final class OverviewStore {
         var devices: [CoreDevice]
         var providers: [CoreProviderUsage]
         var deck: DeckDevice?
+        var deckEnabled: Bool?
     }
 
     /// What the chips draw from the clock, at the precision they draw it:

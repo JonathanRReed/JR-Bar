@@ -177,7 +177,7 @@ def test_makefile_and_hygiene_docs_expose_the_real_fast_gate__and_1_more() -> No
     hygiene = (ROOT / "docs" / "REPOSITORY-HYGIENE.md").read_text(encoding="utf-8")
 
     assert "fast:" in makefile
-    assert ".venv/bin/python scripts/verify_fast.py" in makefile
+    assert '"$(PYTHON)" scripts/verify_fast.py' in makefile
     assert "make fast" in hygiene
     assert "--targeted" not in hygiene
     assert "--no-build" not in hygiene

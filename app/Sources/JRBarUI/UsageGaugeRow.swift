@@ -104,6 +104,7 @@ public struct UsageGaugeRow: View {
     fileprivate static let compactIdentityWidth: CGFloat = 100
     fileprivate static let compactPercentWidth: CGFloat = 40
     public let provider: CoreProviderUsage
+    public let includeAbsent: Bool
     public let name: String
     public let now: Double
     public let connected: Bool
@@ -132,7 +133,8 @@ public struct UsageGaugeRow: View {
                 pace: [String: Double] = [:], forecasts: [String: UsageForecast] = [:],
                 onInspect: ((CoreUsageWindow) -> Void)? = nil, onOpen: (() -> Void)? = nil, fix: String? = nil,
                 onAction: (() -> Void)? = nil, onRetry: (() -> Void)? = nil,
-                compactColumnWidth: CGFloat = UsageGaugeRow.columnWidth) {
+                compactColumnWidth: CGFloat = UsageGaugeRow.columnWidth, includeAbsent: Bool = false) {
+        self.includeAbsent = includeAbsent
         self.compactColumnWidth = compactColumnWidth
         self.provider = provider
         self.name = name
@@ -162,6 +164,20 @@ public struct UsageGaugeRow: View {
         return ["5h", "7d"].filter(unique.contains) + unique.filter { !["5h", "7d"].contains($0) }
     }
 
+    /// Expired stale windows remain in detail without adding columns to the overview.
+    nonisolated public static func compactWindowNames(providers: [CoreProviderUsage], now: Double,
+                                                       connected: Bool) -> [String] {
+        let names = providers.flatMap { provider in
+            guard provider.quotaSource, !provider.usageIsOff,
+                  !["absent", "not_found"].contains(provider.availability) else { return [String]() }
+            return provider.windows.compactMap { window -> String? in
+                let reading = UsageGaugeReading(window: window, provider: provider, now: now, connected: connected)
+                return reading.stale && reading.elapsed ? nil : window.name
+            }
+        }
+        return orderedWindowNames(names)
+    }
+
     private var showsWindows: Bool {
         !["absent", "not_found"].contains(provider.availability) && provider.quotaSource && !provider.usageIsOff && !provider.windows.isEmpty
     }
@@ -173,12 +189,14 @@ public struct UsageGaugeRow: View {
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
         if !provider.quotaSource { return UsageStatus.noQuotaSource.word }
+        if let status = provider.statusText { return status }
+        if isStale && showsWindows { return UsageStatus.stale.word }
         let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
-        return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : UsageStatus.noReading.word)
+        return showsWindows || hasCompactPlaceholders ? nil : UsageStatus.noReading.word
     }
 
     public var body: some View {
-        if provider.availability != "absent" {
+        if provider.availability != "absent" || includeAbsent {
             Group {
                 if style == .compact { compact } else { detail }
             }
@@ -243,7 +261,7 @@ public struct UsageGaugeRow: View {
                 } else {
                     compactWindows
                 }
-                if isStale && showsWindows { compactReadingStatus.padding(.leading, 30) }
+                if status != nil || (isStale && showsWindows) { compactReadingStatus.padding(.leading, 30) }
                 actions.padding(.leading, 30)
             }
         }
@@ -254,15 +272,9 @@ public struct UsageGaugeRow: View {
     }
 
     @ViewBuilder private var compactWindows: some View {
-        if !provider.quotaSource {
-            HStack(spacing: 10) {
-                ProviderLogoTile(provider: provider.id, accent: tileAccent)
-                identity.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
-                ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: ["not_found", "absent"].contains(provider.availability))
                 compactIdentity.frame(width: Self.compactIdentityWidth - 30)
                 if !windowNames.isEmpty {
                     ForEach(windowNames, id: \.self) { column($0, compact: true) }
@@ -270,7 +282,7 @@ public struct UsageGaugeRow: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
-                    ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                    ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: ["not_found", "absent"].contains(provider.availability))
                     compactIdentity
                 }
                 if showsWindows {
@@ -285,11 +297,10 @@ public struct UsageGaugeRow: View {
                 }
             }
         }
-        }
     }
 
     @ViewBuilder private var compactIdentity: some View {
-        if isStale && showsWindows {
+        if status != nil || (isStale && showsWindows) {
             Text(name).font(JRBarTokens.TypeStyle.callout.font).lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -307,10 +318,12 @@ public struct UsageGaugeRow: View {
                     }
                     Text(status).foregroundStyle(provider.quotaSource && provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
                 }
-                .lineLimit(1).truncationMode(.tail).help(status)
+                .fixedSize(horizontal: false, vertical: true).help(status)
             }
-            Label(age, systemImage: "clock").foregroundStyle(neutralInk.stale)
-                .fixedSize().help(age)
+            if isStale && showsWindows {
+                Label(age, systemImage: "clock").foregroundStyle(neutralInk.stale)
+                    .fixedSize().help(age)
+            }
             Spacer(minLength: 0)
         }
         .font(JRBarTokens.TypeStyle.caption.font)
@@ -319,7 +332,7 @@ public struct UsageGaugeRow: View {
     private var detail: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             HStack(spacing: 10) {
-                ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
+                ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: ["not_found", "absent"].contains(provider.availability))
                 identity
             }
             actions.padding(.leading, 30)
@@ -350,7 +363,8 @@ public struct UsageGaugeRow: View {
     }
 
     @ViewBuilder private func column(_ name: String, compact: Bool) -> some View {
-        if let window = provider.windows.first(where: { $0.name == name }), !compact || showsWindows {
+        if let window = provider.windows.first(where: { $0.name == name }),
+           !compact || (showsWindows && !(reading(for: window).stale && reading(for: window).elapsed)) {
             let reading = reading(for: window)
             Group {
                 if compact {
