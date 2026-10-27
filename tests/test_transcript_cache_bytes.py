@@ -55,3 +55,17 @@ def test_a_single_large_message_is_served_but_never_retained(tmp_path):
     )
     assert records[0].message == text
     assert monitor._transcript_records_cache == {}
+
+
+def test_incremental_byte_estimates_match_full_estimates_and_retire_old_records():
+    from jrbar.collector import _transcript_cached_bytes, _transcript_retained_bytes
+
+    stamp = datetime(2026, 10, 25, tzinfo=timezone.utc)
+    shared = {"metadata": [{"message": "synthetic message"}]}
+    first = HookEvent("claude", stamp, "Stop", shared)
+    second = HookEvent("claude", stamp, "Stop", shared)
+    previous = {}
+    for records in [(first,), (first, second, first), (second,), ()]:
+        count, previous = _transcript_cached_bytes(records, previous)
+        assert count == _transcript_retained_bytes(records)
+        assert set(previous) == {id(record) for record in records}
