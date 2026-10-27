@@ -76,7 +76,7 @@ struct MenuBarPositionModelTests {
     @Test("under the divider the page says what is left of the icon, or how to put something there")
     func dividerStatus() {
         let empty = status { $0.dividerHidden = 0 }
-        #expect(empty.headline == "Nothing is hidden yet")
+        #expect(empty.headline == "No hidden items reported")
         #expect(empty.detail.contains("Hold ⌘ and drag an item left of the JR-Bar icon"))
         let some = status { $0.dividerHidden = 3 }
         #expect(some.tone == .ok)
@@ -171,6 +171,67 @@ struct MenuBarPositionModelTests {
         utility.migratePositionModel()
         #expect(box.settings.revealStyle == .bar)
         #expect(box.settings.curation.dividerSuggestions == ["h.app"])
+    }
+
+    @MainActor
+    @Test("a pre-0.10 document preserves hidden picks before retiring its cover map", arguments: [false, true])
+    func migratePre010Document(coverMap: Bool) throws {
+        let source = #"{"enabled":false,"revealStyle":"bar","concealedApps":{"app.hidden":"hidden","app.always":"alwaysHidden","app.visible":"shown"}}"#
+        var document = try #require(JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any])
+        if coverMap { document["sections"] = ["Old item": "hidden"] }
+        let decoded = try JSONDecoder().decode(MenuBarSettings.self,
+            from: JSONSerialization.data(withJSONObject: document))
+        let (utility, box) = makeUtility(decoded)
+        utility.migrateSectionsIfNeeded()
+        utility.migratePositionModel()
+        #expect(box.settings.concealedApps == decoded.concealedApps)
+        #expect(box.settings.sections.isEmpty)
+        #expect(box.settings.curation.dividerSuggestions == ["app.always", "app.hidden"])
+        let persisted = try JSONEncoder().encode(box.settings)
+        let reloaded = try JSONDecoder().decode(MenuBarSettings.self, from: persisted)
+        #expect(reloaded == box.settings)
+        // A dismissed suggestion stays dismissed on the next apply.
+        utility.forgetSuggestion("app.hidden")
+        utility.migrateSectionsIfNeeded()
+        utility.migratePositionModel()
+        #expect(box.settings.curation.dividerSuggestions == ["app.always"])
+        #expect(box.settings.concealedApps == decoded.concealedApps)
+    }
+
+    @Test("an unreported saved item has unknown visibility")
+    func absentSuggestionIsUnverified() {
+        let content = MenuBarSuggestionsContent.make(suggestions: ["app.missing"], plan: MenuBarHidePlan()) { _ in "Example" }
+        #expect(content.rows.first?.state == .absent)
+        #expect(content.lead == "1 saved pick needs a placement check.")
+        #expect(MenuBarPositionCopy.suggestionLine(name: "Example", state: .absent)
+            == "macOS hasn't reported Example's item. Its visibility is unverified.")
+    }
+
+    @MainActor
+    @Test("retiring an old cover map does not restore suggestions the person already dismissed")
+    func legacyMapKeepsDismissals() {
+        var settings = MenuBarSettings(enabled: false, layoutModel: 0,
+                                       concealedApps: ["app.old": .hidden])
+        settings.curation.dividerHintDismissed = true
+        let (utility, box) = makeUtility(settings)
+        utility.migrateSectionsIfNeeded()
+        utility.migratePositionModel()
+        #expect(box.settings.curation.dividerSuggestions.isEmpty)
+        #expect(box.settings.curation.dividerHintDismissed)
+        #expect(box.settings.concealedApps == settings.concealedApps)
+    }
+
+    @MainActor
+    @Test("an older document with only shown picks keeps its reveal style")
+    func shownOnlyDocument() throws {
+        let source = #"{"enabled":false,"revealStyle":"bar","concealedApps":{"app.visible":"shown"}}"#
+        let decoded = try JSONDecoder().decode(MenuBarSettings.self, from: Data(source.utf8))
+        let (utility, box) = makeUtility(decoded)
+        utility.migrateSectionsIfNeeded()
+        utility.migratePositionModel()
+        #expect(box.settings.revealStyle == .bar)
+        #expect(box.settings.concealedApps == decoded.concealedApps)
+        #expect(box.settings.curation.dividerSuggestions.isEmpty)
     }
 
     @MainActor

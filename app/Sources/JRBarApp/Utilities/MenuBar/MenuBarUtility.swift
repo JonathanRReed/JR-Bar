@@ -253,6 +253,11 @@ final class MenuBarUtility: Toy {
                 self.installBoundary()
                 self.hider.reconcile()
             }
+            host?.onBoundaryStyleChange = { [weak self] in
+                guard let self, self.hider.isRunning, self.settings().enabled,
+                      self.settings().provider == .jrbar else { return }
+                self.hider.noteBarReformed("the icon style changed")
+            }
             host?.hiddenItemsMenu = { [weak self] in self?.hiddenItemsMenu() }
             if running { hider.controlsReinstalled(); installBoundary() }
         }
@@ -266,6 +271,7 @@ final class MenuBarUtility: Toy {
             !MenuBarItemLister.axTrusted() || MenuBarItemLister.axInventoryComplete
         }
         hider.onInventoryUpdate = { [weak self] in self?.refreshInventoryState() }
+        hider.onWakeVerdictChange = { [weak self] in self?.engineVersion += 1 }
         actions.itemHotkeys.activate = { [weak self] target, lease in
             guard let self else { return .utilityOff }
             return await self.openShortcutTarget(target, lease: lease)
@@ -1088,7 +1094,15 @@ final class MenuBarUtility: Toy {
             MenuBarProfiles.migrateToDeltas(&draft)
             if legacy {
                 draft.sections = [:]
-                draft.concealedApps = [:]
+                // Keep explicit app picks before retiring the cover-era map.
+                // The divider cannot move them, so retain them as placement
+                // suggestions as well as in the saved record.
+                let picks = supported.filter { $0.value != .shown }.keys
+                if draft.curation.positionModel < MenuBarCuration.currentPositionModel {
+                    draft.curation.dividerSuggestions = Array(
+                        Set(draft.curation.dividerSuggestions).union(picks)).sorted()
+                }
+                draft.concealedApps = supported
                 draft.layoutModel = MenuBarSettings.currentLayoutModel
             } else if moved {
                 draft.concealedApps = supported
@@ -1323,6 +1337,7 @@ final class MenuBarUtility: Toy {
         inputs.overlay = activeOverlay
         inputs.overlayNote = overlayNote
         inputs.accessibilityGranted = accessibilityGranted
+        inputs.inventoryComplete = inventoryState == .complete
         inputs.rivals = runningRivals.map(\.name)
         inputs.dividerHidden = dividerHiddenCount
         inputs.revealed = hider.revealed.contains(.hidden) || hider.revealed.contains(.alwaysHidden)

@@ -61,6 +61,7 @@ struct MenuBarHidingStatus: Equatable, Sendable {
         var overlay: MenuBarOverlay.Kind?
         var overlayNote: String?
         var accessibilityGranted = true
+        var inventoryComplete = true
         var rivals: [String] = []
         /// Items left of the icon right now, by position.
         var dividerHidden = 0
@@ -148,8 +149,14 @@ struct MenuBarHidingStatus: Equatable, Sendable {
                 detail: "These items are showing temporarily. ⌘-drag one right of the JR-Bar icon to keep it shown.",
                 fix: nil, fixTitle: nil, offersShowEverything: true)
         }
+        if !i.inventoryComplete {
+            return MenuBarHidingStatus(
+                tone: .warning, headline: "Enabled, hiding is unverified",
+                detail: "macOS hasn't reported a complete set of items. The counts are from the last complete reading.",
+                fix: nil, fixTitle: nil, offersShowEverything: true)
+        }
         let placementGuide = i.iconLeftmost
-            ? "The JR-Bar icon is at the left end of the bar, so nothing is left of it. Hold ⌘ and drag the icon right, past the apps you want hidden: everything it passes disappears. Click the blank bar left of the icon to bring them back."
+            ? "The JR-Bar icon is at the left end of the reported items. Hold ⌘ and drag the icon right, past the apps you want hidden. Click the blank bar left of the icon to bring them back."
             : "Hold ⌘ and drag an item left of the JR-Bar icon: it disappears. Click the blank bar left of the icon to bring it back, then drag it right of the icon to keep it shown."
         let recoveryDetail = MenuBarWakeRecovery.line(for: i.recovery)
             ?? "JR-Bar has not confirmed that the divider stands on the bar."
@@ -184,9 +191,9 @@ struct MenuBarHidingStatus: Equatable, Sendable {
         }
         if i.dividerHidden == 0 {
             return MenuBarHidingStatus(
-                tone: .note, headline: "Nothing is hidden yet",
+                tone: .note, headline: "No hidden items reported",
                 detail: placementGuide,
-                fix: nil, fixTitle: nil, offersShowEverything: false)
+                fix: nil, fixTitle: nil, offersShowEverything: true)
         }
         let noun = i.dividerHidden == 1 ? "item" : "items"
         return MenuBarHidingStatus(

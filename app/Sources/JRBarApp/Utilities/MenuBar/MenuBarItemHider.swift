@@ -319,8 +319,21 @@ final class MenuBarItemHider {
     /// What the bar needs after something re-formed it (wake, displays,
     /// session, Space): a quiet spell, a clean re-measure, and one re-seat
     /// if the icon is still wrong. See `MenuBarWakeRecovery`.
-    private(set) var wake = MenuBarWakeRecovery()
+    private(set) var wake = MenuBarWakeRecovery() {
+        didSet {
+            if wake.verdict != oldValue.verdict {
+                Self.log.notice("divider check: \(String(describing: self.wake.verdict), privacy: .public)")
+                onWakeVerdictChange?()
+            }
+        }
+    }
+    var onWakeVerdictChange: (@MainActor () -> Void)?
     private var wakeTask: Task<Void, Never>?
+    private var wakeGenerationFloor = -1
+    private var wakePassFloor = -1
+    var wakeSleep: @MainActor (TimeInterval) async -> Void = { seconds in
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+    }
     /// Reconcile passes, the clock of "fresh looks" where no scan runs.
     private var passes = 0
     private var lengthWrittenAtPass = -1
@@ -414,11 +427,14 @@ final class MenuBarItemHider {
     /// glyph bypasses the hold so the app's own control stays reachable.
     nonisolated static let shrinkHold: TimeInterval = 5.0
 
+    var isRunning: Bool { timer != nil }
+
     /// Starts the reconcile cadence and the AX refresh loop. Safe to
     /// call twice.
     func start() {
         guard timer == nil else { return }
         reloadFitEdge()
+        noteBarReformed("the divider started")
         let timer = Timer(timeInterval: 1.0, repeats: true,
                           block: { [weak self] _ in
             MainActor.assumeIsolated { self?.timerTick() }
@@ -667,6 +683,7 @@ final class MenuBarItemHider {
         pendingLength = nil
         lastWriteAt = .distantPast
         resetCaps()
+        noteBarReformed("the divider host changed")
         scheduleSettle()
     }
 
@@ -842,6 +859,7 @@ final class MenuBarItemHider {
             scheduleSettle(refreshListing: true)
         }
         guard listingIsComplete() else {
+            expireWakeCheck()
             overflowStreak = 0
             overflowSeenAtGeneration = -1
             hiddenShutter.orderOut()
@@ -959,6 +977,8 @@ final class MenuBarItemHider {
     /// icon once (`MenuBarWakeRecovery`).
     func noteBarReformed(_ why: String, light: Bool = false) {
         wake.noteEvent(now: wakeClock, light: light)
+        wakeGenerationFloor = listingGeneration()
+        wakePassFloor = passes
         selfCheckSpent = false
         standingStrikes = 0
         standingSince = nil
@@ -974,21 +994,36 @@ final class MenuBarItemHider {
     }
 
     /// Passes at the end of the quiet and after a re-seat, so the check
-    /// happens even on a bar that sits still. Three at most, then the
-    /// episode is the scans' and the timer's alone. Nothing polls.
+    /// happens even on a bar that sits still. Each pass requests a fresh
+    /// listing. A final deadline closes an episode with no usable reading.
     private func scheduleWakeCheck() {
         wakeTask?.cancel()
+        let sleep = wakeSleep
         wakeTask = Task { [weak self] in
-            let beats = [MenuBarWakeRecovery.quiet + 0.1,
-                         MenuBarWakeRecovery.reseatSettle + 0.5,
-                         MenuBarWakeRecovery.reseatSettle + 0.5]
+            let first = MenuBarWakeRecovery.quiet + 0.1
+            let retry = MenuBarWakeRecovery.reseatSettle + 0.5
+            let deadline = MenuBarWakeRecovery.giveUp + 0.1 - first - 3 * retry
+            let beats = [first, retry, retry, retry, deadline]
             for beat in beats {
-                try? await Task.sleep(nanoseconds: UInt64(beat * 1e9))
+                await sleep(beat)
                 guard !Task.isCancelled, let self else { return }
+                self.expireWakeCheck()
+                guard self.wake.isOpen else { return }
+                if self.barIsVisible(), self.barShowing(), self.listingIsScanned() {
+                    _ = await self.refreshListingAfterReflow()
+                    guard !Task.isCancelled else { return }
+                }
                 self.reconcile()
                 guard self.wake.isOpen else { return }
             }
         }
+    }
+
+    /// A missing control or incomplete inventory must not leave the page
+    /// saying "checking" forever. This cannot certify geometry or re-seat.
+    private func expireWakeCheck() {
+        _ = wake.assess(now: wakeClock, generation: -1, floor: -1,
+                        judgeable: false, health: .init())
     }
 
     /// One look at the icon's seat: on the row, the width that was
@@ -997,13 +1032,15 @@ final class MenuBarItemHider {
     /// a row, and acts on the episode's verdict: re-seat once.
     private func checkIcon(controls: MenuBarControlFrames, row: CGRect,
                            items: [MenuBarItem], showing: Bool) {
-        guard let frame = controls.hidden else { return }
+        guard let frame = controls.hidden else {
+            expireWakeCheck()
+            return
+        }
         let onRow = frame.intersects(row)
         let scanned = listingIsScanned()
         let stands = !onRow || MenuBarWakeRecovery.widthStands(
             frame: frame, written: assignedLengths[.hidden], writtenGlyph: writtenGlyph,
-            glyph: controls.hiddenGlyph,
-            floor: writtenHiddenRevealed == true ? 0 : MenuBarUtility.boundaryAffordance)
+            glyph: controls.hiddenGlyph)
         if !wake.isOpen, !selfCheckSpent, onRow, showing, !pointerHolds() {
             standingStrikes = stands ? 0 : standingStrikes + 1
             if stands { standingSince = nil } else if standingSince == nil { standingSince = wakeClock }
@@ -1013,6 +1050,8 @@ final class MenuBarItemHider {
                 standingSince = nil
                 Self.log.notice("bar: the icon is not the width that was written — checking it")
                 wake.noteEvent(now: wakeClock)
+                wakeGenerationFloor = listingGeneration()
+                wakePassFloor = passes
                 scheduleWakeCheck()
             }
         }
@@ -1029,8 +1068,9 @@ final class MenuBarItemHider {
         let action = wake.assess(
             now: wakeClock,
             generation: scanned ? listingGeneration() : passes,
-            floor: scanned ? lengthWrittenAtGeneration : lengthWrittenAtPass,
-            judgeable: showing && barIsVisible() && !pointerHolds(),
+            floor: scanned ? max(lengthWrittenAtGeneration, wakeGenerationFloor)
+                : max(lengthWrittenAtPass, wakePassFloor),
+            judgeable: showing && barIsVisible() && !pointerHolds() && assignedLengths[.hidden] != nil,
             health: health)
         if action == .reseat, let trouble = health.trouble {
             reseat(because: trouble, glyph: controls.hiddenGlyph)

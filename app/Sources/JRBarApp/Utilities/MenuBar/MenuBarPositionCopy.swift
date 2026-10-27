@@ -40,15 +40,15 @@ enum MenuBarPositionCopy {
     /// The suggestions' lead: the old list, offered and never acted on.
     static func suggestionsLead(count: Int) -> String {
         count == 1
-            ? "1 app was hidden by your old list. Nothing hides it now."
-            : "\(count) apps were hidden by your old list. Nothing hides them now."
+            ? "1 saved pick needs a placement check."
+            : "\(count) saved picks need placement checks."
     }
 
     /// One suggested app's line.
     static func suggestionLine(name: String, state: MenuBarSuggestionsContent.State) -> String {
         switch state {
         case .shown: return "\(name) is shown. Hold ⌘ and drag it left of the icon to hide it."
-        case .absent: return "\(name) isn't on the bar right now."
+        case .absent: return "macOS hasn't reported \(name)'s item. Its visibility is unverified."
         }
     }
 

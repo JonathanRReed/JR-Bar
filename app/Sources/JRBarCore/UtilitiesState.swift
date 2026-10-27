@@ -535,8 +535,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                                                  forKey: .displayProfiles)) ?? [:]
         showForUpdates = (try? c.decodeIfPresent(Bool.self, forKey: .showForUpdates)) ?? false
         // A file from before the layers: its profiles are snapshots.
+        let hasHiddenPicks = concealedApps.values.contains { $0 != .shown }
         curation = (try? c.decodeIfPresent(MenuBarCuration.self, forKey: .curation))
-            ?? MenuBarCuration(profileModel: profiles.isEmpty ? MenuBarCuration.currentProfileModel : 0)
+            ?? MenuBarCuration(profileModel: profiles.isEmpty ? MenuBarCuration.currentProfileModel : 0,
+                               positionModel: hasHiddenPicks ? 0 : MenuBarCuration.currentPositionModel)
     }
 }
 

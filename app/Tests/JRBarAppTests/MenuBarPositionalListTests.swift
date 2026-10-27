@@ -61,7 +61,7 @@ struct MenuBarPositionalListTests {
             suggestions: ["done.app", "shown.app", "gone.app"], plan: plan) { $0.replacingOccurrences(of: ".app", with: "") }
         #expect(content.rows.map(\.id) == ["shown.app", "gone.app"])
         #expect(content.rows.map(\.state) == [.shown, .absent])
-        #expect(content.lead == "2 apps were hidden by your old list. Nothing hides them now.")
+        #expect(content.lead == "2 saved picks need placement checks.")
     }
 
     @Test("an app with one item on each side is still the work to do")
@@ -82,10 +82,10 @@ struct MenuBarPositionalListTests {
     @Test("the words say what to do, and one app reads in the singular")
     func words() {
         #expect(MenuBarPositionCopy.hint == "Hold ⌘ and drag an app left of the JR-Bar icon to hide it")
-        #expect(MenuBarPositionCopy.suggestionsLead(count: 1) == "1 app was hidden by your old list. Nothing hides it now.")
+        #expect(MenuBarPositionCopy.suggestionsLead(count: 1) == "1 saved pick needs a placement check.")
         #expect(MenuBarPositionCopy.suggestionLine(name: "Typeless", state: .shown)
                 == "Typeless is shown. Hold ⌘ and drag it left of the icon to hide it.")
         #expect(MenuBarPositionCopy.suggestionLine(name: "Typeless", state: .absent)
-                == "Typeless isn't on the bar right now.")
+                == "macOS hasn't reported Typeless's item. Its visibility is unverified.")
     }
 }
