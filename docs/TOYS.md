@@ -322,10 +322,21 @@ study of Apple's own model (MIT).
 - **Capture** `FoldCapture`: the Duo runs ONE stream (`dual: false`), the
   whole desktop minus JR-Bar, except JR-Bar's own menu-bar windows (the
   Screen Bar, kept through `exceptingWindows`) so the
-  whole bar folds together; no far stream and no window-list poll. The
+  whole bar folds together; no far stream and no window-list poll. It
+  films the display's real backing pixels (`contentRect ×
+  pointPixelScale`, `captureResolution = .best`): 3024×1964 on a 14-inch
+  Retina panel, the overlay's own drawable size, so the first degrees of
+  a fold are the desktop pixel for pixel (`FoldCapture.streamSize`; until
+  0.10.1 it filmed the display in points, a 1512×982 picture on that
+  panel). Every stream films in the panel's colour space, Display P3 on
+  a wide-gamut panel and sRGB otherwise (`FoldColour`); the overlay's
+  layer and the wallpaper stand-in use the same one, so nothing shifts
+  when the overlay comes in. The full-size picture costs memory only
+  while a fold is armed: about 32 MB of pyramid plus the stream's
+  buffers, released when the fold parks. The
   Room runs TWO ScreenCaptureKit streams on the
-  built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
-  no cursor, complete frames only, capped at 2560 px: a near stream
+  built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA, no audio,
+  no cursor, complete frames only, in points capped at 2560 px: a near stream
   (`excludingApplications` JR-Bar itself) for the window cards, and a
   wallpaper-only stream (the display with every application excluded,
   on the same 60 fps configuration) for the

@@ -78,6 +78,31 @@ struct FoldWallpaperTests {
         #expect(bottom.b > 200 && bottom.r < 50)
     }
 
+    @Test("on a wide-gamut panel the wallpaper is drawn in Display P3, the overlay's own space")
+    func drawsInThePanelsSpace() throws {
+        // sRGB red drawn into a P3 frame keeps its look, so its P3 numbers
+        // carry some green; drawn into an sRGB frame it is pure red.
+        let space = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let source = try #require(CGContext(
+            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue))
+        source.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        source.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let red = try #require(source.makeImage())
+        func greenOfRed(wideGamut: Bool) throws -> UInt8 {
+            let buffer = try #require(FoldWallpaperSource.render(
+                red, into: CGSize(width: 2, height: 2), layout: .stretch,
+                fill: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1), wideGamut: wideGamut))
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            let base = try #require(CVPixelBufferGetBaseAddress(buffer)).assumingMemoryBound(to: UInt8.self)
+            return base[1]
+        }
+        #expect(try greenOfRed(wideGamut: false) < 3)
+        let p3 = try greenOfRed(wideGamut: true)
+        #expect(p3 > 30 && p3 < 80, "sRGB red in P3 is about (234, 51, 35), got green \(p3)")
+    }
+
     @Test("the wallpaper file decodes into a frame off the main actor; a missing one says so")
     func decodesFromDisk() async throws {
         let dir = TestTemporaryDirectory.currentURL

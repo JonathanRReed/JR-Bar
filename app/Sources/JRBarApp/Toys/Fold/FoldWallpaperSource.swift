@@ -73,9 +73,12 @@ final class FoldWallpaperSource: FoldFrameSource {
         let fill = (options[.fillColor] as? NSColor)?.usingColorSpace(.sRGB)?.cgColor
             ?? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
         let pixels = Self.pixelSize(points: screen.frame.size, scale: screen.backingScaleFactor)
+        // Drawn in the colour space the overlay's layer is tagged with.
+        let wideGamut = screen.canRepresent(.p3)
         generation += 1
         let mine = generation
-        let result = await Self.frame(from: url, into: pixels, layout: layout, fill: fill)
+        let result = await Self.frame(from: url, into: pixels, layout: layout, fill: fill,
+                                      wideGamut: wideGamut)
         guard mine == generation else { return }
         let buffer: CVPixelBuffer
         switch result {
@@ -107,13 +110,14 @@ final class FoldWallpaperSource: FoldFrameSource {
     /// Reads the picture at `url` and draws it into a frame, on a task
     /// of its own so the main actor never waits on the decode.
     nonisolated static func frame(from url: URL, into pixels: CGSize, layout: Layout,
-                                  fill: CGColor) async -> Result<Frame, FoldWallpaperError> {
+                                  fill: CGColor, wideGamut: Bool = false) async -> Result<Frame, FoldWallpaperError> {
         let cache = BackgroundLookupCache<Int, Result<Frame, FoldWallpaperError>>(load: { _ in
             guard ExternalFilePolicy(home: NSHomeDirectory()).available(url),
                   let image = NSImage(contentsOf: url),
                   let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
             else { return .failure(.noWallpaper) }
-            guard let buffer = render(cgImage, into: pixels, layout: layout, fill: fill) else {
+            guard let buffer = render(cgImage, into: pixels, layout: layout, fill: fill,
+                                      wideGamut: wideGamut) else {
                 return .failure(.noBuffer)
             }
             return .success(Frame(buffer: buffer))
@@ -177,9 +181,10 @@ final class FoldWallpaperSource: FoldFrameSource {
 
     /// Draws `image` into a new BGRA, IOSurface-backed, Metal-compatible
     /// buffer — the same shape a ScreenCaptureKit frame arrives in, rows
-    /// top first — over `fill` for any letterbox.
+    /// top first — over `fill` for any letterbox, in the fold's colour
+    /// space (`FoldColour`): Display P3 on a wide-gamut panel.
     nonisolated static func render(_ image: CGImage, into pixels: CGSize, layout: Layout,
-                                   fill: CGColor) -> CVPixelBuffer? {
+                                   fill: CGColor, wideGamut: Bool = false) -> CVPixelBuffer? {
         let width = Int(pixels.width), height = Int(pixels.height)
         guard width > 0, height > 0 else { return nil }
         let attributes: [String: Any] = [
@@ -193,7 +198,7 @@ final class FoldWallpaperSource: FoldFrameSource {
               let buffer = created else { return nil }
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+        guard let space = CGColorSpace(name: FoldColour.spaceName(wideGamut: wideGamut)),
               let context = CGContext(
                 data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
                 bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
