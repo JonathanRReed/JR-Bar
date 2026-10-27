@@ -4,6 +4,7 @@
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
 # dist/appcast.xml. Signs with the best identity in the keychain and
 # notarizes when the jrbar-notary profile exists (packaging/README.md).
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 VERSION := $(shell sed -n 's/^version = "\([^"]*\)"$$/\1/p' pyproject.toml | head -1)
 
 bootstrap:
@@ -40,7 +41,7 @@ test-portable: bootstrap
 # so a crashing suite fails the final gate; `make package` and `make release`
 # do not, so run final-test before them. `make fast` stays Python-only.
 swift-test:
-	cd app && swift test
+	$(PYTHON) scripts/check_temp_leaks.py --swift
 
 package:
 	./packaging/build_macos_pkg.sh

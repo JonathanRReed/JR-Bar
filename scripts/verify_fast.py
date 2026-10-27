@@ -27,6 +27,7 @@ IMPORT_MODULES: Final = (
     "jrbar.why_light_context",
 )
 CONTRACT_TESTS: Final = (
+    "tests/test_temp_cleanup.py",
     "tests/test_deterministic_timing_contract.py",
     "tests/test_status_bar_facade_contract.py",
     "tests/test_status_bar_adapter_reload_contract.py",
