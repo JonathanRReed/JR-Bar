@@ -47,11 +47,17 @@ class _Object:
     def __init__(self, pointer):
         if not pointer:
             raise RuntimeError("native object unavailable")
+        # Keep the function and its library alive after module globals clear.
+        self._release = _runtime().objc_release
         self.pointer = pointer
 
+    def close(self):
+        pointer = self.__dict__.pop("pointer", None)
+        if pointer:
+            self._release(pointer)
+
     def __del__(self):
-        if getattr(self, "pointer", None):
-            _runtime().objc_release(self.pointer)
+        self.close()
 
 
 class ProcessInfo(_Object):

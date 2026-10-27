@@ -47,3 +47,22 @@ print("native imports verified")
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "native imports verified" in result.stdout
+
+
+def test_native_objects_release_after_module_globals_are_cleared():
+    script = '''
+import jrbar.native_process_info as native
+first = native.ProcessInfo.processInfo()
+assert type(first.isLowPowerModeEnabled()) is bool
+last = native.ProcessInfo.processInfo()
+assert last.thermalState() in range(4)
+native._runtime = None
+first.close()
+first.close()
+del first
+# Leave the last retained object for interpreter shutdown.
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
