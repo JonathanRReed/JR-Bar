@@ -1549,15 +1549,11 @@ private struct BuddyControlsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker(selection: toy.characterBinding) {
-                ForEach(BuddyCharacter.allCases, id: \.self) { c in
-                    Text(c.displayName).tag(c)
-                }
-            } label: {
-                SettingLabel(title: "Character", subtitle: "Who lives in your notch.")
-            }
-            .pickerStyle(.menu)
-            .disabled(toy.miniMode)
+            // One way to choose: the tiles. A menu beside them repeated
+            // the same choice.
+            SettingLabel(title: "Character",
+                         subtitle: toy.miniMode ? "Mini shows only the status dot. Turn Mini off to pick one."
+                                                : "Who lives in your notch.")
 
             if !toy.miniMode { roster }
 
@@ -1581,7 +1577,10 @@ private struct BuddyControlsView: View {
 
             LabeledContent {
                 HStack(spacing: 10) {
-                    Slider(value: toy.scaleBinding, in: NotchBuddySettings.scaleRange, step: 0.25)
+                    // Both sliders snap the same way, with no tick marks:
+                    // the readout beside each one says the exact value.
+                    Slider(value: BuddyControlsView.snapped(toy.scaleBinding, to: 0.25),
+                           in: NotchBuddySettings.scaleRange)
                         .frame(width: 180)
                     ValueText(text: NotchBuddyToy.sizeWords(toy.buddyScale))
                 }
@@ -1602,8 +1601,7 @@ private struct BuddyControlsView: View {
 
             LabeledContent {
                 HStack(spacing: 10) {
-                    // Whole minutes, but no tick marks: 38 of them read
-                    // as a dotted rule, not a dial.
+                    // Whole minutes; the binding rounds.
                     Slider(value: toy.walkEveryBinding, in: NotchBuddySettings.walkEveryRange)
                         .frame(width: 180)
                     ValueText(text: NotchBuddyToy.walkWords(toy.walkEvery))
@@ -1650,6 +1648,15 @@ private struct BuddyControlsView: View {
                 }
             }
         }
+    }
+
+    /// A slider binding that lands on whole multiples of `step`. The
+    /// Size slider used `step:`, which drew nine tick marks beside a
+    /// walk slider with none; snapping in the binding keeps the stops
+    /// and drops the marks, so the two sliders look alike.
+    static func snapped(_ binding: Binding<Double>, to step: Double) -> Binding<Double> {
+        Binding(get: { binding.wrappedValue },
+                set: { binding.wrappedValue = ($0 / step).rounded() * step })
     }
 
     /// The treat's hearts, replayed over the button — the buddy in the
