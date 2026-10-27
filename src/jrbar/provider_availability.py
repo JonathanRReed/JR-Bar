@@ -5,16 +5,110 @@ from __future__ import annotations
 from .provider_usage_platform import provider_descriptor
 
 GONE_READING_SECONDS = 7 * 24 * 60 * 60
+#: Every reason a provider reading can carry, as the sentence a person
+#: reads: what happened and, where there is one, the fix. ``{label}`` is the
+#: provider's display name. A reason missing here reads ``ATTENTION``, never
+#: the code (``tests/test_provider_availability_words.py`` scans for codes).
 _CAUSES = {
-    "claude_keychain_access_lost": "Keychain access lost after Claude renewed its sign-in",
-    "authentication_required": "Sign-in rejected",
-    "network_unavailable": "Usage request could not connect",
-    "response_timed_out": "Usage request timed out",
-    "collector_failed": "Usage source failed",
-    "invalid_provider_response": "Quota service returned an unreadable response",
-    "rate_limited": "Usage requests rate limited",
-    "reading_evidence_missing": "No fresh quota reading",
+    "account_identity_unavailable": "{label} did not say which account this is. Retry in a moment.",
+    "authentication_required": "{label} needs you to sign in again.",
+    "browser_session_expired": "The {label} browser session expired. Reconnect it in Settings › Providers.",
+    "claude_keychain_access_lost": "Keychain access lost after Claude renewed its sign-in. Allow it again.",
+    "cleartext_refused": "{label}'s usage address is not secure, so JR-Bar did not ask it.",
+    "cli_default_account_only": "{label} usage reads only the default CLI account.",
+    "cli_session_changed": "The {label} CLI sign-in changed.",
+    "cli_session_unavailable": "No {label} CLI sign-in was found.",
+    "cliproxy_account_signed_out": "This CLIProxy account is signed out. Sign it in again in CLIProxy.",
+    "cliproxy_key_missing": "Add the CLIProxy management key in Settings › Providers.",
+    "cliproxy_key_rejected": "CLIProxy rejected the management key. Check it in Settings › Providers.",
+    "cliproxy_management_off": "CLIProxy's management API is off. Turn it on in CLIProxy.",
+    "cliproxy_provider_refused": "CLIProxy refused to read this provider's usage.",
+    "cliproxy_read_failed": "CLIProxy's usage could not be read. Retry in a moment.",
+    "cliproxy_slow": "CLIProxy is answering slowly. Retry in a moment.",
+    "cliproxy_unreachable": "CLIProxy is not answering. Check that it is running.",
+    "cliproxy_url_not_loopback": "CLIProxy must run on this Mac. Check its address in Settings › Providers.",
+    "code_assist_project_required": "{label} needs a Code Assist project before it reports usage.",
+    "code_assist_tier_ineligible": "This {label} plan does not report usage.",
+    "collector_failed": "{label}'s usage could not be read. Retry in a moment.",
+    "collector_not_configured": "{label} has no usage source set up.",
+    "credential_changed": "The {label} sign-in changed.",
+    "credential_redirect_refused": "{label}'s usage address redirected elsewhere, so JR-Bar stopped.",
+    "http_error": "{label}'s usage service returned an error. Retry in a moment.",
+    "invalid_configuration": "{label}'s usage source is set up wrong. Check it in Settings › Providers.",
+    "invalid_json": "{label}'s usage service sent a reply JR-Bar could not read.",
+    "invalid_local_usage": "{label}'s local usage file could not be read.",
+    "invalid_provider_response": "{label}'s usage service sent a reply JR-Bar could not read.",
+    "invalid_response": "{label}'s usage service sent a reply JR-Bar could not read.",
+    "invalid_url": "{label}'s usage address is not valid. Check it in Settings › Providers.",
+    "invalid_web_session": "The {label} browser session is not valid. Reconnect it in Settings › Providers.",
+    "local_reading_stale": "{label}'s local reading is old. It updates when {label} runs.",
+    "local_usage_not_found": "No local {label} usage was found yet. It appears after {label} runs.",
+    "network_error": "{label}'s usage service could not be reached. Check the network.",
+    "network_unavailable": "{label}'s usage service could not be reached. Check the network.",
+    "no_separable_quota": "{label} does not report a separate plan allowance.",
+    "not_collected": "{label}'s usage has not been read yet.",
+    "opencode_data_not_found": "No OpenCode data was found on this Mac.",
+    "opencode_go_not_subscribed": "This account has no OpenCode Go subscription, so there is no quota to show.",
+    "opencode_no_quota_source": "OpenCode has no quota source for this account.",
+    "organization_required": "{label} needs an organization chosen in Settings › Providers.",
+    "provider_identity_mismatch": "That reading belonged to another account, so JR-Bar set it aside.",
+    "quota_license_required": "This {label} plan does not report a quota.",
+    "quota_service_not_running": "{label}'s quota service is not running.",
+    "rate_limited": "{label} is limiting usage requests. JR-Bar retries later.",
+    "reading_evidence_missing": "No fresh quota reading yet.",
+    "request_failed": "{label}'s usage request failed. Retry in a moment.",
+    "request_rejected": "{label} rejected the usage request. Retry in a moment.",
+    "response_timed_out": "{label}'s usage service did not answer in time. Retry in a moment.",
+    "response_too_large": "{label}'s usage reply was too large to read.",
+    "source_changed": "{label}'s usage source changed while it was read. Retry.",
+    "source_unavailable": "{label}'s usage source is not available.",
+    "submit_failed": "{label}'s status could not be read. Retry in a moment.",
+    "sync_refresh_failed": "The synced reading could not be refreshed. Retry in a moment.",
+    "token_refresh_failed": "{label}'s sign-in could not be renewed. Sign in to {label} again.",
+    "unsupported_cli_auth_scope": "{label}'s CLI sign-in cannot read usage. Sign in again with usage access.",
+    "usage_access_denied": "{label} did not allow this account to read usage.",
+    "usage_connection_required": "Connect {label} usage in Settings › Providers.",
+    "usage_consent_required": "Turn on {label} usage in Settings › Providers.",
+    "usage_permission_missing": "{label}'s sign-in lacks usage access. Reconnect {label}.",
+    "web_session_account_changed": "The {label} browser session is for another account. Reconnect it in Settings › Providers.",
+    "web_session_changed": "The {label} browser session changed. Reconnect it in Settings › Providers.",
+    "web_session_unavailable": "Connect a {label} browser session in Settings › Providers.",
 }
+ATTENTION = "Usage source needs attention."
+
+#: Reasons that need a person (a sign-in or an OK), not a failing source:
+#: their rows stay neutral and keep their own fix.
+_NEEDS_PERSON_STATES = {"needs_consent", "needs_sign_in"}
+_NEEDS_PERSON_REASONS = {
+    "authentication_required", "cli_session_changed", "cli_session_unavailable", "credential_changed",
+    "usage_consent_required", "usage_connection_required", "usage_permission_missing",
+    "web_session_unavailable", "invalid_web_session", "web_session_changed", "web_session_account_changed",
+    "browser_session_expired", "token_refresh_failed", "claude_keychain_access_lost",
+}
+
+#: Providers whose row action only asks for a refresh: the app cannot run a
+#: CLI login or grant consent from the panel, so the instruction goes in the
+#: status sentence and the button says Retry.
+_REFRESH_ONLY = {"factory", "kilo", "kimi", "kiro"}
+#: The sign-in command each refresh-only CLI provider names.
+_CLI_SIGN_IN = {"kiro": "kiro-cli login", "kilo": "kilo auth login", "kimi": "kimi login"}
+
+
+def status_sentence(reason: str | None, label: str) -> str:
+    """The plain sentence for a reason code; never the code itself."""
+    template = _CAUSES.get(reason or "")
+    return template.format(label=label) if template else ATTENTION
+
+
+def _refresh_only_fix(provider_id: str, state: str, reason: str | None, label: str) -> tuple[str | None, str | None]:
+    """(status sentence, honest action) for a refresh-only provider's row."""
+    if state in {"disabled", "unsupported"} or reason in {"usage_consent_required", "disabled"}:
+        return None, None
+    command = _CLI_SIGN_IN.get(provider_id)
+    if command and (state == "needs_sign_in" or reason in _NEEDS_PERSON_REASONS):
+        extra = " or add a Kilo API key in Settings › Providers" if provider_id == "kilo" else ""
+        return f"Run {command} in Terminal{extra}, then Retry.", "Retry"
+    return None, "Retry"
 
 
 def availability_document(snapshot, *, now: float, installed: bool | None, hidden: bool = False) -> dict:
@@ -47,8 +141,17 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
                       action=f"Open {label} to refresh" if app_backed else snapshot.action_label,
                       action_kind="open_app" if app_backed else None)
     elif state not in {"ready", "disabled", "unsupported"} and reason != "usage_not_turned_on":
-        fields.update(availability="failing",
-                      status_text=_CAUSES.get(reason, (reason or state).replace("_", " ").capitalize()))
+        person = state in _NEEDS_PERSON_STATES or reason in _NEEDS_PERSON_REASONS
+        fields.update(availability="available" if person else "failing",
+                      status_text=status_sentence(reason or state, label))
     elif state == "ready" and any(lane.reset_at is not None and lane.reset_at <= now for lane in snapshot.lanes):
         fields.update(status_text="Quota window reset since the last reading", action="Retry")
+    if snapshot.provider_id in _REFRESH_ONLY and snapshot.action_label not in {None, "Retry", "Retry later"} \
+            and fields["action_kind"] is None:
+        instruction, action = _refresh_only_fix(snapshot.provider_id, state, reason, label)
+        if instruction:
+            fields["status_text"] = instruction
+        elif state == "unsupported" and reason:
+            fields["status_text"] = status_sentence(reason, label)
+        fields["action"] = action
     return fields

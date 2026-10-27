@@ -913,7 +913,15 @@ Vocabulary:
 - `usage.providers[].availability` (additive, 2026-10-25) describes the
   installed source: `source_idle`, `failing`, `missing_recent`, `not_found`,
   `absent`, or `available`. An unknown inventory result never means absent.
-  `status_text` names the cause; `last_good_age_seconds`
+  `status_text` is a plain sentence that names the cause and, where there
+  is one, the fix; it is never the reason code (an unknown code reads
+  "Usage source needs attention."). A reading that needs a person rather
+  than a repair (`needs_consent`, `needs_sign_in`, or a sign-in or consent
+  reason on a stale reading) stays `available`, so it is drawn neutral with
+  its own fix, not as a failure with Retry (2026-10-27). Factory, Kilo, Kimi
+  and Kiro rows only refresh when clicked, so their `action` is `Retry` or
+  absent, and a CLI sign-in names its command in `status_text` ("Run
+  kiro-cli login in Terminal, then Retry."). `last_good_age_seconds`
   is null when there has been no reading. `panel_visible: false` suppresses
   a never-used, absent provider or a row the person explicitly hid. Settings
   still lists it. A removed provider keeps its stale reading for seven days,

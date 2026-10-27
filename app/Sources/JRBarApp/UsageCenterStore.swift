@@ -1363,11 +1363,10 @@ final class UsageCenterStore {
         // who the account is.
         if provider.usageIsOff { return parts.joined(separator: " · ") }
         // A source that is not ready carries the daemon's fix-it hint
-        // ("Reconnect Claude · authentication required"); that says more
-        // than repeating the badge's word.
+        // ("Reconnect Claude"); that says more than repeating the badge's
+        // word. The reason code stays out: the status sentence says why.
         if let action = provider.action, !action.isEmpty {
             parts.append(action)
-            if let reason = provider.reason, !reason.isEmpty { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
             return parts.joined(separator: " · ")
         }
         // With no quota source there is no figure for "Official" to vouch
