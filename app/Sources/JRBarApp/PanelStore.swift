@@ -151,7 +151,7 @@ struct SessionRow: Identifiable, Equatable {
     /// not a finished one, why a stale row is still listed, and how long a
     /// live-but-quiet working row has been silent.
     func help(now: Date) -> String? {
-        var parts: [String] = []
+        var parts: [String] = [label, "Session: \(id)"]
         if isRemote {
             parts.append(remoteMachine.map { "Runs on \($0) — a remote session; answer it there" }
                          ?? "A remote session — answer it on the machine it runs on")

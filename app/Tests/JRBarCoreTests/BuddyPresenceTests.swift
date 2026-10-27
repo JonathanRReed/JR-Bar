@@ -87,7 +87,7 @@ struct BuddyPresenceTests {
             session("s-1", provider: "claude", label: "Claude 123e4567-e89b-12d3-a456-426614174000",
                     mode: "working", updatedAt: 1),
         ])
-        #expect(focus?.session == "123e4567")
+        #expect(focus?.session == "Session")
     }
 }
 

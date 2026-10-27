@@ -8,6 +8,16 @@ import Foundation
 public enum SessionLabel {
     static let uuidPattern = try! NSRegularExpression(pattern: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
     static let hexRunPattern = try! NSRegularExpression(pattern: "^[0-9a-fA-F]{16,}$")
+    static let sessionIDPattern = try! NSRegularExpression(pattern: "\\b(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{8,})\\b")
+
+    /// Old events and saved history can still carry generated id labels.
+    public static func humanTitle(_ text: String) -> String {
+        let range = NSRange(text.startIndex..., in: text)
+        return sessionIDPattern.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+            .replacingOccurrences(of: "()", with: "")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// A UUID, or a bare hex run of 16+ characters (a sub-agent id).
     public static func looksLikeUUID(_ text: String) -> Bool {
@@ -28,10 +38,8 @@ public enum SessionLabel {
         return result
     }
 
-    /// The display label: the daemon's label with a leading provider name
-    /// removed and UUIDs shortened; `short_id` when the label is missing or
-    /// is only an id; and the first eight characters of the id's last
-    /// segment when there is nothing else.
+    /// The shared title without a provider prefix or an opaque session id.
+    /// Ids belong in help and accessibility, never in a title fallback.
     public static func display(label: String?, shortId: String?, id: String, provider: String) -> String {
         let providerWords = Set([provider, providerName(provider)].map { $0.lowercased() }.filter { !$0.isEmpty })
         var text = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,13 +48,29 @@ public enum SessionLabel {
         if let first = words.first, providerWords.contains(first.lowercased()) {
             text = words.dropFirst().joined(separator: " ")
         }
-        if text.isEmpty || looksLikeUUID(text) || providerWords.contains(text.lowercased()) {
-            if let shortId, !shortId.isEmpty { return String(shortId.prefix(8)) }
-            if looksLikeUUID(text) { return String(text.prefix(8)) }
-            let tail = id.split(separator: ":").last.map(String.init) ?? id
-            return String(tail.prefix(8))
-        }
-        return shorteningUUIDs(text)
+        text = humanTitle(text)
+        if text.isEmpty || providerWords.contains(text.lowercased()) { return "Session" }
+        return text
+    }
+
+    /// Context comes only from the daemon's proven groups, as in the panel.
+    public static func contextual(_ session: CoreSession, sessions: [CoreSession], groups: [CoreAgentGroup]) -> String {
+        guard let group = groups.first(where: { $0.id == session.groupId && $0.members.contains(session.id) }),
+              group.rootWorkKey != session.id,
+              let head = sessions.first(where: { $0.id == group.rootWorkKey && $0.groupId == group.id }) else { return session.displayLabel }
+        let title = session.displayLabel
+        let fallback = "\(head.displayLabel) worker "
+        if title.hasPrefix(fallback), Int(title.dropFirst(fallback.count)) != nil { return title }
+        return "\(title) · under \(head.displayLabel)"
+    }
+
+    /// A notice uses the current session title, then its saved event title.
+    public static func eventTitle(_ event: CoreEvent, session: CoreSession?) -> String? {
+        if let session { return session.displayLabel }
+        guard let label = event.label, !label.isEmpty else { return nil }
+        let title = event.session == nil ? humanTitle(label)
+            : display(label: label, shortId: nil, id: event.session ?? "", provider: event.provider ?? "")
+        return title.isEmpty ? nil : title
     }
 
     /// `claude` → `Claude`, `opencode` → `OpenCode`, an unknown id capitalised.

@@ -254,9 +254,7 @@ public enum AlcoveEventPolicy {
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }
         let project = kind == .failed ? session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } : nil
-        let label = project ?? event.label.flatMap { $0.isEmpty ? nil : $0 }
-            ?? session?.displayLabel
-            ?? providerName
+        let label = project ?? SessionLabel.eventTitle(event, session: session) ?? providerName
 
         let title: String
         let subtitle: String

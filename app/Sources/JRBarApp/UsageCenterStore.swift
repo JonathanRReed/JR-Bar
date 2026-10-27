@@ -924,7 +924,28 @@ final class UsageCenterStore {
         gaps.values.contains("reading")
     }
 
-    func burners(for provider: CoreProviderUsage) -> [WindowBurner] { burners[provider.identity] ?? [] }
+    func burners(for provider: CoreProviderUsage) -> [WindowBurner] {
+        (burners[provider.identity] ?? []).map { burner in
+            var value = burner
+            if let session = core.allSessions.first(where: { $0.id == burner.id }) {
+                value.label = SessionLabel.contextual(session, sessions: core.allSessions, groups: core.state?.agentGroups ?? [])
+            }
+            return value
+        }
+    }
+
+    var burnerOpenNote: String?
+    @ObservationIgnored var openBurnerSession: (String) async -> String? = { await SessionOpener.open($0) }
+
+    @discardableResult
+    func openBurner(_ id: String) -> Task<Void, Never>? {
+        guard core.allSessions.contains(where: { $0.id == id && !$0.isRemote }) else { return nil }
+        burnerOpenNote = nil
+        return Task { [weak self] in
+            guard let self else { return }
+            self.burnerOpenNote = await self.openBurnerSession(id)
+        }
+    }
 
     /// Asks `session_usage` for the provider's local sessions with the
     /// headline window's start as `since`, at most every
@@ -957,7 +978,7 @@ final class UsageCenterStore {
                     return
                 }
                 self.burners[identity] = WindowBurner.rank(document.sessions.compactMap { id, usage in
-                    usage.tokensSince.map { (id: id, label: labels[id] ?? id, tokens: $0) }
+                    usage.tokensSince.flatMap { tokens in labels[id].map { (id: id, label: $0, tokens: tokens) } }
                 })
             } catch {
                 // The send's stamp stands, so the one-second clock does not

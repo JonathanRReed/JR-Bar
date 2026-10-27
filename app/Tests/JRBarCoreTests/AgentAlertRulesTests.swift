@@ -242,7 +242,7 @@ struct AgentAlertRulesTests {
         #expect(described.notification?.body == "Fixed the redirect.")
         let ended = AgentAlertRules.notifyWhenDone(.nothing, event: CoreEvent(id: "e", kind: "ended", session: "grok:1"),
                                                    state: Self.state)
-        #expect(ended.notification?.title == "grok run ended")
+        #expect(ended.notification?.title == "run ended")
         let existing = EventDelivery(notification: .init(identifier: "failed:x", title: "already", body: ""))
         #expect(AgentAlertRules.notifyWhenDone(existing, event: CoreEvent(id: "f", kind: "failed", session: "codex:2"),
                                                state: Self.state) == existing)

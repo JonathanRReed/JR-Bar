@@ -1251,7 +1251,7 @@ final class OverviewStore {
             parts.append(filter.preset.label)
         }
         if let parent = workerFilter {
-            let name = roster.first { $0.id == parent }.map { $0.session.label ?? $0.session.shortId ?? parent } ?? parent
+            let name = roster.first { $0.id == parent }.map { $0.session.displayLabel } ?? "Session"
             parts.append("workers of \(name)")
         }
         if let day = dayFilter {
@@ -1290,7 +1290,7 @@ final class OverviewStore {
 
     func prepareRunExport(_ entry: CoreRosterEntry, generatedAt: Date = Date()) {
         guard let markdown = runMarkdown(for: entry, generatedAt: generatedAt) else { return }
-        let base = (entry.session.label ?? entry.session.shortId ?? "session")
+        let base = entry.session.displayLabel
             .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
             .joined(separator: "-").lowercased()
         runExportPreview = ((base.isEmpty ? "session" : String(base.prefix(60))) + ".md", markdown)
@@ -1892,7 +1892,7 @@ extension CoreRosterEntry {
 
     // Table sort keys — each column's comparator maps to one stable value
     // so clicking a header re-orders the whole filtered set deterministically.
-    var labelSortKey: String { session.label ?? session.shortId ?? "" }
+    var labelSortKey: String { session.displayLabel }
     var projectSortKey: String { OverviewFilter.projectName(of: session.cwd) ?? "" }
     var stateSortKey: Int { sortRankKey }
     /// The model `session_usage` read from the run's transcript ("Opus

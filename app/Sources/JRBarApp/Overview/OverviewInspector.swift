@@ -193,7 +193,7 @@ struct OverviewSessionInspector: View {
                     }
                     .buttonStyle(.link)
                     .disabled(store.comparing)
-                    .help("Side by side with \(previous.session.label ?? previous.session.shortId ?? "the last finished run") in the same folder")
+                    .help("Side by side with \(previous.session.displayLabel) in the same folder")
                 }
                 actions
             }
@@ -208,10 +208,11 @@ struct OverviewSessionInspector: View {
         HStack(alignment: .top, spacing: 11) {
             ProviderTile(style: style, size: 32)
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.session.label ?? entry.session.shortId ?? "Session")
+                Text(entry.session.displayLabel)
                     .jrbarType(.title3).fontWeight(.semibold)
                     .lineLimit(2)
                     .textSelection(.enabled)
+                    .help("Session: \(entry.id)")
                 HStack(spacing: 6) {
                     OverviewStatePill(activity: activity, answered: answered)
                     Text(subtitle)

@@ -85,7 +85,7 @@ public enum AgentAlertRules {
         guard doneKinds.contains(event.kind), delivery.notification == nil else { return delivery }
         let session = event.session.flatMap { state?.session(withID: $0) }
         let name = provider(of: event, state: state).map(LightExplainer.providerName) ?? "An agent"
-        let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? name
+        let label = SessionLabel.eventTitle(event, session: session) ?? name
         let (title, body): (String, String) = switch event.kind {
         case "completed": (FinishBanner.title(label: label, duration: event.duration),
                            FinishBanner.summary(event.summary) ?? event.detail
@@ -143,7 +143,7 @@ public enum AgentAlertRules {
             if rule.completions == true, out.notification == nil, event.notify ?? true {
                 let session = event.session.flatMap { state?.session(withID: $0) }
                 let name = LightExplainer.providerName(provider)
-                let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? name
+                let label = SessionLabel.eventTitle(event, session: session) ?? name
                 out.notification = .init(identifier: "completed:\(event.session ?? event.id)",
                                          title: FinishBanner.title(label: label, duration: event.duration),
                                          body: FinishBanner.summary(event.summary) ?? event.detail

@@ -27,25 +27,23 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         return "\(base)|\(instance)"
     }
 
-    /// The label as the panel shows sessions (`SessionLabel`): the daemon's
-    /// "Claude 8870963f-850a-…" row reads "8870963f", never the provider
-    /// twice; with no label at all, the provider's name.
+    /// The shared session title, without an opaque id fallback.
     public var displayLabel: String {
         let providerID = provider ?? session?.split(separator: ":").first.map(String.init) ?? ""
+        let providerName = SessionLabel.providerName(providerID)
+        if session == nil && ((label ?? "").isEmpty || label?.caseInsensitiveCompare(providerName) == .orderedSame) {
+            return providerName
+        }
         let text = SessionLabel.display(label: label, shortId: nil, id: session ?? "", provider: providerID)
         if text.isEmpty { return SessionLabel.providerName(providerID) }
         return text
     }
 
-    /// The row's title. `displayLabel` falls back to eight characters of a
-    /// session id when the daemon sent no usable label; a daemon-projected
-    /// `detail` (the ask's summary, the sweep's "Swept 14 documents", a
-    /// threshold's "90 %") is more readable than a hash, so it wins when the
-    /// label was absent or itself a bare UUID.
+    /// A recorded task detail wins when the session had no human title.
     public var displayTitle: String {
         let label = (self.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if (label.isEmpty || SessionLabel.looksLikeUUID(label)), let detail, !detail.isEmpty {
-            return detail
+            return SessionLabel.humanTitle(detail)
         }
         return displayLabel
     }
