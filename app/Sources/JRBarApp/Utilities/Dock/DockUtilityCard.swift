@@ -237,6 +237,7 @@ struct DockUtilityControls: View {
                 }
                 .buttonStyle(.plain)
                 .help("Dismiss")
+                .accessibilityLabel("Dismiss")
             }
             .padding(.bottom, SettingsMetrics.xs)
         }

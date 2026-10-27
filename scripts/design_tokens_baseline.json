@@ -9,7 +9,6 @@
     "radius: cornerRadius: 5": 3
   },
   "app/Sources/JRBarApp/ControlCenterView.swift": {
-    "animation: duration: 0.01": 1,
     "animation: duration: 0.12": 2,
     "animation: duration: 0.15": 3,
     "animation: duration: 0.2": 3,

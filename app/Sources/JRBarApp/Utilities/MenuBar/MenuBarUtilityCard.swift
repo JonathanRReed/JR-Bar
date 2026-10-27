@@ -435,9 +435,11 @@ struct MenuBarUtilityControls: View {
                     Button { utility.nudgeFitEdge(by: -4) } label: { Image(systemName: "minus") }
                         .controlSize(.small)
                         .help("Four points left")
+                        .accessibilityLabel("Move divider left")
                     Button { utility.nudgeFitEdge(by: 4) } label: { Image(systemName: "plus") }
                         .controlSize(.small)
                         .help("Four points right")
+                        .accessibilityLabel("Move divider right")
                     Button("Reset") { utility.resetFitEdge() }
                         .controlSize(.small)
                         .disabled(!utility.hider.fitEdgeLearned)
@@ -487,6 +489,7 @@ struct MenuBarUtilityControls: View {
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                         .help("Forget this desk")
+                        .accessibilityLabel("Forget this desk")
                     }
                 } label: {
                     SettingLabel(title: other.name)
@@ -787,6 +790,7 @@ private struct MenuBarWhileRulesControls: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .accessibilityLabel("Remove rule")
             }
         }
         let holding = utility.holdingStateRules
@@ -1067,6 +1071,7 @@ private struct MenuBarAutomationControls: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .accessibilityLabel("Remove rule")
             }
         }
 

@@ -725,6 +725,7 @@ struct PaletteEditor: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Add a colour")
+                .accessibilityLabel("Add a colour")
             }
             if !colors.isEmpty {
                 Button {
@@ -735,6 +736,7 @@ struct PaletteEditor: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
                 .help("Clear the palette")
+                .accessibilityLabel("Clear the palette")
             }
         }
     }
@@ -938,7 +940,7 @@ struct EffectLiveOutput: View {
     var body: some View {
         if let lights, !lights.surfaces.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text(connected ? "Current output" : "Last output · disconnected")
+                Text(connected ? "Current output" : "Last output · \(MonitorWords.label.lowercased())")
                     .jrbarType(.caption).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                 ForEach(lights.surfaces.keys.sorted(), id: \.self) { name in
@@ -1090,6 +1092,7 @@ struct AssignmentRow: View {
     let remove: () -> Void
     let select: () -> Void
     @ViewState private var hovering = false
+    @FocusState private var keyboardFocused: Bool
 
     /// A `none` record is an explicit suppress: the scope is hidden, not
     /// "assigned to an effect called none".
@@ -1125,6 +1128,17 @@ struct AssignmentRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { if effect != nil && !suppressed { select() } }
+        .focusable(effect != nil && !suppressed)
+        .focused($keyboardFocused)
+        .onKeyPress(.space) {
+            guard keyboardFocused, effect != nil, !suppressed else { return .ignored }
+            select(); return .handled
+        }
+        .onKeyPress(.return) {
+            guard keyboardFocused, effect != nil, !suppressed else { return .ignored }
+            select(); return .handled
+        }
+        .accessibilityAction { if effect != nil && !suppressed { select() } }
         .onHover { hovering = $0 }
         .padding(.vertical, 1)
         .contextMenu {
