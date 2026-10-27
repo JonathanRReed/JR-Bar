@@ -6,7 +6,6 @@ import errno
 import importlib.util
 import socket
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,10 +23,9 @@ def mock_module():
 
 
 @pytest.fixture()
-def socket_path():
+def socket_path(short_tmp_path):
     # Darwin limits Unix socket paths to 104 bytes.
-    with tempfile.TemporaryDirectory(prefix="jrbar-mock-safety-") as directory:
-        yield Path(directory) / "mock.sock"
+    return short_tmp_path / "mock.sock"
 
 
 @pytest.mark.parametrize("kind", ("file", "directory", "symlink", "broken-symlink"))

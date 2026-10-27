@@ -16,7 +16,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -371,8 +370,8 @@ def test_the_protocol_doc_names_every_open_command_in_its_privilege_section() ->
 
 
 @pytest.fixture
-def sock_dir():
-    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+def sock_dir(short_tmp_path):
+    path = short_tmp_path
     try:
         yield path
     finally:

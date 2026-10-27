@@ -7,9 +7,11 @@ settings, state, provider configuration, LaunchAgent domain, or mounted LEDs.
 
 from __future__ import annotations
 
+import atexit
 import functools
 import ipaddress
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,7 +28,23 @@ if _ROOT not in sys.path:
 
 # Module-level on purpose: fixtures run after test modules are imported, which
 # is too late for modules that cache HOME/XDG-derived defaults.
-_TEST_SANDBOX = Path(tempfile.mkdtemp(prefix="jrbar-pytest-"))
+_parent_temp = os.environ.get("_JRBAR_PYTEST_PARENT_TMP")
+# Keep the controller short even when macOS supplies a long TMPDIR. Workers
+# stay inside that controller's owned directory, including if one crashes.
+_sandbox_parent = (
+    _parent_temp
+    if _parent_temp == tempfile.gettempdir() and _parent_temp is not None
+    and len(os.fsencode(_parent_temp)) <= 30
+    else "/tmp"
+)
+_SANDBOX_OWNER = tempfile.TemporaryDirectory(prefix="jrbar-pytest-", dir=_sandbox_parent)
+_TEST_SANDBOX = Path(_SANDBOX_OWNER.name)
+_TEST_TEMP = _TEST_SANDBOX / "tmp"
+_TEST_TEMP.mkdir(mode=0o700)
+os.environ["TMPDIR"] = str(_TEST_TEMP)
+os.environ["_JRBAR_PYTEST_PARENT_TMP"] = str(_TEST_TEMP)
+tempfile.tempdir = str(_TEST_TEMP)
+_TEMP_BEFORE = set(_TEST_TEMP.iterdir())
 _TEST_HOME = _TEST_SANDBOX / "home"
 _TEST_CONFIG = _TEST_SANDBOX / "config"
 _TEST_STATE = _TEST_SANDBOX / "state"
@@ -69,6 +87,119 @@ except Exception:
     pass
 
 _LIVE_VOLUME_ROOT = Path("/Volumes")
+_WORKER_TEMP_LEAKS: list[str] = []
+_WORKER_SANDBOXES: set[Path] = set()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    # Keep pytest's own paths short too. Xdist supplies each worker's base;
+    # explicit --basetemp paths still belong to the caller.
+    if config.option.basetemp is None:
+        config.option.basetemp = str(_TEST_SANDBOX / "p")
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    output = getattr(node, "workeroutput", {})
+    _WORKER_TEMP_LEAKS.extend(
+        f"{node.gateway.id}/{name}" for name in output.get("jrbar_temp_leaks", ())
+    )
+    sandbox = output.get("jrbar_test_sandbox")
+    if sandbox is not None and Path(sandbox).parent == _TEST_TEMP:
+        _WORKER_SANDBOXES.add(Path(sandbox))
+
+
+def _remove_temp_directories(directories):
+    for directory in directories:
+        if directory.is_symlink():
+            directory.unlink()
+        elif directory.exists():
+            shutil.rmtree(directory)
+
+
+def _cleanup_test_environment():
+    _stop_test_history_builders()
+    _SANDBOX_OWNER.cleanup()
+
+
+atexit.register(_cleanup_test_environment)
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    _stop_test_history_builders()
+    yield
+    # A worker can write HOME/XDG data during unconfigure, after announcing
+    # workerfinished. Xdist has now stopped it, so close its owned scope here.
+    _remove_temp_directories(_WORKER_SANDBOXES)
+    # Pytest has now applied its retention policy. Only inspect this run's
+    # private TMPDIR, never entries belonging to another process.
+    leaked = sorted(_WORKER_TEMP_LEAKS) + sorted(
+        path.name for path in set(_TEST_TEMP.iterdir()) - _TEMP_BEFORE
+        if path.name.startswith(("jrbar", "TemporaryDirectory."))
+    )
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("-", f"temporary entries left by this run: {len(leaked)}")
+        reporter.write_line(f"temporary sandbox: {_TEST_SANDBOX}")
+        for name in leaked:
+            reporter.write_line(name)
+    if leaked:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    if hasattr(session.config, "workeroutput"):
+        session.config.workeroutput["jrbar_temp_leaks"] = leaked
+        session.config.workeroutput["jrbar_test_sandbox"] = str(_TEST_SANDBOX)
+        # Xdist sends workerfinished after this inner wrapper returns. Its
+        # controller must see a cleaned sandbox, before worker unconfigure.
+        _SANDBOX_OWNER.cleanup()
+
+
+def pytest_unconfigure(config):
+    _cleanup_test_environment()
+
+
+def _stop_test_history_builders():
+    # A builder can recreate its database after the directory was removed.
+    module = sys.modules.get("jrbar.token_history_index")
+    if module is not None:
+        disable_history = module.set_enabled
+        disable_history(False)
+        # Runtime callbacks can outlive the last test. They cannot reopen a
+        # history builder after this process has started removing its files.
+        module.set_enabled = lambda enabled: disable_history(False) if not enabled else None
+
+
+@pytest.fixture(autouse=True)
+def close_test_history_indexes(tmp_path):
+    """Stop builders even when a test replaces and discards the shared registry."""
+    from jrbar.token_history_index import TokenHistoryIndex
+
+    indexes = []
+    original_init = TokenHistoryIndex.__init__
+
+    def tracked_init(index, *args, **kwargs):
+        original_init(index, *args, **kwargs)
+        if index.background_build:
+            indexes.append(index)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(TokenHistoryIndex, "__init__", tracked_init)
+        try:
+            yield
+        finally:
+            for index in indexes:
+                index.close()
+
+
+@pytest.fixture
+def short_tmp_path(tmp_path_factory):
+    """A fixture-owned path short enough for macOS's 104-byte Unix sockets."""
+    root = _TEST_SANDBOX / "s"
+    root.mkdir(exist_ok=True)
+    path = root / tmp_path_factory.mktemp("socket").name
+    path.mkdir()
+    return path
 
 # Every guard below patches through its own `pytest.MonkeyPatch`, never the
 # test's shared `monkeypatch` fixture. A merged test that calls

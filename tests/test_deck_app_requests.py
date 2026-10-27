@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import shutil
 import socket
-import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -90,10 +89,6 @@ def test_a_callback_may_name_its_own_receipt() -> None:
     )
 
 
-def _sock_dir():
-    """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
-    return Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
-
 
 def _real_server(sock_dir: Path) -> CoreServer:
     return CoreServer(
@@ -156,12 +151,12 @@ class _Frames:
         return None
 
 
-def test_the_daemon_publishes_a_request_only_to_a_connected_app() -> None:
+def test_the_daemon_publishes_a_request_only_to_a_connected_app(short_tmp_path) -> None:
     # The real CoreServer, never started: client_count is a property there,
     # and a stub with a callable one once hid a request that never went out.
     request = _request_app()
     published: list[tuple[str, dict]] = []
-    sock_dir = _sock_dir()
+    sock_dir = short_tmp_path
     try:
         server = _real_server(sock_dir)
         assert isinstance(type(server).client_count, property)
@@ -197,9 +192,9 @@ def test_a_probe_that_raises_answers_not_connected_and_names_itself_in_the_log(m
     assert "synthetic probe failure" in lines[0]
 
 
-def test_a_connected_app_receives_the_window_and_ask_events() -> None:
+def test_a_connected_app_receives_the_window_and_ask_events(short_tmp_path) -> None:
     request = _request_app()
-    sock_dir = _sock_dir()
+    sock_dir = short_tmp_path
     server = _real_server(sock_dir)
     client: socket.socket | None = None
     try:

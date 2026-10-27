@@ -240,4 +240,7 @@ def test_failed_readiness_runs_cleanup_without_starting_app(fake_dev_script, tmp
     commands = calls.read_text().splitlines()
     assert sum("dev-processes.py stop " in command for command in commands) == 2
     assert any("dev-processes.py wait " in command for command in commands)
-    assert len(commands) == 5
+    # The background mock may not log before the readiness failure returns.
+    process_commands = [command for command in commands if "dev-processes.py " in command]
+    assert len(process_commands) == 4
+    assert sum("dev-processes.py add " in command for command in process_commands) == 1

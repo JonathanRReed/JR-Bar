@@ -13,7 +13,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -32,9 +31,9 @@ TRANSCRIPT = "/Users/me/.claude/projects/demo/session-1.jsonl"
 
 
 @pytest.fixture
-def sock_dir():
+def sock_dir(short_tmp_path):
     """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
-    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    path = short_tmp_path
     try:
         yield path
     finally:

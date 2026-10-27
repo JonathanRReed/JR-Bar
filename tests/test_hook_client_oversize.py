@@ -14,7 +14,6 @@ import io
 import json
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -36,9 +35,9 @@ LOG = Path("/tmp/jrbar-test/claude.jsonl")
 
 
 @pytest.fixture
-def state_dir():
+def state_dir(short_tmp_path):
     """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
-    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    path = short_tmp_path
     try:
         yield path
     finally:
