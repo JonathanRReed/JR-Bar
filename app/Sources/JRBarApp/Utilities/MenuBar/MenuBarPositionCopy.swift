@@ -48,7 +48,9 @@ enum MenuBarPositionCopy {
     static func suggestionLine(name: String, state: MenuBarSuggestionsContent.State) -> String {
         switch state {
         case .shown: return "\(name) is shown. Hold ⌘ and drag it left of the icon to hide it."
-        case .absent: return "macOS hasn't reported \(name)'s item. Its visibility is unverified."
+        case .absent:
+            if name.hasSuffix(" (not installed)") { return name }
+            return "macOS hasn't reported \(name)'s item. Its visibility is unverified."
         }
     }
 

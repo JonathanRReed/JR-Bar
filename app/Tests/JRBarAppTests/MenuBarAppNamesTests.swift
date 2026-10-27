@@ -37,6 +37,8 @@ struct MenuBarAppNamesTests {
             #expect(!item.displayName.contains("test.") && !item.displayName.contains("sample-writer"))
         }
         #expect(MenuBarAppNames.lookupName("/synthetic/Missing Writer.app") == "Missing Writer (not installed)")
+        #expect(MenuBarPositionCopy.suggestionLine(name: "Sample Flow (not installed)", state: .absent)
+                == "Sample Flow (not installed)")
         for name in ["iStat Menus", "zoom.us", "1Password", "SampleWriter"] {
             #expect(MenuBarAppNames.displayName(name) == name)
         }
