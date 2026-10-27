@@ -25,6 +25,48 @@ class PerformanceBudget:
 _REQUIRED_FIELDS = tuple(PerformanceBudget.__dataclass_fields__)
 
 
+def validate_daemon_probe(document: Mapping[str, object]) -> tuple[str, ...]:
+    """Catch large synthetic-workload regressions, separate from release proof."""
+    failures = []
+    if document.get("workload_valid") is not True:
+        failures.append("the synthetic workload was not accepted")
+    if document.get("tracing") or document.get("profiling"):
+        failures.append("traced or profiled runs are not budget evidence")
+    if _number(document, "duration_seconds") < 60:
+        failures.append("measure for at least 60 seconds")
+    for key, limit in (("cpu_percent", 5.0), ("rss_max_mb", 200.0), ("loop_over_250ms", 0)):
+        measured = _number(document, key)
+        if measured > limit:
+            failures.append(f"{key}: measured {measured:g}, probe limit {limit:g}")
+    wakeups = document.get("wakeups_per_minute")
+    if not isinstance(wakeups, Mapping):
+        raise ValueError("missing wakeups_per_minute")
+    if _number(wakeups, "interrupt_wakeups") > 10_000:
+        failures.append("interrupt wakeups exceed 10000 per minute")
+    if document.get("workload") == "idle":
+        messages = document.get("messages_per_minute")
+        if not isinstance(messages, Mapping):
+            raise ValueError("missing messages_per_minute")
+        state_rate = sum(_number(messages, key) for key in ("state", "state_delta") if key in messages)
+        if state_rate > 8:
+            failures.append("idle state publishes exceed 8 per minute")
+    return tuple(failures)
+
+
+def validate_app_feed(document: Mapping[str, object]) -> tuple[str, ...]:
+    """A CPU/allocation guard for 10000 offscreen state messages."""
+    failures = []
+    if _number(document, "messages") != 10_000:
+        failures.append("the app feed must apply 10000 messages")
+    for key, limit in (("cpu_seconds", 30.0), ("blocks_delta", 1000), ("bytes_delta", 2_000_000)):
+        value = document.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"invalid app feed field: {key}")
+        if value > limit:
+            failures.append(f"{key}: measured {value:g}, probe limit {limit:g}")
+    return tuple(failures)
+
+
 def _number(document: Mapping[str, object], key: str) -> float:
     value = document.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):

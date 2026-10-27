@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import cProfile
 import ctypes
 import hashlib
 import importlib
@@ -25,10 +26,42 @@ import sys
 import threading
 import time
 import tracemalloc
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool = False, census: bool = False) -> None:
+def session_identity(index: int) -> str:
+    return f"00000000-0000-4000-8000-{index + 1:012d}"
+
+
+def transcript_row(index: int, turn: int, stamp: datetime, project: Path) -> dict:
+    return {"type": "assistant", "timestamp": stamp.isoformat(),
+            "sessionId": session_identity(index), "cwd": str(project),
+            "message": {"id": f"synthetic-{index}-{turn}", "role": "assistant",
+                        "stop_reason": "end_turn",
+                        "model": "claude-sonnet-4-5", "content": [{"type": "text", "text": "Synthetic work"}],
+                        "usage": {"input_tokens": 100, "output_tokens": 20}}}
+
+
+def process_resources() -> dict[str, int]:
+    """Darwin's process counters, including all threads, without sudo."""
+    class Usage(ctypes.Structure):
+        _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [
+            (name, ctypes.c_uint64) for name in (
+                "user_ns", "system_ns", "idle_wakeups", "interrupt_wakeups", "pageins",
+                "wired_bytes", "rss_bytes", "footprint_bytes", "start", "exit",
+            )
+        ]
+
+    usage = Usage()
+    library = ctypes.CDLL("/usr/lib/libproc.dylib")
+    if library.proc_pid_rusage(os.getpid(), 0, ctypes.byref(usage)) != 0:
+        raise OSError("proc_pid_rusage failed")
+    return {name: int(getattr(usage, name)) for name, _ in Usage._fields_[1:]}
+
+
+def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool = False,
+          census: bool = False, mixed: bool = False, idle: bool = False, profile_main: bool = False) -> None:
     sys.path.insert(0, str(root / "src"))
     if trace:
         tracemalloc.start(1)
@@ -64,6 +97,13 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
     controller_name = "daemon_controller" if (root / "src/jrbar/daemon_controller.py").exists() else "status_bar_legacy"
     controller_module = importlib.import_module("jrbar." + controller_name)
     from jrbar.device_writer import discover_devices
+
+    if mixed:
+        from jrbar.settings import default_settings_path
+
+        settings_path = default_settings_path()
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"transcript_monitoring": {"claude": True}}))
 
     volumes = root / "Volumes"
     for name, count in (("SidePulsePro", 8), ("SidePulseDot", 2)):
@@ -118,16 +158,21 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
     if census:
         for name, label in (("refresh_", "refresh"), ("_execute_hardware_write_command", "hardware"),
                 ("_core_build_state", "state_projection"), ("_core_build_lights", "lights_projection"),
-                ("coreHousekeepingTick_", "housekeeping")):
+                ("coreHousekeepingTick_", "housekeeping"), ("_observe_refresh_state", "admission"),
+                ("ingest_transcript_fallback", "transcript_request")):
             measure(cls, name, label)
         from jrbar import process_registry
+        from jrbar.collector import AgentMonitor
         from jrbar.core_server import CoreServer
         from jrbar.hook_ingress import AppOwnedHookIngressProcessor
+        from jrbar.transcript_runtime import TranscriptFallbackService
 
         measure(process_registry, "_list_processes_uncached", "process_table")
         measure(CoreServer, "_encode", "server_encoding")
         measure(CoreServer, "_fan_out", "server_delivery")
         measure(AppOwnedHookIngressProcessor, "__call__", "hook_processing")
+        measure(AgentMonitor, "_cached_transcript_records", "transcript_cache")
+        measure(TranscriptFallbackService, "_scan", "transcript_scan")
     holder = []
     agents = []
 
@@ -165,9 +210,16 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
             agent = subprocess.Popen([sys.executable, "-c", "import threading; threading.Event().wait(3600)"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             agents.append(agent)
-            record_agent_process("claude", f"probe-session-{index}",
+            record_agent_process("claude", session_identity(index),
                 ProcessEntry(agent.pid, os.getpid(), process_start_epoch(agent.pid), sys.executable),
                 cwd=str(root / "project"))
+            if mixed:
+                transcript = root / "home/.claude/projects/probe" / f"{session_identity(index)}.jsonl"
+                transcript.parent.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now(timezone.utc) - timedelta(hours=1)
+                with transcript.open("w") as stream:
+                    for turn in range(500):
+                        stream.write(json.dumps(transcript_row(index, -turn - 1, stamp, root / "project")) + "\n")
         messages = collections.Counter()
         sizes = collections.Counter()
         pending = b""
@@ -189,6 +241,10 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
         admissions = collections.Counter()
         session_counts = []
         errors = []
+        resource_start = process_resources()
+        resource_samples = []
+        transcript_rows = sessions * 500 if mixed else 0
+        worker_hooks = 0
         warmup = 30
         end = start + warmup + seconds
         while time.monotonic() < end:
@@ -203,16 +259,33 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                 census_started = True
                 census_thread_start = thread_cpu()
             if now >= next_hook:
-                for index in range(sessions):
+                for index in range(0 if idle else sessions):
                     event = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")[round_number % 4]
-                    payload = json.dumps({"hook_event_name": event, "session_id": f"probe-session-{index}",
-                                          "cwd": str(root / "project"), "tool_name": "Read"})
+                    session_id = session_identity(index)
+                    transcript = root / "home/.claude/projects/probe" / f"{session_id}.jsonl"
+                    if mixed:
+                        transcript.parent.mkdir(parents=True, exist_ok=True)
+                        row = transcript_row(index, round_number, datetime.now(timezone.utc), root / "project")
+                        with transcript.open("a") as stream:
+                            stream.write(json.dumps(row) + "\n")
+                        transcript_rows += 1
+                    payload = json.dumps({"hook_event_name": event, "session_id": session_id,
+                                          "cwd": str(root / "project"), "tool_name": "Read",
+                                          **({"transcript_path": str(transcript)} if mixed else {})})
                     disposition = submit_hook_ingress(HookIngressRequest("claude", str(default_state_dir() / "claude.jsonl"), payload))
                     admissions[str(disposition)] += 1
+                    if mixed:
+                        payload = json.dumps({"hook_event_name": "SubagentStop" if round_number % 4 == 3 else "SubagentStart",
+                                              "session_id": session_id, "agent_id": f"worker-{index}",
+                                              "cwd": str(root / "project"), "agent_type": "Explore"})
+                        disposition = submit_hook_ingress(HookIngressRequest("claude", str(default_state_dir() / "claude.jsonl"), payload))
+                        admissions[str(disposition)] += 1
+                        worker_hooks += 1
                 round_number += 1
                 next_hook = now + 5
             if now >= next_probe:
                 if measured:
+                    resource_samples.append(process_resources())
                     reading = resident_bytes()
                     rss.append(reading)
                     if trace:
@@ -244,6 +317,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                 holder[0].performSelectorOnMainThread_withObject_waitUntilDone_("runCoreCallable:", box, False)
                 next_probe = now + 1
             if not measured:
+                resource_start = process_resources()
                 cpu_start = resource.getrusage(resource.RUSAGE_SELF)
                 spawn_start = spawns.copy()
                 blocked_start = blocked_spawns.copy()
@@ -270,6 +344,10 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
             except TimeoutError:
                 pass
         cpu_end = resource.getrusage(resource.RUSAGE_SELF)
+        resource_end = process_resources()
+        transcript_monitor = getattr(holder[0], "transcript_monitor", None)
+        transcript_records = sum(len(entry.records) for entry in
+            getattr(transcript_monitor, "_transcript_records_cache", {}).values())
         cpu_seconds = cpu_end.ru_utime + cpu_end.ru_stime - cpu_start.ru_utime - cpu_start.ru_stime
         loaded = sorted(name for name in sys.modules if name.split(".")[0] in {"AppKit", "Foundation", "WebKit", "Quartz", "objc"})
         dyld = ctypes.CDLL(None)
@@ -279,7 +357,15 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
         framework_images = [dyld._dyld_get_image_name(index).decode() for index in range(dyld._dyld_image_count())
             if any(name in (dyld._dyld_get_image_name(index) or b"") for name in (b"/AppKit.framework/", b"/WebKit.framework/"))]
         report = {"duration_seconds": seconds, "sessions": sessions, "tracing": trace,
+                  "profiling": profile or profile_main,
                   "cpu_percent": 100 * cpu_seconds / seconds, "cpu_seconds": cpu_seconds,
+                  "cpu_seconds_per_minute": cpu_seconds * 60 / seconds,
+                  "wakeups_per_minute": {key: (resource_end[key] - resource_start[key]) * 60 / seconds
+                      for key in ("idle_wakeups", "interrupt_wakeups")},
+                  "footprint_max_mb": max((row["footprint_bytes"] for row in resource_samples), default=0) / 1048576,
+                  "workload": "idle" if idle else ("transcripts-and-workers" if mixed else "hooks"),
+                  "transcript_rows_written": transcript_rows, "worker_hooks": worker_hooks,
+                  "transcript_records_cached": transcript_records,
                   "rss_mean_mb": sum(x for x in rss if x) / len(rss) / 1048576,
                   "rss_max_mb": max(x for x in rss if x) / 1048576,
                   "heap_max_mb": max(heap) / 1048576 if heap else None,
@@ -299,8 +385,10 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                   "cpu_threads": [{"name": value["name"], "seconds": value["seconds"] - census_thread_start.get(key, {}).get("seconds", 0)}
                     for key, value in thread_cpu().items()] if census else None,
                   "source_commit": (root / "revision.txt").read_text().strip(),
-                  "workload_valid": (max(session_counts, default=0) == sessions and bool(admissions)
-                                     and set(admissions) == {"HookIngressDisposition.ACCEPTED"} and not errors)}
+                  "workload_valid": (not errors and (not admissions if idle else
+                      max(session_counts, default=0) >= sessions * (2 if mixed else 1) and bool(admissions)
+                      and set(admissions) == {"HookIngressDisposition.ACCEPTED"}
+                      and (not mixed or transcript_records > 0)))}
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         client.close()
         os.kill(os.getpid(), signal.SIGTERM)
@@ -314,9 +402,15 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
             os.kill(os.getpid(), signal.SIGTERM)
 
     threading.Thread(target=sampling_thread, name="synthetic-workload", daemon=True).start()
+    main_profiler = cProfile.Profile() if profile_main else None
+    if main_profiler is not None:
+        main_profiler.enable()
     try:
         raise SystemExit(jrbar_main(["core", "--socket", str(root / "core.sock")]))
     finally:
+        if main_profiler is not None:
+            main_profiler.disable()
+            main_profiler.dump_stats(str(root / "main-profile.pstats"))
         for agent in agents:
             agent.terminate()
         for agent in agents:
@@ -338,12 +432,17 @@ def main():
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--profile", action="store_true", help="separate CPU profile run; not a timing receipt")
     parser.add_argument("--census", action="store_true", help="record thread CPU per controller job")
+    parser.add_argument("--profile-main", action="store_true", help="separate main-thread cProfile run")
+    parser.add_argument("--mixed", action="store_true", help="append transcripts and run one worker per session")
+    parser.add_argument("--idle", action="store_true", help="leave the daemon idle after startup")
+    parser.add_argument("--check-budget", action="store_true", help="check the synthetic CPU, memory, wakeup and stall limits")
     parser.add_argument("--source", type=Path, help="replay a frozen src directory from an earlier run")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.output.resolve()
     if args.child:
-        child(root, args.seconds, args.sessions, args.trace, args.profile, args.census)
+        child(root, args.seconds, args.sessions, args.trace, args.profile, args.census,
+              args.mixed, args.idle, args.profile_main)
         return
     ingress = root / "state/jrbar/hook-ingress.sock"
     if len(os.fsencode(ingress)) >= 104:
@@ -375,6 +474,9 @@ def main():
         command.append("--profile")
     if args.census:
         command.append("--census")
+    for enabled, flag in ((args.mixed, "--mixed"), (args.idle, "--idle"), (args.profile_main, "--profile-main")):
+        if enabled:
+            command.append(flag)
     with (root / "stdout.log").open("w") as out, (root / "importtime.log").open("w") as err:
         result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=args.seconds + 180, check=False)
     if result.returncode != 0 or not (root / "report.json").exists():
@@ -383,6 +485,13 @@ def main():
     if not json.loads(report)["workload_valid"]:
         raise SystemExit(f"probe workload failed; inspect {root / 'report.json'}")
     print(report)
+    if args.check_budget:
+        from verify_performance_budget import validate_daemon_probe
+
+        failures = validate_daemon_probe(json.loads(report))
+        if failures:
+            raise SystemExit("probe budget failed: " + "; ".join(failures))
+        print("Synthetic daemon probe budget passed")
 
 
 if __name__ == "__main__":

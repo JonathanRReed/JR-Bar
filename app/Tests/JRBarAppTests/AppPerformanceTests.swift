@@ -31,6 +31,17 @@ struct AppPerformanceTests {
         return stats
     }
 
+    private func resources() -> rusage_info_v0 {
+        var usage = rusage_info_v0()
+        let result = withUnsafeMutablePointer(to: &usage) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(getpid(), RUSAGE_INFO_V0, $0)
+            }
+        }
+        #expect(result == 0)
+        return usage
+    }
+
     private func checkpoint(_ label: String) throws {
         guard let root = ProcessInfo.processInfo.environment["JRBAR_PERF_CHECKPOINT_DIR"] else { return }
         let directory = URL(fileURLWithPath: root)
@@ -92,12 +103,14 @@ struct AppPerformanceTests {
         try await feed(1_000)
         try checkpoint("warm")
         let initial = allocation()
+        let initialResources = resources()
         let start = cpu()
         let builds = store.rowsComputations
         let arms = registrations
         try await feed(10_000)
         let elapsed = cpu() - start
         let final = allocation()
+        let finalResources = resources()
         #expect(Ticket.live == 1, "unchanged settings must not retain retired state observers")
         // Malloc totals belong to the process. Only compare them in the
         // isolated probe, never beside unrelated parallel test suites.
@@ -106,6 +119,11 @@ struct AppPerformanceTests {
             #expect(final.size_in_use < initial.size_in_use + 2_000_000)
         }
         print("PERF state mode=\(legacy ? "legacy" : "slices") rendered=\(rendered) messages=10000 cpu_seconds=\(elapsed) blocks_delta=\(Int(final.blocks_in_use) - Int(initial.blocks_in_use)) bytes_delta=\(Int(final.size_in_use) - Int(initial.size_in_use)) row_builds=\(store.rowsComputations - builds) registrations=\(registrations - arms) tickets=\(Ticket.live)")
+        let interrupts = finalResources.ri_interrupt_wkups - initialResources.ri_interrupt_wkups
+        let idleWakes = finalResources.ri_pkg_idle_wkups - initialResources.ri_pkg_idle_wkups
+        let rss = Double(finalResources.ri_resident_size) / 1_048_576
+        let footprint = Double(finalResources.ri_phys_footprint) / 1_048_576
+        print("PERF resources interrupt_wakeups=\(interrupts) idle_wakeups=\(idleWakes) rss_mb=\(rss) footprint_mb=\(footprint)")
         try checkpoint("fed")
         core.handle(.disconnected(reason: "fixture complete"))
         observer = nil
