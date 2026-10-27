@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import ApplicationServices
 import JRBarCore
@@ -2751,7 +2752,7 @@ struct DockKeyCap: View {
 
     var body: some View {
         Text(key)
-            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+            .jrbarType(.caption).fontWeight(.semibold).fontDesign(.rounded)
             .foregroundStyle(.primary)
             .padding(.horizontal, 5)
             .frame(minWidth: 19, minHeight: 19)

@@ -31,7 +31,7 @@ extension AquariumView {
                         hudChip {
                             HStack(spacing: 4) {
                                 Image(systemName: "flame.fill")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .jrbarType(.caption).fontWeight(.semibold)
                                     .foregroundStyle(Tone.neutral.color.gradient)
                                     .symbolEffect(.bounce, options: .nonRepeating, value: reduceMotion ? 0 : game.streakDays)
                                 Text("\(game.streakDays)d")
@@ -220,7 +220,7 @@ extension AquariumView {
                     .foregroundStyle(.white.opacity(0.96))
                 if let reward = n.reward {
                     Text(reward)
-                        .font(.system(size: 10, weight: .medium))
+                        .jrbarType(.caption).fontWeight(.medium)
                         .foregroundStyle(.white.opacity(0.65))
                 }
             }
@@ -263,7 +263,7 @@ extension AquariumView {
                 toy?.dismissAwayNotice()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .jrbarType(.caption).fontWeight(.bold)
                     .foregroundStyle(.white.opacity(0.7))
                     .frame(width: 16, height: 16)
                     .contentShape(Circle())
@@ -302,7 +302,7 @@ extension AquariumView {
             ForEach(ShopItem.Category.allCases, id: \.self) { category in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(category.displayName.uppercased())
-                        .font(.system(size: 10, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .tracking(0.6)
                         .foregroundStyle(.secondary)
                         .padding(.leading, 4)
@@ -388,14 +388,14 @@ extension AquariumView {
                     .font(.system(size: 12, weight: .medium))
                 if unlocked {
                     Text(item.detail)
-                        .font(.system(size: 10.5))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Label("Unlocks at tank level \(AquariumProgression.tierUnlockLevel(tier: item.tier))",
                           systemImage: "lock.fill")
-                        .font(.system(size: 10.5))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -595,7 +595,7 @@ extension AquariumView {
                 set: { toy?.setStored(item, !$0) }))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .font(.system(size: 10.5))
+                .jrbarType(.caption)
                 .fixedSize()
                 .accessibilityLabel("\(item.displayName) in tank")
                 .help(game.shows(item) ? "In the tank — switch off to put it away."
@@ -606,7 +606,7 @@ extension AquariumView {
     /// The quiet "in use" mark for the surface the tank is wearing.
     private var inUse: some View {
         Text("In use")
-            .font(.system(size: 10.5, weight: .medium))
+            .jrbarType(.caption).fontWeight(.medium)
             .foregroundStyle(Self.shopAccent)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -655,7 +655,7 @@ extension AquariumView {
                             Text(achievement.title)
                                 .font(.system(size: 11.5, weight: .medium))
                             Text(achievement.detail)
-                                .font(.system(size: 10.5))
+                                .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
@@ -663,7 +663,7 @@ extension AquariumView {
                         if let at {
                             Text(Date(timeIntervalSince1970: at),
                                  format: .dateTime.month(.abbreviated).day())
-                                .font(.system(size: 10))
+                                .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -674,12 +674,12 @@ extension AquariumView {
         } label: {
             HStack {
                 Text("ACHIEVEMENTS")
-                    .font(.system(size: 10, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .tracking(0.6)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text("\(earned) of \(AquariumAchievement.allCases.count)")
-                    .font(.system(size: 10.5))
+                    .jrbarType(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }

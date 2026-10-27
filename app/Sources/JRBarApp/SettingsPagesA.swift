@@ -288,7 +288,7 @@ struct AgentRow: View {
                     Text(style.name)
                     Circle().fill(statusColor).frame(width: 6, height: 6)
                     Text(statusWord)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -327,7 +327,7 @@ struct AgentRow: View {
         if let note = store.hookNotes[provider] {
             // The reply's own words, where the click happened.
             Text(note.text)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -336,19 +336,19 @@ struct AgentRow: View {
             // Something to fix, and the fix beside it.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(reason)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(Tone.neutral.color)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Repair") { store.installHooks(provider) }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .disabled(!canInstall)
                     .help("Reinstall \(style.name)'s hooks the way JR-Bar writes them today")
             }
         } else if let doctor, let line = HooksDoctor.line(doctor) {
             Text(line)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)

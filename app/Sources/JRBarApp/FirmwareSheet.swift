@@ -162,11 +162,11 @@ struct FirmwareSheetContent: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).fontWeight(.medium)
                 if let detail {
-                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                    Text(detail).jrbarType(.callout).foregroundStyle(.secondary)
                 }
                 if let figure {
                     Text(figure)
-                        .font(.title3.monospacedDigit())
+                        .jrbarType(.title3).monospacedDigit()
                         .padding(.top, 2)
                         .accessibilityLabel("Downloaded \(figure)")
                 }
@@ -188,7 +188,7 @@ struct FirmwareSheetContent: View {
                     Text(line).fixedSize(horizontal: false, vertical: true)
                 }
                 if let took = result.tookLine {
-                    Text(took).font(.subheadline).foregroundStyle(.secondary)
+                    Text(took).jrbarType(.callout).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -231,10 +231,10 @@ struct FirmwareSheetContent: View {
         HStack(alignment: .center, spacing: SettingsMetrics.m) {
             SettingsIconTile(symbol: symbol, tint: tint, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.title3.weight(.semibold))
+                Text(title).jrbarType(.title3).fontWeight(.semibold)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle {
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                    Text(subtitle).jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

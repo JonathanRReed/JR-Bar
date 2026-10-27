@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -66,7 +67,7 @@ struct UsageIntegrationSourcesView: View {
                 }
                 Text("Native provider history takes precedence. Source counts are shown separately and are not added again to the comparison.")
             }
-            .font(.system(size: 10)).foregroundStyle(.secondary)
+            .jrbarType(.caption).foregroundStyle(.secondary)
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
             .accessibilityElement(children: .combine)

@@ -224,14 +224,14 @@ struct ToyCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Text(toy.name)
-                                .font(.body.weight(.semibold))
+                                .jrbarType(.body).fontWeight(.semibold)
                                 .layoutPriority(1)
                             if status.showsChip {
                                 StatusBadge(status.text, tint: status.tint)
                             }
                         }
                         Text(toy.blurb)
-                            .font(.subheadline)
+                            .jrbarType(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -246,7 +246,7 @@ struct ToyCard: View {
             .accessibilityLabel("\(expanded ? "Hide" : "Show") \(toy.name) settings")
             if toy.switchLabel != toy.name {
                 Text(toy.switchLabel)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
             Toggle(toy.switchLabel, isOn: toggle)
@@ -291,7 +291,7 @@ private struct ToyCostLine: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             if let line = toy.cost(at: ToyMeter.uptime) {
                 Label(line, systemImage: "gauge.with.dots.needle.33percent")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
                     .lineLimit(2)

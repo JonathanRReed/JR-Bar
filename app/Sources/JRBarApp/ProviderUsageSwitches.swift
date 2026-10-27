@@ -196,11 +196,11 @@ struct ProviderUsageSwitchesGroup: View {
             if model.switchRows.isEmpty {
                 if !store.isLive {
                     Text("\(MonitorWords.sentence) Turn on the monitor to choose which providers show usage.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .jrbarType(.callout).foregroundStyle(.secondary)
                 } else if model.loading {
-                    Text("Reading providers…").font(.callout).foregroundStyle(.secondary)
+                    Text("Reading providers…").jrbarType(.callout).foregroundStyle(.secondary)
                 } else if model.loadFailure == nil {
-                    Text("No provider usage controls reported.").font(.callout).foregroundStyle(.secondary)
+                    Text("No provider usage controls reported.").jrbarType(.callout).foregroundStyle(.secondary)
                 }
             }
             ForEach(model.switchRows, id: \.id) { row in
@@ -211,13 +211,13 @@ struct ProviderUsageSwitchesGroup: View {
                 revealRequest: store.revealRequest)
             if let failure = model.failure {
                 Text(failure)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(Tone.failure.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let failure = model.loadFailure {
                 HStack {
-                    Text(failure).font(.callout).foregroundStyle(.secondary)
+                    Text(failure).jrbarType(.callout).foregroundStyle(.secondary)
                     Spacer()
                     Button("Retry") { model.refresh(core: store.core) }
                         .controlSize(.small)

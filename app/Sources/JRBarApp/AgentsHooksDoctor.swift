@@ -254,11 +254,11 @@ struct HooksDoctorStatusRow: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(doctor.statusLine(live: live))
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(doctor.failed && live ? Tone.failure.color : Color.secondary)
                 if let line = doctor.receiverLine(live: live) {
                     Text(line)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(doctor.receiverAnswers == false ? Tone.failure.color : Color.secondary)
                 }
             }
@@ -367,7 +367,7 @@ struct ProviderUpdateLine: View {
                 if let line = ProviderUpdateWords.versionLine(installed: version, status: status,
                                                               includeInstalled: !versionShownAbove) {
                     Text(line)
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(status?.updateAvailable == true ? Color.primary : Color.secondary)
                         .monospacedDigit()
                         .lineLimit(1)
@@ -394,20 +394,20 @@ struct ProviderUpdateLine: View {
             }
             if let result = ProviderUpdateWords.resultLine(status, now: Date()) {
                 Text(result)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(status?.phase == .failed ? Tone.failure.color : Color.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let advice = status?.updateAdvice, !running, advice != status?.message {
                 Text(advice)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if provider == "gemini", status?.updateAdvice != ProviderUpdateWords.geminiAdvice {
                 Text(ProviderUpdateWords.geminiAdvice)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)

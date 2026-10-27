@@ -81,10 +81,10 @@ struct ControlCenterView: View {
                     Text("Input check: device actions are paused").foregroundStyle(Tone.neutral.color)
                 }
             }
-            .font(.callout)
+            .jrbarType(.callout)
             .foregroundStyle(.secondary)
             Text("Keys keep their assignments. Explicit mappings override session navigation. No approval or interrupt is emulated.")
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
@@ -231,10 +231,10 @@ struct DeckDeviceChip: View {
                     .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
-                        Text(device?.displayName ?? "Creator Micro 2").font(.headline)
+                        Text(device?.displayName ?? "Creator Micro 2").jrbarType(.headline)
                         if let transport = device?.transport {
                             Label(transport.label, systemImage: transport == .usb ? "cable.connector" : "wave.3.right")
-                                .font(.caption.weight(.medium))
+                                .jrbarType(.caption).fontWeight(.medium)
                                 .foregroundStyle(.secondary)
                                 .labelStyle(.titleAndIcon)
                                 .help("Connected over \(transport.label)")
@@ -245,7 +245,7 @@ struct DeckDeviceChip: View {
                         Text(statusWord)
                         if let serial = device?.serial {
                             Text("·").foregroundStyle(.tertiary)
-                            Text(serial).font(.system(.caption, design: .monospaced))
+                            Text(serial).jrbarType(.caption).fontDesign(.monospaced)
                         }
                         if let firmware = device?.firmware {
                             Text("·").foregroundStyle(.tertiary)
@@ -257,7 +257,7 @@ struct DeckDeviceChip: View {
                                 .help("The hardware layer the pad reports, and the board scope it selects (profile \(profile + 1))")
                         }
                     }
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -286,7 +286,7 @@ struct DeckDeviceChip: View {
                             .monospacedDigit()
                     }
                 }
-                .font(.caption)
+                .jrbarType(.caption)
                 .accessibilityLabel("Receipt: \(receipt.text)")
             }
         }
@@ -503,7 +503,7 @@ struct KeyCap: View {
                     store.togglePin(index: slot.index)
                 } label: {
                     Image(systemName: slot.pinned ? "pin.fill" : "pin")
-                        .font(.system(size: 9, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .foregroundStyle(slot.pinned ? Color.white : Color.white.opacity(0.7))
                         .frame(width: 18, height: 18)
                         .background(Color.white.opacity(slot.pinned ? 0.18 : 0.1), in: Circle())
@@ -616,7 +616,7 @@ struct DialControl: View {
                 ForEach(inputs) { input in
                     HStack(spacing: 4) {
                         Image(systemName: dialSymbol(input))
-                            .font(.system(size: 8, weight: .bold))
+                            .jrbarType(.caption).fontWeight(.bold)
                             .frame(width: 10)
                         Text(input.mappingLabel ?? "Not configured")
                             .lineLimit(1)
@@ -663,7 +663,7 @@ struct JoystickControl: View {
                 let control = sector(n)
                 let on = control.map { store.isLit($0.index) } ?? false
                 Image(systemName: ["chevron.up", "chevron.right", "chevron.down", "chevron.left"][n])
-                    .font(.system(size: 9, weight: .bold))
+                    .jrbarType(.caption).fontWeight(.bold)
                     .foregroundStyle(on ? Color.white : Color.white.opacity(control?.mapping == nil ? 0.2 : 0.5))
                     .offset(x: [0, 30, 0, -30][n], y: [-28, 0, 28, 0][n])
                     .help(control.map { "\($0.label): \($0.mappingLabel ?? "Choose its action in the pickers below the pad.")" } ?? "")
@@ -674,7 +674,7 @@ struct JoystickControl: View {
                 .frame(width: 34, height: 34)
                 .shadow(color: lit ? .white.opacity(0.5) : .black.opacity(0.4), radius: lit ? 8 : 3, y: 2)
             Text("Joystick")
-                .font(.system(size: 8.5, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .foregroundStyle(Color.white.opacity(0.4))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(8)
@@ -718,7 +718,7 @@ struct BankPager: View {
             .keyboardShortcut(.rightArrow, modifiers: [])
             .help("Next bank (wraps)")
             Text(banks.title)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
             if !store.scopes.isEmpty {
@@ -730,7 +730,7 @@ struct BankPager: View {
                 .help("Previous board scope (wraps)")
             }
             Text("Board: \(store.scopeName(store.scope))")
-                .font(.caption.weight(.medium))
+                .jrbarType(.caption).fontWeight(.medium)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -798,7 +798,7 @@ struct AuxBindingsEditor: View {
                 .accessibilityLabel(label ?? control.label)
                 .fixedSize()
             }
-            .font(.caption)
+            .jrbarType(.caption)
             .foregroundStyle(.secondary)
         } else {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
@@ -835,7 +835,7 @@ struct SessionSidebar: View {
             }
             Divider()
             Label("Drag a session onto its key to pin it there. Pins follow the session, not the key.", systemImage: "hand.draw")
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -863,14 +863,14 @@ struct SessionDragRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text(activity.word)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     // Not .secondary: a broken session read exactly like an
                     // idle one here, and a waiting one like both.
                     .foregroundStyle(activity.wordColor)
             }
             Spacer()
             if pinned {
-                Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.secondary)
+                Image(systemName: "pin.fill").jrbarType(.caption).foregroundStyle(.secondary)
             }
             if let key = boundKey {
                 Text("\(key + 1)")
@@ -881,7 +881,7 @@ struct SessionDragRow: View {
                     .help("On key \(key + 1) of this bank")
             } else {
                 Text("other bank")
-                    .font(.caption2)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
             }
             Image(systemName: "line.3.horizontal")
@@ -938,9 +938,9 @@ struct ApplyKeymapSheet: View {
                     .font(.system(size: 30))
                     .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Choose the JR-Bar device layers").font(.title3.weight(.semibold))
+                    Text("Choose the JR-Bar device layers").jrbarType(.title3).fontWeight(.semibold)
                     Text("Close Input and other device controllers before continuing. Every layer below is claimed and named for the scope it selects; macro definitions and other profiles are preserved. Review the exact changes below.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -960,7 +960,7 @@ struct ApplyKeymapSheet: View {
                     .fixedSize()
                     .disabled(store.sheetBusy)
                 }
-                .font(.callout)
+                .jrbarType(.callout)
             }
             if Set(layers.map(\.profile)).count > 1 {
                 Picker("Profile to configure", selection: Binding(
@@ -983,12 +983,12 @@ struct ApplyKeymapSheet: View {
                 set: { store.applyAuxiliary = $0; store.loadPlan() }))
             .disabled(store.sheetBusy)
             Divider()
-            Text("Review Creator Micro 2 key changes").font(.headline)
+            Text("Review Creator Micro 2 key changes").jrbarType(.headline)
             Group {
                 if let plan = store.plan {
                     ScrollView {
                         Text(plan.preview)
-                            .font(.system(.callout, design: .monospaced))
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(10)
@@ -1016,7 +1016,7 @@ struct ApplyKeymapSheet: View {
             HStack {
                 if let plan = store.plan {
                     Text(plan.isNoop ? "Nothing to write." : (plan.changes.count == 1 ? "1 change" : "\(plan.changes.count) changes"))
-                        .font(.caption)
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -1054,21 +1054,21 @@ struct RestoreKeymapSheet: View {
                     .font(.system(size: 30))
                     .foregroundStyle(store.keymap.needsRecovery ? Tone.failure.color : Color.secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Restore the Creator Micro 2 keymap?").font(.title3.weight(.semibold))
+                    Text("Restore the Creator Micro 2 keymap?").jrbarType(.title3).fontWeight(.semibold)
                     Text("Close Input and other device controllers first. JR-Bar restores the first private backup only from a recognized applied keymap or a verifiable interrupted JR-Bar transfer. Later unrelated edits are not overwritten.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if store.keymap.needsRecovery {
                 Label(DeckReceiptMessages.message(for: "recovery_required"), systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(Tone.neutral.color)
             }
             if store.keymap.generation != nil {
                 Text("The pad reconnected since this transfer — start over; nothing resumes on its own.")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
             }
             HStack {
@@ -1109,16 +1109,16 @@ struct ClearAbsentSheet: View {
                     .font(.system(size: 30))
                     .foregroundStyle(Color.secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Reassign absent session slots?").font(.title3.weight(.semibold))
+                    Text("Reassign absent session slots?").jrbarType(.title3).fontWeight(.semibold)
                     Text("Unpinned sessions no longer observed will be removed. Later keys may move. Pending session-key actions will be refused.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if !absent.isEmpty {
                 Text(absent.map { "\($0.index + 1) \($0.title)" }.joined(separator: " · "))
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(3)
             }

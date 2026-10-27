@@ -593,7 +593,7 @@ struct DockPreviewView: View {
                     .truncationMode(.tail)
                 if let channel = appTitle.channel {
                     Text(channel)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.secondary)
@@ -1105,7 +1105,7 @@ struct DockPreviewCard: View {
         VStack(spacing: 1) {
             if let armedNote {
                 Text(armedNote)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .jrbarType(.caption).fontWeight(.semibold)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             } else {
@@ -1122,7 +1122,7 @@ struct DockPreviewCard: View {
                     // What the agent in this window is doing — the fact the
                     // panel's row would show, one quiet line.
                     Text(agent.statusLine)
-                        .font(.system(size: 10, weight: agent.isWaiting ? .semibold : .regular))
+                        .jrbarType(.caption).fontWeight(agent.isWaiting ? .semibold : .regular)
                         .foregroundStyle(agent.isWaiting ? AnyShapeStyle(agent.accent) : AnyShapeStyle(.secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1247,7 +1247,7 @@ private struct DockFolderChip: View {
                 face
                     .frame(width: 40, height: 40)
                 Text(entry.name)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .jrbarType(.caption).fontWeight(.medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.horizontal, 4)
@@ -1520,7 +1520,7 @@ private struct DockPreviewCompactRow: View {
                                 Image(systemName: "arrow.up.right.and.arrow.down.left")
                             }
                         }
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .jrbarType(.caption).fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                 }
                 Text(armedNote ?? window.title)
@@ -1950,7 +1950,7 @@ private struct DockMediaScrubber: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(minWidth: 34, alignment: .trailing)
             }
-            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
             .foregroundStyle(.secondary)
         }
         .help("Drag to seek")

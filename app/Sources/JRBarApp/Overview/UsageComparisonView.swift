@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -20,18 +21,18 @@ struct UsageComparisonView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Text("Share of \(comparison.denominator)")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
+                .jrbarType(.caption).foregroundStyle(.tertiary)
             ForEach(comparison.providers) { provider in
                 HStack(spacing: 10) {
                     Circle().fill(ProviderStyle.style(for: provider.id).accent).frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(ProviderStyle.style(for: provider.id).name).font(.system(size: 11, weight: .medium))
-                        if provider.partial { Text("Partial history").font(.system(size: 9)).foregroundStyle(.secondary) }
+                        if provider.partial { Text("Partial history").jrbarType(.caption).foregroundStyle(.secondary) }
                     }.frame(width: 82, alignment: .leading)
                     Text(amountLabel(provider.amount)).font(.system(size: 11)).monospacedDigit()
                         .frame(width: 84, alignment: .trailing)
                     Text(provider.share.map { String(format: "%.1f%%", $0 * 100) } ?? "Unavailable")
-                        .font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                        .jrbarType(.caption).foregroundStyle(.secondary).monospacedDigit()
                         .frame(width: 66, alignment: .trailing)
                     GeometryReader { geometry in
                         if let share = provider.share {

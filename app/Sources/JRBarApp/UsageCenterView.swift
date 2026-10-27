@@ -311,7 +311,7 @@ struct ProviderFixControls: View {
             FixSignInButton(provider: provider, store: store)
             if let action = provider.action, !action.isEmpty {
                 Text(action)
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
@@ -410,11 +410,11 @@ struct SignInNoteLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: Self.symbol(note.tone))
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(Self.tint(note.tone))
                 .accessibilityHidden(true)
             Text(note.text)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -464,9 +464,9 @@ struct AddAccountButton: View {
         .popover(isPresented: WindowPresenter.presentation($open), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Add a \(providerID) account")
-                    .font(.headline)
+                    .jrbarType(.headline)
                 Text("The instance id distinguishes the account — \"work\", \"personal\". The account's own credential or consented browser session is set up next, from its card's manage row.")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: 260)

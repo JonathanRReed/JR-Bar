@@ -400,7 +400,7 @@ struct DockUtilityControls: View {
                 }
             } label: {
                 Label("Exclude an app…", systemImage: "plus.circle")
-                    .font(.callout)
+                    .jrbarType(.callout)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()

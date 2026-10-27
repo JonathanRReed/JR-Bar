@@ -238,7 +238,7 @@ private struct ConfettiWhenSection: View {
 
         if !toy.settings.triggers.quotaReset, !providerChoices.isEmpty {
             Text("Every reset from")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
             ForEach(providerChoices, id: \.self) { id in
                 Toggle(isOn: providerBinding(id)) {

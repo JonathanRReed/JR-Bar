@@ -153,12 +153,11 @@ struct FirmwareNotesList: View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s) {
             ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
                 HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 4))
-                        .foregroundStyle(.secondary)
+                    Circle().fill(.secondary)
+                        .frame(width: JRBarTokens.Space.xs, height: JRBarTokens.Space.xs)
                         .accessibilityHidden(true)
                     Text(note)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

@@ -81,9 +81,9 @@ struct ComposeSheet: View {
         let analysis = LEDSStudioAnalysis(composed.text)
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Compose a light").font(.title3.weight(.semibold))
+                Text("Compose a light").jrbarType(.title3).fontWeight(.semibold)
                 Text("Stack a base, a moving accent and held LEDs; the composer writes the program that plays them.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .jrbarType(.callout).foregroundStyle(.secondary)
             }
 
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 12) {
@@ -179,12 +179,12 @@ struct ComposeSheet: View {
 
             ForEach(composed.dropped, id: \.self) { note in
                 Label(note, systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(Tone.neutral.color)
+                    .jrbarType(.callout).foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(composed.adjusted, id: \.self) { note in
                 Label(note, systemImage: "tortoise")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .jrbarType(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -195,7 +195,7 @@ struct ComposeSheet: View {
 
             HStack {
                 Text(model.analysis.isBlank ? "" : "Replaces the text in the editor; the Studio program stays as it is.")
-                    .font(.caption).foregroundStyle(.tertiary)
+                    .jrbarType(.caption).foregroundStyle(.tertiary)
                 Spacer()
                 Button("Cancel", role: .cancel) { model.composing = false }
                     .keyboardShortcut(.cancelAction)
@@ -230,7 +230,7 @@ struct ComposeSheet: View {
 
     private func preview<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Text(title).jrbarType(.caption).fontWeight(.medium).foregroundStyle(.secondary)
             content()
         }
     }

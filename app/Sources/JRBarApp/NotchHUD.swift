@@ -506,7 +506,7 @@ struct NotchHUDView: View {
             VStack(spacing: 1) {
                 NotchBuddyView(toy: buddy, docked: true)
                 Text(caption ? buddy.caption() : " ")
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.medium).fontDesign(.rounded)
                     .foregroundStyle(.secondary)
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
                     .lineLimit(1)

@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import CoreVideo
 import JRBarCore
@@ -2241,7 +2242,7 @@ private struct FoldControlsView: View {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
                 FoldLiveAngle(toy: toy)
                 Text(toy.cardDetail)
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("Fold state: \(toy.cardDetail)")
@@ -2297,11 +2298,11 @@ private struct FoldControlsView: View {
     private func externalNote(installed: Bool, name: String, link: URL) -> some View {
         HStack(spacing: 8) {
             Text(installed ? "\(name) is installed" : "\(name) isn't installed")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
             if !installed {
                 Link("Get \(name)", destination: link)
-                    .font(.callout)
+                    .jrbarType(.callout)
             }
         }
     }

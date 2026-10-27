@@ -24,12 +24,12 @@ struct UsageHooksSection: View {
                           path: "usage_hooks.enabled")
             if let problem = model.configProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(Tone.neutral.color)
             }
             if rules.isEmpty {
                 Text("No rules yet. Add one with jrbar usage-hooks add --event quota_low /path/to/script.")
-                    .font(.subheadline)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .settingRowStyle()
@@ -69,12 +69,12 @@ struct UsageHookRuleView: View {
             }
             if let problem {
                 Label("Will not run: \(problem)", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(Tone.neutral.color)
             }
             if let last = model.lastResults[rule.id] {
                 Label(last.line(now: Date(), ruleEvent: rule.event), systemImage: last.ok ? "checkmark.circle" : "xmark.octagon")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Tone.failure.color))
                     .monospacedDigit()
             }

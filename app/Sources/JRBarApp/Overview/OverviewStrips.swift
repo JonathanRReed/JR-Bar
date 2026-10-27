@@ -37,7 +37,7 @@ struct OverviewSummaryStrip: View {
             if store.loading {
                 DelayedWait(size: 12)
             } else if let loadedAt = store.loadedAt {
-                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).font(.system(size: 10.5))
+                Text("Updated \(loadedAt, style: .time)").foregroundStyle(.tertiary).jrbarType(.caption)
             }
         }
         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
@@ -91,7 +91,7 @@ struct OverviewConnectionsStrip: View {
                     .lineLimit(1)
                 if let subtitle = link.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10))
+                        .jrbarType(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }

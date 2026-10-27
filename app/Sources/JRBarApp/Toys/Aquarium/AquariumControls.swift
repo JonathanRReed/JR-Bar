@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -31,10 +32,10 @@ struct AquariumControlsView: View {
             }
 
             Text(toy.activitySummary)
-                .font(.callout)
+                .jrbarType(.callout)
                 .accessibilityLabel(toy.activitySummary)
             Text(AquariumActivityPresentation.rewardHelp)
-                .font(.caption)
+                .jrbarType(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 

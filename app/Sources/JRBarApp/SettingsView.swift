@@ -151,7 +151,7 @@ struct SettingsSearchResults: View {
                                 .lineLimit(1)
                             Text(entry.chapter == .lighting ? "Studio" : (entry.group.isEmpty || entry.group == entry.title
                                  ? entry.page.title : "\(entry.page.title) › \(entry.group)"))
-                                .font(.caption)
+                                .jrbarType(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -324,7 +324,7 @@ struct Provided<Content: View>: View {
 struct NotProvidedHint: View {
     var body: some View {
         Text("Not in this version")
-            .font(.caption)
+            .jrbarType(.caption)
             .foregroundStyle(.tertiary)
     }
 }

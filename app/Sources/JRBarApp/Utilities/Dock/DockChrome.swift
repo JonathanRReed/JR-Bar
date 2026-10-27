@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import SwiftUI
 
@@ -121,7 +122,7 @@ struct DockStillPlaceholder: View {
                     }
                     if minimized {
                         Text("Minimized")
-                            .font(.system(size: 9.5, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -142,7 +143,7 @@ struct DockStillPlaceholder: View {
 struct DockMinimizedMark: View {
     var body: some View {
         Image(systemName: "arrow.down.right.and.arrow.up.left")
-            .font(.system(size: 8, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(.white)
             .frame(width: 18, height: 18)
             .background(Circle().fill(Color.black.opacity(0.55)))

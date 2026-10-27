@@ -194,7 +194,7 @@ struct ScenePackPicker: View {
                 }
             } else if !active.isEmpty {
                 Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -395,7 +395,7 @@ struct ColorVisionNote: View {
     private func pairRow<Trailing: View>(_ text: String, @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(text)
-                .font(.callout).foregroundStyle(.secondary)
+                .jrbarType(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             trailing()
@@ -544,7 +544,7 @@ struct AutoDimSection: View {
                     .labelsHidden()
                     .accessibilityLabel("Auto-dim mode")
                     Text(mode.detail)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -740,7 +740,7 @@ struct AutoDimReadoutRow: View {
             HStack(spacing: 6) {
                 Image(systemName: unavailable ? "exclamationmark.triangle.fill" : symbol)
                     .foregroundStyle(unavailable ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
-                    .font(.callout)
+                    .jrbarType(.callout)
                 Text(line)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -885,11 +885,11 @@ struct FadeRow: View {
         Provided(store, floorPath, ceilingPath) {
             SettingsRow(mode.capitalized) {
                 HStack(spacing: 10) {
-                    Text("Floor").font(.callout).foregroundStyle(.secondary)
+                    Text("Floor").jrbarType(.callout).foregroundStyle(.secondary)
                     Slider(value: store.double(floorPath, default: 0.01), in: 0...1).frame(width: 90)
                         .accessibilityLabel("\(mode.capitalized) floor")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(floorPath)) ?? 0.01), width: 40)
-                    Text("Ceiling").font(.callout).foregroundStyle(.secondary).padding(.leading, 6)
+                    Text("Ceiling").jrbarType(.callout).foregroundStyle(.secondary).padding(.leading, 6)
                     Slider(value: store.double(ceilingPath, default: 0.5), in: 0...1).frame(width: 90)
                         .accessibilityLabel("\(mode.capitalized) ceiling")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(ceilingPath)) ?? 0.5), width: 40)
@@ -928,7 +928,7 @@ struct NotificationsPage: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.neutral.color)
                     Text("macOS has notifications turned off for JR-Bar — banners cannot appear until it is allowed.")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .jrbarType(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Open Settings") {
                         DesktopServices.automatic.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
@@ -1327,7 +1327,7 @@ struct RemotePage: View {
                 SettingRow("Token file") {
                     HStack(spacing: 8) {
                         Text(store.values.string("cloud_ingest_token_path") ?? "")
-                            .font(.callout.monospaced())
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -1490,7 +1490,7 @@ struct StreamDeckCard: View {
                     HStack(spacing: 8) {
                         Text("http://127.0.0.1:8737/status.json")
                             .fixedSize()
-                            .font(.callout.monospaced())
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                         Button("Copy token") { store.copyServeToken() }
@@ -1533,7 +1533,7 @@ struct AdvancedPage: View {
             ConnectionWordRow(store: store)
             SettingsRow("Core version") { Text(store.core.hello?.coreVersion ?? "—").foregroundStyle(.secondary) }
             SettingsRow("Socket") {
-                Text(store.core.socketPath).font(.callout.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(store.core.socketPath).jrbarType(.callout).fontDesign(.monospaced).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             SettingsRow("Capabilities") {
                 Text(store.core.hello?.capabilities.joined(separator: ", ") ?? "—")
@@ -1561,7 +1561,7 @@ struct AdvancedPage: View {
             HStack {
                 Text("Core log")
                 Spacer()
-                Text("\(store.core.logTail.count) lines").font(.callout).foregroundStyle(.tertiary)
+                Text("\(store.core.logTail.count) lines").jrbarType(.callout).foregroundStyle(.tertiary)
             }
         }
 
@@ -1674,9 +1674,9 @@ struct DoctorSheet: View {
             HStack(spacing: SettingsMetrics.m) {
                 SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Chapter.advanced.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Doctor").font(.title3.weight(.semibold))
+                    Text("Doctor").jrbarType(.title3).fontWeight(.semibold)
                     Text("What the monitor checked just now.")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -1709,7 +1709,7 @@ struct DoctorSheet: View {
                 .background(InsetPanel())
             }
             Text("Report")
-                .font(.subheadline.weight(.semibold))
+                .jrbarType(.callout).fontWeight(.semibold)
                 .foregroundStyle(.secondary)
             ScrollView {
                 Text(Self.render(report))

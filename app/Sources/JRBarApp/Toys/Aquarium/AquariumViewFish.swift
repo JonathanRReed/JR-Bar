@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -975,18 +976,18 @@ extension AquariumView {
                     // The logbook: the session it remembers, not a plan.
                     let log = residentLog?.id == fish.id ? residentLog?.log : nil
                     Text(log?.swam ?? "A resident")
-                        .font(.system(size: 9, weight: .medium))
+                        .jrbarType(.caption).fontWeight(.medium)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     if let record = log?.record {
                         Text(record)
-                            .font(.system(size: 9))
+                            .jrbarType(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 } else {
                     Text(fish.plan?.evidence ?? fish.state.rawValue)
-                        .font(.system(size: 9, design: .monospaced))
+                        .jrbarType(.caption).fontDesign(.monospaced)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -995,13 +996,13 @@ extension AquariumView {
                 // the evidence line above put it at.
                 if let cue = fish.cue, cue.isFresh(at: Date()), !fish.isFry {
                     Text(cue.phrase)
-                        .font(.system(size: 9, weight: .medium))
+                        .jrbarType(.caption).fontWeight(.medium)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if let note = careNote(for: fish) {
                     Text(note)
-                        .font(.system(size: 9))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -1035,7 +1036,7 @@ extension AquariumView {
                 selectedID = nil
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
+                    .jrbarType(.caption).fontWeight(.medium)
                     .frame(width: 24, height: 24)
                     .contentShape(Circle())
             }

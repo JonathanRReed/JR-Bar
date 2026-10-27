@@ -109,7 +109,7 @@ struct ReconstructedTimelineView: View {
                 }
                 Text("· \(reconstruction.totalLines) transcript \(reconstruction.totalLines == 1 ? "row" : "rows") read")
             }
-            .font(.system(size: 10.5))
+            .jrbarType(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 2)
@@ -177,9 +177,9 @@ struct ReconstructedTimelineView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(filter.rawValue)
-                    .font(.system(size: 10.5, weight: picked ? .semibold : .medium))
+                    .jrbarType(.caption).fontWeight(picked ? .semibold : .medium)
                 Text("\(count)")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .jrbarType(.caption).fontWeight(.semibold).monospacedDigit()
                     .opacity(0.7)
             }
             .foregroundStyle(ink)
@@ -214,7 +214,7 @@ struct ReconstructedTimelineView: View {
                             withAnimation { proxy.scrollTo(firstError, anchor: .top) }
                         } label: {
                             Label("Jump to error", systemImage: "arrow.down.to.line")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .jrbarType(.caption).fontWeight(.medium)
                                 .padding(.horizontal, 8)
                                 .frame(height: 20)
                                 .background(Capsule().fill(Tone.failure.color.opacity(0.1)))
@@ -284,7 +284,7 @@ struct ReconstructedTimelineView: View {
         @ViewBuilder node: () -> Node, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .top, spacing: Self.gutter) {
             Text(clock)
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .fixedSize()
@@ -313,7 +313,7 @@ struct ReconstructedTimelineView: View {
     /// A node: the row's glyph on a disc of its own tint.
     private func node(_ symbol: String, tint: Color) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 8.5, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(tint)
             .frame(width: Self.nodeSize, height: Self.nodeSize)
             .background(Circle().fill(tint.opacity(0.16)))
@@ -344,7 +344,7 @@ struct ReconstructedTimelineView: View {
 
     private func tag(_ text: String, tint: Color) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .semibold))
+            .jrbarType(.caption).fontWeight(.semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(tint.opacity(0.14), in: .capsule)
@@ -389,12 +389,12 @@ struct ReconstructedTimelineView: View {
                 HStack(spacing: 5) {
                     if let role = item.role {
                         Text(Self.roleName(role))
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .jrbarType(.caption).fontWeight(.semibold)
                             .foregroundStyle(Self.roleTint(role))
                     }
                     if let model = item.model {
                         Text(model)
-                            .font(.system(size: 10))
+                            .jrbarType(.caption)
                             .foregroundStyle(.tertiary)
                     }
                     subagentTag(item)

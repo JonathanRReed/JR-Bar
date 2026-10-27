@@ -64,6 +64,15 @@ def test_repository_matches_baseline():
     assert not differences(scan(root), json.loads((root / BASELINE).read_text()))
 
 
+def test_typography_migration_cannot_be_reopened_with_an_allowance():
+    root = Path(__file__).resolve().parents[1]
+    for file, hits in scan(root).items():
+        # The notch is pinned; the divider lane owns the remaining Menu Bar files.
+        if "/Notch/" in file or "/Utilities/MenuBar/" in file:
+            continue
+        assert not any(key.startswith(("font-floor:", "semantic-font:", "semantic-small:")) for key in hits), file
+
+
 @pytest.mark.parametrize("source,kind", [
     ('Text("State").font(.caption)', "semantic-font"),
     ('Text("State").font(.caption2.weight(.medium))', "semantic-font"),

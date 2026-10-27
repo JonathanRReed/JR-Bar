@@ -235,10 +235,10 @@ struct EffectLibraryPane: View {
                                  text: store.search.isEmpty ? "No effect is in this part of the library." : "No effect's name or meaning fits the search.")
                     .frame(maxHeight: 240)
                 if !store.search.isEmpty {
-                    Button("Clear search") { store.search = "" }.buttonStyle(.link).font(.caption)
+                    Button("Clear search") { store.search = "" }.buttonStyle(.link).jrbarType(.caption)
                 }
                 if store.filter != .all {
-                    Button("Show all effects") { store.filter = .all }.buttonStyle(.link).font(.caption)
+                    Button("Show all effects") { store.filter = .all }.buttonStyle(.link).jrbarType(.caption)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -369,7 +369,7 @@ struct EffectInspectorPane: View {
     private func header(_ effect: EffectDefinition) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(effect.label).font(.title2.weight(.semibold))
+                Text(effect.label).jrbarType(.heading).fontWeight(.semibold)
                 if let pack = effect.pack {
                     Badge(text: "pack · \(pack)", color: .purple)
                 }
@@ -393,7 +393,7 @@ struct EffectInspectorPane: View {
             if store.reduceMotion, let fallback = effect.reduceMotionFallback {
                 Label("Reduce Motion is on — “\(store.catalog?.effect(fallback)?.label ?? fallback)” plays instead",
                       systemImage: "figure.walk.motion")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 10) {
@@ -403,7 +403,7 @@ struct EffectInspectorPane: View {
                 Spacer()
                 if store.rendering {
                     DelayedWait(size: 12)
-                    Text("Rendering…").font(.caption).foregroundStyle(.tertiary)
+                    Text("Rendering…").jrbarType(.caption).foregroundStyle(.tertiary)
                 }
                 Button {
                     store.previewOnHardware(effect)
@@ -441,7 +441,7 @@ struct EffectInspectorPane: View {
                 FactChip(symbol: "figure.walk.motion", text: "Reduce Motion → \(store.catalog?.effect(fallback)?.label ?? fallback)", tint: .secondary)
             }
         }
-        .font(.caption)
+        .jrbarType(.caption)
     }
 
     static func surfaceName(_ surface: String) -> String {
@@ -463,14 +463,14 @@ struct EffectInspectorPane: View {
                 .foregroundStyle(effect.safety == .critical ? Tone.failure.color : Tone.neutral.color)
             VStack(alignment: .leading, spacing: 3) {
                 Text(effect.safety.warns ? "\(effect.safety.label) effect: it blinks hard-edged to be noticed." : "Hard blink, on a named cadence.")
-                    .font(.callout.weight(.medium))
+                    .jrbarType(.callout).fontWeight(.medium)
                 if let cadence {
                     Text("Cadence “\(cadence.label)”: \(cadence.summary).")
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Text("Every program is clamped to 2 Hz (1 Hz for saturated red) by the presentation compiler before it reaches a strip or the Screen Bar; Reduce Motion substitutes the static fallback.")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -494,7 +494,7 @@ struct EffectInspectorPane: View {
             }
         }
         if effect.parameters.isEmpty {
-            Text("This effect has no parameters.").font(.callout).foregroundStyle(.tertiary)
+            Text("This effect has no parameters.").jrbarType(.callout).foregroundStyle(.tertiary)
         } else {
             let values = store.values(for: effect)
             VStack(spacing: 0) {
@@ -523,10 +523,10 @@ struct EffectInspectorPane: View {
                             Text("· tuned").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                         }
                         Spacer()
-                        Button("Remove") { _ = store.remove(assignment) }.buttonStyle(.link).font(.caption)
+                        Button("Remove") { _ = store.remove(assignment) }.buttonStyle(.link).jrbarType(.caption)
                             .disabled(store.assignmentChanging(assignment))
                     }
-                    .font(.callout)
+                    .jrbarType(.callout)
                 }
             }
         }
@@ -620,7 +620,7 @@ struct EffectParameterRow: View {
             HStack(spacing: 8) {
                 Slider(value: Binding(get: { value.doubleValue ?? range.lowerBound }, set: { onChange(.number($0)) }), in: range, step: step)
                 Text(Self.format(value.doubleValue ?? 0, step: step) + unitSuffix)
-                    .font(.callout.monospacedDigit())
+                    .jrbarType(.callout).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
             }
@@ -629,7 +629,7 @@ struct EffectParameterRow: View {
                 Slider(value: Binding(get: { value.doubleValue ?? Double(range.lowerBound) }, set: { onChange(.number($0.rounded())) }),
                        in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
                 Text("\(Int(value.doubleValue ?? 0))" + unitSuffix)
-                    .font(.callout.monospacedDigit())
+                    .jrbarType(.callout).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
             }
@@ -637,7 +637,7 @@ struct EffectParameterRow: View {
             HStack(spacing: 6) {
                 TextField("", value: Binding(get: { Int(value.doubleValue ?? 0) }, set: { onChange(.number(Double($0))) }), format: .number)
                     .textFieldStyle(.roundedBorder)
-                    .font(.callout.monospacedDigit())
+                    .jrbarType(.callout).monospacedDigit()
                     .frame(width: 110)
                 Stepper("", value: Binding(get: { Int(value.doubleValue ?? 0) }, set: { onChange(.number(Double($0))) }), in: range)
                     .labelsHidden()
@@ -656,7 +656,7 @@ struct EffectParameterRow: View {
             .help(value.stringValue ?? "")
         case .colorWell:
             HStack(spacing: 8) {
-                Text(value.stringValue ?? "").font(.caption.monospaced()).foregroundStyle(.tertiary)
+                Text(value.stringValue ?? "").jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.tertiary)
                 ColorPicker("", selection: Binding(
                     get: { Color(nsColor: NSColor(hex: value.stringValue ?? "#FFFFFF") ?? .white) },
                     set: { if let hex = NSColor($0).hexString { onChange(.string(hex)) } }
@@ -687,7 +687,7 @@ struct PaletteEditor: View {
         HStack(spacing: 6) {
             if colors.isEmpty {
                 Text(allowEmpty ? "None yet — tones come from the session's colour" : "None yet")
-                    .font(.caption)
+                    .jrbarType(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1003,7 +1003,7 @@ struct ProviderPlaybackRow: View {
             Button { store.focusPlayback(playback) } label: {
                 HStack(spacing: 7) {
                     ProviderTile(style: ProviderStyle.style(for: playback.providerID), size: 16)
-                    Text(playback.name).font(.callout).lineLimit(1)
+                    Text(playback.name).jrbarType(.callout).lineLimit(1)
                     Spacer(minLength: 4)
                     Text(motionText)
                         .jrbarType(.caption)
@@ -1059,7 +1059,7 @@ struct DevicePlaybackRow: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(store.targetTitle(for: assignment)).font(.callout).lineLimit(1)
+                    Text(store.targetTitle(for: assignment)).jrbarType(.callout).lineLimit(1)
                     if let note = store.assignmentNote(assignment) {
                         Text(note).foregroundStyle(Tone.neutral.color).jrbarType(.caption).lineLimit(1)
                     }
@@ -1155,7 +1155,7 @@ struct AssignSheet: View {
                         .frame(width: 130)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Assign “\(effect?.label ?? "")”").font(.title3.weight(.semibold))
+                    Text("Assign “\(effect?.label ?? "")”").jrbarType(.title3).fontWeight(.semibold)
                 }
             }
             Form {

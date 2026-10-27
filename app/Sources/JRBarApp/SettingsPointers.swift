@@ -1,3 +1,4 @@
+import JRBarUI
 import SwiftUI
 
 /// Where a control that used to be offered in several places lives now.
@@ -96,7 +97,7 @@ struct SettingsPointerRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(line ?? home.line)
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)

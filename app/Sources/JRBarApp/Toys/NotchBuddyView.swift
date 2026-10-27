@@ -227,7 +227,7 @@ struct NotchBuddyView: View {
     @ViewBuilder private func workingBadge(for summary: NotchBuddyToy.BuddySummary) -> some View {
         if summary.working >= 2 {
             Text("\(summary.working)")
-                .font(.system(size: 5.4, weight: .bold, design: .rounded))
+                .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 2.4)
@@ -303,9 +303,9 @@ struct NotchBuddyView: View {
                 return ProviderStyle.style(for: provider).accent
             }
             return .accentColor
-        case .waving: return .orange
-        case .slumped: return .red
-        case .celebrating: return .green
+        case .waving: return Tone.ask.color
+        case .slumped: return Tone.failure.color
+        case .celebrating: return Tone.done.color
         }
     }
 }
@@ -336,7 +336,7 @@ private struct MiniFigure: View {
                 .frame(width: 7, height: 7)
             if working > 1 {
                 Text("\(working)")
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .accessibilityHidden(true)
@@ -345,10 +345,10 @@ private struct MiniFigure: View {
         .overlay(alignment: .top) {
             if waiting > 0 {
                 Text(waiting > 1 ? "!\(waiting)" : "!")
-                    .font(.system(size: 7, weight: .bold, design: .rounded))
+                    .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 2.5).padding(.vertical, 0.5)
-                    .background(Capsule().fill(Color.orange))
+                    .background(Capsule().fill(Tone.ask.color))
                     .offset(y: -8)
                     .accessibilityHidden(true)
             }
@@ -1139,7 +1139,7 @@ struct BuddyFigure: View {
             // The ask's badge: white on an amber pill with a warm halo —
             // a sign held up, not a letter floating loose.
             Text(askCount > 1 ? "!\(askCount)" : "!")
-                .font(.system(size: 5.2, weight: .black, design: .rounded))
+                .jrbarType(.caption).fontWeight(.black).fontDesign(.rounded)
                 .foregroundStyle(.white)
                 .padding(.horizontal, askCount > 1 ? 1.5 : 0)
                 .frame(minWidth: 6, minHeight: 6)
@@ -1147,7 +1147,7 @@ struct BuddyFigure: View {
                     .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.67, blue: 0.25),
                                                   Color(red: 0.98, green: 0.47, blue: 0.1)],
                                          startPoint: .top, endPoint: .bottom)))
-                .shadow(color: .orange.opacity(0.45), radius: 1)
+                .shadow(color: Tone.ask.color.opacity(0.45), radius: 1)
                 .scaleEffect(max(bang.scale, 0.01))
                 .offset(y: -8.6)
                 .opacity(bang.opacity)
@@ -1194,7 +1194,7 @@ struct BuddyFigure: View {
             }
             let p = still ? 0 : min(1, max(0, (age - 0.2) / 0.75))
             Text("+1")
-                .font(.system(size: 4.6, weight: .bold, design: .rounded))
+                .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
                 .foregroundStyle(.secondary)
                 .offset(x: 4.8, y: -7 - p * 5)
                 .opacity(still ? 0.8 : (p > 0.6 ? (1 - p) / 0.4 : 0.9))
@@ -1203,7 +1203,7 @@ struct BuddyFigure: View {
 
     private func zView(_ z: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Text("z")
-            .font(.system(size: 4.5, weight: .bold, design: .rounded))
+            .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
             .foregroundStyle(.secondary)
             .scaleEffect(z.scale)
             .offset(x: z.x, y: z.y)
@@ -1212,7 +1212,7 @@ struct BuddyFigure: View {
 
     private func sparkleView(_ s: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Image(systemName: "sparkle")
-            .font(.system(size: 5, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(.white)
             .scaleEffect(s.scale)
             .offset(x: s.x, y: s.y)
@@ -1223,7 +1223,7 @@ struct BuddyFigure: View {
     /// spins instead of twinkling.
     private func gearSparkleView(_ s: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Image(systemName: "gear")
-            .font(.system(size: 5.5, weight: .bold))
+            .jrbarType(.caption).fontWeight(.bold)
             .foregroundStyle(Color(white: 0.8))
             .rotationEffect(.degrees(still ? 20 : phase * 160))
             .scaleEffect(s.scale)

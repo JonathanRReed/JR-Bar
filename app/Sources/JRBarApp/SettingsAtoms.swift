@@ -71,7 +71,7 @@ struct SettingsPageHeader: View {
             SettingsIconTile(symbol: page.symbol, tint: page.tint, size: SettingsMetrics.headerTile)
             VStack(alignment: .leading, spacing: 3) {
                 Text(page.title)
-                    .font(.title3.weight(.semibold))
+                    .jrbarType(.title3).fontWeight(.semibold)
             }
             Spacer(minLength: 0)
         }
@@ -327,10 +327,10 @@ struct ChipToggleStyle: ToggleStyle {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: on ? "checkmark" : "plus")
-                    .font(.system(size: 9, weight: .bold))
+                    .jrbarType(.caption).fontWeight(.bold)
                 configuration.label
             }
-            .font(.subheadline.weight(.medium))
+            .jrbarType(.callout).fontWeight(.medium)
             .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
@@ -471,7 +471,7 @@ struct SettingGroup<Header: View, Content: View>: View {
                     .id(SettingsStore.groupAnchor(anchor ?? plainTitle))
             } else {
                 header()
-                    .font(.subheadline.weight(.semibold))
+                    .jrbarType(.callout).fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.top, SettingsMetrics.m)
                     .padding(.bottom, 2)

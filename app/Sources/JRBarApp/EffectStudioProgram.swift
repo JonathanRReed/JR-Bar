@@ -461,7 +461,7 @@ struct LEDSStudioView: View {
             .controlSize(.small)
 
             TextEditor(text: $model.text)
-                .font(.system(.body, design: .monospaced))
+                .jrbarType(.body).fontDesign(.monospaced)
                 // Device text, not prose: a "corrected" easing name or a
                 // hyphen split out of roll-left is a different program.
                 .autocorrectionDisabled()
@@ -477,7 +477,7 @@ struct LEDSStudioView: View {
             budget
             if let note = model.analysis.compilerNote {
                 Label(note, systemImage: "tortoise")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -489,7 +489,7 @@ struct LEDSStudioView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, JRBarTokens.Space.xs)
                 }
-                .font(.callout)
+                .jrbarType(.callout)
             }
             Spacer(minLength: 0)
         }
@@ -502,7 +502,7 @@ struct LEDSStudioView: View {
         let analysis = model.analysis
         if analysis.isBlank {
             Label("Write a program, compose one, or start from an example.", systemImage: "pencil.line")
-                .font(.callout).foregroundStyle(.secondary)
+                .jrbarType(.callout).foregroundStyle(.secondary)
         } else if let error = analysis.strip.error {
             errorLabel(error, device: "The strip's firmware")
         } else if let error = analysis.dot.error {
@@ -510,7 +510,7 @@ struct LEDSStudioView: View {
         } else {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                 Label("The firmware accepts this on the 8-LED strip and the 2-LED Dot.", systemImage: "checkmark.circle.fill")
-                    .font(.callout)
+                    .jrbarType(.callout)
                     .foregroundStyle(Tone.done.color)
                 if !analysis.dot.ignoredLines.isEmpty {
                     Text("On the Dot, line\(analysis.dot.ignoredLines.count == 1 ? "" : "s") \(analysis.dot.ignoredLines.map(String.init).joined(separator: ", ")) name only LEDs it does not have; it skips them.")
@@ -526,7 +526,7 @@ struct LEDSStudioView: View {
                   ? "\(device) rejects line \(error.line), column \(error.column): \(error.kind.rawValue)"
                   : "\(device) rejects the program: \(error.kind.rawValue)",
                   systemImage: "xmark.octagon.fill")
-                .font(.callout.weight(.medium))
+                .jrbarType(.callout).fontWeight(.medium)
                 .foregroundStyle(Tone.failure.color)
             Text(error.kind.explanation + " A rejected program makes the device blink red six times.")
                 .jrbarType(.caption)
@@ -610,7 +610,7 @@ struct LEDSStudioView: View {
                  : model.savedProgram.isEmpty
                     ? "Keep this program, then choose Studio program in Studio › Devices › Display."
                     : "Differs from the saved Studio program.")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -630,7 +630,7 @@ struct LEDSStudioView: View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             Text("Startup program").font(.system(size: 13, weight: .semibold))
             Text("INIT.LED is what a SidePulse plays when it powers up, before anything talks to it.")
-                .font(.callout)
+                .jrbarType(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if model.devices.isEmpty {
@@ -689,7 +689,7 @@ private struct ShelveSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Save to the shelf").font(.headline)
+            Text("Save to the shelf").jrbarType(.headline)
             TextField("Name", text: $name, prompt: Text("Evening glow"))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)

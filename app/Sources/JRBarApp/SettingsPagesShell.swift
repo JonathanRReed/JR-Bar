@@ -187,8 +187,8 @@ struct SettingsImportSheet: View {
                 SettingsIconTile(symbol: "tray.and.arrow.down.fill",
                                  tint: SettingsStore.Chapter.advanced.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Import settings").font(.title3.weight(.semibold))
-                    Text(origin).font(.callout).foregroundStyle(.secondary)
+                    Text("Import settings").jrbarType(.title3).fontWeight(.semibold)
+                    Text(origin).jrbarType(.callout).foregroundStyle(.secondary)
                 }
             }
             if let schema = bundle.schema, schema > knownSchema {
@@ -213,7 +213,7 @@ struct SettingsImportSheet: View {
                                     Text(bundle.summary(of: category)).foregroundStyle(.tertiary)
                                 }
                                 Text(needsMonitor(category) ? "Needs the monitor running." : category.detail)
-                                    .font(.subheadline)
+                                    .jrbarType(.callout)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -495,10 +495,10 @@ private struct LinksGroup: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(example.link)
-                            .font(.system(.callout, design: .monospaced))
+                            .jrbarType(.callout).fontDesign(.monospaced)
                             .textSelection(.enabled)
                         Text(example.what)
-                            .font(.callout)
+                            .jrbarType(.callout)
                             .foregroundStyle(.secondary)
                     }
                 }

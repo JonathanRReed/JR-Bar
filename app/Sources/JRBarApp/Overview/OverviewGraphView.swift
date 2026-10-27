@@ -34,7 +34,7 @@ struct OverviewGraphView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.horizontal.circle").foregroundStyle(Tone.neutral.color)
                     Text("\(MonitorWords.sentence) Showing the last roster it reported.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .jrbarType(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
                 .padding(.horizontal, 12).padding(.vertical, 5)
@@ -107,7 +107,7 @@ private struct GraphHeader: View {
                 Spacer(minLength: 0)
                 ViewThatFits(in: .horizontal) {
                     Text("Scroll to pan · pinch to zoom · double-click to open")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize()
+                        .jrbarType(.caption).foregroundStyle(.tertiary).fixedSize()
                     Color.clear.frame(width: 0, height: 0)
                 }
                 .layoutPriority(-1)
@@ -168,7 +168,7 @@ private struct GraphStateChip: View {
                 .foregroundStyle(activity.wordIsLoud ? activity.tint : .secondary)
                 .lineLimit(1)
         }
-        .font(.system(size: 11, weight: .medium))
+        .jrbarType(.caption).fontWeight(.medium)
         .monospacedDigit()
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -643,22 +643,22 @@ private struct GraphHoverCard: View {
             HStack(alignment: .top, spacing: Self.gutter) {
                 ProviderTile(style: style, size: Self.mark)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(node.label).font(.system(size: 12.5, weight: .semibold)).lineLimit(2)
-                    Text(whereLine).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(node.label).jrbarType(.callout).fontWeight(.semibold).lineLimit(2)
+                    Text(whereLine).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             row {
                 Circle().fill(node.activity.tint).frame(width: 7, height: 7)
             } text: {
                 Text(stateLine)
-                    .font(.system(size: 11, weight: .medium))
+                    .jrbarType(.caption).fontWeight(.medium)
                     .monospacedDigit()
                     .foregroundStyle(node.activity.wordIsLoud ? node.activity.tint : .primary)
             }
             if let provenance = node.provenance { row("square.stack", provenance) }
             if let ask = session.ask {
                 Text(ask.summary ?? ask.preview ?? "Waiting on you")
-                    .font(.system(size: 10.5))
+                    .jrbarType(.caption)
                     .foregroundStyle(Tone.neutral.color)
                     .lineLimit(3)
                     .padding(.horizontal, 8).padding(.vertical, 5)
@@ -677,7 +677,7 @@ private struct GraphHoverCard: View {
                 row("person.2", session.workers == 1 ? "1 worker" : "\(session.workers) workers")
             }
             Text(store.canOpen(entry) ? "Click to inspect · double-click to open" : "On the peer Mac · click to inspect")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
+                .jrbarType(.caption).foregroundStyle(.tertiary)
                 .padding(.leading, Self.mark + Self.gutter)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -697,11 +697,11 @@ private struct GraphHoverCard: View {
 
     private func row(_ symbol: String, _ words: String) -> some View {
         row {
-            Image(systemName: symbol).font(.system(size: 10, weight: .medium))
+            Image(systemName: symbol).jrbarType(.caption).fontWeight(.medium)
         } text: {
             Text(words).lineLimit(1)
         }
-        .font(.system(size: 10.5))
+        .jrbarType(.caption)
         .foregroundStyle(.secondary)
     }
 
@@ -750,8 +750,8 @@ private struct GraphHubCard: View {
             HStack(spacing: GraphHoverCard.gutter) {
                 ProviderTile(style: style, size: GraphHoverCard.mark)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(style.name).font(.system(size: 12.5, weight: .semibold))
-                    Text(reach).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    Text(style.name).jrbarType(.callout).fontWeight(.semibold)
+                    Text(reach).jrbarType(.caption).foregroundStyle(.secondary)
                 }
             }
             // A busy provider's states wrap onto a second row, words kept.
@@ -785,7 +785,7 @@ private struct GraphZoomControls: View {
             button("minus", help: "Zoom out (⌘−)") { zoom(1 / 1.25) }
                 .keyboardShortcut("-", modifiers: .command)
             Text("\(Int((scale * 100).rounded()))%")
-                .font(.system(size: 11, weight: .medium))
+                .jrbarType(.caption).fontWeight(.medium)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(width: 42)
@@ -804,7 +804,7 @@ private struct GraphZoomControls: View {
     private func button(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11.5, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .frame(width: 26, height: 24)
                 .contentShape(Rectangle())
         }
@@ -831,13 +831,13 @@ private struct GraphStatusToast: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Button(action: dismiss) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "xmark").jrbarType(.caption).fontWeight(.semibold)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.tertiary)
             .accessibilityLabel("Dismiss status")
         }
-        .font(.system(size: 11))
+        .jrbarType(.caption)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .frame(maxWidth: 360, alignment: .leading)

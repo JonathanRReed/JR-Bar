@@ -93,7 +93,7 @@ def offenders(source: str, path: str = "") -> Counter[str]:
     }
     found: Counter[str] = Counter()
     for kind, pattern in PATTERNS.items():
-        if kind in {"semantic-font", "semantic-small", "font-floor", "status-colour", "elapsed-unit"} and ("/Notch/" in path or path.endswith("/NotchBuddyView.swift")):
+        if kind in {"semantic-font", "semantic-small", "font-floor", "status-colour", "elapsed-unit"} and "/Notch/" in path:
             continue
         if kind == "status-colour" and ("/JRBarCore/" in path or "/Utilities/MenuBar/" in path):
             continue

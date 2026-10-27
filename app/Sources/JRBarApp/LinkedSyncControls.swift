@@ -227,7 +227,7 @@ struct DeviceReceiptRow: View {
     var body: some View {
         if let line = DeviceReceiptWords.line(store.core.lights?.deviceReceipts[deviceID], deviceName: deviceName) {
             Label(line, systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline)
+                .jrbarType(.callout)
                 .foregroundStyle(Tone.neutral.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .settingRowStyle()

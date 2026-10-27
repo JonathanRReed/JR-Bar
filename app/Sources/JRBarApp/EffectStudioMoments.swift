@@ -285,13 +285,13 @@ private struct MomentRow: View {
                 .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
                     .fill((isOn ? Color.accentColor : Color.secondary).opacity(0.12)))
             VStack(alignment: .leading, spacing: 3) {
-                Text(moment.name).font(.body.weight(.medium))
+                Text(moment.name).jrbarType(.body).fontWeight(.medium)
                 Text(moment.meaning).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Text("\(moment.plays) · \(moment.surfaces.map(EffectInspectorPane.surfaceName).joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.tertiary)
+                    .jrbarType(.caption).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 if case .cue(let cue) = control, let line = MomentSwitch.milestoneLine(cue) {
-                    Text(line).font(.caption).foregroundStyle(.secondary)
+                    Text(line).jrbarType(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 12)
@@ -306,7 +306,7 @@ private struct MomentRow: View {
                     if moment.id == "ask_heartbeat" {
                         Label("Ask priority", systemImage: "lock.fill").jrbarType(.caption).foregroundStyle(.secondary)
                     } else if control == .always {
-                        Text("Always on").font(.caption).foregroundStyle(.tertiary)
+                        Text("Always on").jrbarType(.caption).foregroundStyle(.tertiary)
                     } else {
                         Toggle("On", isOn: Binding(get: { isOn }, set: { on in apply(on) }))
                             .toggleStyle(.switch)
@@ -477,8 +477,8 @@ private struct LidTransitionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(transition.label).font(.body.weight(.medium))
-                Text(transition.currentName).font(.caption).foregroundStyle(.secondary)
+                Text(transition.label).jrbarType(.body).fontWeight(.medium)
+                Text(transition.currentName).jrbarType(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Button {
                     play()
@@ -554,7 +554,7 @@ private struct LidLookThumbnail: View {
                             .frame(width: 34)
                     }
                 }
-                Text(look.name).font(.caption).foregroundStyle(selected ? .primary : .secondary)
+                Text(look.name).jrbarType(.caption).foregroundStyle(selected ? .primary : .secondary)
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous)
@@ -646,8 +646,8 @@ struct FinishMomentsSection: View {
             Image(systemName: picked ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(picked ? Color.accentColor : Color.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(look.label).font(.body.weight(.medium))
-                Text(Self.meanings[look.style] ?? "").font(.caption).foregroundStyle(.secondary)
+                Text(look.label).jrbarType(.body).fontWeight(.medium)
+                Text(Self.meanings[look.style] ?? "").jrbarType(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
@@ -698,7 +698,7 @@ private struct MomentsSectionHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.title3.weight(.semibold))
+            Text(title).jrbarType(.title3).fontWeight(.semibold)
             Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 6)

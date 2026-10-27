@@ -1029,7 +1029,7 @@ struct GraphNetworkNodeLabel: View {
         VStack(alignment: .leading, spacing: 2) {
             GraphNodeLabel(node: node, caption: caption, side: .right, worker: worker)
             Text([node.project ?? "No folder", node.provenance].compactMap { $0 }.joined(separator: " · "))
-                .font(.system(size: 9)).foregroundStyle(.secondary)
+                .jrbarType(.caption).foregroundStyle(.secondary)
                 .lineLimit(1).truncationMode(.tail)
         }
         .frame(width: worker ? 116 : 160, height: worker ? 46 : 62, alignment: .topLeading)
@@ -1062,7 +1062,7 @@ struct GraphNodeLabel: View {
             if !worker, let caption {
                 ViewThatFits(in: .horizontal) {
                     ForEach(caption.details, id: \.self) { detail in
-                        line(caption, detail: detail).font(.system(size: 10.5)).monospacedDigit()
+                        line(caption, detail: detail).jrbarType(.caption).monospacedDigit()
                     }
                 }
             }
@@ -1083,7 +1083,7 @@ struct GraphHubCaption: View {
             Text(ProviderStyle.style(for: provider).name)
                 .font(.system(size: 12, weight: .semibold))
             Text(detail)
-                .font(.system(size: 10))
+                .jrbarType(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
@@ -1103,7 +1103,7 @@ struct GraphClusterTitle: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: cluster.id.isEmpty ? "questionmark.folder" : "folder.fill")
-                .font(.system(size: 10.5))
+                .jrbarType(.caption)
                 .foregroundStyle(.tertiary)
             Text(cluster.title)
                 .font(.system(size: 12.5, weight: .semibold))
@@ -1111,7 +1111,7 @@ struct GraphClusterTitle: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text("\(cluster.nodeIDs.count)")
-                .font(.system(size: 10, weight: .semibold))
+                .jrbarType(.caption).fontWeight(.semibold)
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
             HStack(spacing: 3) {

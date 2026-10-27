@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -52,7 +53,7 @@ struct AgentAlertRulesTable: View {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: 0)
             }
-            .font(.caption.weight(.semibold))
+            .jrbarType(.caption).fontWeight(.semibold)
             .foregroundStyle(.secondary)
             ForEach(providers, id: \.self) { provider in
                 Divider()
@@ -67,7 +68,7 @@ struct AgentAlertRulesTable: View {
                     reset(provider)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                .font(.callout)
+                .jrbarType(.callout)
             }
         }
     }
@@ -89,7 +90,7 @@ struct AgentAlertRulesTable: View {
                         finishes(provider, labelled: true)
                         escalation(provider, labelled: true)
                     }
-                    .font(.callout)
+                    .jrbarType(.callout)
                 }
             }
         }
@@ -104,7 +105,7 @@ struct AgentAlertRulesTable: View {
             ProviderTile(style: style, size: 16)
             Text(style.name).lineLimit(1)
         }
-        .font(.callout)
+        .jrbarType(.callout)
         .help(rule.summary.map { "\(style.name): \($0)" } ?? "\(style.name) follows the global notification settings")
     }
 

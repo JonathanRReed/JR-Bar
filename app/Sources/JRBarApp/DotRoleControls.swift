@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -89,7 +90,7 @@ struct DotRoleReadoutRow: View {
                     Text(roleWord)
                         .foregroundStyle(readout.settling ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
                     Text(readout.headline)
-                        .font(.callout)
+                        .jrbarType(.callout)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
                         .fixedSize(horizontal: false, vertical: true)
