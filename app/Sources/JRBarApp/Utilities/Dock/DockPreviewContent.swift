@@ -182,15 +182,12 @@ final class DockPreviewContent {
     /// panel subscribes to `MediaFeed` and shows what the system says
     /// that app is playing. nil until a track lands.
     var media: AlcoveMedia?
-    /// The Calendar tile's glance (the rest of today, up to three), or a
-    /// meeting app's one event whose link is its own — read only when
-    /// JR-Bar already holds Full Calendar Access; a hover never prompts.
-    var calendarEvents: [ShelfCalendarModel.Event] = []
-    /// "Free until 3:30" — nothing on now, something later today.
-    var calendarFreeUntil: Date?
-    /// Calendar access was never asked: the row offers an explicit
-    /// "Show events" button rather than reading unprompted.
-    var calendarNeedsAuth = false
+    var mediaPending = false
+    var calendarState: DockCalendarPreview.State?
+    var calendarNow = Date()
+    var nativeWindowsExpanded = false
+    var hasNativeCard: Bool { media != nil || calendarState != nil }
+    var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
     var largeCards = false
     /// The insets and corners the panel draws, from the card's Spacing —
     /// set at each show, so a late thumbnail re-renders at the same air.

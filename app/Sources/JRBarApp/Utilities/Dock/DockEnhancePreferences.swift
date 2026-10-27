@@ -31,6 +31,14 @@ final class DockEnhancePreferences {
         get { read().showThumbnails }
         set { write?({ var s = read(); s.showThumbnails = newValue; return s }()) }
     }
+    var calendarPreview: Bool {
+        get { read().calendarPreview }
+        set { write?({ var s = read(); s.calendarPreview = newValue; return s }()) }
+    }
+    var mediaPreview: Bool {
+        get { read().mediaPreview }
+        set { write?({ var s = read(); s.mediaPreview = newValue; return s }()) }
+    }
     /// Bigger cards.
     var largePreviews: Bool {
         get { read().largePreviews }

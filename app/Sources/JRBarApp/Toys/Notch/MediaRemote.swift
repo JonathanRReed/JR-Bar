@@ -446,12 +446,15 @@ final class MediaFeed {
     private var deliveryGeneration = 0
     /// The latest reduce — a new reader gets it on subscribe.
     private(set) var media: AlcoveMedia?
+    /// Distinguishes an empty reading from a stream that has not answered yet.
+    private(set) var hasSnapshot = false
 
     init(monitor: AlcoveMediaMonitor? = nil) {
         self.monitor = monitor ?? AlcoveMediaMonitor()
         self.monitor.onChange = { [weak self] media in
             guard let self else { return }
             self.media = media
+            self.hasSnapshot = true
             self.deliveryGeneration &+= 1
             let generation = self.deliveryGeneration
             for (token, reader) in self.readers {
@@ -483,6 +486,7 @@ final class MediaFeed {
         if readers.isEmpty {
             monitor.stop()
             media = nil
+            hasSnapshot = false
         }
     }
 

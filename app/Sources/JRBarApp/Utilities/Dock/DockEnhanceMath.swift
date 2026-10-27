@@ -377,15 +377,6 @@ enum DockEnhanceMath {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
-    /// Whether a hover should read the Now Playing feed at all: always
-    /// for a known player; for any other app only while another surface
-    /// already runs the feed — a hover never spawns the media helper
-    /// just to find a browser isn't playing.
-    static func readsMedia(appBundleID: String?, feedRunning: Bool) -> Bool {
-        guard let appBundleID else { return false }
-        return playerBundleIDs.contains(appBundleID) || feedRunning
-    }
-
     /// The Calendar tile's bundle id — the only tile that earns the
     /// calendar row on its own (and offers the grant).
     static let calendarBundleID = "com.apple.iCal"

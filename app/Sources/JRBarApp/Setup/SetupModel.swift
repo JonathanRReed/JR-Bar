@@ -680,8 +680,7 @@ extension SetupModel {
     static func requestCalendar() async {
         switch calendarStatus() {
         case .needed:
-            let store = EKEventStore()
-            _ = try? await store.requestFullAccessToEvents()
+            _ = await ShelfCalendarReader.shared.requestAccess()
         case .denied, .unavailable:
             DesktopServices.automatic.open(calendarSettingsURL)
         default:

@@ -135,6 +135,8 @@ struct DockUtilityControls: View {
                              subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
             }
 
+            nativePreviews
+
             DisclosureGroup(isExpanded: $showPreviewOptions) {
                 previewOptions
             } label: {
@@ -544,6 +546,27 @@ struct DockUtilityControls: View {
     private var thumbnails: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.showThumbnails },
                 set: { utility.enhance.preferences.showThumbnails = $0 })
+    }
+    private var nativePreviews: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle(isOn: calendarPreview) {
+                SettingLabel(title: "Calendar preview",
+                             subtitle: "Show upcoming events when you hover Calendar.")
+            }
+            Toggle(isOn: mediaPreview) {
+                SettingLabel(title: "Media preview",
+                             subtitle: "Show playback controls when you hover the app playing audio.")
+            }
+        }
+    }
+
+    private var calendarPreview: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.calendarPreview },
+                set: { utility.enhance.preferences.calendarPreview = $0 })
+    }
+    private var mediaPreview: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.mediaPreview },
+                set: { utility.enhance.preferences.mediaPreview = $0 })
     }
     private var largePreviews: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.largePreviews },

@@ -611,10 +611,10 @@
   "app/Sources/JRBarApp/Utilities/Dock/DockEnhancePanel.swift": {
     "animation: duration: 0.12": 4,
     "animation: duration: 0.18": 1,
-    "font: .system(size: 11": 13,
+    "font: .system(size: 11": 11,
     "font: .system(size: 11.5": 1,
-    "font: .system(size: 12": 4,
-    "font: .system(size: 12.5": 5,
+    "font: .system(size: 12": 2,
+    "font: .system(size: 12.5": 4,
     "font: .system(size: 13": 1,
     "font: .system(size: 14": 1,
     "radius: cornerRadius: 11": 1,
