@@ -705,7 +705,7 @@ struct StatusCompactPercentTests {
         #expect(StatusIconRenderer.compactText(Self.meter("claude", nil), now: now) == "--")
     }
 
-    @Test("the countdown wins the slot under 10 % left or 15 minutes out")
+    @Test("the countdown wins the slot under 10% left or 15 minutes out")
     func countdownRule() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         // Nearly spent: the countdown shows even with hours to go.

@@ -14,20 +14,7 @@ public enum FinishBanner {
     /// second, because "finished in 0s" says nothing.
     public static func durationWords(_ seconds: Double?) -> String? {
         guard let seconds, seconds.isFinite, seconds >= 1, seconds < 400 * 24 * 3600 else { return nil }
-        let whole = Int(seconds.rounded())
-        if whole < 60 { return "\(whole)s" }
-        let minutes = whole / 60
-        if minutes < 60 {
-            let rest = whole % 60
-            return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
-        }
-        let hours = minutes / 60
-        if hours < 24 {
-            let rest = minutes % 60
-            return rest == 0 ? "\(hours)h" : "\(hours)h \(rest)m"
-        }
-        let days = hours / 24
-        return hours % 24 == 0 ? "\(days)d" : "\(days)d \(hours % 24)h"
+        return UsageTime.duration(seconds)
     }
 
     /// "sidepulse-core finished in 4m 12s", or "sidepulse-core finished"

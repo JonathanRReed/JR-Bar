@@ -59,7 +59,7 @@ struct UnknownUsageWindowTests {
         let forecast = UsageForecaster.forecast(window: unknown, daemon: nil, samples: [], now: Self.now)
         #expect(forecast.verdict == .unmeasured)
         #expect(forecast.usedPct == nil)
-        // No "100 % left", which is what `remainingPct` would have said.
+        // No "100% left", which is what `remainingPct` would have said.
         #expect(forecast.remainingPct == nil)
         #expect(!forecast.isCritical)
         #expect(forecast.rateText == nil)

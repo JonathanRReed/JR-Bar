@@ -140,11 +140,11 @@ public struct AutoDimSettings: Hashable, Sendable {
     }
 
     static func clock(_ minutes: Int) -> String {
-        String(format: "%02d:%02d", (minutes / 60) % 24, minutes % 60)
+        UsageTime.clock(minutes: minutes)
     }
 
     static func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded()))%"
+        UsageNumber.percent(fraction * 100)
     }
 
     static func luxText(_ lux: Double) -> String {

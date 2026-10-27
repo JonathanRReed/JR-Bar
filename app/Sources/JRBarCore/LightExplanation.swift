@@ -421,35 +421,26 @@ public enum LightExplainer {
     static let longestPlausibleState: Double = 400 * 24 * 60 * 60
 
     static func elapsed(seconds: Double) -> String? {
-        guard seconds.isFinite, seconds < longestPlausibleState else { return nil }
-        let seconds = Int(seconds.rounded())
-        guard seconds >= 0 else { return nil }
-        if seconds < 60 { return "\(seconds) s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes) min" }
-        let hours = minutes / 60
-        if hours < 24 { return minutes % 60 == 0 ? "\(hours) h" : "\(hours) h \(minutes % 60) min" }
-        return "\(hours / 24) d"
+        guard seconds.isFinite, seconds >= 0, seconds < longestPlausibleState else { return nil }
+        return UsageTime.duration(seconds)
     }
 
     static func ago(_ epoch: Double?, now: Date) -> String? {
-        guard let epoch, let text = elapsed(seconds: now.timeIntervalSince1970 - epoch) else { return nil }
-        return "\(text) ago"
+        guard let epoch, elapsed(seconds: now.timeIntervalSince1970 - epoch) != nil else { return nil }
+        return UsageTime.ago(now.timeIntervalSince1970 - epoch)
     }
 
     static func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded()))%"
+        UsageNumber.percent(fraction * 100)
     }
 
     /// The time of day in the reader's own 12- or 24-hour clock.
     static func clock(_ epoch: Double, locale: Locale = .autoupdatingCurrent) -> String {
-        Date(timeIntervalSince1970: epoch)
-            .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
+        UsageTime.clock(epoch, locale: locale)
     }
 
     static func minutes(_ total: Double) -> String {
-        let value = Int(total) % (24 * 60)
-        return String(format: "%02d:%02d", value / 60, value % 60)
+        UsageTime.clock(minutes: Int(saturating: total))
     }
 
     static func providerName(_ id: String) -> String { SessionLabel.providerName(id) }

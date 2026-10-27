@@ -706,11 +706,8 @@ enum DeviceHealthLine {
     /// "4 s", "12 min", "3 h" — a clock step behind is harmless.
     static func age(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite else { return "an unknown time" }
-        let seconds = max(0, seconds)
         if seconds >= 365 * 24 * 3600 { return "over a year" }
-        if seconds < 60 { return "\(Int(seconds)) s" }
-        if seconds < 3600 { return "\(Int(seconds / 60)) min" }
-        return "\(Int(seconds / 3600)) h"
+        return UsageTime.duration(seconds)
     }
 }
 

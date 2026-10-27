@@ -184,10 +184,10 @@ struct UsageHookLastResult: Hashable {
     /// "Last run: Quota low: exit 0 in 0.1 s · 3m ago" under an every-event one.
     func line(now: Date, ruleEvent: String? = nil) -> String {
         let text = shown(ruleEvent: ruleEvent)
-        guard let at, let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now) else {
+        guard let at else {
             return "Last run: \(text)"
         }
-        return "Last run: \(text) · \(age) ago"
+        return "Last run: \(text) · \(UsageTime.ago(now.timeIntervalSince1970 - at))"
     }
 }
 

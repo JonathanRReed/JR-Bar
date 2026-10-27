@@ -169,9 +169,9 @@ struct FirmwareModelTests {
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 98304, total: 137_875)) == "96 of 135 KB")
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 98304, total: nil)) == "96 KB so far")
         #expect(FirmwarePresenter.downloadProgress(FirmwareDownload(bytes: 900_000, total: 137_875)) == "135 of 135 KB")
-        #expect(FirmwarePresenter.duration(42) == "42 s")
-        #expect(FirmwarePresenter.duration(72) == "1 min 12 s")
-        #expect(FirmwarePresenter.duration(120) == "2 min")
+        #expect(FirmwarePresenter.duration(42) == "42s")
+        #expect(FirmwarePresenter.duration(72) == "1m 12s")
+        #expect(FirmwarePresenter.duration(120) == "2m")
     }
 
     // MARK: The group

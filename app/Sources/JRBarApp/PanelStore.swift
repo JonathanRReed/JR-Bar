@@ -1336,8 +1336,7 @@ final class PanelStore {
 
     /// `HH:mm` for "until 08:00" in the toast and the menu's preset label.
     nonisolated static func clockTime(_ date: Date) -> String {
-        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        UsageTime.clock(date.timeIntervalSince1970)
     }
 
     /// Seconds to the next local 08:00 that is at least an hour away:
@@ -2424,27 +2423,11 @@ final class PanelStore {
     // MARK: Formatting
 
     nonisolated static func elapsed(since date: Date?, now: Date) -> String? {
-        guard let date else { return nil }
-        let seconds = max(0, Int(saturating: now.timeIntervalSince(date)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return String(format: "%dh %02dm", hours, minutes % 60) }
-        return "\(hours / 24)d \(hours % 24)h"
+        date.map { UsageTime.duration(now.timeIntervalSince($0)) }
     }
 
     nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
-        guard let epoch else { return nil }
-        // Past the reset the number on screen is the old window's until
-        // the next reading lands; "resets now" read like a promise.
-        if resetHasPassed(epoch, now: now) { return "reset — waiting for a new reading" }
-        let seconds = Int(saturating: epoch - now.timeIntervalSince1970)
-        let minutes = (seconds + 30) / 60
-        if minutes < 60 { return "resets in \(max(1, minutes))m" }
-        let hours = minutes / 60
-        if hours < 24 { return String(format: "resets in %dh %02dm", hours, minutes % 60) }
-        return "resets in \(hours / 24)d \(hours % 24)h"
+        epoch.map { UsageTime.countdown(to: $0, now: now) }
     }
 
     /// A window's reset for a source that may be broken, the panel's

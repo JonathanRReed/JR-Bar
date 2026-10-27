@@ -149,22 +149,22 @@ public struct UsageForecast: Hashable, Sendable {
             }
             return "Used up: the \(window) window is exhausted"
         case .runsOut(let at):
-            return "At this pace the \(window) window runs out at \(Self.clock(at, timeZone: timeZone)) (\(Self.relative(to: at, now: now)))"
+            return "\(UsageTime.runsOut(at: at, now: now.timeIntervalSince1970, timeZone: timeZone)) at this pace for the \(window) window"
         case .comfortable:
             if heldIdle {
-                return "Holding at \(left) % left: no agent is working on it here"
+                return "Holding at \(UsageNumber.percent(Double(left))) left: no agent is working on it here"
             }
             if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate {
-                return "Comfortable: \(left) % left, nothing burning right now"
+                return "Comfortable: \(UsageNumber.percent(Double(left))) left, nothing burning right now"
             }
             if resetsAt != nil {
-                return "Comfortable: \(left) % left, resets before you'd hit it"
+                return "Comfortable: \(UsageNumber.percent(Double(left))) left, resets before you'd hit it"
             }
-            return "Comfortable: \(left) % left at this pace"
+            return "Comfortable: \(UsageNumber.percent(Double(left))) left at this pace"
         case .unknown:
-            return "\(left) % left · no pace yet"
+            return "\(UsageNumber.percent(Double(left))) left · no pace yet"
         case .guarded(let reason):
-            return "\(left) % left · \(Self.guardText(reason))"
+            return "\(UsageNumber.percent(Double(left))) left · \(Self.guardText(reason))"
         case .unmeasured:
             // Unreachable: a window with no reading has no `remainingPct`.
             return "No reading for the \(window) window"
@@ -193,15 +193,14 @@ public struct UsageForecast: Hashable, Sendable {
         default: return nil
         }
         guard let rate = ratePctPerHour, rate.isFinite, rate > UsageForecaster.idleRate else { return nil }
-        return rate >= 10 ? String(format: "%.0f %%/h", rate) : String(format: "%.1f %%/h", rate)
+        return UsageNumber.rate(rate)
     }
 
     /// The time of day in the reader's own clock: "10:47 PM" on a
     /// 12-hour Mac, "22:47" on a 24-hour one, as the menu bar says it.
     public static func clock(_ epoch: Double, timeZone: TimeZone = .current,
                              locale: Locale = .autoupdatingCurrent) -> String {
-        Date(timeIntervalSince1970: epoch)
-            .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
+        UsageTime.clock(epoch, locale: locale, timeZone: timeZone)
     }
 
     /// "resets in 1h 12m", or "reset — waiting for a new reading" once the
@@ -214,13 +213,7 @@ public struct UsageForecast: Hashable, Sendable {
 
     /// "in 1h 12m", "in 4m", "now", "2 d ago" is never needed: resets are ahead.
     public static func relative(to epoch: Double, now: Date) -> String {
-        let seconds = Int(saturating: epoch - now.timeIntervalSince1970)
-        if seconds <= 30 { return "now" }
-        let minutes = (seconds + 30) / 60
-        if minutes < 60 { return "in \(max(1, minutes))m" }
-        let hours = minutes / 60
-        if hours < 24 { return String(format: "in %dh %02dm", hours, minutes % 60) }
-        return "in \(hours / 24)d \(hours % 24)h"
+        UsageTime.relative(to: epoch, now: now)
     }
 }
 

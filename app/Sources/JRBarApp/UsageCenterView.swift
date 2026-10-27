@@ -201,19 +201,18 @@ struct UsageProviderConnection: View {
 
 enum UsageCardCopy {
     nonisolated static func readingAgeText(_ provider: CoreProviderUsage, now: Date) -> String? {
-        guard let readingAt = provider.readingAt,
-              let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: readingAt), now: now)
-        else { return nil }
-        return "read \(age) ago"
+        guard let readingAt = provider.readingAt else { return nil }
+        return "Read \(UsageTime.ago(now.timeIntervalSince1970 - readingAt))"
     }
+
     static func pricingDisclosure(_ history: UsageHistory) -> String {
         guard let pricing = history.pricing else { return "Approximate: the monitor reported no price table for this provider." }
         var text: String
         if pricing.estimated {
             text = "Approximate: list prices"
             if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
-                text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
-                if let cache = pricing.cacheReadPerMillion { text += String(format: ", %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += " (\(UsageFormat.price(perMillion: input, currency: pricing.currency)) in / \(UsageFormat.price(perMillion: output, currency: pricing.currency)) out per M tokens"
+                if let cache = pricing.cacheReadPerMillion { text += ", \(UsageFormat.price(perMillion: cache, currency: pricing.currency)) cache" }
                 text += ")"
             }
             if let model = pricing.model { text += " for \(model)" }
@@ -224,8 +223,8 @@ enum UsageCardCopy {
             text = "List price"
             if let model = pricing.model { text += " for \(model)" }
             if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
-                text += String(format: ": %@%.2f in / %@%.2f out", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
-                if let cache = pricing.cacheReadPerMillion { text += String(format: " / %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
+                text += ": \(UsageFormat.price(perMillion: input, currency: pricing.currency)) in / \(UsageFormat.price(perMillion: output, currency: pricing.currency)) out"
+                if let cache = pricing.cacheReadPerMillion { text += " / \(UsageFormat.price(perMillion: cache, currency: pricing.currency)) cache" }
                 text += " per M tokens"
             }
             if let asOf = pricing.asOf { text += ", as of \(asOf)" }
@@ -515,16 +514,6 @@ struct AddAccountButton: View {
 
 
 
-extension UsageFormat {
-    static func currencySymbol(_ currency: String) -> String {
-        switch currency {
-        case "USD": return "$"
-        case "EUR": return "€"
-        case "GBP": return "£"
-        default: return currency + " "
-        }
-    }
-}
 
 struct ResetSaveNotice: View {
     let retry: () -> Void

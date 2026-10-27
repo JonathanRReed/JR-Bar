@@ -124,8 +124,7 @@ enum HooksDoctor {
         var parts = ["\(entry.hookEvents) event\(entry.hookEvents == 1 ? "" : "s") hooked"]
         if let at = entry.lastEventAt {
             if at.isFinite, at > 0, at <= now.timeIntervalSince1970 {
-                let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now)
-                parts.append(ago.map { "last event \($0) ago" } ?? "last event just now")
+                parts.append("last event \(UsageTime.ago(now.timeIntervalSince1970 - at))")
             } else {
                 parts.append("event time unavailable")
             }
@@ -195,8 +194,7 @@ final class HooksDoctorModel {
         if loading { return "Checking hooks…" }
         if failed { return entries.isEmpty ? "Recheck failed. No report available." : "Recheck failed. Showing the last report." }
         if let checkedAt, checkedAt > 0, checkedAt <= now.timeIntervalSince1970 {
-            let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: checkedAt), now: now)
-            return ago.map { "Checked \($0) ago" } ?? "Checked just now"
+            return "Checked \(UsageTime.ago(now.timeIntervalSince1970 - checkedAt))"
         }
         return entries.isEmpty ? "No hook report yet" : "Hook report loaded"
     }

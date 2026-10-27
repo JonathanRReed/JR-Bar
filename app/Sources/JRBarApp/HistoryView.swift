@@ -257,8 +257,7 @@ struct HistoryFilterBar: View {
     /// "updated 12s ago", or "Refreshing…" while a load is out.
     private func freshness(_ loadedAt: Date) -> String {
         if store.loading { return "Refreshing…" }
-        let age = PanelStore.elapsed(since: loadedAt, now: store.now) ?? "0s"
-        return "updated \(age) ago"
+        return "Updated \(UsageTime.ago(store.now.timeIntervalSince(loadedAt)))"
     }
 }
 

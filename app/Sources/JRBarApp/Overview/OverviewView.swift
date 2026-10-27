@@ -837,12 +837,7 @@ struct CompareRunsSheet: View {
     /// Whole minutes and seconds under an hour and a half: a formatted
     /// `seconds / 60` rounds, so 119 s would read "2m 59s".
     static func durationText(_ seconds: Double) -> String {
-        if seconds < 90 { return String(format: "%.0fs", seconds) }
-        if seconds < 5400 {
-            let whole = Int(seconds)
-            return "\(whole / 60)m \(whole % 60)s"
-        }
-        return String(format: "%.1fh", seconds / 3600)
+        UsageTime.duration(seconds)
     }
 
     private static func gapText(_ gap: String) -> String {

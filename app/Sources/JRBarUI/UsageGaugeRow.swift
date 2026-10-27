@@ -24,7 +24,7 @@ public struct UsageGaugeReading: Equatable, Sendable {
     public var forecastHelp: String {
         [forecast?.headline(now: Date(timeIntervalSince1970: timestamp)),
          forecast.flatMap { SessionAwarePace.roomText($0, now: timestamp) },
-         resetFootnote.isEmpty ? nil : "Resets \(resetFootnote)"].compactMap { $0 }.joined(separator: ". ")
+         resetFootnote.isEmpty ? nil : (elapsed ? resetFootnote : "Resets \(resetFootnote)")].compactMap { $0 }.joined(separator: ". ")
     }
     private let timestamp: Double
 
@@ -39,64 +39,31 @@ public struct UsageGaugeReading: Equatable, Sendable {
         let suppressed = ["absent", "not_found"].contains(provider.availability) || provider.usageIsOff || !provider.quotaSource
         let measured = window.usedPct.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil }
         percentUsed = elapsed || suppressed ? nil : measured
-        if elapsed {
-            resetFootnote = window.resetsAt.map { "\(Self.interval(now - $0)) ago" } ?? "Awaiting reading"
-        } else {
-            resetFootnote = window.resetsAt.map { Self.resetTime($0, now: now, locale: locale, timeZone: timeZone) } ?? ""
-        }
+        resetFootnote = window.resetsAt.map { UsageTime.resetLine($0, now: now, locale: locale, timeZone: timeZone) }
+            ?? (elapsed ? "Waiting for a new reading" : "")
         let unavailable = stale || elapsed || suppressed || provider.isSignedOut
             || ["disabled", "off", "needs_consent", "error", "unavailable", "source_not_found"].contains(provider.state ?? "")
         self.forecast = unavailable || percentUsed == nil ? nil : forecast
         switch self.forecast?.verdict {
         case .exhausted?: footnote = "Used up"
         case .runsOut(let at)?:
-            if at - now < 3600 {
-                let minutes = max(1, Int(ceil(max(0, at - now) / 60)))
-                footnote = "Runs out in \(minutes)\(abbreviatesMinutes ? "m" : " min")"
-            } else {
-                let formatter = DateFormatter()
-                formatter.locale = locale
-                formatter.timeZone = timeZone
-                formatter.setLocalizedDateFormatFromTemplate("jm")
-                footnote = "Runs out \(formatter.string(from: Date(timeIntervalSince1970: at)))"
-            }
+            footnote = UsageTime.runsOut(at: at, now: now, locale: locale, timeZone: timeZone)
         default: footnote = resetFootnote
         }
     }
 
     public static func resetTime(_ reset: Double, now: Double, locale: Locale, timeZone: TimeZone) -> String {
-        guard reset.isFinite, now.isFinite else { return "" }
-        let remaining = reset - now
-        if remaining <= 0 { return "\(interval(-remaining)) ago" }
-        if remaining < 3600 { return "in \(interval(remaining))" }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let date = Date(timeIntervalSince1970: reset)
-        let today = calendar.isDate(date, inSameDayAs: Date(timeIntervalSince1970: now))
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate(today ? "jm" : "EEEj")
-        return formatter.string(from: date)
+        UsageTime.resetLine(reset, now: now, locale: locale, timeZone: timeZone)
     }
 
     public static func age(provider: CoreProviderUsage, now: Double, snapshotReceivedAt: Double) -> String {
         let seconds = provider.readingAt.map { now - $0 }
             ?? provider.lastGoodAgeSeconds.map { $0 + max(0, now - snapshotReceivedAt) }
-        return seconds.map { "Read \(interval($0)) ago" } ?? "Reading age unknown"
+        return seconds.map { "Read \(UsageTime.ago($0))" } ?? "Reading age unknown"
     }
 
     static func interval(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "unknown" }
-        let minutes = max(0, seconds / 60)
-        if minutes < 1 { return "<1m" }
-        if minutes < 60 { return "\(Int(minutes))m" }
-        let hours = Int(minutes / 60)
-        let remainder = Int(minutes.truncatingRemainder(dividingBy: 60))
-        if minutes < 1440 { return remainder == 0 ? "\(hours)h" : "\(hours)h \(remainder)m" }
-        let days = Int(minutes / 1440)
-        let extraHours = hours % 24
-        return extraHours == 0 ? "\(days)d" : "\(days)d \(extraHours)h"
+        UsageTime.duration(seconds)
     }
 }
 
@@ -123,7 +90,7 @@ public struct UsageGaugeHeader: View {
 public struct UsageGaugeRow: View {
     @Environment(\.jrbarInk) private var neutralInk
     public enum Style: Sendable { case compact, detail }
-    public static let columnWidth: CGFloat = 64
+    public static let columnWidth: CGFloat = 76
     public static let compactRowHeight: CGFloat = 36
     fileprivate static let compactIdentityWidth: CGFloat = 100
     fileprivate static let compactPercentWidth: CGFloat = 40
@@ -403,7 +370,7 @@ private struct CompactUsageGaugeColumn: View {
         VStack(alignment: .trailing, spacing: 0) {
             if let used = reading.percentUsed {
                 HStack(spacing: JRBarTokens.Space.xs) {
-                    Text("\(Int(used.rounded()))%")
+                    Text(UsageNumber.percent(used))
                         .font(JRBarTokens.TypeStyle.headline.font).monospacedDigit()
                         .foregroundStyle(reading.stale ? neutralInk.stale : neutralInk.label)
                         .frame(width: UsageGaugeRow.compactPercentWidth, alignment: .trailing)
@@ -450,7 +417,7 @@ private struct UsageGaugeColumn: View {
                     .foregroundStyle(neutralInk.secondary).lineLimit(1)
             }
             if let used = reading.percentUsed {
-                Text("\(Int(used.rounded()))%")
+                Text(UsageNumber.percent(used))
                     .font((compact ? JRBarTokens.TypeStyle.headline : .title1).font).monospacedDigit()
                     .foregroundStyle(reading.stale ? neutralInk.stale : neutralInk.label)
                 JRBarGauge(value: used, tint: accent, stale: reading.stale, height: compact ? 4 : 6, pace: compact ? nil : pace)

@@ -148,8 +148,8 @@ public struct StatusMeter: Hashable, Sendable {
     public var readout: String {
         let staleNote = stale ? " (stale)" : ""
         guard let fraction else { return "\(name) no reading\(staleNote)" }
-        let percent = Int((fraction * 100).rounded())
-        return "\(name) \(approximate ? "~" : "")\(percent)%\(staleNote)"
+        let percent = UsageNumber.percent(fraction * 100)
+        return "\(name) \(approximate ? "~" : "")\(percent)\(staleNote)"
     }
 }
 
@@ -393,7 +393,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     static func percentText(_ meter: StatusMeter, now: Date = Date()) -> String {
         if let countdown = countdownText(meter, now: now) { return countdown }
         guard let fraction = meter.fraction else { return unknownPercentText }
-        return (meter.approximate ? "~" : "") + "\(Int(((1 - fraction) * 100).rounded()))"
+        return (meter.approximate ? "~" : "") + UsageNumber.percent(Double(UsageWindowLabel.wholeLeft(usedPct: fraction * 100)), showUnit: false)
     }
 
     /// "12m" / "3h" / "2d" to the window's reset when the reset deserves
@@ -407,9 +407,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         guard delta >= 0 else { return nil }
         let nearlySpent = meter.fraction.map { $0 > 0.90 } ?? false
         guard nearlySpent || delta < 900 else { return nil }
-        if delta < 3600 { return "\(Int(delta / 60))m" }
-        if delta < 86400 { return "\(Int(delta / 3600))h" }
-        return "\(Int(delta / 86400))d"
+        return UsageTime.duration(delta)
     }
 
     /// What the percent style prints for a window with no reading. Two
@@ -436,7 +434,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         guard let meter else { return unknownPercentText }
         if let countdown = countdownText(meter, now: now) { return countdown }
         guard let fraction = meter.fraction else { return unknownPercentText }
-        return (meter.approximate ? "~" : "") + "\(Int(((1 - fraction) * 100).rounded()))%"
+        return (meter.approximate ? "~" : "") + UsageNumber.percent(Double(UsageWindowLabel.wholeLeft(usedPct: fraction * 100)))
     }
 
     static func compactWidth(_ spec: StatusIconSpec, now: Date = Date()) -> CGFloat {
@@ -1023,7 +1021,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     static func orbitWords(_ spec: StatusIconSpec) -> [String] {
         var words: [String] = []
         if let fraction = spec.ringFraction {
-            words.append("\(Int((fraction * 100).rounded()))% used")
+            words.append("\(UsageNumber.percent(fraction * 100)) used")
         }
         let working = spec.sessions.filter { $0.state == .working }.count
         if working > 0 {

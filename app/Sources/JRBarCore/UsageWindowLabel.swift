@@ -100,8 +100,7 @@ public enum UsageWindowLabel {
 
     /// `42%`, or `—` when the provider stated no number.
     public static func percent(_ usedPct: Double?) -> String {
-        guard let usedPct else { return unknownPercent }
-        return "\(wholeUsed(usedPct))%"
+        UsageNumber.percent(usedPct)
     }
 
     /// "42 percent used" / "no reading", for VoiceOver and tooltips.
