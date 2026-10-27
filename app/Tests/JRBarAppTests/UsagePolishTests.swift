@@ -168,6 +168,11 @@ struct UsagePolishTests {
         let slot = DeckSlot(index: 0, session: session.id, label: "Sample task", provider: "codex",
                             state: .active, navigable: true)
         let finish = try EffectStudioMomentsTests.finishDocument()
+        let lastLights = CoreLights(surfaces: [
+            "hardware": CoreLightSurface(program: "#1288FF", ledCount: 8, why: "working"),
+        ])
+        var disabled = Self.provider
+        disabled.reason = CoreProviderUsage.usageOffReason
         for dark in [false, true] {
             for width in [CGFloat(320), CGFloat(372)] {
                 try await U5Proof.render(VStack(spacing: 12) {
@@ -178,6 +183,8 @@ struct UsagePolishTests {
                         windowNames: ["5h", "7d"])
                     UsageGaugeRow(provider: empty, name: "Grok", now: Self.now, style: .compact,
                         windowNames: ["5h", "7d"], includeAbsent: true)
+                    UsageGaugeRow(provider: disabled, name: "Claude", now: Self.now,
+                        style: .compact, windowNames: ["5h", "7d"])
                 }, name: "p3-usage-\(Int(width))", width: width, dark: dark)
             }
             try await U5Proof.render(UsageProviderDetail(provider: Self.provider, store: usage, showCost: true)
@@ -198,6 +205,8 @@ struct UsagePolishTests {
                 name: "p3-menubar-settings", width: 600, dark: dark)
             try await U5Proof.render(StudioMixPage(store: studio).frame(height: 900),
                 name: "p3-studio", width: 850, dark: dark)
+            try await U5Proof.render(EffectLiveOutput(lights: lastLights, connected: false).padding(20),
+                name: "p3-studio-offline-output", width: 440, dark: dark)
             try await U5Proof.render(VStack(alignment: .leading, spacing: 20) {
                 PaletteEditor(colors: ["#1288FF"], maximum: 4, allowEmpty: true, onChange: { _ in })
                 KeyCap(store: deck, slot: slot)
