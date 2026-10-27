@@ -727,10 +727,15 @@ def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
         assert len(lines) == 1
         document = json.loads(lines[0])
         assert document["reason"] == "refused_invalid"
+        assert document["detail"] == "bad_lengths"
+        assert document["provider"] == "claude"
+        assert document["bytes"] == len(truncated)
         assert frozenset(document) == {
             "recorded_at",
             "provider",
             "reason",
+            "detail",
+            "bytes",
             "sequence",
             "version",
         }
