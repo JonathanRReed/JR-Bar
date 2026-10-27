@@ -371,6 +371,25 @@ struct PanelCompositionTests {
         #expect(store.hooksConnected)
     }
 
+    @Test func theUsageHeaderSaysWhenItLastReadAndRefreshesEveryone() async throws {
+        let store = Self.store()
+        #expect(store.usageUpdatedText == nil)
+        store.core.apply(.state(CoreState(generation: 2, usage: CoreUsage(refreshedAt: Self.time - 150, providers: [Self.usage()]))))
+        #expect(store.usageUpdatedText == "Updated 2m ago")
+        store.core.apply(.state(CoreState(generation: 3, usage: CoreUsage(refreshedAt: Self.time - 10, providers: [Self.usage()]))))
+        #expect(store.usageUpdatedText == "Updated just now")
+        let requests = TestEvents<[String]>()
+        store.requestUsageRefresh = { providers in
+            requests.send(providers)
+            return CoreReply(id: "refresh", ok: true)
+        }
+        store.refreshAllUsage()
+        let requested = try await requests.next()
+        #expect(requested.isEmpty)
+        store.core.handle(.disconnected(reason: "fixture"))
+        #expect(store.usageUpdatedText == nil)
+    }
+
     @Test func findTrimsTheSameQueryForAgentsAndAsks() {
         let ask = CoreAsk(session: "codex:ask", summary: "Sample request", answerable: true)
         let store = Self.store([Self.session("claude:root")], asks: [ask])

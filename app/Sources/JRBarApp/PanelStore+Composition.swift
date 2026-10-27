@@ -192,6 +192,29 @@ extension PanelStore {
         else { runUsageAction(usage, action: usage.actionKind) }
     }
 
+    /// "Updated 2m ago" beside the Usage title: when the monitor last
+    /// finished a usage refresh. Nil while the monitor is down, where each
+    /// row already says how old its reading is.
+    var usageUpdatedText: String? {
+        guard isLive, let at = core.state?.usage?.refreshedAt else { return nil }
+        let date = Date(timeIntervalSince1970: at)
+        guard now.timeIntervalSince(date) >= 60, let age = Self.elapsed(since: date, now: now) else { return "Updated just now" }
+        return "Updated \(age) ago"
+    }
+
+    /// ⌘R in the panel: ask every provider the person turned on for a new
+    /// reading. Nothing new leaves the Mac; a provider without consent is
+    /// not asked.
+    func refreshAllUsage() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.requestUsageRefresh([])
+                guard reply.ok else { throw reply.error ?? CoreReplyError(code: "refused") }
+            } catch { self.show(toast: MonitorWords.reason(error)) }
+        }
+    }
+
     func retryPanelUsage(_ usage: CoreProviderUsage) {
         Task { [weak self] in
             guard let self else { return }

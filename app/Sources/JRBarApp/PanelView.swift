@@ -20,8 +20,10 @@ struct PanelView: View {
                 StatusBanner(store.connectionTitle, detail: store.connectionDescription)
                     .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if let failure = store.providerList.failure {
-                StatusBanner("Provider list unavailable", kind: .failure, detail: failure)
-                    .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
+                StatusBanner("Provider list unavailable", kind: .failure, detail: failure) {
+                    Button("Retry") { _ = Task { await store.providerList.refresh() } }
+                }
+                .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             }
             if !store.visibleAskRows.isEmpty || store.demoRow != nil {
                 panelSectionTitle("Needs you")
