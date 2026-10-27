@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .power_policy import configure_caffeinate_display_assertion
+from .power_policy import configure_caffeinate_display_assertion, display_hold_wanted
 from .settings import (
     CLOSED_LID_AWAKE_AGENTS,
     CLOSED_LID_AWAKE_ALWAYS,
@@ -568,6 +568,22 @@ class ClosedLidAwakeController:
         self.display_sleeper: Callable[[], None] = run_pmset_displaysleepnow
         self._display_sleep_requested = False
         self._display_sleep_retry_at = 0.0
+        #: The lid as the daemon last read it (``observe_lid``); None while
+        #: nothing reads it, which counts as open.
+        self.lid_closed: bool | None = None
+
+    def observe_lid(self, lid_closed: bool | None) -> None:
+        """The lid reading before each update: with the lid shut on no
+        external display the hold lets the display sleep."""
+        self.lid_closed = lid_closed if isinstance(lid_closed, bool) else None
+
+    def display_wanted(self) -> bool:
+        """``keep_display_awake``, except with the lid shut and no external
+        display on: then the computer stays awake and the screen sleeps."""
+        if not self.keep_display_awake:
+            return False
+        external = self._read(self.external_display_reader) if self.lid_closed is True else None
+        return display_hold_wanted(True, lid_closed=self.lid_closed, external_display=external)
 
     def configure_sleep_on_release(
         self,
@@ -787,16 +803,17 @@ class ClosedLidAwakeController:
             except Exception as exc:
                 errors.append(f"disablesleep: {exc}")
 
-        if self.process_running() and self._process_display != self.keep_display_awake:
+        display = self.display_wanted()
+        if self.process_running() and self._process_display != display:
             self._terminate_caffeinate(errors)
         if not self.process_running():
             try:
                 self.process = self.process_factory(
-                    self.caffeinate_command(),
+                    self.caffeinate_command(display=display),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self._process_display = self.keep_display_awake
+                self._process_display = display
             except Exception as exc:
                 self.process = None
                 errors.append(f"caffeinate: {exc}")
@@ -912,11 +929,11 @@ class ClosedLidAwakeController:
     def process_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def caffeinate_command(self) -> list[str]:
+    def caffeinate_command(self, *, display: bool | None = None) -> list[str]:
         command = list(
             configure_caffeinate_display_assertion(
                 self.command,
-                keep_display_awake=self.keep_display_awake,
+                keep_display_awake=self.display_wanted() if display is None else display,
             )
         )
         if self.watch_current_process:

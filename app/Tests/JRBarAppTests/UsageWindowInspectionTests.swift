@@ -87,7 +87,7 @@ struct UsageWindowInspectionTests {
             #expect(result.readingNotice != nil)
             #expect(result.verdictText == "Paused")
             #expect(result.forecastEvidence == nil)
-            #expect(result.readingAge == "Read 1h 00m ago")
+            #expect(result.readingAge == "Read 1h ago")
         }
     }
 

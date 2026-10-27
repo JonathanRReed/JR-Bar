@@ -175,7 +175,7 @@ import Testing
                 == KeepAwakeMenu.maxDurations)
         #expect(KeepAwakeMenu.title(seconds: 5400) == "1 hour 30 minutes")
         #expect(KeepAwakeMenu.shortTitle(seconds: 900) == "15m")
-        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2h 00m")
+        #expect(KeepAwakeMenu.shortTitle(seconds: 7200) == "2h")
     }
 
     @Test func theCardSwitchIsThePersonsHold() async throws {

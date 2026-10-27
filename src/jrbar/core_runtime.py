@@ -7629,6 +7629,21 @@ def build_headless_controller_class() -> type:
                 raise box.error
             return box.result
 
+        def _core_on_main_later(self, callable_: Callable[[], Any]) -> None:
+            """Queue ``callable_`` for the main thread and return at once --
+            for a watch thread that must never wait on the main thread (a
+            keep-awake process exit). Errors are logged, not raised."""
+            box = CoreCallableBox(callable_)
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "runCoreCallableLogged:", box, False
+            )
+
+        def runCoreCallableLogged_(self, box):
+            try:
+                box.callable()
+            except Exception:
+                legacy.log_status_bar(f"core: queued main-thread call failed: {traceback.format_exc(limit=4)}")
+
         def _core_initial_documents(self):
             with self._core_lock:
                 documents = dict(self._core_documents)

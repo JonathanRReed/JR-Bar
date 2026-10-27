@@ -47,6 +47,9 @@ public enum UsageTime {
         return "in \(Int(saturating: ceil(seconds / 60))) min" // jrbar-token-exception: frozen notch calendar copy
     }
 
+    /// "45s", "12m 30s", "1h", "1h 05m", "3d", "3d 4h". A whole hour or
+    /// day drops the zeros: "1h", never "1h 00m". The daemon's
+    /// `jrbar.duration_words.duration` says the same.
     public static func duration(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "unknown" }
         let whole = Int(saturating: max(0, seconds))
@@ -57,8 +60,13 @@ public enum UsageTime {
             return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
         }
         let hours = minutes / 60
-        if hours < 24 { return String(format: "%dh %02dm", hours, minutes % 60) }
-        return "\(hours / 24)d \(hours % 24)h"
+        if hours < 24 {
+            let rest = minutes % 60
+            return rest == 0 ? "\(hours)h" : String(format: "%dh %02dm", hours, rest)
+        }
+        let days = hours / 24
+        let restHours = hours % 24
+        return restHours == 0 ? "\(days)d" : "\(days)d \(restHours)h"
     }
 
     public static func ago(_ seconds: Double) -> String {

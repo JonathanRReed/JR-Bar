@@ -72,7 +72,7 @@ struct PanelUsageTests {
         let weekly = CoreUsageWindow(key: "7d", name: "7d", usedPct: 12, resetsAt: now.timeIntervalSince1970 + 3 * 86_400)
         var both = broken
         both.windows.append(weekly)
-        #expect(resetLine(both) == "Reconnect Claude · 7d resets in 3d 0h", "a reset still ahead is still true")
+        #expect(resetLine(both) == "Reconnect Claude · 7d resets in 3d", "a reset still ahead is still true")
         #expect(resetLine(BrokenUsageSources.grok) == "Run grok login")
         let fidelityStale = provider("claude", 19, fidelity: "stale", resetsIn: -60, action: "Reconnect Claude")
         #expect(resetLine(fidelityStale) == "Reconnect Claude", "stale by fidelity is stale")
@@ -80,8 +80,8 @@ struct PanelUsageTests {
         // Without a fix to offer, the old wording stands; live rows are unchanged.
         #expect(resetLine(BrokenUsageSources.staleWithoutFix) == "5h reset — waiting for a new reading")
         #expect(resetLine(BrokenUsageSources.healthyPast) == "5h reset — waiting for a new reading")
-        #expect(resetLine(provider("claude", 40, action: "Retry")) == "5h resets in 3h 00m")
-        #expect(resetLine(provider("claude", 40), noRoom: true) == "5h resets in 3h 00m · no room for +1")
+        #expect(resetLine(provider("claude", 40, action: "Retry")) == "5h resets in 3h")
+        #expect(resetLine(provider("claude", 40), noRoom: true) == "5h resets in 3h · no room for +1")
         #expect(resetLine(provider("grok", nil, state: "needs_sign_in", resetsIn: nil, action: "Run grok login")) == "Run grok login")
     }
 

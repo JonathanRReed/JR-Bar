@@ -13,7 +13,14 @@ from pathlib import Path
 from . import firmware_hold
 from .device_writer import KNOWN_LED_FILE_NAMES
 from .models import AgentMode
-from .power_policy import configure_caffeinate_display_assertion
+from .power_policy import configure_caffeinate_display_assertion, display_hold_wanted
+from .process_watch import (
+    ProcessExitWatch,
+    ProcessIdentity,
+    process_label,
+    read_identity,
+    valid_pid,
+)
 
 AWAKE_GRACE_SECONDS = 300.0
 SD_STATUS_READ_SECONDS = 60.0
@@ -91,6 +98,9 @@ def battery_yields_hold(snapshot, settings) -> bool:
 #   agents      -- until the named sessions finish, which no keep-awake app
 #                  can offer because none of them knows what an agent is
 #   indefinite  -- until the person turns it off
+#   process     -- while one process runs (``jrbar awake -- swift test``,
+#                  ``jrbar awake --pid 4242``), learnt from a kqueue exit
+#                  watch, never by asking; bounded to a day like a duration
 #
 # A lease never outlives its own bound, and it YIELDS (not ends) to heat and
 # to a dying battery: the countdown keeps running while it is suspended,
@@ -99,7 +109,8 @@ def battery_yields_hold(snapshot, settings) -> bool:
 LEASE_DURATION = "duration"
 LEASE_AGENTS = "agents"
 LEASE_INDEFINITE = "indefinite"
-LEASE_KINDS = (LEASE_DURATION, LEASE_AGENTS, LEASE_INDEFINITE)
+LEASE_PROCESS = "process"
+LEASE_KINDS = (LEASE_DURATION, LEASE_AGENTS, LEASE_INDEFINITE, LEASE_PROCESS)
 #: The longest duration a lease may ask for. "Until 8 AM" from late
 #: evening fits; a week-long hold is a forgotten one.
 MAX_LEASE_SECONDS = 24 * 60 * 60.0
@@ -126,6 +137,8 @@ LEASE_END_EXPIRED = "expired"
 LEASE_END_FINISHED = "finished"
 LEASE_END_CANCELLED = "cancelled"
 LEASE_END_REPLACED = "replaced"
+#: The process a ``process`` lease waited on has ended.
+LEASE_END_EXITED = "exited"
 
 HOLD_STATE_OFF = "off"
 HOLD_STATE_AGENTS = "agents"
@@ -175,6 +188,11 @@ class AwakeLease:
     sessions: tuple[str, ...] = ()
     display: bool = False
     source: str = "app"
+    #: A ``process`` lease's process: its pid, when it started (microseconds,
+    #: so a reused pid is never mistaken for it) and its short name.
+    pid: int | None = None
+    process_started: int | None = None
+    label: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in LEASE_KINDS:
@@ -213,9 +231,18 @@ class AwakeLease:
             raise ValueError("lease display flag must be a boolean")
         if _bounded_word(self.source, MAX_LEASE_SOURCE_LENGTH) != self.source:
             raise ValueError("lease source must be a short word")
+        if self.kind == LEASE_PROCESS:
+            if not valid_pid(self.pid):
+                raise ValueError("a process lease names the pid it waits on")
+            if type(self.process_started) is not int or self.process_started < 0:
+                raise ValueError("a process lease records when its process started")
+            if process_label(self.label) != self.label:
+                raise ValueError("a process lease's label must be a short name")
+        elif self.pid is not None or self.process_started is not None or self.label is not None:
+            raise ValueError("only a process lease names a process")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        document: dict[str, object] = {
             "kind": self.kind,
             "started_at": self.started_at,
             "until": self.until,
@@ -223,6 +250,11 @@ class AwakeLease:
             "display": self.display,
             "source": self.source,
         }
+        if self.kind == LEASE_PROCESS:
+            document["pid"] = self.pid
+            document["process_started"] = self.process_started
+            document["label"] = self.label
+        return document
 
     @classmethod
     def from_dict(cls, raw: object) -> AwakeLease | None:
@@ -240,6 +272,9 @@ class AwakeLease:
                 sessions=tuple(sessions),
                 display=raw.get("display", False),  # type: ignore[arg-type]
                 source=raw.get("source", "app"),  # type: ignore[arg-type]
+                pid=raw.get("pid"),  # type: ignore[arg-type]
+                process_started=raw.get("process_started"),  # type: ignore[arg-type]
+                label=raw.get("label"),  # type: ignore[arg-type]
             )
         except (TypeError, ValueError):
             return None
@@ -295,17 +330,53 @@ def next_local_time(clock: str, *, now: float, zone=None) -> float:
     raise ValueError("until_time could not be resolved")
 
 
+def _process_lease(
+    args: Mapping[str, object],
+    *,
+    now: float,
+    display: bool,
+    source: str,
+    identify: Callable[[int], ProcessIdentity | None],
+) -> AwakeLease:
+    """``hold_awake {pid}``: a lease while that process runs. The label is
+    the caller's short name for it when it gives a usable one (``npm`` for a
+    script whose process is ``node``), else the process's own name; never
+    its arguments."""
+    pid = args.get("pid")
+    if not valid_pid(pid):
+        raise ValueError("pid must be a process id")
+    given = args.get("label")
+    if given is not None and type(given) is not str:
+        raise ValueError("label must be a short name")
+    identity = identify(pid)  # type: ignore[arg-type]
+    if identity is None:
+        raise LeaseRefusedError("That process has already ended.")
+    label = process_label(given) or identity.name
+    return AwakeLease(
+        LEASE_PROCESS,
+        now,
+        now + MAX_LEASE_SECONDS,
+        display=display,
+        source=source,
+        pid=identity.pid,
+        process_started=identity.started,
+        label=label,
+    )
+
+
 def lease_from_args(
     args: Mapping[str, object],
     *,
     now: float,
     pending_ids: frozenset[str],
     zone=None,
+    identify: Callable[[int], ProcessIdentity | None] = read_identity,
 ) -> AwakeLease:
     """The ``hold_awake`` command's arguments as a lease.
 
     Exactly one of ``seconds``, ``until``, ``until_time`` (a local ``HH:MM``,
-    the next one), ``until_agents_idle`` or ``indefinite`` says how long.
+    the next one), ``until_agents_idle``, ``indefinite`` or ``pid`` (while
+    that process runs) says how long.
     ``sessions`` narrows "until the agents finish" to named sessions; without
     it the lease waits on every session working right now. ``ValueError`` is
     a malformed request; ``LeaseRefusedError`` is a well-formed one that
@@ -320,14 +391,16 @@ def lease_from_args(
     source = str(source).strip()
     chosen = [
         name
-        for name in ("seconds", "until", "until_time", "until_agents_idle", "indefinite")
+        for name in ("seconds", "until", "until_time", "until_agents_idle", "indefinite", "pid")
         if args.get(name) not in (None, False)
     ]
     if len(chosen) != 1:
         raise ValueError(
-            "give exactly one of seconds, until, until_time, until_agents_idle or indefinite"
+            "give exactly one of seconds, until, until_time, until_agents_idle, indefinite or pid"
         )
     shape = chosen[0]
+    if shape == "pid":
+        return _process_lease(args, now=now, display=display, source=source, identify=identify)
     if shape in ("seconds", "until", "until_time"):
         if shape == "until_time":
             if type(args.get("until_time")) is not str:
@@ -549,6 +622,7 @@ _POWER_REASON_WORDS = {
     SUSPENDED_LOW_POWER: "Low Power Mode",
     LEASE_END_EXPIRED: "time up",
     LEASE_END_FINISHED: "agents finished",
+    LEASE_END_EXITED: "command finished",
     "agents_idle": "agents finished",
     "policy": "setting changed",
 }
@@ -774,6 +848,8 @@ class KeepAwakeController:
         self.thermal = ThermalGovernor()
         self.thermal_state: int | None = None
         self.lid_closed: bool | None = None
+        #: An external display is on (read only while the lid is shut).
+        self.external_display: bool | None = None
         self.battery_floor = False
         #: Low Power Mode is on and the setting says a hold yields to it.
         self.low_power = False
@@ -789,6 +865,15 @@ class KeepAwakeController:
         self.suspension: str | None = None
         self._process_display: bool | None = None
         self._grace_epoch: tuple[float, float] | None = None
+        # A ``process`` lease's exit watch. The watch thread only sets the
+        # event and calls ``on_process_exit`` (the daemon hops to its main
+        # thread and resyncs); the lease ends on that thread, in
+        # ``_lease_holds``.
+        self.process_identity: Callable[[int], ProcessIdentity | None] = read_identity
+        self.process_watch_factory: Callable[..., object] = ProcessExitWatch
+        self.on_process_exit: Callable[[], None] | None = None
+        self._process_watch: object | None = None
+        self._process_exited = threading.Event()
 
     def set_enabled(self, enabled: bool) -> None:
         with self._status_read_lock:
@@ -892,7 +977,18 @@ class KeepAwakeController:
         ) is not None:
             self._save_lease(None)
             return
+        if lease.kind == LEASE_PROCESS and not self._same_process(lease):
+            # The process ended while the daemon was away, or its pid now
+            # belongs to someone else: the hold is over.
+            self._save_lease(None)
+            self._log(
+                POWER_LEASE_ENDED,
+                reason=LEASE_END_EXITED,
+                duration=max(0.0, self.wall_clock() - lease.started_at),
+            )
+            return
         self.lease = lease
+        self._arm_process_watch(lease)
 
     def start_lease(self, lease: AwakeLease) -> AwakeLease:
         if type(lease) is not AwakeLease:
@@ -902,8 +998,42 @@ class KeepAwakeController:
         if self.lease is not None:
             self._log(POWER_LEASE_ENDED, reason=LEASE_END_REPLACED)
         self.lease = lease
+        self._arm_process_watch(lease)
         self._log(POWER_LEASE_STARTED, reason=lease.kind)
         return lease
+
+    def _same_process(self, lease: AwakeLease) -> bool:
+        try:
+            identity = self.process_identity(lease.pid)  # type: ignore[arg-type]
+        except Exception:
+            return False
+        return identity is not None and identity.started == lease.process_started
+
+    def _arm_process_watch(self, lease: AwakeLease | None) -> None:
+        """One exit watch for a ``process`` lease, none otherwise: a new
+        lease cancels the last one's watch before it arms its own."""
+        previous = self._process_watch
+        self._process_watch = None
+        cancel = getattr(previous, "cancel", None)
+        if callable(cancel):
+            cancel()
+        self._process_exited = threading.Event()
+        if lease is None or lease.kind != LEASE_PROCESS:
+            return
+        exited = self._process_exited
+
+        def heard_exit() -> None:
+            exited.set()
+            notify = self.on_process_exit
+            if notify is not None:
+                notify()
+
+        try:
+            self._process_watch = self.process_watch_factory(lease.pid, heard_exit)
+        except Exception:
+            # No watch is not an exit: the lease keeps its day-long bound,
+            # and the identity check below still ends it at the next sync.
+            self._process_watch = None
 
     def end_lease(self, reason: str = LEASE_END_CANCELLED) -> bool:
         lease = self.lease
@@ -912,6 +1042,7 @@ class KeepAwakeController:
                 self._save_lease(None)
             return False
         self.lease = None
+        self._arm_process_watch(None)
         self._save_lease(None)
         self._log(
             POWER_LEASE_ENDED,
@@ -929,6 +1060,7 @@ class KeepAwakeController:
         thermal_state: int | None = None,
         lid_closed: bool | None = None,
         low_power: bool = False,
+        external_display: bool | None = None,
     ) -> None:
         """What the hold yields to, read by the daemon before each sync:
         which sessions are still running (for "until these agents finish"),
@@ -940,14 +1072,27 @@ class KeepAwakeController:
         self.thermal_state = thermal_state
         self.lid_closed = lid_closed
         self.low_power = bool(low_power)
+        self.external_display = external_display if isinstance(external_display, bool) else None
 
     def effective_display(self) -> bool:
+        """Hold the display too only when the setting or the lease asks
+        for it, and never with the lid shut on no external display: the
+        computer stays awake, the screen goes dark."""
         lease = self.lease
-        return self.keep_display_awake or bool(lease is not None and lease.display)
+        wanted = self.keep_display_awake or bool(lease is not None and lease.display)
+        return display_hold_wanted(
+            wanted, lid_closed=self.lid_closed, external_display=self.external_display
+        )
 
     def _lease_holds(self) -> bool:
         lease = self.lease
         if lease is None:
+            return False
+        if lease.kind == LEASE_PROCESS and (
+            self._process_exited.is_set()
+            or (self._process_watch is None and not self._same_process(lease))
+        ):
+            self.end_lease(LEASE_END_EXITED)
             return False
         verdict = lease_verdict(lease, now=self.wall_clock(), pending_ids=self.pending_ids)
         if verdict is None:
@@ -1256,6 +1401,8 @@ class KeepAwakeController:
             return "Manual Keep Awake stopped, but its saved data could not be cleared"
         if self.persistence_error == "save_failed":
             return "Manual Keep Awake could not be saved"
+        if self.lease is not None and self.lease.kind == LEASE_PROCESS:
+            return f"Keep awake held while {self.lease.label} runs"
         if self.lease is not None:
             return f"Keep awake held by you ({self.lease.kind})"
         if not self.enabled:

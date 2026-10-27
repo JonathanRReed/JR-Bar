@@ -196,7 +196,7 @@ def test_reset_credits_are_counted_in_words() -> None:
     ]}
     code, out, _ = run(usage=usage)
     assert code == 0
-    assert out.strip() == "Codex  7d 70% left · resets 1h00m · 2 reset credits"
+    assert out.strip() == "Codex  7d 70% left · resets 1h · 2 reset credits"
 
 
 def test_only_a_reference_only_window_is_called_detail() -> None:
