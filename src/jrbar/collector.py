@@ -80,6 +80,7 @@ from .private_io import (
     atomic_private_write,
     read_private_text,
 )
+from .project_names import repository_project as project_name
 from .provider_adapters import (
     NormalizedProviderRecord,
     minimize_hook_event,
@@ -234,6 +235,7 @@ class SourceSpec:
 
 @dataclass
 class StatusMetadata:
+    started_at: float | None = None
     cwd: str | None = None
     title: str | None = None
     origin: str | None = None
@@ -517,6 +519,9 @@ def agent_status_from_canonical_work(
         event_name=projected_event_name,
         session_id=session_id,
         cwd=None,
+        session_title=overlay.status.session_title if matching_overlay else None,
+        started_at=overlay.status.started_at if matching_overlay else None,
+        project=overlay.status.project if matching_overlay else None,
         tool_name=(
             overlay.status.tool_name if matching_overlay and overlay.preserve_details else None
         ),
@@ -597,7 +602,7 @@ def _snapshot_from_operator_state(
                     )
                 )
             ),
-            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links),
+            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links or status.session_title),
         )
     )
     merged = _reconcile_delegating_parents(merged, collected_at)
@@ -3483,7 +3488,8 @@ def metadata_for_record(
             f"{record.provider}:session:{record.session_id}",
             StatusMetadata(),
         )
-        update_metadata(session_metadata, record)
+        if not record.agent_id:
+            update_metadata(session_metadata, record)
 
     status_metadata = metadata_by_status.setdefault(record.status_key, StatusMetadata())
     update_metadata(status_metadata, record)
@@ -3491,13 +3497,16 @@ def metadata_for_record(
     if session_metadata is None:
         return status_metadata
     return StatusMetadata(
+        started_at=status_metadata.started_at or session_metadata.started_at,
         cwd=status_metadata.cwd or session_metadata.cwd,
-        title=status_metadata.title or session_metadata.title,
+        title=status_metadata.title or (session_metadata.title if not record.agent_id else None),
         origin=status_metadata.origin or session_metadata.origin,
     )
 
 
 def update_metadata(metadata: StatusMetadata, record: HookEvent) -> None:
+    if record.event_name == "SessionStart" and metadata.started_at is None:
+        metadata.started_at = record.logged_at.timestamp()
     if record.cwd:
         metadata.cwd = record.cwd
 
@@ -3573,7 +3582,10 @@ def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None)
         updated_at=record.logged_at,
         event_name=record.event_name,
         session_id=record.session_id,
-        cwd=record.cwd,
+        cwd=metadata.cwd or record.cwd,
+        started_at=metadata.started_at,
+        session_title=metadata.title or _devin_persisted_label(record, record.agent_id or record.session_id),
+        project=project_name(metadata.cwd or record.cwd),
         tool_name=record.tool_name,
         message=_capped_detail(record.message),
         origin=record.origin or metadata.origin or origin_label_from_payload(record.provider, record.raw),
@@ -3835,6 +3847,7 @@ def _merged_status_candidates(
 ) -> tuple[AgentStatus, ...]:
     merged: dict[str, AgentStatus] = {}
     links_by_id: dict[str, set] = {}
+    titles_by_id = {}
     from .lineage_adapters import resolve_hermes_key, resolve_openclaw_key
 
     statuses = tuple(statuses)
@@ -3851,6 +3864,10 @@ def _merged_status_candidates(
                              parent_links=tuple(replace(link, child=resolver(link.child) or link.child,
                                                         parent=resolver(link.parent)) for link in status.parent_links))
         links_by_id.setdefault(status.agent_id, set()).update(status.parent_links)
+        if status.session_title:
+            previous_title = titles_by_id.get(status.agent_id)
+            if previous_title is None or (status.origin or "").startswith("T3 Code"):
+                titles_by_id[status.agent_id] = status
         if status.event_name == "LineageObserved":
             continue
         existing = merged.get(status.agent_id)
@@ -3869,9 +3886,20 @@ def _merged_status_candidates(
         links_by_id[agent_id] = links
         if agent_id.startswith("hermes:") and any(link.parent and ":session:" in link.parent for link in links):
             links_by_id[agent_id] = {link for link in links if link.parent and ":session:" in link.parent}
-    return tuple(replace(merged[agent_id], parent_links=tuple(sorted(links_by_id[agent_id],
-                         key=lambda link: (link.harness, link.parent or "", link.observed_at))))
-                 for agent_id in sorted(merged))
+    result = []
+    for agent_id in sorted(merged):
+        status = merged[agent_id]
+        titled = titles_by_id.get(agent_id, status)
+        result.append(replace(status, session_title=titled.session_title, started_at=titled.started_at or status.started_at,
+                              project=titled.project or status.project,
+                              cwd=status.cwd or titled.cwd,
+                              parent_links=tuple(sorted(links_by_id[agent_id],
+                                  key=lambda link: (link.harness, link.parent or "", link.observed_at)))))
+    # Facts retain their provider title separately so future refreshes never
+    # mistake a generated worker label for a task.
+    from .core_projection import session_names
+    names = session_names(result)
+    return tuple(replace(status, display_name=names[status.agent_id]) for status in result)
 
 
 def _status_without_dismissed_ask(
@@ -4012,6 +4040,9 @@ def agent_status_from_dict(data: object) -> AgentStatus | None:
             event_name=str(data["event_name"]),
             session_id=session_id,
             cwd=cwd,
+            session_title=_string_or_none(data.get("session_title")),
+            started_at=data.get("started_at") if type(data.get("started_at")) in (int, float) else None,
+            project=_string_or_none(data.get("project")) or project_name(cwd),
             tool_name=_string_or_none(data.get("tool_name")),
             message=_string_or_none(data.get("message")),
             origin=_string_or_none(data.get("origin")),
@@ -4144,49 +4175,15 @@ def read_recent_lines(path: Path, max_lines: int, *, max_bytes: int = RECENT_LIN
 
 
 def _replace_stale(status: AgentStatus, stale: bool) -> AgentStatus:
-    if status.stale == stale:
-        return status
-    return AgentStatus(
-        provider=status.provider,
-        agent_id=status.agent_id,
-        display_name=status.display_name,
-        mode=status.mode,
-        updated_at=status.updated_at,
-        event_name=status.event_name,
-        session_id=status.session_id,
-        cwd=status.cwd,
-        tool_name=status.tool_name,
-        message=status.message,
-        origin=status.origin,
-        stale=stale,
-        work_key=status.work_key,
-        request_key=status.request_key,
-    )
+    return status if status.stale == stale else replace(status, stale=stale)
 
 
 def _replace_mode(status: AgentStatus, mode: AgentMode) -> AgentStatus:
-    if status.mode == mode:
-        return status
-    return AgentStatus(
-        provider=status.provider,
-        agent_id=status.agent_id,
-        display_name=status.display_name,
-        mode=mode,
-        updated_at=status.updated_at,
-        event_name=status.event_name,
-        session_id=status.session_id,
-        cwd=status.cwd,
-        tool_name=status.tool_name,
-        message=status.message,
-        origin=status.origin,
-        stale=status.stale,
-        work_key=status.work_key,
-        request_key=status.request_key,
-    )
+    return status if status.mode == mode else replace(status, mode=mode)
 
 
 def title_from_event(record: HookEvent) -> str | None:
-    if record.provider == "codex":
+    if record.provider == "codex" and not record.agent_id:
         title = codex_session_title(record.session_id)
         if title:
             return title
@@ -4312,15 +4309,6 @@ def display_name_from_parts(
 def normalized_name_part(text: str) -> str:
     return " ".join(text.replace("_", " ").replace("-", " ").split()).casefold()
 
-
-def project_name(cwd: str | None) -> str | None:
-    if not cwd:
-        return None
-    path = Path(cwd)
-    for candidate in (path, *path.parents):
-        if (candidate / ".git").exists():
-            return candidate.name or str(candidate)
-    return path.name or cwd
 
 
 def truncate_text(text: str, max_len: int) -> str:

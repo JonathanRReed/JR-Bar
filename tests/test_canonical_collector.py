@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -265,7 +266,8 @@ def test_stale_replay_status_cannot_shadow_fresher_canonical_projection__and_2_m
     assert status.mode is AgentMode.WAITING_FOR_INPUT
     assert status.event_name == "PermissionRequest"
     assert status.cwd is status.tool_name is status.message is status.origin is None
-    assert snapshot_status == status
+    assert snapshot_status.display_name == "Codex session in Unknown project"
+    assert replace(snapshot_status, display_name=status.display_name) == status
 
 
 

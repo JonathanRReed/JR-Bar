@@ -554,8 +554,8 @@ def test_a_row_is_named_by_the_providers_own_title_when_it_is_recorded__and_1_mo
     target.track_completions((done,))
 
     (entry,) = target.activity_ledger.entries
-    assert entry.label == "sidepulse-manager"
-    assert entry.detail == "Refactor the auth flow"
+    assert entry.label == "Refactor the auth flow"
+    assert entry.detail is None
     assert looked_up == ["claude:session:one"]
 
     # --- scenario: a_failing_lookup_keeps_the_plain_label

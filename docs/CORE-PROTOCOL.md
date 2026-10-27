@@ -533,15 +533,18 @@ Vocabulary:
 - `sessions[].id` is the existing agent id: `provider:session:<sid>` for a
   main session, `provider:agent:<id>` for a worker (`kind: "worker"`,
   `parent` = the main session's id). `label` is human: the provider's own
-  session title when it has one (Claude's `name` from
-  `~/.claude/sessions/<pid>.json`, Codex's `thread_name` from
-  `~/.codex/session_index.jsonl`), else the collector's derived name with
-  its short id stripped (project / first prompt), else the working
-  directory's last path component, else `<Provider> session`. A worker
-  uses its own title or task. Without one it uses `<head label> worker N`,
-  where N is its ordinal among the proven group's workers sorted by id,
-  including ended members. State and roster use the same title rule and
-  group resolver. Ids belong in help or accessibility text. `short_id` is the first 8
+  session title or task from its provider. T3 delegated threads use the
+  delegated task title from the existing incremental T3 reader. An untitled
+  worker uses `<head title> worker N`, where N follows the proven group's
+  workers sorted by identity, including ended members. Other untitled
+  sessions use `<Provider> session in <Project>`. The daemon applies this
+  rule to state, roster, History, notices, alerts, speech, Deck and logs.
+  Views consume the projected label. Saved labels use the app's shared
+  compatibility formatter. IDs appear only in an explicit copy action or
+  accessibility custom content, never in hover help. `project` is the
+  repository name, resolved during collection from git's common directory
+  or a known worktree layout. Views use it for grouping and show branch or
+  worktree details separately. `short_id` is the first 8
   characters of the session id (of the agent id for a worker); `cwd` comes
   from the hook payload as the process registry recorded it, or the
   provider's session record.

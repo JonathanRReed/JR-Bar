@@ -173,6 +173,9 @@ class AgentStatus:
 
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
     quota_working: bool | None = None
+    session_title: str | None = None
+    started_at: float | None = None
+    project: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.provider, str):
@@ -248,6 +251,9 @@ class AgentStatus:
             "event_name": self.event_name,
             "session_id": self.session_id,
             "cwd": self.cwd,
+            "session_title": self.session_title,
+            "started_at": self.started_at,
+            "project": self.project,
             "tool_name": self.tool_name,
             "message": self.message,
             "origin": self.origin,

@@ -268,7 +268,11 @@ class DeckSessionBoard:
                 elif status.mode is AgentMode.BLOCKED_ERROR and not signals_failure(status, now=now):
                     state = "idle"
                 source = status.work_key.source_key
-                slots.append(SessionSlot(index, identity, _text(status.display_name),
+                from .core_projection import session_label
+                label = session_label(provider=status.provider, session_id=status.session_id,
+                                      agent_id=status.agent_id, display_name=status.display_name,
+                                      cwd=status.cwd, extras=None, title=status.session_title, project=status.project)
+                slots.append(SessionSlot(index, identity, _text(label),
                                          f"{_text(status.provider, 24)} · {_text(source.adapter_id, 28)} · "
                                          f"{_text(source.source_instance_id, 24)}",
                                          state if fresh else "stale",

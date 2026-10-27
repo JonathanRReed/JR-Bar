@@ -975,3 +975,52 @@ def test_t3_child_failure_then_running_clears_failed_lifecycle(tmp_path):
     assert status.mode is AgentMode.WORKING
     assert status.is_subagent
     assert not signals_failure(status, now=datetime.fromisoformat(NOW))
+
+
+def test_delegate_title_is_read_without_changing_activity_and_refreshes_from_cache(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, 'root', active_provider_thread_id='parent-binding')
+    _thread(database, 'child', title='session', active_provider_thread_id='child-binding', relationship='subagent')
+    _run(database, 'root', 1, 'running')
+    _run(database, 'child', 1, 'running')
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE orchestration_v2_projection_provider_threads '
+                           '(provider_thread_id TEXT, thread_id TEXT, driver TEXT, status TEXT, payload_json TEXT)')
+        for tid, handle, native in [('root', 'parent-binding', 'native-root'), ('child', 'child-binding', 'native-child')]:
+            connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
+                               (handle, tid, 'codex', 'running', json.dumps({'nativeThreadRef': {'driver': 'codex', 'nativeId': native}})))
+        connection.execute('CREATE TABLE orchestration_v2_projection_subagents '
+                           '(thread_id TEXT, child_thread_id TEXT, provider_thread_id TEXT, status TEXT, updated_at TEXT, payload_json TEXT)')
+        connection.execute('INSERT INTO orchestration_v2_projection_subagents VALUES (?,?,?,?,?,?)',
+                           ('root', 'child', 'child-binding', 'running', NOW, json.dumps({'title': 'Install the sample build'})))
+    now = datetime.fromisoformat(NOW)
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        for title in ['Install the sample build', 'Verify the sample panel']:
+            with sqlite3.connect(database) as connection:
+                connection.execute('UPDATE orchestration_v2_projection_subagents SET payload_json=?', (json.dumps({'title': title}),))
+            snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: now)
+            child = next(thread for thread in snapshot.threads if thread.thread_id == 'child')
+            assert child.thread_title == title
+            assert child.to_agent_status().session_title == title
+            assert child.to_agent_status().mode is AgentMode.WORKING
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_project_names_use_the_git_repository_instead_of_a_t3_project_alias(tmp_path):
+    repository = tmp_path / 'Sample'
+    admin = repository / '.git' / 'worktrees' / 'arbitrary'
+    admin.mkdir(parents=True)
+    (admin / 'commondir').write_text('../..')
+    worktree = tmp_path / 'arbitrary-checkout'
+    worktree.mkdir()
+    (worktree / '.git').write_text(f'gitdir: {admin}')
+    database = _v2(tmp_path)
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE projection_projects SET title=?, workspace_root=?', ('A project alias', str(worktree)))
+    _thread(database, worktree=str(worktree))
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert snapshot.threads[0].project_title == 'A project alias'
+    assert snapshot.agent_statuses()[0].project == 'Sample'

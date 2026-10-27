@@ -1369,9 +1369,9 @@ for (const event of [
             )
             self.assertEqual(status.work_key, expected_key)
             self.assertEqual(status.agent_id, f"codex:session:{session_id}")
-            self.assertEqual(status.display_name, f"Codex {session_id}")
+            self.assertEqual(status.display_name, "startup replay should restore this")
             self.assertIsNone(status.cwd)
-            self.assertNotIn("startup replay", status.display_name)
+            self.assertNotIn(session_id, status.display_name)
 
         # --- scenario: status_bar_startup_replay_keeps_only_latest_record_per_session
         try:
@@ -4526,7 +4526,7 @@ for (const event of [
 
             self.assertEqual(snapshot.aggregate.mode, AgentMode.WORKING)
             self.assertEqual(snapshot.statuses[0].session_id, session_id)
-            self.assertIn("sidepulse", snapshot.statuses[0].display_name)
+            self.assertEqual(snapshot.statuses[0].display_name, "it didnt catch this conversation")
             self.assertIn("it didnt catch", snapshot.statuses[0].display_name)
 
     def test_record_caches_and_snapshot_reuse(self) -> None:
@@ -5510,9 +5510,8 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
             snapshot = monitor.snapshot()
             status = snapshot.statuses[0]
 
-            self.assertIn("sidepulse", status.display_name)
             self.assertIn("team id YOUR_TEAM_ID", status.display_name)
-            self.assertIn(session_id[:8], status.display_name)
+            self.assertNotIn(session_id[:8], status.display_name)
             self.assertNotIn("/Users/example", status.display_name)
 
         # --- scenario: codex_display_name_uses_session_index_thread_name
@@ -5572,8 +5571,7 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
                 snapshot = monitor.snapshot()
 
             name = snapshot.statuses[0].display_name
-            self.assertIn("sidepulse", name)
-            self.assertIn("Refine README agent status modes", name)
+            self.assertEqual(name, "Refine README agent status modes")
             self.assertNotIn("Why are we burning", name)
 
         # --- scenario: live_monitor_refreshes_loaded_codex_display_name_from_session_index

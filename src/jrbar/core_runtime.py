@@ -1015,7 +1015,7 @@ def _cmd_snooze(self, args):
                 if _set_run_snooze(self, status, 0):
                     applied.append(status.agent_id)
             except Exception as exc:
-                self._core_log(f"unsnooze failed for {status.agent_id}: {exc}")
+                self._core_log(f"unsnooze failed for {self._core_label(status)}: {exc}")
             payload = AgentBrowserActionPayload(work_key, state.generation, OperatorActionKind.UNSNOOZE)
         else:
             preset = "15-minutes" if seconds <= 900 else "1-hour" if seconds <= 3600 else "tomorrow"
@@ -1026,7 +1026,7 @@ def _cmd_snooze(self, args):
             if self._apply_preference_action(payload) and status.agent_id not in applied:
                 applied.append(status.agent_id)
         except Exception as exc:
-            self._core_log(f"snooze failed for {status.agent_id}: {exc}")
+            self._core_log(f"snooze failed for {self._core_label(status)}: {exc}")
     self.refresh_(None)
     return {"sessions": applied, "until": (time.time() + seconds) if seconds > 0 else None, "scope": "family"}
 
@@ -3707,11 +3707,15 @@ def _history_rows_named(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         session_id, label = session.get("id"), session.get("label")
         if isinstance(session_id, str) and isinstance(label, str) and label.strip():
             names[session_id] = label.strip()
-    if not names:
-        return rows
     named: list[dict[str, Any]] = []
     for row in rows:
         label = names.get(row.get("session")) if isinstance(row.get("session"), str) else None
+        if label is None and row.get("session"):
+            from .core_projection import human_session_title, session_label
+            title = row.get("detail") if human_session_title(row.get("label"), row.get("provider") or "") is None else None
+            label = session_label(provider=row.get("provider") or "", session_id=row["session"],
+                                  agent_id=row["session"], display_name=row.get("label"),
+                                  cwd=row.get("cwd"), extras=None, title=title)
         if label is None or label == row.get("label"):
             named.append(row)
             continue
@@ -4655,7 +4659,7 @@ def _cmd_deck_answer(self, args):
         if args.get(key) is not None:
             answer[key] = args[key]
     result = _cmd_answer_ask(self, answer)
-    self._core_log(f"deck: {core_deck.control_label(index)} answers {status.agent_id}: {decision}")
+    self._core_log(f"deck: {core_deck.control_label(index)} answers {self._core_label(status)}: {decision}")
     return {"index": index, "identity": identity, "session": status.agent_id, "action": "answer_ask", **result}
 
 
@@ -7116,7 +7120,7 @@ def build_headless_controller_class() -> type:
             result = {"index": index, "identity": identity, "session": status.agent_id}
             answered = self._core_deck_try_answer(status)
             if answered is not None:
-                legacy.log_status_bar(f"deck: key {index + 1} answers {status.agent_id}")
+                legacy.log_status_bar(f"deck: key {index + 1} answers {self._core_label(status)}")
                 result.update({"action": "answer_ask", "decision": answered.get("decision"), "answered": True})
                 return result
 
@@ -8055,6 +8059,7 @@ def build_headless_controller_class() -> type:
                 agent_id=status.agent_id, display_name=status.display_name,
                 cwd=status.cwd, extras=cached[1] if cached else None,
                 is_worker=status.is_subagent,
+                title=getattr(status, "session_title", None), project=getattr(status, "project", None),
             )
 
         def _core_extras_for(self, status) -> SessionExtras | None:
@@ -8207,6 +8212,7 @@ def build_headless_controller_class() -> type:
                 cwd=cwd,
                 name=name,
                 provider_ended=provider_ended,
+                started_at=getattr(record, "started_at_epoch", None),
             )
             return extras, settled
 

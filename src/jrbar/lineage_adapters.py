@@ -607,23 +607,29 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
     for worker in subagents:
         parent_tid = worker.get("thread_id")
         child_tid = worker.get("child_thread_id")
-        child = keys.get(child_tid)
-        if child is None:
-            native = worker.get("native_task_ref")
-            if type(native) is str:
-                try:
-                    native = json.loads(native)
-                except ValueError:
-                    native = None
-            if type(native) is dict:
-                provider = _provider(native.get("driver"), worker.get("provider_instance_id"), registry_providers)
-                kind = "agent" if provider in {"claude", "devin", "opencode", "grok"} else "session"
-                native_id = native.get("nativeId")
-                child = member_key(provider, cursor_native_id(native_id) if provider == "cursor" else native_id, kind)
+        child = t3_subagent_key(worker, keys, registry_providers=registry_providers)
         if child:
             parent = keys.get(parent_tid) if child_tid not in ambiguous and parent_tid not in ambiguous else None
             links.append(ParentLink(child, parent, "t3code", observed_at))
     return keys, tuple(links)
+
+
+def t3_subagent_key(worker: dict, keys: dict, *, registry_providers=None) -> str | None:
+    child = keys.get(worker.get("child_thread_id"))
+    if child:
+        return child
+    native = worker.get("native_task_ref")
+    if type(native) is str:
+        try:
+            native = json.loads(native)
+        except ValueError:
+            return None
+    if type(native) is not dict:
+        return None
+    provider = _provider(native.get("driver"), worker.get("provider_instance_id"), registry_providers)
+    kind = "agent" if provider in {"claude", "devin", "opencode", "grok"} else "session"
+    native_id = native.get("nativeId")
+    return member_key(provider, cursor_native_id(native_id) if provider == "cursor" else native_id, kind)
 
 
 def read_devin_links(database: Path, *, observed_at: float) -> tuple[ParentLink, ...]:

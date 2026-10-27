@@ -883,18 +883,7 @@ def test_server_binds_loopback_on_an_ephemeral_port__and_1_more(running_server) 
 
 
 def test_display_name_reaches_the_collector_though_canonical_rows_self_label():
-    """Two halves, both pinned, because only one of them ships today.
-
-    The wire name *is* delivered: `collector.status_from_event` builds it from
-    the `prompt` channel exactly as it does for a local `UserPromptSubmit`.
-    The canonical projection then relabels the row with its content-free
-    `safe_label`, because `ingest_record` sets `preserve_display_name` only for
-    transcript-sourced records. Surfacing cloud names is a one-line collector
-    change (reported as wiring), and this test is what will fail loudly when
-    that change lands -- it must be updated deliberately, not drifted past.
-
-    Deletion: stop writing `raw["prompt"]` in `hook_event_from_cloud_event`
-    and the first half fails."""
+    """The explicit cloud title survives canonical status projection."""
     ingest = _ingest()
     assert _post(
         ingest,
@@ -911,7 +900,7 @@ def test_display_name_reaches_the_collector_though_canonical_rows_self_label():
     monitor = LiveAgentMonitor()
     monitor.ingest_record(record)
     row = monitor.current_statuses_by_key()["claude:session:named-1"]
-    assert row.display_name == "Claude named-1"
+    assert row.display_name == "PR 412 flaky test"
 
 
 def test_real_socket_rejects_a_wrong_token__and_2_more(running_server) -> None:

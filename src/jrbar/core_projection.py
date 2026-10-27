@@ -155,6 +155,7 @@ USAGE_WINDOW_NAMES: Final = {
 }
 # Provider display names for the label fallback ("Claude fca1eb06").
 PROVIDER_LABELS: Final = {
+    "t3code": "T3 Code",
     "codex": "Codex",
     "claude": "Claude",
     "devin": "Devin",
@@ -251,6 +252,7 @@ class SessionExtras:
     # looked". A one-shot CLI run exits the moment it finishes, so
     # ``process_alive`` alone cannot tell those two apart.
     provider_ended: bool | None = None
+    started_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,87 +369,99 @@ def short_session_id(session_id: str | None, agent_id: str | None = None) -> str
     return None
 
 
-def _looks_like_safe_label(text: str, provider: str) -> bool:
-    """True for the collector's content-free fallback ("Claude <work id>",
-    "Claude agent <id>"): a provider word, optionally "agent", then one
-    id-shaped token. Those carry nothing a person can read."""
-    if re.fullmatch(r"[0-9a-fA-F]{8,}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", text):
-        return True
-    parts = text.split()
-    if len(parts) not in (2, 3):
-        return False
-    head = parts[0].lower()
-    if head != provider.lower() and head != PROVIDER_LABELS.get(provider, "").lower():
-        return False
-    if len(parts) == 3 and parts[1].lower() not in ("agent", "worker", "session"):
-        return False
-    token = parts[-1]
-    return len(token) >= 8 and all(char.isalnum() or char == "-" for char in token)
-
-
-def _slug_session_id(session_id: str | None) -> str | None:
-    """A session id that already IS a name: Devin's ``cubic-class`` or
-    ``jrbar-install-probe`` reads fine whole -- truncating it to eight
-    characters produced "cubic-cl". Anything that isn't slug-shaped --
-    a UUID, a hex run, a ULID, an underscore id -- uses the session
-    fallback instead of leaking an opaque id."""
-    if not isinstance(session_id, str):
+def human_session_title(value: str | None, provider: str = "") -> str | None:
+    """Reject generated names before choosing a title on any output."""
+    text = str(value or "").strip()
+    if not text or re.search(r"\b[0-9a-fA-F]{8,}\b|(?:^|/)t3-[^ /]*", text):
         return None
-    text = session_id.strip()
-    if not 2 <= len(text) <= 40 or not text.isprintable() or " " in text:
+    if text.lower() in {"session", "worker", "agent", "t3-", provider.lower(),
+                        PROVIDER_LABELS.get(provider, "").lower()}:
         return None
-    if re.fullmatch(
-        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
-        r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-        text,
-    ):
-        return None
-    if not re.fullmatch(r"[a-zA-Z0-9]+(-[a-zA-Z0-9]+)+", text):
+    if text.startswith(("/", "~/")):
         return None
     return text
 
 
 def session_label(
-    *,
-    provider: str,
-    session_id: str | None,
-    agent_id: str,
-    display_name: str | None,
-    cwd: str | None,
-    extras: SessionExtras | None,
-    is_worker: bool = False,
-    parent_label: str | None = None,
-    worker_ordinal: int = 1,
+    *, provider: str, session_id: str | None, agent_id: str,
+    display_name: str | None, cwd: str | None, extras: SessionExtras | None,
+    is_worker: bool = False, parent_label: str | None = None,
+    worker_ordinal: int = 1, title: str | None = None,
+    project: str | None = None, started_at: float | None = None,
 ) -> str:
-    """A human label: the provider's own session title, else the display
-    name the collector derived (project/prompt), else the working
-    directory's last path component, else provider plus the session's
-    slug or "session". Untitled workers use their head and group ordinal."""
+    """The session name for every output: own task, group worker, or context."""
+    from .project_names import project_name
+
     provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
-    # Native workers can share their head's session_id. Its cached title is
-    # then the head's title, not the worker's task.
+    project = project or project_name((extras.cwd if extras else None) or cwd)
     owns_title = not is_worker or session_id == agent_id.rsplit(":", 1)[-1]
-    name = extras.name.strip() if owns_title and extras is not None and isinstance(extras.name, str) else ""
-    if _looks_like_safe_label(name, provider):
-        name = ""
-    stripped = strip_session_short_id(display_name or "", session_id)
-    context_labels = {parent_label, session_id, agent_id.rsplit(":", 1)[-1],
-                      (cwd or "").rstrip("/").rsplit("/", 1)[-1]}
-    if (not name and stripped and stripped.lower() not in {"worker", "agent", "session"}
-            and not _looks_like_safe_label(stripped, provider)
-            and not (is_worker and stripped in context_labels)):
-        name = stripped
-    if is_worker:
-        base = parent_label or provider_label
-        return name or f"{base} worker {worker_ordinal}"
-    if name:
-        return name
-    for candidate in ((extras.cwd if extras is not None else None), cwd):
-        if isinstance(candidate, str) and candidate.strip():
-            tail = candidate.rstrip("/").rsplit("/", 1)[-1]
-            if tail:
-                return tail
-    return f"{provider_label} {_slug_session_id(session_id) or 'session'}"
+    own = human_session_title(title, provider)
+    if own is None and owns_title and extras is not None:
+        own = human_session_title(extras.name, provider)
+    if own is None:
+        candidate = human_session_title(strip_session_short_id(display_name or "", session_id), provider)
+        contexts = {project, parent_label, session_id, agent_id.rsplit(":", 1)[-1],
+                    (cwd or "").rstrip("/").rsplit("/", 1)[-1]}
+        native = agent_id.split(":", 2)[-1]
+        for identity in (session_id, native):
+            if identity:
+                contexts.update({f"{provider_label} {identity}", f"{provider_label} session {identity}",
+                                 f"{provider_label} agent {identity}"})
+        if candidate not in contexts and candidate and not candidate.startswith(provider_label + " session in "):
+            own = candidate
+    if own:
+        return own
+    if is_worker and human_session_title(parent_label, provider):
+        return f"{parent_label} worker {max(1, worker_ordinal)}"
+    label = f"{provider_label} session in {project or 'Unknown project'}"
+    if started_at is not None:
+        try:
+            label += datetime.fromtimestamp(started_at).strftime(" at %H:%M")
+        except (ValueError, OSError, OverflowError):
+            pass
+    return label
+
+
+def session_names(statuses, *, extras_by_id=None, group_resolution=None, now=None) -> dict[str, str]:
+    """Resolve names once for a complete roster, including ended group heads."""
+    from .agent_groups import resolve_agent_groups
+
+    statuses = tuple(statuses)
+    extras_by_id = extras_by_id or {}
+    if group_resolution is None:
+        stamp = now if now is not None else max((status.updated_at.timestamp() for status in statuses), default=0)
+        group_resolution = resolve_agent_groups(statuses, now=stamp)
+    group_by_member = {member: group for group in group_resolution.groups for member in group.members}
+    ordinals = {member: ordinal for group in group_resolution.groups
+                for ordinal, member in enumerate(sorted(member for member in group.members if member != group.root_work_key), 1)}
+    names = {}
+    for status in sorted(statuses, key=lambda item: str(getattr(item, "agent_id", "")) in ordinals):
+        key = str(getattr(status, "agent_id", ""))
+        group = group_by_member.get(key)
+        parent = group.root_work_key if group and group.root_work_key != key else None
+        names[key] = session_label(
+            provider=str(getattr(status, "provider", "unknown")), session_id=getattr(status, "session_id", None), agent_id=key,
+            display_name=getattr(status, "display_name", None), cwd=getattr(status, "cwd", None), extras=extras_by_id.get(key),
+            is_worker=parent is not None or bool(getattr(status, "is_subagent", False)), parent_label=names.get(parent),
+            worker_ordinal=ordinals.get(key, 1),
+            title=getattr(status, "session_title", None), project=getattr(status, "project", None),
+        )
+    counts = {}
+    for name in names.values():
+        counts[name] = counts.get(name, 0) + 1
+    for status in statuses:
+        key = str(getattr(status, "agent_id", ""))
+        provider = str(getattr(status, "provider", "unknown"))
+        extras = extras_by_id.get(key)
+        began = getattr(status, "started_at", None) or (extras.started_at if extras else None)
+        fallback_prefix = PROVIDER_LABELS.get(provider, provider.title()) + " session in "
+        if counts[names[key]] > 1 and began is not None and names[key].startswith(fallback_prefix):
+            names[key] = session_label(
+                provider=provider, session_id=getattr(status, "session_id", None), agent_id=key,
+                display_name=None, cwd=getattr(status, "cwd", None), extras=extras,
+                project=getattr(status, "project", None), started_at=began,
+            )
+    return names
 
 
 def usage_window_name(lane_id: str | None, label: str | None, model: str | None = None) -> str:
@@ -1104,6 +1118,7 @@ def session_document(
     cwd = getattr(status, "cwd", None) or (extras.cwd if extras is not None else None)
     event_name = getattr(status, "event_name", None)
     from .failure_policy import ended_without_failure, failure_signal_until
+    from .project_names import project_name
 
     if ended_without_failure(status):
         mode = AgentMode.ENDED_UNCONFIRMED
@@ -1170,11 +1185,14 @@ def session_document(
             extras=extras,
             is_worker=is_subagent,
             parent_label=parent_label,
+            title=getattr(status, "session_title", None),
+            project=getattr(status, "project", None),
         ),
         "short_id": short_session_id(
             agent_id if is_subagent else session_id, agent_id
         ),
         "cwd": cwd,
+        "project": getattr(status, "project", None) or project_name(cwd),
         "mode": mode.value,
         "lifecycle": lifecycle,
         "failure_signal_until": failure_deadline,
@@ -1718,25 +1736,9 @@ def project_session_rows(
     rows = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
     resolution = group_resolution or _agent_group_resolution(snapshot, now=now)
     _apply_agent_group_rows(rows, statuses, resolution, ask_ids, quiet_worker_ids)
-    statuses_by_id = {str(getattr(status, "agent_id", "")): status for status in statuses}
-    for group in resolution.groups:
-        head = documents_by_id.get(group.root_work_key)
-        if head is None:
-            continue
-        # Group membership is canonical and includes ended heads. Sorting by
-        # identity keeps ordinals independent of activity and roster order.
-        workers = sorted(member for member in group.members if member != group.root_work_key)
-        for ordinal, member in enumerate(workers, start=1):
-            status = statuses_by_id.get(member)
-            row = documents_by_id.get(member)
-            if status is None or row is None:
-                continue
-            row["label"] = session_label(
-                provider=row["provider"], session_id=getattr(status, "session_id", None),
-                agent_id=member, display_name=getattr(status, "display_name", None),
-                cwd=row["cwd"], extras=extras_by_id.get(member), is_worker=True,
-                parent_label=head["label"], worker_ordinal=ordinal,
-            )
+    names = session_names(statuses, extras_by_id=extras_by_id, group_resolution=resolution, now=now)
+    for row in rows:
+        row["label"] = names[row["id"]]
     return rows, ask_ids
 
 

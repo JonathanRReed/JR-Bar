@@ -4772,15 +4772,9 @@ class StatusBarController(NSObject):
     ) -> tuple[ActivityEntry, ...]:
         """Build one ledger row per main session, named the way rows are.
 
-        `strip_session_short_id` is the whole title rule here: the display
-        name with its short id dropped. It never looks for a project on disk,
-        because a per-refresh recorder must not stat the filesystem for a
-        `.git` directory. The row's `detail` is
-        ``core_projection.session_label``: the
-        same projected name the daemon's ``state.sessions`` rows carry,
-        including the provider's own session title from the daemon's
-        extras cache when it has one, so History names the row when it is
-        recorded rather than only when it is shown.
+        The shared naming function uses cached provider titles and project
+        facts. Recording a row does not inspect git metadata or create a
+        second name for History.
 
         `duration_seconds` is filled only when ``_session_active_since``
         saw this session live before the transition: a run the monitor
@@ -4797,13 +4791,7 @@ class StatusBarController(NSObject):
                 from .failure_policy import ended_without_failure
                 if ended_without_failure(status):
                     continue
-            label = safe_activity_text(
-                strip_session_short_id(status.display_name, status.session_id),
-                MAX_ACTIVITY_LABEL_LENGTH,
-            ) or safe_activity_text(status.agent_id, MAX_ACTIVITY_LABEL_LENGTH)
             provider = safe_activity_text(status.provider, 32) or "unknown"
-            if not label:
-                continue
             occurred = status.updated_at.timestamp()
             # Lazy: core_projection is a leaf, but this file is on every
             # import path and the label costs nothing until a row exists.
@@ -4828,9 +4816,13 @@ class StatusBarController(NSObject):
                     extras=extras,
                     is_worker=False,
                     parent_label=None,
+                    title=getattr(status, "session_title", None), project=getattr(status, "project", None),
                 ),
                 MAX_ACTIVITY_DETAIL_LENGTH,
             )
+            label = safe_activity_text(detail, MAX_ACTIVITY_LABEL_LENGTH)
+            if not label:
+                continue
             duration: float | None = None
             began = active_since.get(status.agent_id)
             if began is not None and occurred >= began:
@@ -5103,7 +5095,7 @@ class StatusBarController(NSObject):
             return
         log_status_bar(
             "completion batch: "
-            + ", ".join(status.agent_id[:60] for status in batch.statuses)
+            + ", ".join(status.display_name for status in batch.statuses)
         )
         ordered_ids = sorted(current_modes)
         # Brand-anchored like the mailbox dots and the strip (audit V3):
@@ -5140,7 +5132,7 @@ class StatusBarController(NSObject):
                 except Exception as exc:
                     log_status_bar(
                         "completion notification routing failed "
-                        f"({status.agent_id[:60]}): {exc}"
+                        f"({status.display_name}): {exc}"
                     )
 
         for status in batch.statuses:
@@ -5160,7 +5152,7 @@ class StatusBarController(NSObject):
                 except Exception as exc:
                     log_status_bar(
                         "completion webhook routing failed "
-                        f"({status.agent_id[:60]}): {exc}"
+                        f"({status.display_name}): {exc}"
                     )
 
         if not self.settings.completion_sweep_enabled:
@@ -6322,10 +6314,16 @@ class StatusBarController(NSObject):
         except Exception as exc:
             log_status_bar(f"liveness sweep live set skipped: {exc}")
         self._record_expired_asks(result)
+        names = {(status.provider, status.session_id): status.display_name for status in statuses}
         for dead in result.ended_sessions:
+            from .core_projection import session_label
+            label = names.get((dead.record.provider, dead.record.session_id)) or session_label(
+                provider=dead.record.provider, session_id=dead.record.session_id, agent_id="",
+                display_name=None, cwd=dead.record.cwd, extras=None,
+            )
             log_status_bar(
                 "liveness: ended "
-                f"{dead.record.provider} {dead.record.session_id[:8]} "
+                f"{label} "
                 f"pid={dead.record.pid} reason={dead.reason}"
             )
         if getattr(result, "failed_sends", 0):
@@ -6368,7 +6366,7 @@ class StatusBarController(NSObject):
         self.record_activity_entries(entries)
         for status in expired:
             log_status_bar(
-                f"asks: expired unanswered {status.provider} {str(status.session_id)[:8]}"
+                f"asks: expired unanswered {status.display_name}"
             )
 
     def pollLiveness_(self, _timer):
@@ -11278,20 +11276,6 @@ def ask_statuses(projection, settings=None) -> list[AgentStatus]:
             settings or AgentMonitorSettings(),
         )
     return [row.source_status for row in projection.actionable_attention]
-
-
-def strip_session_short_id(display_name: str, session_id: str | None) -> str:
-    text = display_name.strip()
-    if session_id:
-        suffix = f" ({session_id[:8]})"
-        if text.endswith(suffix):
-            return text[: -len(suffix)].strip()
-    if text.endswith(")") and " (" in text:
-        prefix, suffix = text.rsplit(" (", 1)
-        token = suffix[:-1]
-        if 6 <= len(token) <= 12 and all(char.isalnum() or char == "-" for char in token):
-            return prefix.strip()
-    return text
 
 
 _symbol_image_cache: dict[tuple[str, str], object] = {}

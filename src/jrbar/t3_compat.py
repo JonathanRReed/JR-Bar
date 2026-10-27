@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .models import AgentMode, AgentStatus, ParentLink, parse_datetime
+from .project_names import repository_project
 from .provider_facts import SourceKey, WorkIdentifier, WorkKey
 
 _log = logging.getLogger(__name__)
@@ -253,6 +254,7 @@ class T3ThreadView:
     turn_state: str | None = None
     parent_links: tuple[ParentLink, ...] = ()
     delegated_stop: bool = False
+    repository_name: str | None = None
     _agent_status: AgentStatus | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
@@ -299,10 +301,14 @@ class T3ThreadView:
             SourceKey(self.provider, "t3code", source_instance, "threads"),
             WorkIdentifier(work_id),
         )
+        from .project_names import project_name
+
         status = AgentStatus(
             provider=self.provider,
             agent_id=f"{self.provider}:session:{observation_id}",
             display_name=_bounded_text(self.thread_title, T3_MAX_TITLE_LENGTH),
+            session_title=_bounded_text(self.thread_title, T3_MAX_TITLE_LENGTH),
+            project=self.repository_name or project_name(self.workspace_root),
             mode=mode,
             updated_at=self.updated_at,
             event_name=event_name,
@@ -790,6 +796,7 @@ def _read_legacy_snapshot(
                 T3ThreadView(
                     thread_id=str(row["thread_id"]),
                     project_id=str(row["project_id"]),
+                    repository_name=repository_project(row["worktree_path"] or row["workspace_root"]),
                     project_title=_bounded_text(
                         row["project_title"],
                         T3_MAX_TITLE_LENGTH,
@@ -1198,6 +1205,7 @@ def _read_v2_snapshot(
                 T3ThreadView(
                     thread_id=str(row["thread_id"]),
                     project_id=str(row["project_id"]),
+                    repository_name=repository_project(row["worktree_path"] or row["workspace_root"]),
                     project_title=_bounded_text(row["project_title"], T3_MAX_TITLE_LENGTH),
                     thread_title=_bounded_text(row["thread_title"], T3_MAX_TITLE_LENGTH),
                     workspace_root=str(row["workspace_root"]),
@@ -1239,7 +1247,7 @@ def _read_v2_snapshot(
                 )
             )
             views[tid] = (bound, threads[-1])
-        from .lineage_adapters import read_t3_registry_providers, t3_parent_links
+        from .lineage_adapters import read_t3_registry_providers, t3_parent_links, t3_subagent_key
 
         # Bind only the selected provider thread. Native IDs, not T3's own
         # provider-thread handles, join the hook/transcript roster.
@@ -1273,6 +1281,7 @@ def _read_v2_snapshot(
                 subagents = [dict(row) for row in connection.execute(
                     f"SELECT thread_id, child_thread_id, {status_column} AS status, {instance_column} AS provider_instance_id, "
                     f"{binding_column} AS binding_id, {native_ref} AS native_task_ref, "
+                    "json_extract(CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{}' END, '$.title') AS task_title, "
                     "json_extract(CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{}' END, '$.result') AS result "
                     f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders}) "
                     f"{recent}{ordering} LIMIT ?",
@@ -1308,6 +1317,10 @@ def _read_v2_snapshot(
             if worker["status"] in {"cancelled", "interrupted"}
             or (worker["status"] == "failed" and delegated_infrastructure_stop(worker.get("result")))
         }
+        # Delegation records own the task title even when the child thread
+        # still has its launcher's generic title.
+        threads = [replace(thread, thread_title=_bounded_text(latest_workers[thread.thread_id]["task_title"], T3_MAX_TITLE_LENGTH))
+                   if latest_workers.get(thread.thread_id, {}).get("task_title") else thread for thread in threads]
         threads = [replace(thread, delegated_stop=True) if thread.thread_id in stopped_children
                    and thread.active_turn_id is None and thread.turn_state in {"error", "interrupted"}
                    else thread for thread in threads]
@@ -1315,6 +1328,11 @@ def _read_v2_snapshot(
         registry_providers = read_t3_registry_providers(database.parent / "settings.json")
         keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(),
                                       subagents=subagents, registry_providers=registry_providers)
+        worker_titles = {}
+        for worker in subagents:
+            child = t3_subagent_key(worker, keys, registry_providers=registry_providers)
+            if child and worker.get("task_title"):
+                worker_titles.setdefault(child, _bounded_text(worker["task_title"], T3_MAX_TITLE_LENGTH))
         links_by_child = {}
         for link in links:
             links_by_child.setdefault(link.child, []).append(link)
@@ -1334,7 +1352,7 @@ def _read_v2_snapshot(
                 not (links or thread.thread_id in bound_thread_ids)
                 or (previous.provider == key.split(":", 1)[0] and previous.provider_thread_id == native)
             )
-            if thread.thread_id not in selected and same_targets and same_identity and previous.delegated_stop == thread.delegated_stop and cache.views.get(thread.thread_id) == views.get(thread.thread_id):
+            if thread.thread_id not in selected and same_targets and same_identity and previous.delegated_stop == thread.delegated_stop and previous.thread_title == thread.thread_title and cache.views.get(thread.thread_id) == views.get(thread.thread_id):
                 threads[index] = previous
             elif links or thread.thread_id in bound_thread_ids:
                 threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
@@ -1363,7 +1381,8 @@ def _read_v2_snapshot(
             threads=tuple(threads),
             native_workers=tuple(AgentStatus(
                 provider=child.split(":", 1)[0], agent_id=child,
-                display_name="Worker", mode=AgentMode.UNKNOWN,
+                display_name=worker_titles.get(child, "Worker"), mode=AgentMode.UNKNOWN,
+                session_title=worker_titles.get(child), origin="T3 Code",
                 updated_at=observed_at, event_name="LineageObserved",
                 parent_links=tuple(links_by_child[child]),
             ) for child in sorted({link.child for link in links} - {f"{thread.provider}:session:{thread.provider_thread_id}" for thread in threads})),

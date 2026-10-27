@@ -395,22 +395,20 @@ def _question_for(request_key: RequestKey, statuses: tuple[AgentStatus, ...]) ->
 
 
 def _label_for(row: ProjectedAgentRow | None, work: object, provider: str) -> str:
-    label = _text(getattr(row, "display_name", None), ANNOUNCER_NAME_CAP)
-    if not label:
-        label = _text(getattr(work, "safe_label", None), ANNOUNCER_NAME_CAP)
-    return label or _text(provider, ANNOUNCER_NAME_CAP, "Agent").title()
+    from .core_projection import session_label
+    status = _status_for(row) if row is not None else None
+    return _text(session_label(
+        provider=provider, session_id=getattr(status, "session_id", None),
+        agent_id=getattr(row, "agent_id", ""),
+        display_name=getattr(row, "display_name", None) or getattr(work, "safe_label", None),
+        cwd=getattr(status, "cwd", None), extras=None,
+        title=getattr(status, "session_title", None), project=getattr(status, "project", None),
+    ), ANNOUNCER_NAME_CAP)
 
 
 def _session_for(row: ProjectedAgentRow | None, work: object) -> str:
-    status = _status_for(row) if row is not None else None
-    return _text(
-        getattr(status, "session_id", None),
-        ANNOUNCER_NAME_CAP,
-    ) or _text(getattr(row, "agent_id", None), ANNOUNCER_NAME_CAP) or _text(
-        getattr(getattr(work, "work_id", None), "value", None),
-        ANNOUNCER_NAME_CAP,
-        "Session",
-    )
+    provider = getattr(row, "provider", "") if row is not None else ""
+    return _label_for(row, work, provider)
 
 
 def _canonical_alerts(
