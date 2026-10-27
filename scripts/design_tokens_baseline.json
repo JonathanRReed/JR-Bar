@@ -337,7 +337,7 @@
     "radius: cornerRadius: 4.5": 1
   },
   "app/Sources/JRBarApp/SettingsAtoms.swift": {
-    "animation: duration: 0.28": 2,
+    "animation: duration: 0.28": 1,
     "font-floor: .system(size: 9": 1,
     "font: .system(size: 9": 1,
     "semantic-font: .font(.headline": 2,
@@ -346,7 +346,7 @@
   },
   "app/Sources/JRBarApp/SettingsPagesA.swift": {
     "semantic-font: .font(.callout": 1,
-    "semantic-font: .font(.caption": 5
+    "semantic-font: .font(.caption": 4
   },
   "app/Sources/JRBarApp/SettingsPagesB.swift": {
     "animation: duration: 0.2": 1,

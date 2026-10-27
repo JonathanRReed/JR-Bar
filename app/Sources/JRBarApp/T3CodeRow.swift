@@ -43,7 +43,7 @@ struct T3CodeStatus: Equatable {
                             running: running, installed: installed)
     }
 
-    var line: String { running ? "Detected" : installed ? "Not running" : "Not installed" }
+    var line: String { IntegrationStatus.app(installed: installed, running: running) }
 
     var isSettling: Bool {
         guard running else { return false }
@@ -117,16 +117,16 @@ struct T3CodeRow: View {
 
     private var isRunning: Bool { running ?? status?.running ?? false }
     private var line: String {
-        if isRunning { return "Detected" }
-        guard let status else { return "Status not reported" }
-        return status.installed ? "Not running" : "Not installed"
+        if isRunning { return IntegrationStatus.app(installed: true, running: true) }
+        guard let status else { return "Not reported" }
+        return IntegrationStatus.app(installed: status.installed, running: false)
     }
 
     var body: some View {
-        SettingsRow("T3 Code") {
-            ProviderLogoTile(provider: "t3code")
-            StateDot(isRunning ? .live : .stale)
-            Text(line).foregroundStyle(.secondary)
+        if isRunning || status?.installed == true {
+            SettingsNavigationRow("T3 Code", subtitle: line) { ExternalProviders.t3Code.open() }
+        } else {
+            SettingsRow("T3 Code", subtitle: line) { EmptyView() }
         }
     }
 }

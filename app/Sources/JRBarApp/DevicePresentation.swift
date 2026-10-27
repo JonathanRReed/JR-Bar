@@ -1,17 +1,17 @@
 import JRBarCore
+import JRBarUI
 
 /// Saved Off wins even when the daemon omits the device or retains an old row.
 enum DeviceConnectionState: String, CaseIterable {
     case off = "Off"
     case connected = "Connected"
     case notConnected = "Not connected"
-    case unknown = "Unknown"
 
     init(enabled: Bool?, connected: Bool?, live: Bool) {
         if enabled == false { self = .off }
-        else if !live { self = .unknown }
+        else if !live { self = .notConnected }
         else if let connected { self = connected ? .connected : .notConnected }
-        else { self = .unknown }
+        else { self = .notConnected }
     }
 
     static func device(_ device: CoreDevice?, enabled: Bool? = nil, live: Bool) -> Self {
@@ -26,6 +26,10 @@ enum DeviceConnectionState: String, CaseIterable {
         Self(enabled: enabled, connected: running, live: live)
     }
 
+    static func screenBar(_ device: CoreDevice?, enabled: Bool? = nil, live: Bool) -> Self {
+        Self(enabled: enabled ?? device?.enabled, connected: device?.enabled ?? device?.connected, live: live)
+    }
+
     static func toast(_ event: CoreEvent, settings: SettingsDocument?, live: Bool) -> String? {
         guard event.kind == "device_connected" || event.kind == "device_disconnected" else { return nil }
         let entry = settings?.deviceEntries.first { $0.id == event.detail }
@@ -35,6 +39,8 @@ enum DeviceConnectionState: String, CaseIterable {
     }
 
     var isConnected: Bool { self == .connected }
+    var tone: Tone { isConnected ? .done : .neutral }
+    func badgeWord(live: Bool) -> String? { live ? rawValue : nil }
 
     func help(name: String) -> String { "\(name) · \(rawValue)" }
 }
@@ -47,6 +53,10 @@ extension SettingsStore {
     }
 
     var creatorMicroConnection: DeviceConnectionState { .creatorMicro(deck, live: isLive) }
+
+    var screenBarConnection: DeviceConnectionState {
+        .screenBar(deviceFacts("screen-bar"), enabled: values.bool("virtual_status_device_enabled"), live: isLive)
+    }
 
     func streamDeckConnection(running: Bool?) -> DeviceConnectionState {
         .streamDeck(enabled: values.bool("serve_enabled"), running: running, live: isLive)

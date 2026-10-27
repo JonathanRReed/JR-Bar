@@ -155,13 +155,50 @@ public struct SettingsNavigationRow: View {
     public var body: some View {
         Button(action: action) {
             SettingsRow(title, subtitle: subtitle) {
-                Image(systemName: "chevron.right").foregroundStyle(neutralInk.tertiary)
+                Image(systemName: "chevron.right").jrbarType(.caption).foregroundStyle(neutralInk.tertiary)
             }
             .background(hovering ? neutralInk.hover : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .help(title.hasPrefix("Open ") ? title : "Open \(title)")
+    }
+}
+
+public struct SettingsExpansionRow<Content: View>: View {
+    @Environment(\.jrbarInk) private var neutralInk
+    @Binding private var expanded: Bool
+    @UIState private var hovering = false
+    private let title: String
+    private let subtitle: String?
+    private let content: () -> Content
+
+    public init(_ title: String, subtitle: String? = nil, isExpanded: Binding<Bool>,
+                @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self._expanded = isExpanded
+        self.content = content
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { expanded.toggle() } label: {
+                SettingsRow(title, subtitle: subtitle) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .jrbarType(.caption)
+                        .foregroundStyle(neutralInk.tertiary)
+                }
+                .background(hovering ? neutralInk.hover : .clear)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("\(expanded ? "Collapse" : "Expand") \(title)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            if expanded { content() }
+        }
     }
 }
 

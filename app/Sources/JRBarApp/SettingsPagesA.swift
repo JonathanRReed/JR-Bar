@@ -464,9 +464,7 @@ struct DevicesPage: View {
     }
 
     static func screenBarStatus(device: CoreDevice?, live: Bool) -> String {
-        guard live else { return MonitorWords.label }
-        guard let enabled = device?.enabled else { return "Not reported" }
-        return enabled ? "Shown" : "Hidden"
+        live ? DeviceConnectionState.screenBar(device, live: live).rawValue : MonitorWords.label
     }
 
     var body: some View {
@@ -517,11 +515,10 @@ struct ScreenBarSettingsCard: View {
         SettingGroup(anchor: "Screen Bar") {
             ScreenBarCard(store: store, device: device)
         } header: {
-            let bar = store.deviceFacts("screen-bar")
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
-                                pill: store.isLive ? DevicesPage.screenBarStatus(device: bar, live: true) : nil,
-                                pillTint: store.isLive && bar?.enabled == true ? Tone.done.color : .secondary)
+                                pill: store.screenBarConnection.badgeWord(live: store.isLive),
+                                pillTint: store.screenBarConnection.tone.color)
         }
     }
 }
@@ -554,8 +551,8 @@ struct DeviceCard: View {
             SettingsGroupHeader(title: device.name,
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
                                 tint: SettingsStore.Page.devices.tint,
-                                pill: connection.rawValue,
-                                pillTint: connection.isConnected ? Tone.done.color : .secondary,
+                                pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color,
                                 trailing: device.kind == "dot" ? "2 LEDs" : device.kind == "pro" ? "8 LEDs" : nil)
         }
     }
@@ -786,20 +783,17 @@ struct CreatorMicroCard: View {
 
     var body: some View {
         SettingGroup(anchor: "Creator Micro") {
-            if store.isLive || store.deckNote != nil {
-                SettingsRow("Status") {
-                    VStack(alignment: .trailing, spacing: 3) {
-                        if store.isLive { StatusBadge(statusText, tint: statusColor) }
-                        // The toggle's own answer, where the click happened.
-                        if let note = store.deckNote {
-                            Text(note.text)
-                                .font(.caption)
-                                .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.trailing)
-                                .transition(.opacity)
-                        }
-                    }
+            if let note = store.deckNote {
+                StatusBanner(note.text, kind: note.isError ? .failure : .information)
+            }
+            if connection.isConnected, let device {
+                if device.hasConflict {
+                    StatusBanner(DeckDevice.conflictText, kind: .failure, detail: device.conflict)
+                } else if !device.approved {
+                    StatusBanner("Creator Micro is not enabled", detail: "Approve it in Creator Micro.")
+                }
+                SettingsRow("Connection", subtitle: [device.transport?.label, device.serial].compactMap { $0 }.joined(separator: " · ")) {
+                    EmptyView()
                 }
             }
             SettingsNavigationRow("Open Creator Micro") { store.onOpenControlCenter?() }
@@ -810,8 +804,8 @@ struct CreatorMicroCard: View {
         } header: {
             SettingsGroupHeader(title: "Creator Micro", symbol: "keyboard.fill",
                                 tint: Color(nsColor: .systemIndigo),
-                                pill: connection.rawValue,
-                                pillTint: statusColor)
+                                pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color)
         }
     }
 
@@ -896,7 +890,7 @@ struct ScreenBarCard: View {
     @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
-        ScreenBarRightNowRow(store: store)
+        if store.isLive { ScreenBarRightNowRow(store: store) }
         settingsRows
     }
 

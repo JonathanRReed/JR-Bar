@@ -278,16 +278,13 @@ struct DisclosureChevron: View {
     var hovering = false
 
     var body: some View {
-        Image(systemName: "chevron.right")
-            .font(JRBarTokens.TypeStyle.caption.font.weight(.bold))
+        Image(systemName: open ? "chevron.down" : "chevron.right")
+            .font(JRBarTokens.TypeStyle.caption.font)
             .foregroundStyle(hovering ? .primary : .secondary)
-            .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: 22, height: 22)
-            .background(Circle().fill(Color.primary.opacity(hovering ? 0.12 : 0.06)))
-            .animation(JRBarTokens.Motion.quick.animation, value: hovering)
             .accessibilityHidden(true)
     }
-}
+    }
 
 /// The recessed panel a disclosure opens onto: a hair darker than the
 /// group it sits in, with a hairline edge, in either appearance.
@@ -603,12 +600,8 @@ struct DisclosureRow<Content: View>: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: expanded) {
-            content()
-        } label: {
-            SettingLabel(title: title, subtitle: subtitle)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        SettingsExpansionRow(title, subtitle: subtitle, isExpanded: expanded) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -636,28 +629,14 @@ struct SettingsFoldRow<Content: View>: View {
         self.content = content
     }
 
+    private var expanded: Binding<Bool> {
+        Binding(get: { store.isFoldOpen(id) }, set: { open in
+            withAnimation(reduceMotion ? nil : JRBarTokens.Motion.quick.animation) { store.setFold(id, open: open) }
+        })
+    }
+
     var body: some View {
-        let open = store.isFoldOpen(id)
-        Button {
-            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
-                store.setFold(id, open: !open)
-            }
-        } label: {
-            HStack(alignment: .center, spacing: SettingsMetrics.m) {
-                SettingLabel(title: title, subtitle: subtitle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                DisclosureChevron(open: open, hovering: hovering)
-            }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(open ? "Collapses" : "Expands")
-        if open {
-            content()
-        }
+        SettingsExpansionRow(title, subtitle: subtitle, isExpanded: expanded) { content() }
     }
 }
 

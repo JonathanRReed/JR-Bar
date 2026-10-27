@@ -1466,9 +1466,6 @@ struct StreamDeckCard: View {
 
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
-            if store.isLive {
-                SettingRow("Endpoint") { StatusBadge(statusText, tint: statusColor) }
-            }
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
                             subtitle: "Serve status, the status URL and its token.") {
                 SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
@@ -1505,8 +1502,8 @@ struct StreamDeckCard: View {
             }
         } header: {
             SettingsGroupHeader(title: "Stream Deck", symbol: "square.grid.3x2.fill",
-                                tint: Color(nsColor: .systemBlue), pill: connection.rawValue,
-                                pillTint: statusColor)
+                                tint: Color(nsColor: .systemBlue), pill: connection.badgeWord(live: store.isLive),
+                                pillTint: connection.tone.color)
         }
         .task(id: enabled && store.isLive) { await refreshServeState() }
     }
