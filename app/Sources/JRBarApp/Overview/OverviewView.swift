@@ -297,7 +297,7 @@ struct OverviewView: View {
             }
             Divider()
             if !store.isLive, store.roster.isEmpty {
-                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                    text: "The roster comes from the monitor. Rows appear as soon as the socket is live.",
                                    tint: Tone.neutral.color)
             } else if !store.isLive {
@@ -306,7 +306,7 @@ struct OverviewView: View {
                 // and disclaimed, with live actions gated by `canOpen`/
                 // `askAction` which already refuse remote/dead work.
                 WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: Tone.neutral.color,
-                                text: "Monitor not connected — showing the last roster it reported.")
+                                text: "\(MonitorWords.sentence) Showing the last roster it reported.")
                     .padding(.horizontal, 10).padding(.vertical, 6)
                 rosterTable.opacity(0.55)
             } else if let error = store.error, store.roster.isEmpty {

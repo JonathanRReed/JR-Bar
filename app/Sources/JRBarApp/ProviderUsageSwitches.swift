@@ -195,7 +195,7 @@ struct ProviderUsageSwitchesGroup: View {
         SettingGroup(Self.title, note: Self.note) {
             if model.switchRows.isEmpty {
                 if !store.isLive {
-                    Text("Monitor offline. Turn on the monitor to choose which providers show usage.")
+                    Text("\(MonitorWords.sentence) Turn on the monitor to choose which providers show usage.")
                         .font(.callout).foregroundStyle(.secondary)
                 } else if model.loading {
                     Text("Reading providers…").font(.callout).foregroundStyle(.secondary)

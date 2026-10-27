@@ -191,7 +191,7 @@ final class HooksDoctorModel {
     }
 
     func statusLine(live: Bool, now: Date = Date()) -> String {
-        if !live { return "Monitor offline. Recheck when it reconnects." }
+        if !live { return "\(MonitorWords.sentence) Recheck when it reconnects." }
         if loading { return "Checking hooks…" }
         if failed { return entries.isEmpty ? "Recheck failed. No report available." : "Recheck failed. Showing the last report." }
         if let checkedAt, checkedAt > 0, checkedAt <= now.timeIntervalSince1970 {

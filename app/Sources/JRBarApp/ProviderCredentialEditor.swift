@@ -120,7 +120,7 @@ final class ProviderCredentialEditorModel {
 
     private static func failureWords(_ error: Error, removing: Bool, credential: String) -> String {
         if let client = error as? CoreClientError, client == .notConnected {
-            return "Monitor offline. Reconnect and try again."
+            return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
         case "unauthenticated": return "Restart JR-Bar to reconnect securely, then try again."
@@ -282,7 +282,7 @@ struct ProviderSavedCredentialControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !core.isLive {
-                Text("Monitor offline. Reconnect to manage this credential.")
+                Text("\(MonitorWords.sentence) Reconnect to manage this credential.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -368,7 +368,7 @@ final class ProviderSourceOptionsModel {
         } catch {
             guard active, generation == revision else { return false }
             if error as? CoreClientError == .notConnected {
-                message = "Monitor offline. Reconnect and try again."
+                message = "\(MonitorWords.sentence) Reconnect and try again."
             } else if (error as? CoreReplyError)?.code == "settings_changed" {
                 message = "These choices changed elsewhere. Reload providers and try again."
             } else {

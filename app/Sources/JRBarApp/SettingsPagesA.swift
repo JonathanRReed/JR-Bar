@@ -269,24 +269,11 @@ struct AgentRow: View {
     private var status: String? { store.hookStatus(provider) }
 
     var statusWord: String {
-        guard store.isLive else { return "Monitor offline" }
-        switch status {
-        case "ok": return "Live"
-        case "missing": return "Not installed"
-        case "stale": return "Quiet"
-        case nil: return "Unknown"
-        case let other?: return other.capitalized
-        }
+        store.isLive ? HookStatus(status).word : MonitorWords.label
     }
 
     var statusColor: Color {
-        guard store.isLive else { return Color(nsColor: .quaternaryLabelColor) }
-        switch status {
-        case "ok": return Tone.done.color
-        case "stale": return Tone.neutral.color
-        case "missing": return Color(nsColor: .tertiaryLabelColor)
-        default: return Color(nsColor: .quaternaryLabelColor)
-        }
+        store.isLive ? HookStatus(status).tone.color : Tone.neutral.color
     }
 
     private var busy: Bool { store.hookBusy.contains(provider) }
@@ -477,7 +464,7 @@ struct DevicesPage: View {
     }
 
     static func screenBarStatus(device: CoreDevice?, live: Bool) -> String {
-        guard live else { return "Monitor not connected" }
+        guard live else { return MonitorWords.label }
         guard let enabled = device?.enabled else { return "Not reported" }
         return enabled ? "Shown" : "Hidden"
     }

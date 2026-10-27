@@ -720,7 +720,7 @@ struct EventLogView: View {
             if store.replay.events.isEmpty {
                 WindowEmptyState(
                     symbol: store.isLive ? "list.bullet.rectangle" : "antenna.radiowaves.left.and.right.slash",
-                    title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : "Monitor not connected",
+                    title: store.isLive ? (store.replay.loading ? "Reading the journal…" : "No events yet") : MonitorWords.label,
                     text: store.isLive
                         ? "The journal holds the events the monitor published since it started."
                         : "The event journal lives in the monitor. It appears when the socket is live.",
@@ -890,7 +890,7 @@ struct HistoryEmptyState: View {
 
     var body: some View {
         if !store.isLive {
-            WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: "Monitor not connected",
+            WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: MonitorWords.label,
                              text: store.error ?? "History lives in the monitor. The rows come back as soon as the socket is live.",
                              tint: Tone.neutral.color)
         } else if store.loading {

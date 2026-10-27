@@ -1576,7 +1576,7 @@ final class SettingsStore {
     private func runHook(provider: String, verb: String, _ body: @escaping @MainActor () async throws -> CoreReply) -> Task<Void, Never>? {
         guard !hookBusy.contains(provider) else { return nil }
         guard core.isLive else {
-            noteHook(provider, "Monitor offline", isError: true)
+            noteHook(provider, MonitorWords.label, isError: true)
             return nil
         }
         hookBusy.insert(provider)
@@ -1625,7 +1625,7 @@ final class SettingsStore {
     func updateProvider(_ provider: String) {
         guard !updateBusy.contains(provider), core.providerUpdates[provider]?.isRunning != true else { return }
         guard core.isLive else {
-            noteHook(provider, "Monitor offline", isError: true)
+            noteHook(provider, MonitorWords.label, isError: true)
             return
         }
         updateBusy.insert(provider)

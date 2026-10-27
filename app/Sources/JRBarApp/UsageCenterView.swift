@@ -40,11 +40,11 @@ struct UsageCenterView: View {
                 VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
                     if store.providers.isEmpty {
                         WindowEmptyState(symbol: store.isLive ? "chart.xyaxis.line" : "bolt.horizontal.circle",
-                            title: store.isLive ? "No usage yet" : "Monitor not connected",
+                            title: store.isLive ? "No usage yet" : MonitorWords.label,
                             text: store.isLive ? "Installed providers appear when the monitor reports them." : "Your usage will appear when JR-Bar reconnects.",
                             actionTitle: "Open Providers", action: store.openUsageSettings)
                     } else {
-                        if !store.isLive { StatusBanner("Monitor not connected", detail: "Showing the last readings.") }
+                        if !store.isLive { StatusBanner(MonitorWords.label, detail: "Showing the last readings.") }
                         if store.resetSaveFailure != nil { ResetSaveNotice { store.loadResetStatus(retry: true) } }
                         if visibleSelection == "overview" {
                             UsageOverviewTable(store: store, showCost: showCost) { selection = $0 }

@@ -1855,7 +1855,7 @@ enum ScreenBarSourceLine {
                          offlineFeed: OfflineFeed? = nil) -> String {
         var parts: [String] = []
         if !live {
-            parts.append("Monitor offline — " + (offlineFeed ?? .strip).playing)
+            parts.append("\(MonitorWords.label) · " + (offlineFeed ?? .strip).playing)
         } else if mirrorSetting, stripPresent {
             var mirror = "Mirroring the strip, phase-locked"
             if let offset = phaseOffsetMs, abs(offset) >= 1 {

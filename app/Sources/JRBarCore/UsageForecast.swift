@@ -137,17 +137,17 @@ public struct UsageForecast: Hashable, Sendable {
             // Nothing was measured: say so, and say the one thing that IS
             // known -- when the window turns over.
             if let resetsAt {
-                return "No reading for the \(window) window · \(Self.resetPhrase(resetsAt, now: now))"
+                return "\(UsageStatus.noReading.word) for the \(window) window · \(Self.resetPhrase(resetsAt, now: now))"
             }
-            return "No reading for the \(window) window"
+            return "\(UsageStatus.noReading.word) for the \(window) window"
         }
         let left = UsageWindowLabel.wholeLeft(usedPct: 100 - remainingPct)
         switch verdict {
         case .exhausted:
             if let resetsAt {
-                return "Used up: the \(window) window \(Self.resetPhrase(resetsAt, now: now))"
+                return "\(UsageStatus.usedUp.word): the \(window) window \(Self.resetPhrase(resetsAt, now: now))"
             }
-            return "Used up: the \(window) window is exhausted"
+            return "\(UsageStatus.usedUp.word): the \(window) window is exhausted"
         case .runsOut(let at):
             return "\(UsageTime.runsOut(at: at, now: now.timeIntervalSince1970, timeZone: timeZone)) at this pace for the \(window) window"
         case .comfortable:
@@ -167,7 +167,7 @@ public struct UsageForecast: Hashable, Sendable {
             return "\(UsageNumber.percent(Double(left))) left · \(Self.guardText(reason))"
         case .unmeasured:
             // Unreachable: a window with no reading has no `remainingPct`.
-            return "No reading for the \(window) window"
+            return "\(UsageStatus.noReading.word) for the \(window) window"
         }
     }
 
@@ -181,7 +181,7 @@ public struct UsageForecast: Hashable, Sendable {
         case "stale_samples": return "readings stopped; pace paused"
         case "clock_regressed": return "clock moved backwards; pace paused"
         case "window_elapsed": return "window reset; waiting for a new reading"
-        case "monitor_offline": return "monitor disconnected; pace paused"
+        case "monitor_offline": return "\(MonitorWords.sentence) Pace paused"
         default: return "no pace yet"
         }
     }
@@ -350,19 +350,24 @@ extension UsageForecast {
     /// The verdict as one or two words for a chip: "Used up", "Runs out
     /// 16:42", "Resets first", "Holding", "No pace yet", "Paused", "No
     /// reading" — the same facts `headline` spells out.
-    public func verdictWord(timeZone: TimeZone = .current) -> String {
+    public var status: UsageStatus {
         switch verdict {
-        case .exhausted: return "Used up"
-        case .runsOut(let at): return "Runs out \(Self.clock(at, timeZone: timeZone))"
+        case .exhausted: .usedUp
+        case .runsOut: .runsOut
         case .comfortable:
-            if heldIdle { return "Holding" }
-            if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate { return "Not burning" }
-            return resetsAt != nil ? "Resets first" : "Comfortable"
-        case .unknown: return "No pace yet"
+            if heldIdle { .holding }
+            else if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate { .notBurning }
+            else { resetsAt != nil ? .resetsFirst : .comfortable }
+        case .unknown: .noPace
         case .guarded(let reason):
-            return ["insufficient_samples", "insufficient_span"].contains(reason) ? "No pace yet" : "Paused"
-        case .unmeasured: return "No reading"
+            ["insufficient_samples", "insufficient_span"].contains(reason) ? .noPace : .paused
+        case .unmeasured: .noReading
         }
+    }
+
+    public func verdictWord(timeZone: TimeZone = .current) -> String {
+        if case .runsOut(let at) = verdict { return "\(status.word) \(Self.clock(at, timeZone: timeZone))" }
+        return status.word
     }
 }
 

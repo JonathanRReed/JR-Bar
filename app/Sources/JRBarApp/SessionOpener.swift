@@ -29,7 +29,7 @@ enum SessionOpener {
     /// test — refuses every open.
     static var wiring: Wiring?
 
-    static let notAnswering = "The monitor is not answering"
+    static let notAnswering = MonitorWords.sentence
     static let cancelled = "Opening cancelled"
 
     /// Open `id` through the published wiring.

@@ -204,7 +204,7 @@ struct SettingsPageNotice: View {
     var body: some View {
         switch Self.notice(store: store, page: page) {
         case .offline:
-            StatusBanner("Monitor not connected", detail: "Showing saved settings.")
+            StatusBanner(MonitorWords.label, detail: "Showing saved settings.")
         case .schema(let schema):
             StatusBanner("Newer settings schema", detail: "Monitor schema \(schema). Update JR-Bar to see all settings.")
         case .failure(let message): StatusBanner(message, kind: .failure)

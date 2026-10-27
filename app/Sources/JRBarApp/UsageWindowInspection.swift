@@ -37,7 +37,7 @@ struct UsageWindowInspection {
     }
 
     var readingNotice: String? {
-        if !isLive { return "Monitor disconnected. This is the last reading." }
+        if !isLive { return "\(MonitorWords.sentence) This is the last reading." }
         if provider.isStale || ["failing", "source_idle", "missing_recent"].contains(provider.availability) {
             return "This reading is stale."
         }
@@ -55,8 +55,8 @@ struct UsageWindowInspection {
     }
 
     var verdictText: String {
-        if !hasAmount { return "No reading" }
-        if readingNotice != nil { return "Paused" }
+        if !hasAmount { return UsageStatus.noReading.word }
+        if readingNotice != nil { return UsageStatus.paused.word }
         return displayForecast.verdictWord()
     }
 

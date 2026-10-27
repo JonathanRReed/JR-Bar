@@ -610,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore.notch.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.connectionDescription = { [weak store] in
-            store?.connectionDescription ?? "Monitor not connected"
+            store?.connectionDescription ?? MonitorWords.label
         }
         utilitiesStore.agents.onOpenMonitorDetails = { [weak overviewWindow] in
             overviewWindow?.show(link: "core")
@@ -2217,7 +2217,7 @@ extension AppDelegate {
         store?.onManualQuietApplied = { [weak router] seconds in router?.manualQuietApplied(seconds: seconds) }
         router.quiet = { [weak self] mode, seconds, onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
-            guard core.isLive else { return "The monitor is not connected. Quiet needs it." }
+            guard core.isLive else { return "\(MonitorWords.sentence) Quiet needs it." }
             let result = await store.requestQuiet(mode: mode ?? store.quietMode, seconds: seconds,
                                                   feedback: false, onApplied: onApplied).value
             switch result {
@@ -2228,7 +2228,7 @@ extension AppDelegate {
         router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
         router.endQuiet = { [weak self] onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
-            guard core.isLive else { return "The monitor is not connected." }
+            guard core.isLive else { return MonitorWords.sentence }
             let result = await store.requestQuiet(mode: store.quietMode, seconds: 0,
                                                   feedback: false, onApplied: onApplied).value
             switch result {
@@ -2261,7 +2261,7 @@ extension AppDelegate {
         // The checks a link can fail at once stay synchronous; the open
         // itself is awaited, and a refusal after it is said the same way.
         router.openSession = { [weak self] id in
-            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard let core = self?.core, core.isLive else { return MonitorWords.sentence }
             guard core.state?.session(withID: id) != nil else { return "No session \(id.prefix(40)) is being watched." }
             Task { @MainActor [weak self] in
                 if let refusal = await SessionOpener.open(id) { self?.showFeedback(refusal) }
@@ -2269,7 +2269,7 @@ extension AppDelegate {
             return nil
         }
         router.revealAsk = { [weak self] in
-            guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
+            guard let core = self?.core, core.isLive else { return MonitorWords.sentence }
             guard !core.asks.isEmpty else { return "No agent is waiting on you." }
             // The notch card or the panel, whichever the asks arrive on;
             // both list the longest-waiting ask first, with Approve and Deny.

@@ -100,7 +100,7 @@ struct FirmwareRows: View {
 
     private func summary(_ card: FirmwareCardState) -> String {
         guard isLive else {
-            return firmware.status == nil ? "Monitor not connected" : "Last reported: " + card.headline
+            return firmware.status == nil ? MonitorWords.label : "Last reported: " + card.headline
         }
         switch card.display {
         case .upToDate(let version): return "\(version) · Up to date"

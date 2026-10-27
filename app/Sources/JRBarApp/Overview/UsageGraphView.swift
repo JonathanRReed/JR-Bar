@@ -53,7 +53,7 @@ struct UsageGraphView: View {
                     Button("Turn on") { store.enableTokenHistory() }.disabled(!store.isLive)
                 }.padding()
             } else if !store.isLive {
-                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                    text: "The chart comes from the monitor's local transcript scan.")
             } else if let error = store.graphError, graph == nil {
                 errorState(error)

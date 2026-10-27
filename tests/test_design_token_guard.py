@@ -81,6 +81,8 @@ def test_repository_matches_baseline():
     ('func currencySymbol(_ currency: String) -> String {}', "currency-table"),
     ('switch currency { case "EUR": "€"; default: "$" }', "currency-table"),
     ('let count = tokens / 1_000', "token-math"),
+    ('Text("Monitor offline")', "monitor-wording"),
+    ('Text("The monitor is not answering")', "monitor-wording"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))
@@ -92,6 +94,7 @@ def test_wording_and_notch_exceptions_are_narrow():
     assert offenders(source, "app/Sources/JRBarApp/SettingsView.swift")
     assert not offenders('func currencySymbol() {}', "app/Sources/JRBarCore/Wording.swift")
     assert offenders('func currencySymbol() {}', "app/Sources/JRBarApp/Other.swift")
+    assert not offenders('let label = "Monitor not connected"', "app/Sources/JRBarCore/StatusWords.swift")
     assert not offenders('let paint = model.red + model.green')
 
 

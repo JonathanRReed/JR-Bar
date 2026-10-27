@@ -158,7 +158,7 @@ final class FactoryBrowserConnectionModel {
 
     private static func failureWords(_ error: Error) -> String {
         if let client = error as? CoreClientError, client == .notConnected {
-            return "Monitor offline. Reconnect and try again."
+            return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
         case "browser_session_not_found":

@@ -45,7 +45,7 @@ public struct UsageGaugeReading: Equatable, Sendable {
             || ["disabled", "off", "needs_consent", "error", "unavailable", "source_not_found"].contains(provider.state ?? "")
         self.forecast = unavailable || percentUsed == nil ? nil : forecast
         switch self.forecast?.verdict {
-        case .exhausted?: footnote = "Used up"
+        case .exhausted?: footnote = UsageStatus.usedUp.word
         case .runsOut(let at)?:
             footnote = UsageTime.runsOut(at: at, now: now, locale: locale, timeZone: timeZone)
         default: footnote = resetFootnote
@@ -160,12 +160,12 @@ public struct UsageGaugeRow: View {
         !connected || provider.isStale || ["missing_recent", "source_idle", "failing"].contains(provider.availability)
     }
     private var status: String? {
-        if !connected && !suppressDisconnectedStatus { return "Disconnected" }
+        if !connected && !suppressDisconnectedStatus { return MonitorWords.label }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
         if !provider.quotaSource { return "No quota source" }
         let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
-        return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : "No quota reading")
+        return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : UsageStatus.noReading.word)
     }
 
     public var body: some View {
@@ -377,7 +377,7 @@ private struct CompactUsageGaugeColumn: View {
                     JRBarGauge(value: used, tint: accent, stale: reading.stale, height: 4)
                 }
             } else {
-                Text(reading.elapsed ? "Reset" : "No reading")
+                Text(reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)
                     .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .caption).font).lineLimit(1)
                     .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -391,7 +391,7 @@ private struct CompactUsageGaugeColumn: View {
         .frame(maxWidth: .infinity)
         .help(reading.forecastHelp)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.footnote). \(reading.forecastHelp)")
+        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { UsageWindowLabel.spoken($0) } ?? (reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)), \(reading.footnote). \(reading.forecastHelp)")
     }
 
     private var captionColor: Color {
@@ -422,7 +422,7 @@ private struct UsageGaugeColumn: View {
                     .foregroundStyle(reading.stale ? neutralInk.stale : neutralInk.label)
                 JRBarGauge(value: used, tint: accent, stale: reading.stale, height: compact ? 4 : 6, pace: compact ? nil : pace)
             } else {
-                Text(reading.elapsed ? "Reset" : "No reading")
+                Text(reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)
                     .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .caption).font).lineLimit(1)
                     .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
             }
@@ -431,6 +431,6 @@ private struct UsageGaugeColumn: View {
         }
         .frame(maxWidth: .infinity, alignment: compact ? .trailing : .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { "\(Int($0.rounded())) percent used" } ?? (reading.elapsed ? "Reset" : "No reading")), \(reading.resetFootnote)")
+        .accessibilityLabel("\(reading.title), \(reading.percentUsed.map { UsageWindowLabel.spoken($0) } ?? (reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)), \(reading.resetFootnote)")
     }
 }

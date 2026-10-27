@@ -1,3 +1,4 @@
+import JRBarCore
 import JRBarUI
 import SwiftUI
 
@@ -26,7 +27,7 @@ struct SettingsFeatureRow: View {
                         HStack(spacing: JRBarTokens.Space.sm) {
                             Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
                                 .lineLimit(1).layoutPriority(1)
-                            if toy.status.showsChip && (store.isLive || toy.status.text != "Monitor not connected") {
+                            if toy.status.showsChip && (store.isLive || toy.status.text != MonitorWords.label) {
                                 Text(toy.status.text).foregroundStyle(Tone.neutral.color).jrbarType(.caption)
                                     .lineLimit(1).help(toy.status.text)
                             }

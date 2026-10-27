@@ -323,13 +323,7 @@ struct SetupAgentRow: View {
     let agent: SetupAgent
 
     private var statusColor: Color {
-        guard store.monitorLive else { return Color(nsColor: .tertiaryLabelColor) }
-        switch agent.hookStatus {
-        case "ok": return Tone.done.color
-        case "stale": return Tone.neutral.color
-        case "missing": return Color(nsColor: .tertiaryLabelColor)
-        default: return Color(nsColor: .quaternaryLabelColor)
-        }
+        store.monitorLive ? HookStatus(agent.hookStatus).tone.color : Tone.neutral.color
     }
 
     var body: some View {
@@ -349,7 +343,7 @@ struct SetupAgentRow: View {
                 Text(agent.name)
                 HStack(spacing: 5) {
                     Circle().fill(statusColor).frame(width: 6, height: 6)
-                    Text(store.monitorLive && agent.hookStatus == "missing" ? "Hooks not installed" : agent.statusWord(monitorLive: store.monitorLive))
+                    Text(agent.statusWord(monitorLive: store.monitorLive))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

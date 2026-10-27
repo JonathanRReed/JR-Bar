@@ -65,7 +65,7 @@ struct EffectStudioView: View {
     var effectsRoom: some View {
         Group {
             if !store.isLive {
-                WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+                WindowEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                  text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.",
                                  tint: Tone.neutral.color)
             } else if store.catalog == nil, let error = store.loadError, !store.loading {

@@ -459,7 +459,7 @@ final class HistoryStore {
                     self.say(reply.error?.message ?? "Could not resume \(row.displayTitle)", isError: true)
                 }
             } catch {
-                self.say("The monitor is not answering", isError: true)
+                self.say(MonitorWords.sentence, isError: true)
             }
         }
     }
@@ -569,7 +569,7 @@ final class HistoryStore {
                 self.loading = false
                 if let refresh = self.reload() { await refresh.value }
             } catch {
-                self.say("\(verb) failed: the monitor is not answering.", isError: true)
+                self.say("\(verb) failed: \(MonitorWords.sentence)", isError: true)
             }
         }
     }

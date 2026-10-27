@@ -33,7 +33,7 @@ struct OverviewGraphView: View {
             if !store.isLive, !store.roster.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "bolt.horizontal.circle").foregroundStyle(Tone.neutral.color)
-                    Text("Monitor not connected — showing the last roster it reported.")
+                    Text("\(MonitorWords.sentence) Showing the last roster it reported.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -54,7 +54,7 @@ struct OverviewGraphView: View {
     @ViewBuilder
     private var emptyState: some View {
         if !store.isLive, store.roster.isEmpty {
-            OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
+            OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
                                text: "The graph draws the monitor's roster. It fills in as soon as the socket is live.")
         } else if store.graphScope == .active {
             OverviewEmptyState(symbol: "point.3.connected.trianglepath.dotted", title: "Nothing running",

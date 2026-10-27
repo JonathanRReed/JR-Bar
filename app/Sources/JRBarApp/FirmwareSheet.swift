@@ -86,7 +86,7 @@ struct FirmwareSheetContent: View {
                                title: "The update did not start", detail: failure)
             }
             if !isLive {
-                SettingsBanner(symbol: "bolt.slash.fill", tint: Tone.neutral.color, title: "The monitor is not running",
+                SettingsBanner(symbol: "bolt.slash.fill", tint: Tone.neutral.color, title: MonitorWords.label,
                                detail: "Start it again, then open this sheet again.")
             }
             HStack {

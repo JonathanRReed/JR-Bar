@@ -1,3 +1,4 @@
+import JRBarCore
 import Foundation
 import JRBarUI
 import Observation
@@ -605,7 +606,7 @@ final class SetupStore {
                                    detail: "Skipped. Settings › \(SettingsStore.Page.agents.title) installs hooks any time.", ok: false))
         } else if !monitorLive {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "Monitor offline. Reconnect to check the installed hooks.", ok: false))
+                                   detail: "\(MonitorWords.sentence) Reconnect to check the installed hooks.", ok: false))
         } else if !hooked.isEmpty {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
                                    detail: "\(hooked.count) provider\(hooked.count == 1 ? "" : "s") reporting.", ok: true))

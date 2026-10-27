@@ -644,8 +644,8 @@ final class PanelStore {
             if let stale = staleUpdateText { return "Monitor \(version) connected — quiet, \(stale)" }
             return "Monitor \(version) connected"
         case .connected: return "Connected, waiting for state"
-        case .connecting(let attempt): return attempt <= 1 ? "Connecting to the monitor…" : "Reconnecting to the monitor (try \(attempt))…"
-        case .disconnected(let reason): return "Monitor not connected: \(reason)"
+        case .connecting: return MonitorWords.reconnecting
+        case .disconnected(let reason): return "\(MonitorWords.label): \(reason)"
         case .idle: return "Monitor client idle"
         }
     }
@@ -1431,7 +1431,7 @@ final class PanelStore {
                     result = .refused("Quiet failed: the monitor returned an incomplete result.")
                 }
             } catch {
-                result = .refused("Quiet failed: the monitor is not answering.")
+                result = .refused("Quiet failed: \(MonitorWords.sentence)")
             }
             if feedback {
                 switch result {
@@ -1622,10 +1622,10 @@ final class PanelStore {
 
         var text: String {
             switch self {
-            case .stale: return "Stale"
-            case .usedUp: return "Used up"
-            case .runsOut(let when): return "Runs out \(when)"
-            case .incident: return "Incident"
+            case .stale: return UsageStatus.stale.word
+            case .usedUp: return UsageStatus.usedUp.word
+            case .runsOut(let when): return "\(UsageStatus.runsOut.word) \(when)"
+            case .incident: return UsageStatus.incident.word
             }
         }
     }
@@ -1933,7 +1933,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
                 }
             } catch {
-                self.show(toast: "The monitor is not answering")
+                self.show(toast: MonitorWords.sentence)
             }
         }
     }
@@ -1954,7 +1954,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not dismiss that ask")
                 }
             } catch {
-                self.show(toast: "The monitor is not answering")
+                self.show(toast: MonitorWords.sentence)
             }
         }
     }
@@ -2035,7 +2035,7 @@ final class PanelStore {
                 }
             } catch {
                 guard self.clearRequestGeneration == generation else { return }
-                self.show(toast: "Clear failed: the monitor is not answering")
+                self.show(toast: "Clear failed: \(MonitorWords.sentence)")
             }
         }
     }
@@ -2074,7 +2074,7 @@ final class PanelStore {
             } catch {
                 guard self.undoOfferGeneration == offerGeneration,
                       self.clearRequestGeneration == clearGeneration else { return }
-                self.show(toast: "Undo failed: the monitor is not answering")
+                self.show(toast: "Undo failed: \(MonitorWords.sentence)")
             }
         }
     }

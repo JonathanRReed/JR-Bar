@@ -17,7 +17,7 @@ struct PanelView: View {
                     Button("Restart") { store.restartCore() }
                 }.padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if !store.isLive {
-                StatusBanner("Connecting to the monitor", detail: store.connectionDescription)
+                StatusBanner(MonitorWords.reconnecting, detail: store.connectionDescription)
                     .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if let failure = store.providerList.failure {
                 StatusBanner("Provider list unavailable", kind: .failure, detail: failure)
@@ -289,7 +289,7 @@ struct ConnectionDot: View {
             }
         }
         .frame(width: 6, height: 6)
-        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? "Connecting to the monitor" : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
+        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? MonitorWords.reconnecting : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
     }
 }
 
