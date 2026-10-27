@@ -90,7 +90,7 @@ extension PanelStore {
     var panelAgents: [PanelAgent] {
         guard isLive else { return [] }
         let sessions = core.sessions
-        let inputs = PanelAgentsInputs(sessions: core.allSessions, groups: core.state?.agentGroups ?? [],
+        let inputs = PanelAgentsInputs(sessions: core.allSessions, groups: core.agentGroups,
                                        settings: core.settings, usage: sessionUsage.usage,
                                        asks: askRows.compactMap(\.ask), query: trimmedFindQuery)
         if let memo = panelAgentsMemo, memo.inputs == inputs { return memo.agents }

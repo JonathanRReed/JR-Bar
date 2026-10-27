@@ -185,6 +185,59 @@ struct HALPropertyListenersTests {
         #expect(calls.lock.withLock { calls.count } == 1)
     }
 
+    @Test func aBurstReadsTheLatestPropertyOnceAndTheNextEdgeStillArrives() {
+        let fake = Fake()
+        let queue = DispatchQueue(label: "jrbar.test.hal-burst")
+        final class Reading: @unchecked Sendable {
+            var value = 0
+            var seen: [Int] = []
+        }
+        let reading = Reading()
+        let listeners = HALPropertyListeners(api: fake.api, queue: queue) { _ in
+            reading.seen.append(reading.value)
+        }
+        listeners.reconcile([.init(system: .audio, object: 42, selector: 1)])
+        queue.suspend()
+        for value in 1...1_000 {
+            reading.value = value
+            fake.addedCallback?()
+        }
+        queue.resume()
+        queue.sync {}
+        #expect(reading.seen == [1_000])
+        queue.suspend()
+        reading.value = 1_001
+        fake.addedCallback?()
+        queue.resume()
+        queue.sync {}
+        #expect(reading.seen == [1_000, 1_001])
+        listeners.reconcile([])
+        fake.removedCallback?()
+        queue.sync {}
+        #expect(reading.seen == [1_000, 1_001])
+    }
+
+    @Test func aPropertyChangeDuringTheReadQueuesAnotherRead() {
+        let fake = Fake()
+        let queue = DispatchQueue(label: "jrbar.test.hal-during-read")
+        final class Edge: @unchecked Sendable {
+            var fire: (() -> Void)?
+            var reads = 0
+        }
+        let edge = Edge()
+        let listeners = HALPropertyListeners(api: fake.api, queue: queue) { _ in
+            edge.reads += 1
+            if edge.reads == 1 { edge.fire?() }
+        }
+        listeners.reconcile([.init(system: .audio, object: 42, selector: 1)])
+        edge.fire = fake.addedCallback
+        fake.addedCallback?()
+        queue.sync {}
+        queue.sync {}
+        #expect(edge.reads == 2)
+        listeners.reconcile([])
+    }
+
     @Test func failedRemovalAtDeinitReleasesTheOwnedContextAndLeavesLateCallbacksSafe() {
         final class Owner: @unchecked Sendable {}
         let fake = Fake()

@@ -739,13 +739,12 @@ final class PanelStore {
         core.settings.map { SettingsDocument($0.document) }
     }
 
-    /// What `rows` is made of. Reading them all on every call, answered
-    /// from the memo or not, keeps SwiftUI and `withObservationTracking`
-    /// subscribed to each one. Comparing is cheap: an unchanged document
-    /// is the same storage, and a new frame differs in its generation.
+    /// Read each input even on a cache hit, so observers stay subscribed.
+    /// Clock, health and quota updates do not change session rows.
     private struct RowsInputs: Equatable {
         let live: Bool
-        let state: CoreState?
+        let sessions: [CoreSession]
+        let asks: [CoreAsk]
         let settings: CoreSettings?
         let usage: [String: SessionUsage]
     }
@@ -788,7 +787,7 @@ final class PanelStore {
     @ObservationIgnored private(set) var rowsComputations = 0
 
     private var currentRows: RowsMemo {
-        let inputs = RowsInputs(live: core.isLive, state: core.state, settings: core.settings,
+        let inputs = RowsInputs(live: core.isLive, sessions: core.allSessions, asks: core.asks, settings: core.settings,
                                 usage: sessionUsage.usage)
         if let memo = rowsMemo, memo.inputs == inputs { return memo }
         let memo = RowsMemo(inputs: inputs, rows: Self.buildRows(inputs))
@@ -801,12 +800,13 @@ final class PanelStore {
     /// asks the longest-unanswered leads — `openedAt` ascending — so the
     /// ask that has been waiting longest is never buried under newer ones;
     /// an undated ask sorts last among them. Other ties: most recent first.
-    /// Built once per change of the daemon's state, its settings, the
+    /// Built once per change of the sessions, asks, settings, the
     /// sessions' usage or liveness, however often it is read.
     var rows: [SessionRow] { currentRows.rows }
 
     private static func buildRows(_ inputs: RowsInputs) -> [SessionRow] {
-        guard inputs.live, let state = inputs.state else { return [] }
+        guard inputs.live else { return [] }
+        let state = CoreState(sessions: inputs.sessions, asks: inputs.asks)
         let document = inputs.settings.map { SettingsDocument($0.document) }
         let pinned = Dictionary(state.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
         // A provider's style is one lookup per provider per build — the
@@ -1275,7 +1275,7 @@ final class PanelStore {
     }
 
     var quiet: Quiet? {
-        guard let focus = core.state?.focus,
+        guard let focus = core.focus,
               let mode = focus.mode,
               mode != "off", mode != "normal" else { return nil }
         return Quiet(mode: mode, source: focus.source,

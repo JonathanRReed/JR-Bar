@@ -117,13 +117,26 @@ final class HALPropertyListeners {
         let action: @Sendable () -> Void
         let lock = NSLock()
         var enabled = true
+        var pending = false
         init(queue: DispatchQueue, action: @escaping @Sendable () -> Void) {
             self.queue = queue
             self.action = action
         }
         func setEnabled(_ value: Bool) { lock.withLock { enabled = value } }
+        func enqueue() {
+            let needed = lock.withLock {
+                guard enabled, !pending else { return false }
+                pending = true
+                return true
+            }
+            if needed { queue.async { self.fire() } }
+        }
         func fire() {
-            if lock.withLock({ enabled }) { action() }
+            let live = lock.withLock {
+                pending = false
+                return enabled
+            }
+            if live { action() }
         }
     }
 
@@ -150,7 +163,7 @@ final class HALPropertyListeners {
         }
         func enqueue(_ token: UInt) {
             let context = lock.withLock { values[token] }
-            if let context { context.queue.async { context.fire() } }
+            context?.enqueue()
         }
     }
     private static let contexts = Contexts()
