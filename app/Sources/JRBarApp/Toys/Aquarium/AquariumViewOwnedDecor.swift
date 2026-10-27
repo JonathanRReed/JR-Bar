@@ -1378,7 +1378,7 @@ extension AquariumView {
             var bubble = canvas
             bubble.opacity = (1 - ph) * 0.85
             if sim.napping {
-                bubble.draw(Text("z").jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+                bubble.draw(Text("z").font(.system(size: JRBarTokens.TypeStyle.caption.size, weight: .bold, design: .rounded))
                     .foregroundStyle(.white), at: CGPoint(x: bx, y: by))
             } else {
                 let r = 2.5 + ph * 3
