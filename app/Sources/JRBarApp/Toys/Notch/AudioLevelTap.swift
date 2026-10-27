@@ -66,6 +66,9 @@ final class AudioLevelTap {
 
     private var engine: (any AudioTapEngine)?
     private var engineGeneration = 0
+    var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var retryAfter: TimeInterval = 0
+    private static let retrySeconds: TimeInterval = 30
 
     /// Push the gating facts. Any change re-evaluates the state table;
     /// a false verdict tears the tap down immediately (well inside the
@@ -74,20 +77,32 @@ final class AudioLevelTap {
     /// now-playing app changes underneath a running pipeline.
     func sync(visible: Bool, playing: Bool, enabled: Bool,
               clientBundleID: String? = nil) {
+        if self.clientBundleID != clientBundleID { retryAfter = 0 }
         self.clientBundleID = clientBundleID
 
         guard NotchAudioLevels.shouldRun(mediaRowVisible: visible,
                                          playing: playing,
                                          settingEnabled: enabled) else {
+            retryAfter = 0
             stop()
             return
         }
+        // A named app that exited must not turn into a global capture.
+        let processes: [pid_t]?
+        if let clientBundleID {
+            let pids = resolvePIDs(clientBundleID)
+            guard !pids.isEmpty else { stop(); return }
+            processes = pids
+        } else {
+            processes = nil
+        }
+        guard clock() >= retryAfter else { return }
         if engine == nil {
-            start()
-        } else if engine?.processes != targetProcesses() {
+            start(processes: processes)
+        } else if engine?.processes != processes {
             // The client changed mid-flight (or resolved late) — the
             // tap aims at the wrong process. Rebuild rather than mix.
-            restart()
+            restart(processes: processes)
         }
     }
 
@@ -111,16 +126,7 @@ final class AudioLevelTap {
         onLevels?(levels)
     }
 
-    /// Which processes the tap should mix: the now-playing client's
-    /// pids when the feed named a bundle and it resolves, else nil —
-    /// the global mixdown.
-    private func targetProcesses() -> [pid_t]? {
-        guard let bundleID = clientBundleID else { return nil }
-        let pids = resolvePIDs(bundleID)
-        return pids.isEmpty ? nil : pids
-    }
-
-    private func start() {
+    private func start(processes: [pid_t]?) {
         engineGeneration &+= 1
         let generation = engineGeneration
         let engine = makeEngine()
@@ -140,7 +146,7 @@ final class AudioLevelTap {
         // Adopt now so a stop() during the build still tears it down;
         // `live` only flips when the pipeline is genuinely up.
         self.engine = engine
-        engine.start(processes: targetProcesses()) { [weak self] result in
+        engine.start(processes: processes) { [weak self] result in
             Task { @MainActor [weak self] in
                 guard let self, self.engineGeneration == generation, self.engine != nil else { return }
                 switch result {
@@ -151,15 +157,16 @@ final class AudioLevelTap {
                     // every failure reads the same to the row:
                     // decorative bars.
                     audioTapLog.error("audio tap: pipeline failed — \(error.localizedDescription, privacy: .public)")
+                    self.retryAfter = self.clock() + Self.retrySeconds
                     self.stop()
                 }
             }
         }
     }
 
-    private func restart() {
+    private func restart(processes: [pid_t]?) {
         stop()
-        start()
+        start(processes: processes)
     }
 
     private func note(levels bands: [Float]) {
@@ -172,6 +179,7 @@ final class AudioLevelTap {
     /// or a tap the system killed, reports here — the row falls back
     /// to decorative bars rather than drawing a frozen reading.
     private func noteEngineDied() {
+        retryAfter = clock() + Self.retrySeconds
         stop()
     }
 }
@@ -382,6 +390,9 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
         // 1. The tap description. A known client mixes its processes;
         // otherwise the global stereo mixdown of everything.
         let objectIDs = buildTarget.map { Self.processObjectIDs(for: $0) } ?? []
+        guard buildTarget == nil || !objectIDs.isEmpty else {
+            throw AudioTapError.tapCreationFailed(kAudioHardwareBadObjectError)
+        }
         let description: CATapDescription
         if !objectIDs.isEmpty {
             description = CATapDescription(stereoMixdownOfProcesses: objectIDs)
@@ -543,8 +554,8 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
 
     /// pid → the HAL's process object id — a tap description names
     /// process objects, not pids. A pid that won't translate is
-    /// dropped; none translating at all means the global mixdown
-    /// carries the read instead.
+    /// dropped. If none translate, the named client has no usable
+    /// audio process and the pipeline does not start.
     private static func processObjectIDs(for pids: [pid_t]) -> [AudioObjectID] {
         pids.compactMap { pid in
             var objectID = AudioObjectID(kAudioObjectUnknown)

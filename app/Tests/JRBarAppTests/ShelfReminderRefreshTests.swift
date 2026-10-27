@@ -76,8 +76,8 @@ struct ShelfReminderRefreshTests {
         let model = model(gate)
         var scheduled = 0
         model.scheduleRefreshOverride = { scheduled += 1 }
-        model.refreshNow()
-        model.refreshNow()
+        model.sync(enabled: true)
+        model.sync(enabled: true)
         #expect(gate.cancelled == [1])
 
         gate.answer(2, with: [entry("New")])
@@ -94,8 +94,8 @@ struct ShelfReminderRefreshTests {
     func olderReplyWhileNewerPending() {
         let gate = FetchGate()
         let model = model(gate)
-        model.refreshNow()
-        model.refreshNow()
+        model.sync(enabled: true)
+        model.sync(enabled: true)
         gate.answer(1, with: [entry("Old")])
         #expect(model.state == .needsPermission)
         gate.answer(2, with: [])
@@ -109,7 +109,7 @@ struct ShelfReminderRefreshTests {
         let model = model(gate)
         var scheduled = 0
         model.scheduleRefreshOverride = { scheduled += 1 }
-        model.refreshNow()
+        model.sync(enabled: true)
         model.stop()
         #expect(gate.cancelled == [1])
         gate.answer(1, with: [entry("Late")])
@@ -141,7 +141,7 @@ struct ShelfReminderRefreshTests {
         let model = model(gate)
         var scheduled = 0
         model.scheduleRefreshOverride = { scheduled += 1 }
-        model.refreshNow()
+        model.sync(enabled: true)
         model.authorization = { status }
         gate.answer(1, with: [entry("Private")])
         let expected: ShelfRemindersModel.State = status == .notDetermined ? .needsPermission : .hidden
@@ -154,9 +154,9 @@ struct ShelfReminderRefreshTests {
     func permissionLossCancels() {
         let gate = FetchGate()
         let model = model(gate)
-        model.refreshNow()
+        model.sync(enabled: true)
         model.authorization = { .denied }
-        model.refreshNow()
+        model.sync(enabled: true)
         #expect(gate.cancelled == [1])
         gate.answer(1, with: [entry("Private")])
         #expect(model.state == .hidden)
@@ -167,14 +167,14 @@ struct ShelfReminderRefreshTests {
     func failedLatestRead() {
         let gate = FetchGate()
         let model = model(gate)
-        model.refreshNow()
+        model.sync(enabled: true)
         gate.answer(1, with: [entry("Kept")])
-        model.refreshNow()
-        model.refreshNow()
+        model.sync(enabled: true)
+        model.sync(enabled: true)
         gate.answer(3, with: nil)
         gate.answer(2, with: [entry("Old")])
         #expect(model.state == .items([entry("Kept")]))
-        model.refreshNow()
+        model.sync(enabled: true)
         gate.answer(4, with: [])
         #expect(model.state == .idle)
         model.stop()
@@ -187,7 +187,7 @@ struct ShelfReminderRefreshTests {
         let early = Date(timeIntervalSinceReferenceDate: 1000)
         let late = early.addingTimeInterval(60)
         let entries = [entry("Z"), entry("Late", due: late), entry("A"), entry("Early", due: early)]
-        model.refreshNow()
+        model.sync(enabled: true)
         gate.answer(1, with: entries)
         #expect(model.state == .items([entries[3], entries[1], entries[2], entries[0]]))
         model.stop()
@@ -198,8 +198,8 @@ struct ShelfReminderRefreshTests {
         let gate = FetchGate()
         let model = model(gate)
         gate.replyOnCancel = true
-        model.refreshNow()
-        model.refreshNow()
+        model.sync(enabled: true)
+        model.sync(enabled: true)
         #expect(model.state == .needsPermission)
         #expect(gate.cancelled == [1])
         model.stop()
@@ -219,7 +219,7 @@ struct ShelfReminderRefreshTests {
             reply([self.entry("Duplicate")])
             return { cancelled += 1 }
         }
-        model.refreshNow()
+        model.sync(enabled: true)
         #expect(model.state == .idle)
         #expect(scheduled == 1)
         model.stop()

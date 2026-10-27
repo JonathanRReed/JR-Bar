@@ -46,6 +46,7 @@ final class ShelfRemindersModel {
     private var refreshTimer: Timer?
     private var cancelFetch: (() -> Void)?
     private var fetchInFlight = false
+    private var enabled = false
     /// A new read or stop makes earlier replies stale, including replies
     /// delivered during cancellation.
     private var epoch = 0
@@ -71,6 +72,7 @@ final class ShelfRemindersModel {
     }
 
     func stop() {
+        enabled = false
         writeNotice = nil
         epoch += 1
         fetchInFlight = false
@@ -79,6 +81,7 @@ final class ShelfRemindersModel {
         cancel?()
         refreshTimer?.invalidate()
         refreshTimer = nil
+        store = nil
     }
 
     /// Pin-side entry: the switch off hides the row; on, the glance
@@ -92,6 +95,7 @@ final class ShelfRemindersModel {
             state = .hidden
             return
         }
+        self.enabled = true
         refreshNow()
     }
 
@@ -100,6 +104,7 @@ final class ShelfRemindersModel {
     /// pinned hides the row and ends the cadence, rather than drawing
     /// "No reminders due" from a store that now answers nothing.
     func refreshNow() {
+        guard enabled else { return }
         switch authorization() {
         case .fullAccess:
             loadNext()
@@ -124,6 +129,8 @@ final class ShelfRemindersModel {
     /// count, since a missed reminder is exactly the row's job. Dueless
     /// reminders follow the dated ones.
     private func loadNext() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
         epoch += 1
         let epoch = self.epoch
         let cancel = cancelFetch
@@ -205,7 +212,7 @@ final class ShelfRemindersModel {
     /// The identifier re-resolves — a reminder deleted mid-row never
     /// earns a save.
     func complete(_ entry: Entry) {
-        guard let store else { return }
+        guard enabled, let store else { return }
         guard let reminder = store.calendarItem(withIdentifier: entry.id) as? EKReminder
         else { return }
         reminder.isCompleted = true

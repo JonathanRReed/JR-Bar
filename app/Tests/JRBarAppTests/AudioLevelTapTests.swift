@@ -153,14 +153,44 @@ import JRBarCore
                 "a known client gets its own process tap")
     }
 
-    @Test func anUnresolvableClientFallsBackToGlobal() async {
-        let (tap, engine) = makeTap()
+    @Test func anExitedClientDoesNotStartGlobalCapture() async {
+        let tap = AudioLevelTap()
+        var starts = 0
+        tap.makeEngine = { starts += 1; return FakeEngine() }
         tap.resolvePIDs = { _ in [] }
         tap.sync(visible: true, playing: true, enabled: true,
                  clientBundleID: "com.vendor.unknown")
         await settle()
-        #expect(engine().processes == nil,
-                "no resolved PIDs → the global mixdown tap")
+        #expect(starts == 0)
+        #expect(!tap.live)
+    }
+
+    @Test func offMakesNoCallsAndFailuresWaitBeforeRetrying() async {
+        let tap = AudioLevelTap()
+        var now: TimeInterval = 100
+        var starts = 0
+        var resolutions = 0
+        tap.clock = { now }
+        tap.makeEngine = {
+            starts += 1
+            let engine = FakeEngine()
+            engine.startError = AudioTapError.noOutputDevice
+            return engine
+        }
+        tap.resolvePIDs = { _ in resolutions += 1; return [123] }
+        for (visible, playing, enabled) in [(false, true, true), (true, false, true), (true, true, false)] {
+            tap.sync(visible: visible, playing: playing, enabled: enabled, clientBundleID: "test.sample")
+        }
+        #expect(starts == 0 && resolutions == 0)
+        tap.sync(visible: true, playing: true, enabled: true)
+        await settle()
+        for _ in 0..<10 { tap.sync(visible: true, playing: true, enabled: true) }
+        #expect(starts == 1)
+        now += 30
+        tap.sync(visible: true, playing: true, enabled: true)
+        await settle()
+        #expect(starts == 2)
+        tap.stop()
     }
 
     @Test func aClientChangeRetargetsTheTap() async {
@@ -222,6 +252,8 @@ import JRBarCore
 
     @Test func everyLiveEdgeReachesTheListener() async throws {
         let (tap, engine) = makeTap()
+        var now: TimeInterval = 100
+        tap.clock = { now }
         var edges: [Bool] = []
         tap.onLiveChange = { edges.append($0) }
         tap.sync(visible: true, playing: true, enabled: true)
@@ -229,6 +261,7 @@ import JRBarCore
         await settle()
         engine().onDeath?()
         await drainMainQueue()
+        now += 30
         tap.sync(visible: true, playing: true, enabled: true)
         await settle()
         tap.stop()

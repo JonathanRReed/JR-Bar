@@ -39,6 +39,7 @@ final class ShelfCalendarModel {
 
     private(set) var state: State = .needsPermission
     private var refreshTimer: Timer?
+    private var readWork: DispatchWorkItem?
     @ObservationIgnored var scheduleRefreshOverride: (() -> Void)?
     /// The permission as it stands; the tests hand in their own.
     @ObservationIgnored var authorization: () -> EKAuthorizationStatus = {
@@ -53,11 +54,15 @@ final class ShelfCalendarModel {
     /// card unpinned, and a grant must not restart the refresh timer
     /// the stop just killed.
     private var epoch = 0
+    private var enabled = false
 
     func stop() {
+        enabled = false
         epoch += 1
         refreshTimer?.invalidate()
         refreshTimer = nil
+        readWork?.cancel()
+        readWork = nil
     }
 
     /// Pin-side entry: the switch off hides the row; on, the glance
@@ -71,6 +76,7 @@ final class ShelfCalendarModel {
             state = .hidden
             return
         }
+        self.enabled = true
         refreshNow()
     }
 
@@ -80,6 +86,7 @@ final class ShelfCalendarModel {
     /// next tick read an empty store and drew "nothing upcoming" — the
     /// fake free day this model exists never to show.
     func refreshNow() {
+        guard enabled else { return }
         switch authorization() {
         case .fullAccess:
             loadNext()
@@ -104,11 +111,13 @@ final class ShelfCalendarModel {
         let epoch = self.epoch
         let fetch = fetchEvents
         let requestedAt = clock()
-        readQueue.async { [weak self] in
+        readWork?.cancel()
+        let work = DispatchWorkItem { @Sendable [weak self] in
             let events = fetch(requestedAt)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.epoch == epoch else { return }
+                    self.readWork = nil
                     guard self.authorization() == .fullAccess else {
                         self.refreshNow()
                         return
@@ -120,6 +129,8 @@ final class ShelfCalendarModel {
                 }
             }
         }
+        readWork = work
+        readQueue.async(execute: work)
     }
 
     /// One store for the glance's reads, made and used on a model's
