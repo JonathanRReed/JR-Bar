@@ -98,6 +98,8 @@ final class KeepAwakeUtility: Toy {
             let clock = UsageTime.clock(headsUpAt.timeIntervalSince1970, locale: locale, timeZone: timeZone)
             parts.append("one heads-up at \(clock)")
         }
+        // Asked for and not taken: nothing is held, but the session is not off.
+        if !reading.holding && reading.leaseInForce { return "No power assertion · the hold didn't take" }
         if !reading.holding && !clockRunning && headsUpAt == nil { return UtilityCost.off }
         return parts.joined(separator: " · ")
     }
@@ -367,7 +369,9 @@ struct KeepAwakeCup: View {
             } else {
                 Image(systemName: steam.symbol)
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.accentColor.opacity(steam.opacity), Color.accentColor)
+                    // The symbol's first layer is the cup, its second the
+                    // waves: the cup stays solid and only the steam thins.
+                    .foregroundStyle(Color.accentColor, Color.accentColor.opacity(steam.opacity))
             }
         }
         .accessibilityLabel("Keep Awake, \(steam.words)")

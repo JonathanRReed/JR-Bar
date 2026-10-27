@@ -325,6 +325,10 @@ struct KeepAwakeUtilityPolishTests {
                 .contains("hears the command exit; nothing polls"))
         #expect(KeepAwakeUtility.costLine(reading: KeepAwakeReading(state: .off), appHolds: false,
                                           clockRunning: false, headsUpAt: nil) == UtilityCost.off)
+        var failed = KeepAwakeReading(state: .lease(.indefinite))
+        failed.holdFailed = true
+        #expect(KeepAwakeUtility.costLine(reading: failed, appHolds: false, clockRunning: false, headsUpAt: nil)
+                == "No power assertion · the hold didn't take", "a failed session is not off")
         #expect(DockUtility.costLine(watching: true, switcher: true, previews: 3, captures: 0)
                 == "Watching the Dock through Accessibility · 3 previews, no captures in the last minute · one key tap for the switcher chords")
         #expect(MenuBarUtility.costLine(rechecking: true, conditionRules: true)

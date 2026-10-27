@@ -91,6 +91,7 @@ struct KeepAwakePolishRenderProofTests {
             }
         }
         .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         for dark in [false, true] {
             try ProofRender.write(scene, size: CGSize(width: 560, height: 170),
