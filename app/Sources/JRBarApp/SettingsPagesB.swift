@@ -1346,7 +1346,7 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
+        SettingGroup(note: "Copy the status link and key, then paste them into a Stream Deck web-request action.", anchor: "Stream Deck") {
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
                             subtitle: "Share status with local tools and copy its access key.") {
                 SettingToggle(store, "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
@@ -1367,7 +1367,7 @@ struct StreamDeckCard: View {
                     } message: {
                         Text("A press can approve, deny or choose an answer through the local endpoint. Bind answers only to keys you press, never to rules or timers.")
                     }
-                SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
+                SettingRow("Status link", subtitle: "Stream Deck reads redacted agent counts here, using the key.") {
                     HStack(spacing: 8) {
                         Text("http://127.0.0.1:8737/status.json")
                             .fixedSize()
