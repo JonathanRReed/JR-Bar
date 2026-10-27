@@ -4,7 +4,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch utility reliability", .temporaryDirectory, .serialized)
+@Suite("Notch utility reliability", .temporaryDirectory, .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct NotchUtilityReliabilityTests {
     private func storeURL() -> URL {
@@ -128,7 +128,7 @@ struct NotchUtilityReliabilityTests {
     }
 
     @Test("a newer calendar refresh discards the earlier result while its own read is pending")
-    func latestCalendarRefresh() async {
+    func latestCalendarRefresh() async throws {
         let calendar = ShelfCalendarModel()
         calendar.scheduleRefreshOverride = {}
         calendar.authorization = { .fullAccess }
@@ -136,16 +136,17 @@ struct NotchUtilityReliabilityTests {
         let old = ShelfCalendarModel.Event(title: "Old meeting", start: start,
                                           end: start.addingTimeInterval(600), url: nil)
         let gate = TestGate()
-        await withCheckedContinuation { (entered: CheckedContinuation<Void, Never>) in
-            calendar.fetchEvents = { _ in [old] }
-            calendar.refreshNow()
-            calendar.fetchEvents = { _ in
-                DispatchQueue.main.async { entered.resume() }
-                gate.wait()
-                return []
-            }
-            calendar.refreshNow()
+        let entered = TestSignal()
+        defer { gate.signal(); calendar.stop() }
+        calendar.fetchEvents = { _ in [old] }
+        calendar.sync(enabled: true)
+        calendar.fetchEvents = { _ in
+            entered.signal()
+            gate.wait()
+            return []
         }
+        calendar.sync(enabled: true)
+        try #require(await entered.wait())
         #expect(calendar.state == .needsPermission, "the older read did not paint its stale event")
         gate.signal()
         await withCheckedContinuation { (settled: CheckedContinuation<Void, Never>) in

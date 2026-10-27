@@ -57,19 +57,19 @@ struct ShelfGlanceTests {
         calendar.authorization = { .fullAccess }
         calendar.sync(enabled: true)
         calendar.authorization = { .denied }
-        calendar.refreshNow()
+        calendar.sync(enabled: true)
         #expect(calendar.state == .hidden, "the tick re-checks access; an empty store is not a free day")
         calendar.authorization = { .notDetermined }
-        calendar.refreshNow()
+        calendar.sync(enabled: true)
         #expect(calendar.state == .needsPermission)
         calendar.stop()
 
         let reminders = ShelfRemindersModel()
         reminders.authorization = { .restricted }
-        reminders.refreshNow()
+        reminders.sync(enabled: true)
         #expect(reminders.state == .hidden)
         reminders.authorization = { .notDetermined }
-        reminders.refreshNow()
+        reminders.sync(enabled: true)
         #expect(reminders.state == .needsPermission)
     }
 
