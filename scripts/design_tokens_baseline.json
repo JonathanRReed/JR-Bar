@@ -1,4 +1,10 @@
 {
+  "app/Sources/JRBarApp/AgentsHooksDoctor.swift": {
+    "error-words: : \\(error)\"": 1
+  },
+  "app/Sources/JRBarApp/AppDelegate.swift": {
+    "error-words: : \\(error)\"": 1
+  },
   "app/Sources/JRBarApp/AskAnswerViews.swift": {
     "animation: duration: 1": 1,
     "radius: cornerRadius: 4": 2
@@ -33,6 +39,9 @@
     "font: .system(size: 13": 1,
     "font: .system(size: 14": 1,
     "radius: cornerRadius: 8": 1
+  },
+  "app/Sources/JRBarApp/DiagnosticsReport.swift": {
+    "error-words: : \\(error)\"": 1
   },
   "app/Sources/JRBarApp/DotRoleControls.swift": {
     "radius: cornerRadius: 7": 2
@@ -120,6 +129,13 @@
     "radius: cornerRadius: 7": 1,
     "radius: cornerRadius: 9": 1
   },
+  "app/Sources/JRBarApp/PanelStore+Composition.swift": {
+    "error-words: toast: error.localizedDescription": 1
+  },
+  "app/Sources/JRBarApp/PanelStore.swift": {
+    "error-words: .message ?? reply.error?.code": 3,
+    "error-words: toast: error.localizedDescription": 1
+  },
   "app/Sources/JRBarApp/ScreenBarPeek.swift": {
     "font: .system(size: 11": 3,
     "font: .system(size: 12": 1,
@@ -143,6 +159,9 @@
     "font: .system(size: 11": 2,
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2
+  },
+  "app/Sources/JRBarApp/SettingsStore.swift": {
+    "error-words: : \\(error)\"": 5
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
@@ -546,6 +565,9 @@
   "app/Sources/JRBarApp/Toys/Fold/LidAngleSensor.swift": {
     "token-math: / 1_000": 1
   },
+  "app/Sources/JRBarApp/Toys/Notch/AlcoveMediaAdapter.swift": {
+    "error-words: String(describing: error)": 1
+  },
   "app/Sources/JRBarApp/Toys/Notch/NotchCardView.swift": {
     "animation: duration: 0.15": 1,
     "animation: duration: 1": 1,
@@ -562,6 +584,9 @@
   },
   "app/Sources/JRBarApp/Toys/Notch/NotchTimerGlance.swift": {
     "radius: cornerRadius: 10": 1
+  },
+  "app/Sources/JRBarApp/Toys/Notch/SystemTogglesStore.swift": {
+    "error-words: : \\(error)\"": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyBodies.swift": {
     "colour: Color(red: 0.45": 1,
@@ -695,6 +720,20 @@
     "font: .system(size: 12": 1,
     "font: .system(size: 12.5": 1
   },
+  "app/Sources/JRBarCore/CoreClient.swift": {
+    "error-words: String(describing: error)": 1
+  },
+  "app/Sources/JRBarCore/CoreCodec.swift": {
+    "error-words: : \\(error)\"": 1,
+    "error-words: String(describing: error)": 1
+  },
+  "app/Sources/JRBarCore/CoreModel.swift": {
+    "error-words: .message ?? reply.error?.code": 1,
+    "error-words: : \\(error)\"": 2
+  },
+  "app/Sources/JRBarCore/CoreSupervisor.swift": {
+    "error-words: : \\(error)\"": 1
+  },
   "app/Sources/JRBarCore/KeepAwakeReading.swift": {
     "elapsed-unit: \\(hours) h": 1,
     "elapsed-unit: \\(hours) h \\(rest) min": 1,
@@ -705,7 +744,8 @@
   "app/Sources/JRBarCore/NotchIsland.swift": {
     "elapsed-unit: \\(hours) h": 1,
     "elapsed-unit: \\(hours) h \\(rest) min": 1,
-    "elapsed-unit: \\(rest) min": 1
+    "elapsed-unit: \\(rest) min": 1,
+    "error-words: .message ?? error?.code": 1
   },
   "app/Sources/JRBarCore/NotchMotion.swift": {
     "animation: response: 0.14": 1,

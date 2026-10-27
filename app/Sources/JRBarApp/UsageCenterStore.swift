@@ -831,7 +831,7 @@ final class UsageCenterStore {
                 _ = try await self.core.setSetting("claude_plan_limits_consent_version", value: .number(1))
                 let reply = try await self.core.setSetting("claude_plan_limits_enabled", value: .bool(true))
                 if !reply.ok {
-                    self.show(error: reply.error?.message ?? reply.error?.code ?? "Plan limits stayed off", action: .planLimits)
+                    self.show(error: reply.error?.sentence ?? "Plan limits stayed off", action: .planLimits)
                 } else {
                     self.actionSucceeded(.planLimits)
                 }
@@ -1331,14 +1331,11 @@ final class UsageCenterStore {
     /// not keep showing a choice the daemon did not keep.
     nonisolated static func refusal(_ reply: CoreReply) -> String? {
         guard !reply.ok else { return nil }
-        return reply.error?.message ?? reply.error?.code ?? "refused"
+        return reply.error?.sentence ?? "The monitor refused that."
     }
 
     static func describe(_ error: Error) -> String {
-        if let reply = error as? CoreReplyError {
-            return reply.message ?? reply.code
-        }
-        return "\(error)"
+        MonitorWords.reason(error)
     }
 
     // MARK: Formatting

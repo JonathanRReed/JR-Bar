@@ -34,6 +34,10 @@ PATTERNS = {
     "quota-tone": re.compile(r'JRBarTokens\.Ink\.attention'),
     "secondary-button": re.compile(r'\bPillButton(?:Style|Body)\b'),
     "block-meter": re.compile(r"[\u2580-\u259f\u25a0\u25a1\u25b0\u25b1]+"),
+    # A thrown error reaches people as `MonitorWords.reason(error)` or a
+    # reply's `sentence`, never as a type dump, a reply code or Swift's
+    # "The operation couldn't be completed".
+    "error-words": re.compile(r'toast: error\.localizedDescription|String\(describing: error\)|\.message \?\? [\w$?.]*\.code\b|: \\\(error\)"'),
 }
 
 
@@ -111,7 +115,7 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
             continue
-        text_checks = {"block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        text_checks = {"error-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

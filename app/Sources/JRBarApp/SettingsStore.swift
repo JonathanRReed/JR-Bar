@@ -1586,7 +1586,7 @@ final class SettingsStore {
             do {
                 let reply = try await body()
                 if !reply.ok {
-                    let message = reply.error?.message ?? reply.error?.code ?? "refused"
+                    let message = reply.error?.sentence ?? "The monitor refused that."
                     self.noteHook(provider, message, isError: true)
                     self.report(error: "\(verb) hooks for \(provider): \(message)")
                     return
@@ -1605,7 +1605,7 @@ final class SettingsStore {
                     self.show(status: verb == "Install" ? "Hooks installed for \(provider)" : "Hooks removed for \(provider)")
                 }
             } catch {
-                self.noteHook(provider, String(describing: error), isError: true)
+                self.noteHook(provider, MonitorWords.reason(error), isError: true)
                 self.report(error: "\(verb) hooks for \(provider): \(error)")
             }
         }
@@ -1638,7 +1638,7 @@ final class SettingsStore {
                     self.noteHook(provider, start.message.isEmpty ? "Not started" : start.message, isError: true)
                 }
             } catch {
-                let words = (error as? CoreReplyError).map { $0.message ?? $0.code } ?? String(describing: error)
+                let words = MonitorWords.reason(error)
                 self.noteHook(provider, words, isError: true)
             }
         }
@@ -1672,7 +1672,7 @@ final class SettingsStore {
                 guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
                 if !reply.ok {
                     self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
-                    self.report(error: "claude_plan_limits_enabled: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    self.report(error: "claude_plan_limits_enabled: \(reply.error?.sentence ?? "The monitor refused that.")")
                     return
                 }
                 if on, reply.result?["value"]?.boolValue != true {
@@ -1745,9 +1745,9 @@ final class SettingsStore {
             defer { self.doctorRunning = false }
             do {
                 let reply = try await self.core.doctor()
-                self.doctorReport = reply.ok ? (reply.result ?? .object([:])) : .object(["error": .string(reply.error?.message ?? "doctor failed")])
+                self.doctorReport = reply.ok ? (reply.result ?? .object([:])) : .object(["error": .string(reply.error?.sentence ?? "The doctor did not finish.")])
             } catch {
-                self.doctorReport = .object(["error": .string("\(error)")])
+                self.doctorReport = .object(["error": .string(MonitorWords.reason(error))])
             }
         }
     }
@@ -1769,7 +1769,7 @@ final class SettingsStore {
                 do {
                     let reply = try await self.core.doctor()
                     doctor = reply.ok ? (reply.result ?? .object([:]))
-                        : .object(["error": .string(reply.error?.message ?? "doctor failed")])
+                        : .object(["error": .string(reply.error?.sentence ?? "The doctor did not finish.")])
                 } catch {
                     doctor = .object(["error": .string("\(error)")])
                 }

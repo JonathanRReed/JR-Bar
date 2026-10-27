@@ -553,7 +553,7 @@ final class HistoryStore {
                     reply = undone
                 }
                 guard reply.ok else {
-                    self.say("\(verb) failed: \(reply.error?.message ?? reply.error?.code ?? "refused")", isError: true)
+                    self.say("\(verb) failed: \(reply.error?.sentence ?? "The monitor refused that.")", isError: true)
                     return
                 }
                 let countKey = action == .clear ? "cleared" : "restored"

@@ -123,6 +123,11 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('Text("42% left")', "usage-direction"),
     ('view.foregroundStyle(JRBarTokens.Ink.attention)', "quota-tone"),
     ('view.buttonStyle(PillButtonStyle(prominent: false))', "secondary-button"),
+    ('self.show(toast: error.localizedDescription)', "error-words"),
+    ('return SetupNote(String(describing: error), isError: true)', "error-words"),
+    ('return reply.message ?? reply.code', "error-words"),
+    ('let why = reply.error?.message ?? reply.error?.code ?? "refused"', "error-words"),
+    ('report(error: "Install hooks: \\(error)")', "error-words"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))
