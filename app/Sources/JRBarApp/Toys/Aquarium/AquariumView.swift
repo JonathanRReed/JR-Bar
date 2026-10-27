@@ -372,7 +372,8 @@ struct AquariumView: View {
                     drawTreasure(canvas: &canvas, size: size, t: t,
                                  now: context.date)
                     if owns(.tetraSchool) {
-                        drawTetraSchool(canvas: &canvas, size: size, t: t)
+                        drawTetraSchool(canvas: &canvas, size: size, t: t,
+                                        layouts: layouts.filter { order.mains[$0.key] != nil })
                     }
                     if owns(.cleanerShrimp) {
                         drawCleanerShrimp(canvas: &canvas, size: size, t: t,

@@ -531,6 +531,19 @@ what was adopted and what was turned down, is
 - Apple's WWDC23 session "Animate with springs" (10158) for retargeting
   and velocity, and the SwiftUI animation documentation for the presets.
 
+## Aquarium schools, 2026-10-27
+
+The tank's fry and tetra school flock with boids, reimplemented from
+Craig Reynolds' paper "Flocks, Herds, and Schools: A Distributed
+Behavioral Model" (SIGGRAPH 1987, [red3d.com/cwr/boids](https://www.red3d.com/cwr/boids/)):
+separation, alignment and cohesion over a bounded set of neighbours. The
+walls and the bigger fish take their share of the turn first, the
+prioritised steering in Reynolds' "Steering Behaviors For Autonomous
+Characters" (GDC 1999, [red3d.com/cwr/steer](https://www.red3d.com/cwr/steer/)).
+The design audit pointed at [beneater/boids](https://github.com/beneater/boids)
+at `86b4cb9896f4` (MIT) as a small reference; `SchoolFlock` was written
+from the papers, and no code was copied from it.
+
 ## Grok credential expiry, 2026-10-12
 
 - **Grok Build**, commit `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`, Apache-2.0

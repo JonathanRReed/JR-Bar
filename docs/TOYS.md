@@ -596,8 +596,14 @@ session is seen again. A resident whose session returns is simply that
 session's fish once more, same swim.
 
 Sub-agent sessions join as fry — about half size, the school's
-species — orbiting loosely around their parent's fish, up to eight a
-school (extra workers merge visually rather than crowding the tank).
+species — schooling on their parent's flank, up to eight a school
+(extra workers merge visually rather than crowding the tank). A school
+is a small flock (`SchoolFlock`, Reynolds' boids): each fry keeps off
+its siblings, swims the way they swim and drifts to their middle, so
+the school bunches as the parent turns and spreads again after. It
+steps on a fixed 1/30 s clock, counts at most six neighbours a fish and
+pays for at most four steps a frame; Reduce Motion holds each fry in a
+still spot round its parent.
 A worker whose parent isn't listed drifts to the largest
 same-provider fish, or free-swims when there isn't one. Fry carry no
 labels or status bubbles; a failed worker just fades & sinks a
@@ -627,7 +633,8 @@ of the side tower. Bought pets swim their own errands on the mover pass:
 the turtle glides midwater and climbs to sip the surface, the octopus
 keeps house in the amphora (or a rock's lee) and crawls out every few
 minutes, the cleaner shrimp hops aboard an idle fish every half a
-minute or so, the tetra school orbits as one shared target, the pink
+minute or so, the tetra school flocks after one wandering target and
+parts round a fish in its way, the pink
 axolotl ambles the sand with waving gill frills, and the manta
 crosses the back every few minutes as a wide dim shadow. Alternate
 substrates recolour the whole bed — white sand brightens and
@@ -724,8 +731,8 @@ both eyes, the bow tie knots at the middle of the chin and the laptop
 sits the frame out. The seahorse, which stands upright, flicks round
 through a narrow side view instead.
 
-Everything else that used to mirror in one frame turns too: fry squash
-through zero at each end of their orbit, a completing fish facing left
+Everything else that used to mirror in one frame turns too: fry and
+tetras squash through zero whenever their school turns, a completing fish facing left
 turns round before it corkscrews out, the fish that come for a finished
 run's pellets are picked once, when the run finishes, from where every
 fish really is, and each swims over through its own turn and eats its

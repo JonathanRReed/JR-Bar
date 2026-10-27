@@ -185,7 +185,7 @@ extension AquariumView {
                         parent: (fish: Fish, layout: Layout)? = nil) -> Layout {
         let poseNow = AquariumMotionClock.poseDate(for: fish, at: now, still: isStill)
         if fish.isFry, let parent {
-            return settle(fryLayout(of: fish, at: t, now: poseNow, parent: parent), of: fish, t: t)
+            return settle(fryLayout(of: fish, in: size, at: t, now: poseNow, parent: parent), of: fish, t: t)
         }
         let h = fish.seed
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
@@ -470,7 +470,7 @@ extension AquariumView {
     /// from its id's hash — riding a touch higher, because fry sit up
     /// in the water. The orbit follows the parent's layout, so an
     /// ask-rise, a sink or a drift off the edge carries the school.
-    private func fryLayout(of fish: Fish, at t: Double, now: Date,
+    private func fryLayout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
                            parent: (fish: Fish, layout: Layout)) -> Layout {
         let h = fish.seed
         let phase = Double(h & 0xFF) / 0xFF * .pi * 2
@@ -492,6 +492,13 @@ extension AquariumView {
         // of a turn is all there is to see.
         let travel = -sin(angle) * (omega >= 0 ? 1 : -1)
         let orbitFacing = reduceMotion ? (travel >= 0 ? 1.0 : -1.0) : min(1, max(-1, travel / 0.35))
+        // Moving, the school flocks (`SchoolFlock`): each fry keeps off
+        // its siblings, swims with them and stays on its parent's flank.
+        // Reduce Motion keeps the still orbit spot above.
+        if !reduceMotion {
+            return flockFryLayout(of: fish, in: size, at: t, now: now, parent: parent, spawnAngle: angle,
+                                  orbitR: orbitR)
+        }
 
         var l = Layout()
         l.scale = pl.scale * 1.08
@@ -529,6 +536,76 @@ extension AquariumView {
             l.pitch = pl.pitch
         }
         return l
+    }
+
+    /// A fry in its school: the flock's place and heading, stepped once
+    /// a frame for the whole school by whichever of its fry is laid out
+    /// first. A newcomer joins at its old orbit spot; a fry that sinks
+    /// or leaves stops flocking where it is and plays its own exit.
+    private func flockFryLayout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
+                                parent: (fish: Fish, layout: Layout),
+                                spawnAngle: Double, orbitR: Double) -> Layout {
+        let pl = parent.layout
+        let flocking = fish.state == .swimming || fish.state == .idling || fish.state == .surfacing
+        let school = motion.swim.school(parent.fish.id)
+        let spawn = (x: pl.x + cos(spawnAngle) * orbitR, y: pl.y + sin(spawnAngle) * orbitR * 0.5 - 12)
+        school.flock.join(fish.id, at: t, spawn: { spawn }, facing: pl.yawCos, active: flocking)
+        // Its flank: a little behind the parent and a touch above.
+        let goal = (x: pl.x - pl.yawCos * 24, y: pl.y - 14)
+        let parentLength = Self.fishBaseLength * pl.scale
+        let body = SchoolFlock.Obstacle(x: pl.x, y: pl.y, radius: parentLength * 0.36)
+        school.flock.advance(to: t, goal: goal, bounds: Self.schoolBounds(in: size, around: pl),
+                             obstacles: [body], tuning: .fry,
+                             pace: swimTempo * (parent.fish.state == .idling ? 0.45 : 1))
+        let member = school.flock.member(fish.id)
+            ?? SchoolFlock.Member(id: fish.id, x: spawn.x, y: spawn.y, seen: t)
+
+        var l = Layout()
+        l.scale = pl.scale * 1.08
+        l.riseFrom = pl.riseFrom
+        l.opacity = pl.opacity
+        l.wag = pl.wag * 1.4
+        l.yawCos = member.facing
+        l.turn = 1 - abs(member.facing)
+        let speed = max(1, SchoolFlock.Tuning.fry.maxSpeed)
+        let climb = min(1, max(-1, member.vy / speed))
+        switch fish.state {
+        case .swimming, .idling, .surfacing:
+            l.x = member.x
+            l.y = member.y
+            l.pitch = pl.pitch * 0.3 + climb * 0.35
+        case .sinking:
+            let age = now.timeIntervalSince(fish.stateSince)
+            let drop = smooth(clamp01(age / 1.6))
+            l.x = member.x
+            l.y = member.y + drop * 44
+            l.pitch = 0.5 * drop
+            l.opacity = pl.opacity * (1 - 0.72 * drop)
+            l.wag = pl.wag * (1 - drop)
+        case .leaving:
+            // It follows its parent off, closing in and coming round to
+            // the parent's heading as it goes.
+            let progress = fish.leaveProgress(at: now)
+            let close = smooth(clamp01(progress * 1.6)) * 0.55
+            l.x = member.x + (pl.x - member.x) * close
+            l.y = member.y + (pl.y - 12 - member.y) * close
+            let follow = smooth(clamp01(progress * 4))
+            l.yawCos = member.facing + (pl.yawCos - member.facing) * follow
+            l.turn = 1 - abs(l.yawCos)
+            l.pitch = pl.pitch
+        }
+        return l
+    }
+
+    /// Where a school may swim: inside the glass and above the sand.
+    /// Without a size yet (a test's bare layout), a generous box round
+    /// the parent.
+    static func schoolBounds(in size: CGSize, around pl: Layout) -> SchoolFlock.Bounds {
+        guard size.width > 0, size.height > 0 else {
+            return SchoolFlock.Bounds(minX: pl.x - 400, minY: pl.y - 300, maxX: pl.x + 400, maxY: pl.y + 300)
+        }
+        return SchoolFlock.Bounds(minX: 14, minY: 26, maxX: Double(size.width) - 14,
+                                  maxY: Double(size.height) * 0.8)
     }
 
     // MARK: Fish shape

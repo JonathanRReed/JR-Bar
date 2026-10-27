@@ -96,6 +96,24 @@ final class TankSwimMemory {
 
     /// Keyed by the fry's id.
     var orbits: [String: Orbit] = [:]
+    /// One school's flock, held by reference so a frame steps it in
+    /// place rather than copying it out of the table and back.
+    final class School {
+        var flock = SchoolFlock()
+    }
+
+    /// The schools that flock (`SchoolFlock`): a parent's fry keyed by
+    /// the parent's id, and the tetras under `tetraSchoolKey`.
+    var schools: [String: School] = [:]
+    static let tetraSchoolKey = "tetra-school"
+
+    /// The school under `key`, made on first use.
+    func school(_ key: String) -> School {
+        if let school = schools[key] { return school }
+        let school = School()
+        schools[key] = school
+        return school
+    }
     private var rosterIDs: Set<String>?
     /// The cleaner shrimp's, while the tank has one.
     var shrimp: ShrimpTrail?
@@ -162,5 +180,6 @@ final class TankSwimMemory {
         meals = meals.filter { live.contains($0.key) }
         rolls = rolls.filter { live.contains($0.key) }
         orbits = orbits.filter { live.contains($0.key) }
+        schools = schools.filter { live.contains($0.key) || $0.key == Self.tetraSchoolKey }
     }
 }
