@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -274,7 +275,10 @@ extension AquariumView {
             Gradient(colors: [.white.opacity(0.38), .white.opacity(0.10)]),
             startPoint: CGPoint(x: 0, y: rect.minY), endPoint: CGPoint(x: 0, y: rect.maxY)),
             lineWidth: 0.75)
-        let accent = Color(nsColor: ProviderStyle.style(for: fish.providerID).nsAccent)
+        // The provider's colour names who it is; an ask wears amber,
+        // the app's one colour for "this needs you".
+        let accent = fish.state == .surfacing ? Tone.ask.color
+            : Color(nsColor: ProviderStyle.style(for: fish.providerID).nsAccent)
         let dotRect = CGRect(x: rect.minX + 9, y: cy - dot / 2, width: dot, height: dot)
         tag.fill(Path(ellipseIn: dotRect.insetBy(dx: -1.5, dy: -1.5)), with: .color(accent.opacity(0.3)))
         tag.fill(Path(ellipseIn: dotRect), with: .color(accent))

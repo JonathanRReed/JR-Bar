@@ -776,18 +776,19 @@ extension AquariumView {
                      with: .color(.white), lineWidth: 0.9)
         }
 
-        // Waiting at the glass: a soft glow ring pulses off its nose,
-        // like a tap on the pane asking for you.
+        // Waiting at the glass: a soft amber ring pulses off its nose,
+        // like a tap on the pane asking for you. Amber is the app's one
+        // colour for "this needs you", the same as the buddy and notch.
         if l.tapRing >= 0, !fish.isFry {
             let rr = (10 + l.tapRing * 54) * (length / Self.fishBaseLength)
-            var g = canvas
-            g.blendMode = .plusLighter
             let nose = l.along(0.30, length: length)
-            g.stroke(Path(ellipseIn: CGRect(x: l.x + nose.x - rr,
-                                            y: l.y + nose.y - 5 - rr * 0.8,
-                                            width: rr * 2, height: rr * 1.6)),
-                     with: .color(.white.opacity(l.opacity * (1 - l.tapRing) * 0.35)),
-                     lineWidth: 1.6)
+            let ring = Path(ellipseIn: CGRect(x: l.x + nose.x - rr,
+                                              y: l.y + nose.y - 5 - rr * 0.8,
+                                              width: rr * 2, height: rr * 1.6))
+            let fade = l.opacity * (1 - l.tapRing)
+            var g = canvas
+            g.stroke(ring, with: .color(Tone.ask.color.opacity(fade * 0.3)), lineWidth: 4.5)
+            g.stroke(ring, with: .color(Tone.ask.color.opacity(min(1, fade * 1.15))), lineWidth: 1.4)
         }
 
         // W13's evidence overlays — one marker, only what the plan
@@ -904,11 +905,14 @@ extension AquariumView {
             // Resolved glyphs are cached across frames — the label
             // doesn't change between reduces, only its anchor does.
             let (resolved, textSize) = textCache.chip(for: fish.label, canvas: canvas)
+            // An asking fish's chip leads with an amber dot.
+            let asking = fish.state == .surfacing
+            let dotRoom: Double = asking ? 9 : 0
             let chipX = min(max(l.x, textSize.width / 2 + 14), size.width - textSize.width / 2 - 14)
             let chipY = min(l.y + height / 2 + 14, size.height - 14)
-            let chip = CGRect(x: chipX - textSize.width / 2 - 6.5,
+            let chip = CGRect(x: chipX - textSize.width / 2 - 6.5 - dotRoom,
                               y: chipY - textSize.height / 2 - 2.5,
-                              width: textSize.width + 13, height: textSize.height + 5)
+                              width: textSize.width + 13 + dotRoom, height: textSize.height + 5)
             // The tether: a hairline from the body's underside down to
             // the chip — invisible when the chip is clamped sideways.
             if abs(chipX - l.x) < 20 {
@@ -924,6 +928,10 @@ extension AquariumView {
                 Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),
                 startPoint: CGPoint(x: 0, y: chip.minY), endPoint: CGPoint(x: 0, y: chip.maxY)),
                 lineWidth: 0.6)
+            if asking {
+                let dot = CGRect(x: chip.minX + 5.5, y: chipY - 2.75, width: 5.5, height: 5.5)
+                lc.fill(Path(ellipseIn: dot), with: .color(Tone.ask.color))
+            }
             lc.draw(resolved, at: CGPoint(x: chipX, y: chipY), anchor: .center)
         }
     }
