@@ -383,7 +383,7 @@ public struct UsageGaugeRow: View {
             }
             .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity)
         } else {
-            Text("–").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
+            Text("—").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
                 .frame(width: compact ? Self.compactPercentWidth : nil, alignment: .trailing)
                 .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity, alignment: compact ? .leading : .center)
                 .accessibilityLabel("\(name): no window")

@@ -111,7 +111,7 @@ enum OverviewLinkage {
 
     private static func coreLink(_ s: Snapshot, now: Date) -> OverviewLink {
         var facts: [OverviewLinkFact] = []
-        facts.append(.init("Link", s.connected ? "connected" : (s.connecting ? "connecting" : "offline")))
+        facts.append(.init("Link", s.connected ? "Connected" : (s.connecting ? MonitorWords.reconnecting : "Not connected")))
         if let version = s.coreVersion { facts.append(.init("Version", version)) }
         if let pid = s.corePID { facts.append(.init("Daemon pid", "\(pid)")) }
         if s.connected, let at = s.connectedAt {
@@ -132,13 +132,13 @@ enum OverviewLinkage {
         let subtitle: String
         if s.connected, !s.stateUsable {
             tone = s.stateRejected == nil ? .busy : .warn
-            subtitle = s.stateRejected == nil ? "connected · waiting for state" : "connected · update unreadable"
+            subtitle = s.stateRejected == nil ? "Connected · waiting for an update" : "Connected · update unreadable"
         } else if s.connected {
             tone = s.stateStale ? .warn : .good
-            subtitle = s.stateStale ? "connected · quiet" : "connected"
+            subtitle = s.stateStale ? "Connected · quiet" : "Connected"
         } else {
             tone = s.connecting ? .busy : .down
-            subtitle = s.connecting ? "connecting" : "offline"
+            subtitle = s.connecting ? MonitorWords.reconnecting : "Not connected"
         }
         return OverviewLink(
             id: "core", group: .core,
