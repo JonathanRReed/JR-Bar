@@ -2099,6 +2099,14 @@ extension AppDelegate {
         // Awake is the daemon's one keep-awake lease: the chip, links and
         // Shortcuts send it, `state.power.hold` is what the chip shows.
         if let core { SystemTogglesStore.shared.state.attachLease(to: core) }
+        // Five minutes before a timed session lets go: one notice, with
+        // "+30 min", held by the same quiet as every courtesy banner.
+        let headsUp = SystemTogglesStore.shared.state.headsUp
+        headsUp.deliver = { [weak self] plan in self?.events?.notifications.deliverAwakeHeadsUp(plan) }
+        headsUp.withdraw = { [weak self] in self?.events?.notifications.withdraw(identifier: KeepAwakeHeadsUp.identifier) }
+        headsUp.focus = { [weak core] in core?.state?.focus }
+        events?.notifications.onExtendAwake = { SystemTogglesStore.shared.extendAwake() }
+        SystemTogglesStore.shared.state.syncAwakeChip()
         wireCommandRouter()
         // App actions bound on Settings › Shortcuts, and the one key the
         // daemon's retired registry held, adopted when its settings land.

@@ -1599,8 +1599,10 @@ public struct CoreClosedLid: Codable, Hashable, Sendable {
 
 /// The person's own keep-awake request (`state.power.hold.lease`): for a
 /// duration (`until` is its end), until the named sessions finish
-/// (`kind == "agents"`, `until` is the backstop), or until turned off
-/// (`kind == "indefinite"`, no `until`).
+/// (`kind == "agents"`, `until` is the backstop), until turned off
+/// (`kind == "indefinite"`, no `until`), or while one process runs
+/// (`kind == "process"`: `pid`, and `label`, its short name — never its
+/// arguments; `until` is the day-long backstop).
 public struct CoreAwakeLease: Codable, Hashable, Sendable {
     public var kind: String?
     public var startedAt: Double?
@@ -1608,13 +1610,29 @@ public struct CoreAwakeLease: Codable, Hashable, Sendable {
     public var sessions: [String]?
     public var display: Bool?
     public var source: String?
+    public var pid: Int?
+    public var label: String?
 
     enum CodingKeys: String, CodingKey {
-        case kind, until, sessions, display, source
+        case kind, until, sessions, display, source, pid, label
         case startedAt = "started_at"
     }
 
+    public init(kind: String? = nil, startedAt: Double? = nil, until: Double? = nil,
+                sessions: [String]? = nil, display: Bool? = nil, source: String? = nil,
+                pid: Int? = nil, label: String? = nil) {
+        self.kind = kind
+        self.startedAt = startedAt
+        self.until = until
+        self.sessions = sessions
+        self.display = display
+        self.source = source
+        self.pid = pid
+        self.label = label
+    }
+
     public var waitsOnAgents: Bool { kind == "agents" }
+    public var waitsOnProcess: Bool { kind == "process" }
 
     /// Seconds left on a duration lease; nil for the other two shapes,
     /// whose end is not a countdown.
@@ -1749,6 +1767,8 @@ public struct CoreAwakeRequest: Hashable, Sendable {
         /// Every main session running now, or the named ones.
         case untilAgentsFinish(sessions: [String]?)
         case indefinite
+        /// While this process runs (`jrbar awake -- …`), named by `label`.
+        case whileRunning(pid: Int, label: String?)
     }
 
     public var shape: Shape
@@ -1771,6 +1791,9 @@ public struct CoreAwakeRequest: Hashable, Sendable {
             args["until_agents_idle"] = .bool(true)
             if let sessions { args["sessions"] = .array(sessions.map(JSONValue.string)) }
         case .indefinite: args["indefinite"] = .bool(true)
+        case .whileRunning(let pid, let label):
+            args["pid"] = .number(Double(pid))
+            if let label { args["label"] = .string(label) }
         }
         return args
     }

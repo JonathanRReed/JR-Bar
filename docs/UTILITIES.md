@@ -566,8 +566,26 @@ switch. It is the same hold as the notch card's Awake chip, the panel
 footer's cup and the Screen Bar's right ear (`SystemTogglesStore`): the
 daemon's `hold_awake` lease while the monitor is connected, the app's own
 power assertion otherwise. A hold the daemon asked for but nothing is
-keeping reads "Not held" (the footer says "Awake hold didn't start"), never
+keeping reads "Not held" on the chip, and the card says "Couldn't hold the
+Mac awake" with **Try again**, which re-asks the same hold. It never says
 "Awake".
+
+A hold keeps the computer awake and lets the display sleep: the daemon's
+`caffeinate -ims`, the app's own `kIOPMAssertionTypeNoIdleSleep`, and
+`caffeinate -i -w` for `jrbar awake` without the monitor. The display is
+held only when the person turns on **Keep the display on** (their sessions)
+or **Keep display awake** (the agents), and never with the lid shut on no
+external display. Both were reset to off once in 0.10.1
+(`keep_display_awake_default_version`, `keepAwakeDisplayMigration`).
+
+- **While a command runs**: `jrbar awake -- <command>` and `jrbar awake
+  --pid N` start the daemon's `process` lease. One kqueue `NOTE_EXIT`
+  watch per lease hears the exit; the card reads "While swift runs".
+- **Heads-up**: five minutes before a timed session ends, one notice with
+  **+30 min** (`KeepAwakeHeadsUpScheduler`): one scheduled event, armed
+  when the hold changes and dropped when it changes again, held by the
+  quiet that holds banners, off with **Heads-up before it ends**. The cup's
+  steam (`KeepAwakeSteam`) fades in steps on the countdown's own redraw.
 
 - **Duration menu** (`KeepAwakeMenu`): the presets ("For 15 minutes", …),
   Until 08:00 (the panel's next-morning rule: the next 08:00 at least an
@@ -587,8 +605,9 @@ keeping reads "Not held" (the footer says "Awake hold didn't start"), never
   removed).
 - **While agents run**: the four daemon rows (**Keep Mac awake**, **Keep
   display awake**, **Lid closed** with Let it sleep, Stay awake while agents
-  run or Always stay awake, and **Keep awake on battery**; all on except Lid
-  closed, which defaults to Let it sleep). Settings › General › Power
+  run or Always stay awake, and **Keep awake on battery**; Keep Mac awake
+  and Keep awake on battery default on, Keep display awake off, and Lid
+  closed to Let it sleep). Settings › General › Power
   keeps them too. A finished agent's quota lease no longer keeps a
   quota-exhausted Mac awake for the agent still working. The closed-lid hold
   rides the privileged sleep helper (`pmset disablesleep`) and the daemon

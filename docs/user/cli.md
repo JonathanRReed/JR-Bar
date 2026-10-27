@@ -69,6 +69,8 @@ jrbar quiet --until 8am        # or until a time of day; modes: pause, dim, mute
 jrbar snooze all 30m           # snooze the alerts of every asking session; a session id works too, `off` ends it
 jrbar deepwork 50m             # asks-only quiet (25m by default), then what the agents did; `deepwork off` ends it
 jrbar awake 2h                 # keep the Mac awake; `--until 8am` works, `awake off` lets go
+jrbar awake -- swift test      # run a command with the Mac held awake until it exits
+jrbar awake --pid 4242         # hold the Mac awake until a running process exits
 jrbar toggle dark              # a quick toggle, flip or `on` / `off`
 jrbar confetti --provider codex   # a burst in that provider's colours (--session, or --from-hook in a Stop hook)
 jrbar set global_brightness_scale 0.6   # any setting by dot path (values are JSON)
@@ -83,6 +85,21 @@ a duration or `--until`, not both. Quiet and keep-awake last at most a day,
 and deep work between a minute and a day. `jrbar toggle` takes `awake`,
 `dark`, `desktop`, `hidden`, `mute`, `saver`, `lock`, `dock`, `mic`, `eject`
 or `sleep`.
+
+Keep awake holds the computer, not the screen: the display still sleeps
+on its usual schedule, and with the lid closed it goes off while the Mac
+keeps running. Turn on Keep the display on if you want the screen held too.
+
+`jrbar awake -- <command>` runs the command in your terminal and keeps the
+Mac awake until it exits, then exits with the command's own status (130
+after Ctrl-C). Everything after `--` is the command, so its own flags are
+safe. `jrbar awake --pid 4242` holds until that process exits and returns
+straight away. The monitor learns the exit from macOS the moment it
+happens, so nothing checks in the meantime. JR-Bar shows the command's name,
+"Awake while swift runs", and never its arguments. If the monitor isn't
+running, the system's `caffeinate` holds the Mac instead, the same way. A
+hold while a command runs lasts at most a day, like any other, and starting
+another Keep Awake session replaces it.
 
 `quiet`, `snooze`, `set`, `get`, `confetti` and `status` talk to the
 running monitor and exit 3 when none answers. `toggle`, `awake`, `deepwork`

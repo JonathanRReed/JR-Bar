@@ -16,6 +16,9 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     static let plainCategory = "jrbar.plain"
     static let approveAction = "jrbar.approve"
     static let denyAction = "jrbar.deny"
+    /// The Keep Awake heads-up and its one action, "+30 min".
+    static let keepAwakeCategory = "jrbar.keepAwake"
+    static let extendAwakeAction = "jrbar.keepAwake.extend"
 
     var onOpenSession: ((String) -> Void)?
     /// A banner's Approve or Deny, awaited: the session, the request the
@@ -25,6 +28,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     /// the shared answer desk.
     var onAnswerAskNow: (@MainActor (_ session: String, _ request: String?, _ approve: Bool) async -> String?)?
     var onLog: ((String) -> Void)?
+    /// The heads-up's "+30 min": the delegate wires it to the one hold.
+    var onExtendAwake: (@MainActor () -> Void)?
 
     /// The banner's copy of its ask episode.
     nonisolated static let requestKey = "request"
@@ -142,6 +147,36 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// The five-minute heads-up before a timed Keep Awake session lets go,
+    /// with "+30 min". Quiet when it is due is the scheduler's to judge; a
+    /// refused permission is the system's, and says so in the log.
+    func deliverAwakeHeadsUp(_ plan: KeepAwakeHeadsUp) {
+        guard let center else {
+            onLog?("notification (unbundled, not shown): \(plan.title) — \(plan.body())")
+            return
+        }
+        registerCategories()
+        let identifier = KeepAwakeHeadsUp.identifier
+        let token = pendingDeliveries.begin(identifier)
+        ensureAuthorized { [weak self] granted in
+            guard let self, self.pendingDeliveries.finish(identifier, token: token) else { return }
+            guard granted else { self.onLog?("notification skipped: permission denied"); return }
+            let content = UNMutableNotificationContent()
+            content.title = plan.title
+            content.body = plan.body()
+            content.categoryIdentifier = Self.keepAwakeCategory
+            content.threadIdentifier = "jrbar.keepAwake"
+            content.interruptionLevel = .active
+            content.userInfo["identifier"] = identifier
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            center.add(request) { [weak self] error in
+                guard let error else { return }
+                let message = "notification failed: \(error.localizedDescription)"
+                Task { @MainActor [weak self] in self?.onLog?(message) }
+            }
+        }
+    }
+
     func withdraw(identifier: String) {
         pendingDeliveries.withdraw(identifier)
         center?.removeDeliveredNotifications(withIdentifiers: [identifier])
@@ -155,7 +190,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         let deny = UNNotificationAction(identifier: Self.denyAction, title: "Deny", options: [.destructive])
         let ask = UNNotificationCategory(identifier: Self.askCategory, actions: [approve, deny], intentIdentifiers: [], options: [])
         let plain = UNNotificationCategory(identifier: Self.plainCategory, actions: [], intentIdentifiers: [], options: [])
-        center.setNotificationCategories([ask, plain])
+        let extend = UNNotificationAction(identifier: Self.extendAwakeAction, title: "+30 min", options: [])
+        let awake = UNNotificationCategory(identifier: Self.keepAwakeCategory, actions: [extend],
+                                           intentIdentifiers: [], options: [])
+        center.setNotificationCategories([ask, plain, awake])
     }
 
     /// Lazy: the system prompt appears the first time a notification is due.
@@ -208,6 +246,8 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
                 if let session { answer(session, request: request, approve: true) }
             case Self.denyAction:
                 if let session { answer(session, request: request, approve: false) }
+            case Self.extendAwakeAction:
+                onExtendAwake?()
             case UNNotificationDismissActionIdentifier:
                 break
             default:
