@@ -4201,7 +4201,9 @@ def main() -> int:
                 break
             try:
                 conn, _ = server.accept()
-            except TimeoutError:
+            # socket.timeout is TimeoutError only from Python 3.10; the
+            # system python3 is 3.9, where it would end the loop.
+            except (TimeoutError, socket.timeout):
                 continue
             except OSError:
                 break
