@@ -1191,21 +1191,21 @@ struct RemotePage: View {
             }
         }
 
-        SettingGroup("Serve", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
-            SettingToggle(store, "Serve status", subtitle: "Opens a loopback endpoint so local tools can read this desk's status.", path: "serve_enabled")
+        SettingGroup("Local tools", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
+            SettingToggle(store, "Share status with local tools", subtitle: "Lets local tools read this Mac's status.", path: "serve_enabled")
             Provided(store, "serve_enabled") {
-                SettingRow("Bearer token") {
-                    Button("Copy token") { store.copyServeToken() }
+                SettingRow("Access key", subtitle: "Bearer token for local tools.") {
+                    ActionButton("Copy key") { store.copyServeToken() }
                         .disabled(!(store.values.bool("serve_enabled") ?? false) || !store.isLive)
                         .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
         }
 
-        SettingGroup("Cloud ingest") {
-            SettingToggle(store, "Cloud ingest", subtitle: "Opens a loopback port so off-machine agents can post their own lifecycle.", path: "cloud_ingest_enabled")
+        SettingGroup("Other machines") {
+            SettingToggle(store, "Accept events from other machines", subtitle: "Receives agent events from other machines.", path: "cloud_ingest_enabled")
             Provided(store, "cloud_ingest_token_path") {
-                SettingRow("Token file") {
+                SettingRow("Access key file") {
                     HStack(spacing: 8) {
                         Text(store.values.string("cloud_ingest_token_path") ?? "")
                             .jrbarType(.callout).fontDesign(.monospaced)
@@ -1348,8 +1348,8 @@ struct StreamDeckCard: View {
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
-                            subtitle: "Serve status, the status URL and its token.") {
-                SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
+                            subtitle: "Share status with local tools and copy its access key.") {
+                SettingToggle(store, "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                               path: "serve_enabled")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("Answer from a key", isOn: Binding(
@@ -1374,7 +1374,7 @@ struct StreamDeckCard: View {
                             .jrbarType(.callout).fontDesign(.monospaced)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        Button("Copy token") { store.copyServeToken() }
+                        ActionButton("Copy key") { store.copyServeToken() }
                             .disabled(!enabled || !store.isLive)
                             .help("Fetches the endpoint's bearer token from the monitor and copies it")
                     }

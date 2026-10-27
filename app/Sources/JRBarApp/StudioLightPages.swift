@@ -157,25 +157,25 @@ private struct StudioDeviceRows: View {
             && DotRole.parse(settings.values.string("dot_role")) != .status
     }
     var body: some View {
-        SettingsGroup {
-            SettingsRow("\(device.name): Display") {
+        SettingGroup {
+            SettingsRow("Display", subtitle: linked ? "Follows the strip." : nil) {
                 Picker("\(device.name) display", selection: settings.string("\(device.prefix).led_display", default: "agent")) {
                     ForEach(DevicesPage.displayModes, id: \.value) { Text($0.label).tag($0.value) }
                 }.labelsHidden().disabled(linked).settingControl("\(device.prefix).led_display")
             }
-            SettingsRow("\(device.name): Mix") {
+            SettingsRow("Mix", subtitle: linked ? "Follows the strip." : mirrorsHardware ? "Mirrors the strip." : nil) {
                 Picker("\(device.name) mix", selection: settings.optionalString("\(device.prefix).blend_mode")) {
                     Text("Global mix").tag("")
                     ForEach(mixes) { Text($0.name).tag($0.id) }
                 }.labelsHidden().disabled(linked || mirrorsHardware).settingControl("\(device.prefix).blend_mode")
             }
-            SettingsRow("\(device.name): Asks only") {
+            SettingsRow("Asks only", subtitle: linked ? "Follows the strip." : nil) {
                 Toggle("\(device.name) asks only", isOn: Binding(
                     get: { settings.values.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
                     set: { settings.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
                 )).labelsHidden().toggleStyle(.switch).disabled(linked).settingControl("\(device.prefix).signal_policy")
             }
-            SettingsRow("\(device.name): Provider") {
+            SettingsRow("Provider", subtitle: linked ? "Follows the strip." : nil) {
                 Picker("\(device.name) provider", selection: settings.optionalString("\(device.prefix).provider_pin")) {
                     Text("All providers").tag("")
                     ForEach(SettingsKey.providers.filter { $0 != "t3code" }, id: \.self) {
@@ -184,23 +184,25 @@ private struct StudioDeviceRows: View {
                 }.labelsHidden().disabled(linked).settingControl("\(device.prefix).provider_pin")
             }
             if device.kind == "dot", device.id == settings.deviceEntries.first(where: { $0.kind == "dot" })?.id {
-                SettingsRow("\(device.name): Role") {
+                SettingsRow("Role") {
                     Picker("Dot role", selection: settings.string("dot_role", default: DotRole.extend.rawValue)) {
                         ForEach(DotRole.allCases) { Text($0.label).tag($0.rawValue) }
                     }.labelsHidden().disabled(!(settings.values.bool("devices_linked") ?? true)).settingControl("dot_role")
                 }
-                SettingPicker(settings, "\(device.name): Look", path: "dot_extend_style",
+                SettingPicker(settings, "Look", path: "dot_extend_style",
                               options: LinkedSyncControls.styles, default: "continue", segmented: true)
                     .disabled(!LinkedSyncControls.isExtending(settings))
-                SettingsRow("\(device.name): Finished runs") {
+                SettingsRow("Finished runs") {
                     Toggle("Also show finished runs", isOn: settings.bool("dot_role_include_completions"))
                         .labelsHidden().toggleStyle(.switch)
                         .disabled(!DotRole.parse(settings.values.string("dot_role")).usesCompletions)
                         .settingControl("dot_role_include_completions")
                 }
             }
-            if linked { Text("\(device.name) follows the strip.")
-                .jrbarType(.caption).foregroundStyle(.secondary).settingsRowInsets() }
+        } header: {
+            SettingsGroupHeader(title: device.name,
+                symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
+                tint: SettingsStore.Page.devices.tint)
         }
     }
 }

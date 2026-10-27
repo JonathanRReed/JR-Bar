@@ -228,7 +228,7 @@ private struct StudioPlanInspector: View {
                     }
                     Divider()
                 }
-                Button("Edit devices", action: openDevices)
+                Button("Open Devices", action: openDevices)
             }.padding(JRBarTokens.Space.lg)
         }
     }

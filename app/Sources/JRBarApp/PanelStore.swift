@@ -201,7 +201,7 @@ struct SessionRow: Identifiable, Equatable {
     func quietText(now: Date) -> String? {
         guard SilentSession.silence(activity: activity, stale: stale, openToolCall: openToolCall,
                                     lastSignal: since, now: now) != nil else { return nil }
-        return PanelStore.elapsed(since: since, now: now).map { "quiet \($0)" }
+        return PanelStore.elapsed(since: since, now: now).map { "Quiet \($0)" }
     }
 
     /// The elapsed column's text: the plain age, prefixed "quiet" once a

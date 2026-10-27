@@ -286,7 +286,7 @@ struct SettingsBundle: Equatable, Sendable {
             "remote_peers.enabled": "Remote machines",
             "remote_peers.publish_enabled": "Remote machines",
             "remote_peers.include_messages": "Remote machines",
-            "cloud_ingest_enabled": "Cloud ingest",
+            "cloud_ingest_enabled": "Accept events from other machines",
             "escalation_webhook_url": "Escalation webhook",
             "webhook_events": "Escalation webhook",
             "ntfy_enabled": "Phone alerts",

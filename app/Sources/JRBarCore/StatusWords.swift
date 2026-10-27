@@ -31,7 +31,7 @@ public enum HookStatus: String, CaseIterable, Sendable {
 }
 
 public enum UsageStatus: String, CaseIterable, Sendable {
-    case stale, usedUp, runsOut, noReading, noPace, reset, holding, paused, comfortable, notBurning, resetsFirst, incident
+    case stale, usedUp, runsOut, noReading, noQuotaSource, noPace, reset, holding, paused, comfortable, notBurning, resetsFirst, incident
 
     public var word: String {
         switch self {
@@ -39,6 +39,7 @@ public enum UsageStatus: String, CaseIterable, Sendable {
         case .usedUp: "Used up"
         case .runsOut: "Runs out"
         case .noReading: "No reading"
+        case .noQuotaSource: "No quota source"
         case .noPace: "No pace yet"
         case .reset: "Reset"
         case .holding: "Holding"

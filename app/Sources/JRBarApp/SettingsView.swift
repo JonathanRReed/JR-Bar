@@ -309,28 +309,24 @@ struct Provided<Content: View>: View {
 
     private var provided: Bool { store.hasDocument && paths.contains { store.isProvided($0) } }
 
+    static func reason(live: Bool, hasDocument: Bool, provided: Bool) -> String? {
+        if !live { return "Reconnect to change this setting." }
+        if !hasDocument { return "Waiting for settings." }
+        return provided ? nil : "Not in this version"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             content()
                 .settingControl(recordsControl ? paths : [])
                 .disabled(!provided || !store.isLive)
-            if store.hasDocument, !provided {
-                NotProvidedHint()
+            if let reason = Self.reason(live: store.isLive, hasDocument: store.hasDocument, provided: provided) {
+                Text(reason).jrbarType(.caption).foregroundStyle(.secondary)
             }
         }
     }
 }
 
-struct NotProvidedHint: View {
-    var body: some View {
-        Text("Not in this version")
-            .jrbarType(.caption)
-            .foregroundStyle(.tertiary)
-    }
-}
-
-/// A title with an optional explanatory line below it, the way System
-/// Settings labels a toggle.
 struct SettingLabel: View {
     let title: String
     var subtitle: String? = nil

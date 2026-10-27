@@ -5,7 +5,7 @@ only.
 
 ## `jrbar serve`: a status endpoint
 
-Turn on **Settings › Remote › Serve status**. The daemon then serves
+Turn on **Settings › Remote › Share status with local tools**. The daemon then serves
 `http://127.0.0.1:8737/status.json`:
 
 - agent counts (working, waiting, failed) for your main sessions; sub-agents
@@ -25,7 +25,7 @@ curl -s -H "Authorization: Bearer $(cat ~/.local/state/jrbar/serve-token)" \
 The endpoint listens on loopback only and is read-only. The app also serves
 `GET /asks.json` and `POST /answer` for a Stream Deck key, but they answer
 only while their own switch, `serve_answer_enabled`, is on. It is off by
-default and separate from Serve status (`jrbar set serve_answer_enabled
+default and separate from Share status with local tools (`jrbar set serve_answer_enabled
 true` turns it on). Both routes need the token, and an answer is a press by
 a person, never a rule. A Stream Deck "API request" key and the xbar example below
 are built on this endpoint.

@@ -172,7 +172,7 @@ public struct UsageGaugeRow: View {
         if !connected && !suppressDisconnectedStatus { return MonitorWords.label }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return provider.statusText ?? "Usage is off" }
-        if !provider.quotaSource { return "No quota source" }
+        if !provider.quotaSource { return UsageStatus.noQuotaSource.word }
         let hasCompactPlaceholders = style == .compact && !windowNames.isEmpty && !isStale
         return provider.statusText ?? (showsWindows || hasCompactPlaceholders ? nil : UsageStatus.noReading.word)
     }
@@ -193,10 +193,10 @@ public struct UsageGaugeRow: View {
                 .layoutPriority(1)
             if let status {
                 HStack(spacing: 3) {
-                    if provider.availability == "failing" {
+                    if provider.quotaSource && provider.availability == "failing" {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(JRBarTokens.Ink.failure)
                     }
-                    Text(status).foregroundStyle(provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
+                    Text(status).foregroundStyle(provider.quotaSource && provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
                 }
                 .font(JRBarTokens.TypeStyle.caption.font).lineLimit(1).truncationMode(.tail)
                 .help(status)
@@ -253,7 +253,13 @@ public struct UsageGaugeRow: View {
         .onHover { hovering = $0 }
     }
 
-    private var compactWindows: some View {
+    @ViewBuilder private var compactWindows: some View {
+        if !provider.quotaSource {
+            HStack(spacing: 10) {
+                ProviderLogoTile(provider: provider.id, accent: tileAccent)
+                identity.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
                 ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: provider.availability == "not_found")
@@ -279,6 +285,7 @@ public struct UsageGaugeRow: View {
                 }
             }
         }
+        }
     }
 
     @ViewBuilder private var compactIdentity: some View {
@@ -295,10 +302,10 @@ public struct UsageGaugeRow: View {
         return HStack(spacing: JRBarTokens.Space.sm) {
             if let status {
                 HStack(spacing: 3) {
-                    if provider.availability == "failing" {
+                    if provider.quotaSource && provider.availability == "failing" {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(JRBarTokens.Ink.failure)
                     }
-                    Text(status).foregroundStyle(provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
+                    Text(status).foregroundStyle(provider.quotaSource && provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
                 }
                 .lineLimit(1).truncationMode(.tail).help(status)
             }
