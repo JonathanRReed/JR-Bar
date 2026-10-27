@@ -384,7 +384,7 @@ struct DotRoleMockTests {
         let model = CoreModel(socketPath: socket)
         model.start()
         defer { model.stop() }
-        #expect(await MockCoreIntegrationTests.wait { model.isLive && model.lights != nil && model.settings != nil })
+        try #require(await MockCoreIntegrationTests.wait { model.isLive && model.lights != nil && model.settings != nil })
 
         // The default: the Dot extends the strip and says so.
         #expect(SettingsDocument(model.settings!.document).string("dot_role") == "extend")
@@ -401,7 +401,7 @@ struct DotRoleMockTests {
 
         // Status: the Dot renders itself and the frame carries no role.
         #expect(try await model.setSetting("dot_role", value: "status").ok)
-        #expect(await MockCoreIntegrationTests.wait { model.lights?.dot != nil && model.lights?.dot?.role == nil })
+        try #require(await MockCoreIntegrationTests.wait { model.lights?.dot != nil && model.lights?.dot?.role == nil })
         #expect(DotRoleReadout.make(chosen: .status, includeCompletions: false, dot: model.lights?.dot).rendersItself == true)
 
         // The completions switch is a plain bool the daemon keeps.
