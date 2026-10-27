@@ -25,6 +25,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
+from .duration_words import duration
+
 USAGE_JSON_SCHEMA = 1
 
 _PROVIDER_NAMES = {
@@ -73,14 +75,9 @@ def reset_words(resets_at: float | None, now: float) -> str | None:
         return "reset passed, the reading is older"
     if seconds <= 60:
         return "resetting now"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"resets {minutes}m"
-    hours, minutes = divmod(minutes, 60)
-    if hours < 24:
-        return f"resets {hours}h{minutes:02d}m"
-    days, hours = divmod(hours, 24)
-    return f"resets {days}d{hours}h"
+    # Run together, one table cell: "resets 2h14m". A whole hour or day
+    # drops its zeros ("resets 1h"), the app's rule (duration_words).
+    return "resets " + duration(seconds // 60 * 60).replace(" ", "")
 
 
 def _left(window: dict[str, Any]) -> str:

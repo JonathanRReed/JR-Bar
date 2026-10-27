@@ -10,7 +10,7 @@ struct NotchWordingParityTests {
         // Typed tables keep CI's older type checker inside its time limit.
         let cases: [(Double, String)] = [(0, "reset — waiting for a new reading"),
                                          (1, "resets in 1m"), (3720, "resets in 1h 02m"),
-                                         (3600, "resets in 1h 00m"), (331_200, "resets in 3d 20h")]
+                                         (3600, "resets in 1h"), (331_200, "resets in 3d 20h")]
         for (seconds, text) in cases {
             #expect(PanelStore.countdown(to: now.timeIntervalSince1970 + seconds, now: now) == text)
         }

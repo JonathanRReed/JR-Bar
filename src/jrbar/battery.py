@@ -746,4 +746,5 @@ def format_minutes(minutes: int) -> str:
     if minutes < 60:
         return f"{minutes}m"
     hours, rest = divmod(minutes, 60)
-    return f"{hours}h{rest:02d}m"
+    # A whole hour drops its zeros, the app's rule (duration_words).
+    return f"{hours}h" if rest == 0 else f"{hours}h{rest:02d}m"

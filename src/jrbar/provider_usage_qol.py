@@ -6,6 +6,7 @@ import hashlib
 import math
 from dataclasses import dataclass
 
+from .duration_words import duration
 from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane
 
 #: A TIMING reset: the old window's boundary passed between two reads and
@@ -601,13 +602,7 @@ def format_reset_countdown(reset_at: float | None, *, now: float) -> str:
             return "reset passed — reading is older"
         return "resetting now"
     minutes = max(1, seconds // 60)
-    if minutes < 60:
-        return f"resets in {minutes}m"
-    hours, remaining_minutes = divmod(minutes, 60)
-    if hours < 24:
-        return f"resets in {hours}h {remaining_minutes}m"
-    days, remaining_hours = divmod(hours, 24)
-    return f"resets in {days}d {remaining_hours}h"
+    return f"resets in {duration(minutes * 60)}"
 
 
 def usage_totals(

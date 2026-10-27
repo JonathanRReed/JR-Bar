@@ -16,6 +16,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Final
 
+from .duration_words import duration
+
 #: Canonical lane ids -> window minutes. Only lanes whose duration is
 #: KNOWN get a pace reading.
 WINDOW_MINUTES_BY_LANE_ID: Final = {
@@ -112,10 +114,7 @@ def pace_phrase(reading: PaceReading | None, *, now: float) -> str | None:
         return "out"
     if reading.verdict == PACE_CRITICAL and reading.exhaustion_epoch is not None:
         minutes = max(1, int((reading.exhaustion_epoch - now) // 60))
-        if minutes < 60:
-            return f"runs out in ~{minutes}m at this rate"
-        hours, rest = divmod(minutes, 60)
-        return f"runs out in ~{hours}h {rest:02d}m at this rate"
+        return f"runs out in ~{duration(minutes * 60)} at this rate"
     return {
         PACE_FAST: "spending fast",
         PACE_ON_PACE: "on pace",

@@ -55,8 +55,8 @@ struct FoundationComponentsTests {
         let german = UsageGaugeReading.resetTime(clock + 6000, now: clock, locale: Locale(identifier: "de_DE"), timeZone: zone)
         #expect(german == "14:40")
         #expect(UsageGaugeReading.interval(59) == "59s")
-        #expect(UsageGaugeReading.interval(10800) == "3h 00m")
-        #expect(UsageGaugeReading.interval(259200) == "3d 0h")
+        #expect(UsageGaugeReading.interval(10800) == "3h")
+        #expect(UsageGaugeReading.interval(259200) == "3d")
     }
 
     @Test func expiredOrExplicitlyElapsedWindowSuppressesOldPercent() {
