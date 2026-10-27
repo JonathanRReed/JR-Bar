@@ -438,7 +438,7 @@ final class ScreenBarView: NSView {
         haloLayer.frame = haloFrame
         haloMask.frame = CGRect(origin: .zero, size: haloFrame.size)
         updateLightGeometryMasks(band: rect, halo: haloFrame)
-        let radius = min(ScreenBarDesign.cornerRadius, rect.height / 2.0, rect.width / 2.0)
+        let radius = ScreenBarGeometry.bandCapRadius(rect)
         outlineLayer.frame = bounds
         outlineLayer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
         CATransaction.commit()

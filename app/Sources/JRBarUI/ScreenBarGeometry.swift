@@ -787,6 +787,13 @@ public enum ScreenBarGeometry {
     /// instead would square the grown card's foot into a slab and cap
     /// the Notch profile corner at 5 pt; seating the strip keeps every
     /// radius and follows the morph continuously (2.7 pt at rest).
+    /// The radius of the lit strip's rounded end caps, as the band and
+    /// outline layers draw them on `band`: the design's corner, never more
+    /// than half the strip's height or width.
+    public static func bandCapRadius(_ band: CGRect) -> CGFloat {
+        min(ScreenBarDesign.cornerRadius, band.height / 2.0, band.width / 2.0)
+    }
+
     public static func stripEndInset(cornerRadius radius: CGFloat) -> CGFloat {
         // The band layer's corner radius, as Core Animation draws it on
         // a strip this thin: half its height.

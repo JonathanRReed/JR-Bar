@@ -1389,9 +1389,15 @@ turned off alone.
   Wednesday, Yom Kippur, Ashura, MLK Day, Juneteenth, Election Day, Tax
   Day and daylight saving stay plain on purpose. When two fall on one day,
   a birthday wins, then a single day, then the shorter span.
-- **Where they show.** Closed, a garland hangs from the Screen Bar, only
-  as wide as the notch, in a click-through window of its own that follows
-  the band's panel by its window notifications. Open, the strip under the
+- **Where they show.** Closed, a garland hangs from the Screen Bar's lit
+  strip, in a click-through window of its own that follows the band's
+  panel by its window notifications. The window is exactly the strip's
+  width, read off the band's own view, and the string runs from the
+  centre of one rounded end cap to the other (`SeasonalGarlandSpan`, with
+  the cap radius the band layer itself uses), every piece hung inside
+  that span; the open card's strip finds the band under the card the way
+  the band seats itself there (`ScreenBarGeometry.coupledBand`), so both
+  stay aligned at any notch width or display. Open, the strip under the
   Now · Shelf · Agent Overview row carries the garland, with the set's
   centrepiece at the bottom right and a word when there is one ("Night 3",
   "Alex's birthday"). Both are overlays: the notch's sizes, shapes and

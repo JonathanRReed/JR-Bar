@@ -155,17 +155,17 @@ struct SeasonalStoreTests {
         #expect(!store.seasonal.isRunning)
     }
 
-    @Test("the garland hangs under the band, the notch's width, and stands down while the island is open")
+    @Test("the garland hangs under the strip, its width, and stands down while the island is open")
     func bandFrame() {
-        let band = NSRect(x: 600, y: 860, width: 320, height: 40)
+        let strip = NSRect(x: 662.7, y: 860, width: 194.6, height: 4)
         let island = NSRect(x: 660, y: 864, width: 200, height: 36)
-        let frame = SeasonalBandOverlay.frame(band: band, island: island, notchDepth: 32)
-        #expect(frame?.width == 204)
-        #expect(frame?.maxY == band.minY)
+        let frame = SeasonalBandOverlay.frame(strip: strip, island: island, notchDepth: 32)
+        #expect(frame?.minX == strip.minX && frame?.width == strip.width)
+        #expect(frame?.maxY == strip.minY)
         #expect(frame?.height == SeasonalGarland.hang)
         let open = NSRect(x: 560, y: 600, width: 400, height: 300)
-        #expect(SeasonalBandOverlay.frame(band: band, island: open, notchDepth: 32) == nil)
-        #expect(SeasonalBandOverlay.frame(band: nil, island: island, notchDepth: 32) == nil)
+        #expect(SeasonalBandOverlay.frame(strip: strip, island: open, notchDepth: 32) == nil)
+        #expect(SeasonalBandOverlay.frame(strip: nil, island: island, notchDepth: 32) == nil)
     }
 
     @Test("the card's strip is an overlay: the card is the same size with a set on")

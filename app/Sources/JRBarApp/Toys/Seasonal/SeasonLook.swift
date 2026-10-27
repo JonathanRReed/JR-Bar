@@ -187,22 +187,45 @@ enum SeasonLook {
         c.stroke(ribbon, with: .color(color), style: StrokeStyle(lineWidth: max(0.6, s * 0.1), lineCap: .round))
     }
 
-    /// A garland from `from` to `to`, sagging `sag` points at its middle,
-    /// with `count` pieces `size` tall hanging along it.
-    static func garland(_ c: inout Context, _ occasion: SeasonalOccasion, from: CGPoint, to: CGPoint,
-                        sag: Double, count: Int, size: Double, phase: Double = 0) {
-        let control = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 + sag * 2)
+    /// Half the widest piece a set hangs, as a share of the piece's size:
+    /// a bat's wings, a turned leaf, a sheet of papel picado. The first
+    /// and last pieces sit this far inside the string's ends.
+    static func pieceHalfWidth(_ holiday: SeasonalHoliday) -> Double {
+        switch holiday {
+        case .halloween: return 0.68
+        case .thanksgiving, .earthDay: return 0.52
+        case .diaDeMuertos: return 0.47
+        case .lunarNewYear: return 0.42
+        case .hanukkah, .kwanzaa, .newYear, .pride, .independenceDay, .birthday, .valentines: return 0.42
+        case .stPatricks: return 0.4
+        case .groundhogDay: return 0.38
+        case .christmas, .easter, .ramadanEid: return 0.32
+        }
+    }
+
+    /// A garland along `span`, its string from one end to the other at
+    /// height `y`, sagging `sag` points at its middle, with pieces `size`
+    /// tall hung inside the span. `keepClear` is a stretch of the string
+    /// that carries no pieces (the card's caption and centrepiece).
+    static func garland(_ c: inout Context, _ occasion: SeasonalOccasion, span: SeasonalGarlandSpan, y: Double,
+                        sag: Double, size: Double, phase: Double = 0, keepClear: ClosedRange<Double>? = nil) {
+        let from = CGPoint(x: span.start, y: y)
+        let to = CGPoint(x: span.end, y: y)
+        let control = CGPoint(x: (from.x + to.x) / 2, y: y + sag * 2)
         var line = Path()
         line.move(to: from)
         line.addQuadCurve(to: to, control: control)
         c.stroke(line, with: .color(string(occasion.holiday)), style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
-        guard count > 0 else { return }
-        for i in 0..<count {
-            let t = (Double(i) + 0.5) / Double(count)
+        let half = pieceHalfWidth(occasion.holiday) * size
+        let count = SeasonLook.count(for: span.length, holiday: occasion.holiday)
+        for (i, x) in span.centres(count: count, halfWidth: half).enumerated() {
+            if let keepClear, x + half > keepClear.lowerBound, x - half < keepClear.upperBound { continue }
+            // The control point sits over the middle, so x runs straight
+            // along t and the string's height at x is one quadratic.
+            let t = span.length > 0 ? (x - span.start) / span.length : 0.5
             let u = 1 - t
-            let x = u * u * from.x + 2 * u * t * control.x + t * t * to.x
-            let y = u * u * from.y + 2 * u * t * control.y + t * t * to.y
-            garlandPiece(&c, occasion, index: i, top: CGPoint(x: x, y: y), size: size, phase: phase)
+            let top = CGPoint(x: x, y: u * u * from.y + 2 * u * t * control.y + t * t * to.y)
+            garlandPiece(&c, occasion, index: i, top: top, size: size, phase: phase)
         }
     }
 

@@ -3,12 +3,76 @@ import JRBarCore
 import JRBarUI
 import SwiftUI
 
-/// The garland that hangs from the Screen Bar under the closed notch:
-/// the set's string drooping across the band's width with its pieces
-/// hung along it. A still drawing: it redraws when the day changes, not
-/// on a clock.
+/// Where a garland hangs along the Screen Bar's lit strip: its string runs
+/// from the centre of one rounded end cap to the other, so it starts and
+/// ends exactly where the strip does, and its pieces stay inside that span.
+/// Derived from the strip's own rect and its cap radius
+/// (`ScreenBarGeometry.bandCapRadius`), never a constant of its own, so it
+/// follows every notch width and every display.
+struct SeasonalGarlandSpan: Equatable {
+    var start: Double
+    var end: Double
+
+    var length: Double { max(0, end - start) }
+
+    init(start: Double, end: Double) {
+        self.start = start
+        self.end = end
+    }
+
+    /// The span along `band`, the strip's rect in the drawing's coordinates.
+    init(band: CGRect) {
+        let cap = Double(ScreenBarGeometry.bandCapRadius(band))
+        start = Double(band.minX) + cap
+        end = Double(band.maxX) - cap
+    }
+
+    /// Where `count` pieces, each `halfWidth` either side of its centre,
+    /// hang: evenly, the first and last flush inside the ends.
+    func centres(count: Int, halfWidth: Double) -> [Double] {
+        let first = start + halfWidth
+        let last = end - halfWidth
+        guard count > 0, last >= first else { return [] }
+        guard count > 1 else { return [(first + last) / 2] }
+        let pitch = (last - first) / Double(count - 1)
+        return (0..<count).map { first + Double($0) * pitch }
+    }
+
+    /// The strip under the island, in the island's own coordinates, as
+    /// `ScreenBarView` seats it there: the island's body (its frame less
+    /// the top shoulders), the end caps tucked inside the corner the
+    /// island has at `islandSize` (`ScreenBarGeometry.coupledBand`).
+    static func coupledStrip(islandSize: CGSize, notchWidth: CGFloat, notchDepth: CGFloat,
+                             restingRadius: CGFloat) -> CGRect {
+        let frame = CGRect(origin: .zero, size: islandSize)
+        let body = NotchSilhouetteGeometry.body(of: frame, notchWidth: notchWidth, notchDepth: notchDepth)
+        let radius = NotchSilhouetteGeometry.radius(size: islandSize, notchDepth: notchDepth,
+                                                    restingRadius: restingRadius)
+        let room = CGSize(width: islandSize.width, height: islandSize.height + ScreenBarDesign.glowHeight)
+        let coupled = ScreenBarGeometry.coupledBand(in: room, island: body, cornerRadius: radius)
+        return coupled.band
+    }
+}
+
+/// The island's measures the card strip needs to find the Screen Bar
+/// under it.
+struct SeasonalIslandMetrics: Equatable {
+    var notchWidth: CGFloat
+    var notchDepth: CGFloat
+    var restingRadius: CGFloat
+    /// The island's black above the card's own frame.
+    var topPad: CGFloat
+}
+
+/// The garland that hangs from the Screen Bar under the closed notch. The
+/// view is exactly as wide as the strip (`SeasonalBandOverlay` sizes its
+/// window to it), so the string runs cap to cap. A still drawing: it
+/// redraws when the day changes, not on a clock.
 struct SeasonalGarland: View {
     let occasion: SeasonalOccasion
+    /// The strip's cap radius; the string's ends sit this far in.
+    var capRadius: CGFloat = ScreenBarGeometry.bandCapRadius(CGRect(x: 0, y: 0, width: 200,
+                                                                    height: ScreenBarDesign.bandHeight))
 
     /// How far below the band the garland hangs, in points.
     static let hang: CGFloat = 18
@@ -16,11 +80,10 @@ struct SeasonalGarland: View {
     var body: some View {
         Canvas { context, size in
             var c = context
-            let inset = 3.0
             let piece = min(9.5, max(6.5, Double(size.height) * 0.5))
-            let count = SeasonLook.count(for: Double(size.width) - inset * 2, holiday: occasion.holiday)
-            SeasonLook.garland(&c, occasion, from: CGPoint(x: inset, y: 1), to: CGPoint(x: Double(size.width) - inset, y: 1),
-                               sag: Double(size.height) * 0.16, count: count, size: piece, phase: 0.4)
+            let span = SeasonalGarlandSpan(start: Double(capRadius), end: Double(size.width - capRadius))
+            SeasonLook.garland(&c, occasion, span: span, y: 0.5, sag: Double(size.height) * 0.16,
+                               size: piece, phase: 0.4)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -28,32 +91,47 @@ struct SeasonalGarland: View {
 }
 
 /// The open notch card's strip: under the Now · Shelf · Agent Overview
-/// row, just above the Screen Bar, a garland across and the set's
-/// centrepiece at the bottom right, with a word or two when there is
-/// one to say ("Night 3", "Alex's birthday"). An overlay: the card's
-/// layout and size don't change.
+/// row, just above the Screen Bar, a garland that runs exactly along the
+/// Screen Bar below it, the set's centrepiece at its bottom right, and a
+/// word or two when there is one to say ("Night 3", "Alex's birthday").
+/// An overlay: the card's layout and size don't change.
 struct SeasonalCardStrip: View {
     let occasion: SeasonalOccasion
+    /// The island's measures; the strip reads the Screen Bar's span from
+    /// them and from the card's size.
+    var metrics = SeasonalIslandMetrics(notchWidth: 185, notchDepth: 32, restingRadius: 8, topPad: 36)
+    /// The whole card's height, for the island's corner.
+    var cardHeight: CGFloat = 300
 
-    /// The card's bottom corners: the centrepiece keeps inside their curve.
-    static let cornerClearance: Double = 30
+    /// The Screen Bar's span under a card `width` wide and `height` tall.
+    static func span(cardWidth width: CGFloat, cardHeight height: CGFloat,
+                     metrics: SeasonalIslandMetrics) -> SeasonalGarlandSpan {
+        let island = CGSize(width: width, height: height + metrics.topPad)
+        let strip = SeasonalGarlandSpan.coupledStrip(islandSize: island, notchWidth: metrics.notchWidth,
+                                                     notchDepth: metrics.notchDepth,
+                                                     restingRadius: metrics.restingRadius)
+        return SeasonalGarlandSpan(band: strip)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
+            let span = Self.span(cardWidth: size.width, cardHeight: cardHeight, metrics: metrics)
             let piece = min(26, Double(size.height) * 0.9)
-            let centreX = Double(size.width) - Self.cornerClearance - piece * 0.45
-            // A caption takes its room from the garland's end, never its
-            // pieces: about six points a letter at the caption size.
+            // The centrepiece stands at the span's right end, inside it:
+            // the widest (a menorah, a kinara) is about 0.6 of its height
+            // either side of its centre.
+            let centreX = span.end - piece * 0.6
+            // A caption takes its room from the garland's pieces, never
+            // its string: about six points a letter at the caption size.
             let captionRoom = occasion.caption.map { Double($0.count) * 6.4 + 10 } ?? 0
+            let clearFrom = centreX - piece * 0.62 - 6 - captionRoom
             ZStack(alignment: .bottomTrailing) {
                 Canvas { context, canvasSize in
                     var c = context
-                    let right = centreX - piece * 0.62 - 8 - captionRoom
-                    let count = SeasonLook.count(for: right - 20, holiday: occasion.holiday)
-                    SeasonLook.garland(&c, occasion, from: CGPoint(x: 20, y: 2), to: CGPoint(x: right, y: 2),
-                                       sag: Double(canvasSize.height) * 0.12, count: count,
-                                       size: min(9, Double(canvasSize.height) * 0.36), phase: 0.4)
+                    SeasonLook.garland(&c, occasion, span: span, y: 2, sag: Double(canvasSize.height) * 0.12,
+                                       size: min(9, Double(canvasSize.height) * 0.36), phase: 0.4,
+                                       keepClear: clearFrom...span.end)
                     let base = CGPoint(x: centreX, y: Double(canvasSize.height) - 7)
                     SeasonLook.centerpiece(&c, occasion, base: base, size: piece, phase: 0.4)
                 }
@@ -221,6 +299,7 @@ final class SeasonalBandOverlay {
     private var host: NSHostingView<AnyView>?
     private var observers: [NSObjectProtocol] = []
     private var shown: SeasonalOccasion?
+    private var shownCap: CGFloat?
 
     init(seasonal: SeasonalStore, center: NotificationCenter = .default) {
         self.seasonal = seasonal
@@ -272,30 +351,44 @@ final class SeasonalBandOverlay {
         shown = nil
     }
 
-    /// Where the garland hangs: under the band, the island's width (the
-    /// notch's), or nil while there is no band, the island is open, or
-    /// nothing is in season.
-    static func frame(band: NSRect?, island: NSRect?, notchDepth: CGFloat) -> NSRect? {
-        guard let band, band.width > 1 else { return nil }
+    /// Where the garland hangs: exactly the lit strip's width, under its
+    /// lower edge, or nil while there is no strip, the island is open, or
+    /// nothing is in season. `strip` is the Screen Bar's own band rect on
+    /// screen (`stripScreenRect`), so the string's ends meet its caps.
+    static func frame(strip: NSRect?, island: NSRect?, notchDepth: CGFloat) -> NSRect? {
+        guard let strip, strip.width > 1 else { return nil }
         if let island, island.height > notchDepth + 12 { return nil }
-        let span = island.map { NSRect(x: $0.minX, y: band.minY, width: $0.width, height: band.height) } ?? band
-        return NSRect(x: span.minX - 2, y: band.minY - SeasonalGarland.hang, width: span.width + 4,
+        return NSRect(x: strip.minX, y: strip.minY - SeasonalGarland.hang, width: strip.width,
                       height: SeasonalGarland.hang)
+    }
+
+    /// The Screen Bar's lit strip on screen, read off its view, or nil
+    /// while the band is ordered out.
+    static var stripScreenRect: NSRect? {
+        for window in NSApp?.windows ?? [] where window is ScreenBarPanel {
+            guard window.isVisible, let view = window.contentView as? ScreenBarView,
+                  !view.bandRect.isEmpty else { continue }
+            return window.convertToScreen(view.convert(view.bandRect, to: nil))
+        }
+        return nil
     }
 
     private func place() {
         guard let occasion = seasonal.occasion else { return stop() }
         let screen = ScreenBarGeometry.preferredScreen()
         let depth = screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0
-        guard let frame = Self.frame(band: ScreenBarGeometry.bandScreenRect,
-                                     island: ScreenBarGeometry.islandScreenRect, notchDepth: depth) else {
+        let strip = Self.stripScreenRect
+        guard let strip, let frame = Self.frame(strip: strip, island: ScreenBarGeometry.islandScreenRect,
+                                                notchDepth: depth) else {
             window?.orderOut(nil)
             return
         }
         let panel = window ?? makeWindow()
-        if shown != occasion {
+        let cap = ScreenBarGeometry.bandCapRadius(strip)
+        if shown != occasion || shownCap != cap {
             shown = occasion
-            host?.rootView = AnyView(SeasonalGarland(occasion: occasion))
+            shownCap = cap
+            host?.rootView = AnyView(SeasonalGarland(occasion: occasion, capRadius: cap))
         }
         if panel.frame != frame { panel.setFrame(frame, display: true) }
         // Through the guarded presenter, so a test process never orders

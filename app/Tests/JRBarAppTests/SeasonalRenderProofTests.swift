@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import JRBarCore
+import JRBarLEDS
 import JRBarTestSupport
 import JRBarUI
 import SwiftUI
@@ -41,41 +42,66 @@ struct SeasonalRenderProofTests {
 
     // MARK: The closed notch and its Screen Bar
 
+    /// The real Screen Bar, coupled under an island at `island` (view
+    /// coordinates, y up) in a canvas of `size`, lit with a gradient.
+    static func screenBar(size: CGSize, island: CGRect, notchWidth: CGFloat, depth: CGFloat) -> ScreenBarView {
+        let bar = ScreenBarView(frame: CGRect(origin: .zero, size: size))
+        bar.earRecoveryReduceMotionOverride = true
+        bar.updateLayout {
+            bar.notchCornerRadius = 8
+            bar.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
+                                                    bandSpan: size.width, leftExtent: 0, rightExtent: 0)
+            bar.islandFrame = island
+        }
+        bar.relayout()
+        let colours = (0..<12).map { i -> RGB in
+            let t = Double(i) / 11
+            return RGB(r: 0.98 - 0.68 * t, g: 0.55 + 0.2 * t, b: 0.3 + 0.7 * t)
+        }
+        bar.display(colors: colours)
+        return bar
+    }
+
+    /// An AppKit view inside a SwiftUI proof scene.
+    struct Hosted: NSViewRepresentable {
+        let view: NSView
+        func makeNSView(context: Context) -> NSView { view }
+        func updateNSView(_ nsView: NSView, context: Context) {}
+    }
+
     @Test(.enabled(if: enabled)) func closedNotch() throws {
         let (toy, store, _) = NotchSurfaceRenderProofTests.makeToy()
         defer { withExtendedLifetime(store) {} }
         let depth = max(toy.notchDepth, 32)
         let idle = toy.idleLayout
-        let islandWidth = NotchSurfaceRenderProofTests.slotWidth + 2 * idle.windowShoulder
+        let slot = NotchSurfaceRenderProofTests.slotWidth
+        let islandWidth = slot + 2 * idle.windowShoulder
         let canvas = CGSize(width: 520, height: 96)
+        let island = CGRect(x: (canvas.width - islandWidth) / 2, y: canvas.height - depth,
+                            width: islandWidth, height: depth)
         for (name, occasion) in Self.cases {
             for scheme in Self.schemes {
-                let island = NotchSurfaceRenderProofTests.scene(
+                let bar = Self.screenBar(size: canvas, island: island, notchWidth: slot, depth: depth)
+                // The garland's window, as the overlay places it from the
+                // band's own rect.
+                let frame = try #require(SeasonalBandOverlay.frame(strip: bar.bandRect, island: island,
+                                                                   notchDepth: depth))
+                let cap = ScreenBarGeometry.bandCapRadius(bar.bandRect)
+                let scene = NotchSurfaceRenderProofTests.scene(
                     NotchIslandView(toy: toy), size: CGSize(width: islandWidth, height: depth), depth: depth,
                     canvas: canvas, dark: scheme.dark)
-                let dressed = ZStack(alignment: .top) {
-                    island
-                    VStack(spacing: 0) {
-                        Color.clear.frame(height: depth - 4)
-                        Self.band.frame(width: islandWidth - 16, height: 4)
-                        SeasonalGarland(occasion: occasion)
-                            .frame(width: islandWidth + 4, height: SeasonalGarland.hang)
-                    }
+                let dressed = ZStack(alignment: .topLeading) {
+                    scene
+                    Hosted(view: bar).frame(width: canvas.width, height: canvas.height)
+                    SeasonalGarland(occasion: occasion, capRadius: cap)
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: canvas.height - frame.maxY)
                 }
-                .frame(width: canvas.width, height: canvas.height)
+                .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
                 try ProofRender.write(dressed, size: canvas, name: "seasonal-\(name)-closed-\(scheme.name)",
                                       dark: scheme.dark, settle: 0.1)
             }
         }
-    }
-
-    /// The Screen Bar's lit strip, as it reads under the island.
-    private static var band: some View {
-        Capsule()
-            .fill(LinearGradient(colors: [Color(red: 0.98, green: 0.55, blue: 0.3), Color(red: 0.55, green: 0.45, blue: 1),
-                                          Color(red: 0.3, green: 0.75, blue: 1)],
-                                 startPoint: .leading, endPoint: .trailing))
-            .shadow(color: Color(red: 0.6, green: 0.5, blue: 1).opacity(0.55), radius: 3)
     }
 
     // MARK: The open card
@@ -88,26 +114,33 @@ struct SeasonalRenderProofTests {
         defer { NotchSurfaceRenderProofTests.clearTray(model) }
         model.show(.now)
         let depth = max(toy.notchDepth, 32)
-        let width = NotchIslandLayout.expandedWidth(slotWidth: NotchSurfaceRenderProofTests.slotWidth)
+        let slot = NotchSurfaceRenderProofTests.slotWidth
+        let width = NotchIslandLayout.expandedWidth(slotWidth: slot)
+        let topPad = toy.cardTopPad
+        model.seasonalIsland = { SeasonalIslandMetrics(notchWidth: slot, notchDepth: depth, restingRadius: 8,
+                                                       topPad: topPad) }
         for (name, occasion) in Self.cases {
             model.seasonalOccasion = { occasion }
             let card = NotchCardView(model: model, style: .island, width: width)
             let probe = NSHostingView(rootView: card)
             probe.layoutSubtreeIfNeeded()
-            let height = toy.cardTopPad + ceil(probe.fittingSize.height)
+            let height = topPad + ceil(probe.fittingSize.height)
+            let canvas = CGSize(width: width + 140, height: height + 40)
+            let island = CGRect(x: (canvas.width - width) / 2, y: canvas.height - height, width: width, height: height)
             for scheme in Self.schemes {
-                let island = ZStack(alignment: .top) {
+                let bar = Self.screenBar(size: canvas, island: island, notchWidth: slot, depth: depth)
+                let face = ZStack(alignment: .top) {
                     NotchSilhouette(notchDepth: depth, restingRadius: 8).fill(.black)
-                    card.padding(.top, toy.cardTopPad)
-                    VStack(spacing: 0) {
-                        Spacer(minLength: 0)
-                        Self.band.frame(width: width - 60, height: 4).padding(.bottom, 2)
-                    }
+                    card.padding(.top, topPad)
                 }
-                let canvas = CGSize(width: width + 140, height: height + 40)
-                try ProofRender.write(NotchSurfaceRenderProofTests.scene(island, size: CGSize(width: width, height: height),
-                                                                         depth: depth, canvas: canvas, dark: scheme.dark),
-                                      size: canvas, name: "seasonal-\(name)-card-\(scheme.name)", dark: scheme.dark)
+                let scene = ZStack(alignment: .topLeading) {
+                    NotchSurfaceRenderProofTests.scene(face, size: CGSize(width: width, height: height),
+                                                       depth: depth, canvas: canvas, dark: scheme.dark)
+                    Hosted(view: bar).frame(width: canvas.width, height: canvas.height)
+                }
+                .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
+                try ProofRender.write(scene, size: canvas, name: "seasonal-\(name)-card-\(scheme.name)",
+                                      dark: scheme.dark)
             }
         }
         model.seasonalOccasion = { nil }
