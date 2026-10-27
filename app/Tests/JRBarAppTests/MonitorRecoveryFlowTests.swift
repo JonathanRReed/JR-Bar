@@ -31,7 +31,7 @@ struct MonitorRecoveryFlowTests {
         #expect(utility.status == .paused("Monitor update unreadable"))
         let store = OverviewStore(core: core)
         let link = store.links.first { $0.id == "core" }
-        #expect(link?.subtitle == "connected · update unreadable")
+        #expect(link?.subtitle == "Connected · update unreadable")
         #expect(link?.facts.contains(.init("Update rejected", "fixture decode failure")) == true)
         #expect(store.links.first { $0.id == "node:local" }?.tone != .good)
         var shows = 0
@@ -46,7 +46,7 @@ struct MonitorRecoveryFlowTests {
         core.handle(.disconnected(reason: "fixture closed"))
         utility.refreshSnapshot()
         #expect(utility.status == .paused("Monitor not connected"))
-        #expect(store.links.first { $0.id == "core" }?.subtitle == "offline")
+        #expect(store.links.first { $0.id == "core" }?.subtitle == "Not connected")
     }
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
@@ -69,7 +69,7 @@ struct MonitorRecoveryFlowTests {
         let core = CoreModel()
         core.handle(.connected)
         let store = OverviewStore(core: core)
-        #expect(store.links.first { $0.id == "core" }?.subtitle == "connected · waiting for state")
+        #expect(store.links.first { $0.id == "core" }?.subtitle == "Connected · waiting for an update")
         #expect(store.links.first { $0.id == "core" }?.tone == .busy)
         var legacy = OverviewLinkage.Snapshot()
         legacy.connected = true
