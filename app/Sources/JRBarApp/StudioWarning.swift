@@ -2,6 +2,7 @@ import Foundation
 import JRBarCore
 
 /// The monitor keeps parameter ids in diagnostics. Studio names the controls.
+/// Provider and motion names arrive as display names already.
 enum StudioWarning {
     static func plain(_ warning: String) -> String {
         var text = warning
@@ -20,16 +21,6 @@ enum StudioWarning {
                 let parameter = EffectParameter(name: key, type: .number, defaultValue: .number(0))
                 text.replaceSubrange(range, with: parameter.title.lowercased())
             }
-        }
-        let names = ["codex": "Codex", "claude": "Claude", "gemini": "Gemini", "grok": "Grok",
-                     "kitt": "Knight Rider", "auto": "Automatic", "breathe": "Breathe", "comet": "Comet",
-                     "heartbeat": "Heartbeat", "steady": "Steady", "ember": "Ember", "chase": "Chase",
-                     "scanner": "Scanner", "flicker": "Flicker", "stack": "Stack", "twinkle": "Twinkle",
-                     "drift": "Drift", "converge": "Converge", "aurora": "Aurora", "tide": "Tide",
-                     "gradient": "Gradient", "marquee": "Marquee", "duotone": "Duotone", "bloom": "Bloom",
-                     "frontier": "Frontier", "glint": "Glint", "ripple": "Ripple", "pendulum": "Pendulum", "blink": "Blink"]
-        for (key, label) in names {
-            text = text.replacingOccurrences(of: "\\b\(key)\\b", with: label, options: .regularExpression)
         }
         text = text.replacingOccurrences(of: "was clamped to", with: "was limited to")
             .replacingOccurrences(of: "was rejected; using", with: "could not be used; using")
