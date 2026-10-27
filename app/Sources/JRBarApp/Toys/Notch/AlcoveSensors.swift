@@ -38,7 +38,7 @@ final class NotchSensorMonitor {
     private(set) var state = NotchSensorState()
     var onChange: (@MainActor (NotchSensorState) -> Void)?
 
-    private var timer: Timer?
+    private(set) var timer: Timer?
     private(set) var running = false
 
     private lazy var listeners = HALPropertyListeners { [weak self] key in

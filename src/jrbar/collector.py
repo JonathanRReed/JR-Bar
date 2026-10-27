@@ -242,15 +242,26 @@ class StatusMetadata:
 
 
 def _transcript_retained_bytes(records: tuple[HookEvent, ...]) -> int:
-    def size(value):
-        if isinstance(value, dict):
-            return sys.getsizeof(value) + sum(size(key) + size(item) for key, item in value.items())
-        if isinstance(value, (tuple, list)):
-            return sys.getsizeof(value) + sum(size(item) for item in value)
-        if isinstance(value, HookEvent):
-            return sys.getsizeof(value) + size(vars(value))
-        return sys.getsizeof(value)
-    return size(records)
+    # Shared keys and metadata still count at every reference. Calculate
+    # each object's contribution once within this estimate, not per use.
+    return _transcript_object_bytes(records, {})
+
+
+def _transcript_object_bytes(value: object, sizes: dict[int, int]) -> int:
+    identity = id(value)
+    cached = sizes.get(identity)
+    if cached is not None:
+        return cached
+    total = sys.getsizeof(value)
+    if isinstance(value, dict):
+        total += sum(_transcript_object_bytes(key, sizes) + _transcript_object_bytes(item, sizes)
+                     for key, item in value.items())
+    elif isinstance(value, (tuple, list)):
+        total += sum(_transcript_object_bytes(item, sizes) for item in value)
+    elif isinstance(value, HookEvent):
+        total += _transcript_object_bytes(vars(value), sizes)
+    sizes[identity] = total
+    return total
 
 
 @dataclass(frozen=True)

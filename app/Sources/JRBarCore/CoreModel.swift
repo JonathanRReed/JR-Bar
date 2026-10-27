@@ -1357,7 +1357,7 @@ public final class CoreModel {
                 case "unseen_completions": updateSlice(\.unseenCompletions, \.unseenCompletions, value.unseenCompletions)
                 case "provider_updates": updateSlice(\.providerUpdates, \.providerUpdates, value.providerUpdates)
                 case "peers": _state?.peers = value.peers
-                case "agent_groups": _state?.agentGroups = value.agentGroups
+                case "agent_groups": updateSlice(\.agentGroups, \.agentGroups, value.agentGroups)
                 default: continue
                 }
                 sliceGenerations[key] = generation
@@ -1458,6 +1458,7 @@ public final class CoreModel {
     @ObservationIgnored public private(set) var sessionRevision: UInt64 = 0
     /// Every session in the frame, workers included (`state.sessions`).
     public private(set) var allSessions: [CoreSession] = []
+    public private(set) var agentGroups: [CoreAgentGroup] = []
     public private(set) var asks: [CoreAsk] = []
     public private(set) var devices: [CoreDevice] = []
     /// `state.usage.providers`.
@@ -1494,6 +1495,7 @@ public final class CoreModel {
             assign(\.sessions, state?.mainSessions ?? [])
         }
         assign(\.asks, state?.asks ?? [])
+        assign(\.agentGroups, state?.agentGroups ?? [])
         assign(\.devices, state?.devices ?? [])
         assign(\.usage, state?.usage?.providers ?? [])
         assign(\.escalation, state?.escalation)

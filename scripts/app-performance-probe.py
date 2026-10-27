@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Profile the isolated Swift state-feed test, never an installed app."""
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -12,6 +13,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--configuration", choices=("debug", "release"), default="debug")
+    parser.add_argument("--check-budget", action="store_true")
+    parser.add_argument("--mode", choices=("legacy", "slices", "both"), default="both")
+    parser.add_argument("--test-executable", type=Path, help="run a frozen isolated test executable directly")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--render", action="store_true", help="lay out the real panel offscreen after each message")
     args = parser.parse_args()
@@ -23,9 +28,13 @@ def main():
     env["JRBAR_PERF_ISOLATED"] = "1"
     if args.render:
         env["JRBAR_PERF_RENDERED"] = "1"
-    command = ["swift", "test", "--skip-build", "--filter", "AppPerformanceTests"]
+    command = ["swift", "test", "--skip-build", "-c", args.configuration, "--filter", "AppPerformanceTests"]
+    if args.test_executable:
+        command = [str(args.test_executable.resolve()), "--testing-library", "swift-testing",
+                   "--filter", "AppPerformanceTests"]
+    receipts = []
     for run in range(args.runs):
-        for mode in ("legacy", "slices"):
+        for mode in (("legacy", "slices") if args.mode == "both" else (args.mode,)):
             env["JRBAR_PERF_MODE"] = mode
             log = output / f"feed-{run}-{mode}.log"
             with log.open("w") as stream:
@@ -34,6 +43,24 @@ def main():
             for line in log.read_text().splitlines():
                 if line.startswith("PERF "):
                     print(line, flush=True)
+                if line.startswith("PERF state "):
+                    fields = dict(item.split("=", 1) for item in line.split()[2:])
+                    receipt = {key: float(value) if key not in {"mode", "rendered"} else value
+                               for key, value in fields.items()}
+                    receipt["run"] = run
+                    receipts.append(receipt)
+                    if args.check_budget:
+                        from verify_performance_budget import validate_app_feed
+
+                        failures = validate_app_feed(receipt)
+                        if failures:
+                            raise SystemExit("app feed budget failed: " + "; ".join(failures))
+                elif line.startswith("PERF resources ") and receipts:
+                    receipts[-1].update({key: float(value) for key, value in
+                                         (item.split("=", 1) for item in line.split()[2:])})
+            if not receipts or receipts[-1]["run"] != run or receipts[-1]["mode"] != mode:
+                raise SystemExit(f"no app feed receipt in {log}")
+    (output / "report.json").write_text(json.dumps(receipts, indent=2) + "\n")
     if not args.profile:
         return
     os.mkfifo(output / "continue")

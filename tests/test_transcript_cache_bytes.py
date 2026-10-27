@@ -1,7 +1,19 @@
+import sys
 from datetime import datetime, timezone
 
 from jrbar.collector import AgentMonitor
 from jrbar.models import HookEvent
+
+
+def test_shared_metadata_keeps_the_same_conservative_byte_budget():
+    from jrbar.collector import _transcript_retained_bytes
+
+    record = HookEvent("claude", datetime(2026, 10, 25, tzinfo=timezone.utc), "Stop",
+                       {"metadata": [{"message": "synthetic message"}]})
+    one = (record,)
+    two = (record, record)
+    one_record_bytes = _transcript_retained_bytes(one) - sys.getsizeof(one)
+    assert _transcript_retained_bytes(two) == sys.getsizeof(two) + 2 * one_record_bytes
 
 
 def test_metadata_cache_drops_tool_output_and_enforces_total_byte_bound(tmp_path):

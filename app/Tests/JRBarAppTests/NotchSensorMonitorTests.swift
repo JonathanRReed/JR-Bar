@@ -52,17 +52,26 @@ struct NotchSensorMonitorTests {
     func lifecycle() {
         let monitor = NotchSensorMonitor()
         #expect(!monitor.running)
+        #expect(monitor.timer == nil)
         monitor.start()
         #expect(monitor.running)
+        #expect(monitor.timer?.isValid == true)
+        let startedTimer = monitor.timer
         monitor.stop()
         #expect(!monitor.running)
+        #expect(monitor.timer == nil)
+        #expect(startedTimer?.isValid == false)
         #expect(monitor.state == NotchSensorState(),
                 "a stopped monitor never leaves a stale dot")
         // Restarting is a fresh baseline — the first poll after it
         // lands whatever the hardware says, live or not.
         monitor.start()
         #expect(monitor.running)
+        #expect(monitor.timer?.isValid == true)
+        let restartedTimer = monitor.timer
         monitor.stop()
+        #expect(monitor.timer == nil)
+        #expect(restartedTimer?.isValid == false)
     }
 
     @Test("start arms the system listeners, stop removes every one")

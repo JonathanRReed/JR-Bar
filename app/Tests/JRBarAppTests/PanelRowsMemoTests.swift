@@ -99,4 +99,60 @@ struct PanelRowsMemoTests {
         core.apply(.state(Self.state(3, [Self.session("a"), Self.session("b")])))
         #expect(tripped.fired, "the memo must still subscribe its reader to the state")
     }
+
+    @Test("clock, health and quota frames leave session rows and their observers alone")
+    func unrelatedFramesKeepRows() {
+        let (core, store) = Self.liveStore([Self.session("a")])
+        let original = store.rows
+        let before = store.rowsComputations
+        final class Tripped: @unchecked Sendable { var fired = false }
+        let tripped = Tripped()
+        withObservationTracking {
+            _ = store.rows
+            _ = store.panelAgents
+            _ = store.quietLabel
+        } onChange: { tripped.fired = true }
+        for generation in 2...100 {
+            var frame = Self.state(generation, [Self.session("a")])
+            frame.health = .object(["age": .number(Double(generation))])
+            frame.usage = CoreUsage(providers: [CoreProviderUsage(id: "claude")])
+            core.apply(.state(frame))
+            #expect(store.rows == original)
+            #expect(core.usage.map(\.id) == ["claude"])
+        }
+        #expect(store.rowsComputations == before)
+        #expect(!tripped.fired)
+    }
+
+    @Test("an ask-only update reaches main, worker and orphan rows in the same turn")
+    func askOnlyUpdatesReachRows() {
+        var worker = Self.session("worker")
+        worker.kind = "worker"
+        worker.parent = "a"
+        let (core, store) = Self.liveStore([Self.session("a"), worker])
+        #expect(store.rows.map(\.id) == ["a"])
+        var frame = Self.state(2, [Self.session("a"), worker])
+        frame.asks = [CoreAsk(session: "a", request: "main-ask"),
+                      CoreAsk(session: "worker", request: "worker-ask"),
+                      CoreAsk(session: "gone", request: "orphan-ask")]
+        core.apply(.state(frame))
+        #expect(Set(store.rows.map(\.id)) == ["a", "worker", "gone"])
+        #expect(Set(store.rows.compactMap { $0.ask?.id }) == ["main-ask", "worker-ask", "orphan-ask"])
+        core.apply(.state(Self.state(3, [Self.session("a"), worker])))
+        #expect(store.rows.map(\.id) == ["a"])
+        #expect(store.askRows.isEmpty)
+    }
+
+    @Test("focus-only frames update Quiet in the same turn")
+    func focusOnlyUpdatesReachQuiet() {
+        let (core, store) = Self.liveStore([Self.session("a")])
+        #expect(store.quiet == nil)
+        var frame = Self.state(2, [Self.session("a")])
+        frame.focus = CoreFocus(mode: "pause", source: "override")
+        core.apply(.state(frame))
+        #expect(store.quiet?.mode == "pause")
+        #expect(store.quietIsOurs)
+        core.apply(.state(Self.state(3, [Self.session("a")])))
+        #expect(store.quiet == nil)
+    }
 }
