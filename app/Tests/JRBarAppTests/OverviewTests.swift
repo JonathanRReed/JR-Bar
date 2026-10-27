@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -8,7 +9,7 @@ import JRBarCore
 /// definitions, strip counts, and the keyboard walk — all over the
 /// daemon's roster rows, none of it inventing a second projection.
 @MainActor
-@Suite struct OverviewTests {
+@Suite(.temporaryDirectory) struct OverviewTests {
 
     private static func entry(
         _ id: String,
@@ -269,7 +270,7 @@ import JRBarCore
 /// formatting, gap-preserving page merges, kind chips, and the
 /// accessibility strings — all over the same roster rows.
 @MainActor
-@Suite struct OverviewIncredibleTests {
+@Suite(.temporaryDirectory) struct OverviewIncredibleTests {
 
     private static func entry(
         _ id: String,
@@ -544,14 +545,14 @@ import JRBarCore
 
 /// The export preview/write path: the previewed bytes are the saved ones.
 @MainActor
-@Suite struct OverviewExportTests {
+@Suite(.temporaryDirectory) struct OverviewExportTests {
     @Test func saveExportWritesThePreviewedDocument() throws {
         let store = OverviewStore(core: CoreModel())
         store.exportPreview = (
             .object(["t": .string("audit_export"), "counts": .object(["total": .number(3)])]),
             "# audit\n"
         )
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let dir = TestTemporaryDirectory.currentURL.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 

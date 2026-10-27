@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,11 +9,11 @@ import JRBarCore
 /// The Aquarium card: it renders folded and open, its Look menu names
 /// what the tank wears, a search hit inside Fine-tune names a row the
 /// card really draws, and the new day/night modes reach the water.
-@Suite("Aquarium controls")
+@Suite("Aquarium controls", .temporaryDirectory)
 @MainActor
 struct AquariumControlsTests {
     private func scratch() -> AquariumSaveFile {
-        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-controls-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
     }

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
 @MainActor
-@Suite("Usage history native socket", .serialized,
+@Suite("Usage history native socket", .temporaryDirectory, .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["JRBAR_HISTORY_RPC_PROBE"] == "1"))
 struct UsageHistorySocketTests {
     private func until(_ predicate: () -> Bool) async throws {
@@ -19,7 +20,7 @@ struct UsageHistorySocketTests {
         let python = try #require(ProcessInfo.processInfo.environment["JRBAR_HISTORY_RPC_PYTHON"])
         let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let temporary = URL(fileURLWithPath: "/tmp")
+        let temporary = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-history-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         let log = temporary.appendingPathComponent("fixture.log")

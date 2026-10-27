@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,11 +9,11 @@ import JRBarCore
 /// One purse across toys: the tank shop's buddy shelf sells what the
 /// Notch Buddy wears, paid in the tank's pearls. It wears only what the
 /// tank owns.
-@Suite("Buddy wardrobe")
+@Suite("Buddy wardrobe", .temporaryDirectory)
 @MainActor
 struct BuddyWardrobeTests {
     private func store(owning items: [ShopItem]) throws -> (ToysStore, URL) {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-wardrobe-\(UUID().uuidString)")
         let file = AquariumSaveFile(url: dir.appending(path: "aquarium-save.json"))
         try file.save(AquariumSave(game: AquariumGame(

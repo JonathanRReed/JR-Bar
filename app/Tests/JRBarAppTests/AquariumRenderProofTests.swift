@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -13,7 +14,7 @@ import JRBarCore
 /// human can eyeball the art the way the review screenshots do. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `aquarium-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Aquarium render proof")
+@Suite("Aquarium render proof", .temporaryDirectory)
 @MainActor
 struct AquariumRenderProofTests {
     init() throws {
@@ -362,7 +363,7 @@ struct AquariumRenderProofTests {
         })))
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
-        let save = AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        let save = AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-proof-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }
@@ -425,7 +426,7 @@ struct AquariumRenderProofTests {
         ])))
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
-        let save = AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        let save = AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-inspection-proof-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }

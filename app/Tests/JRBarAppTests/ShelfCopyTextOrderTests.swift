@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf Copy Text ordering", .timeLimit(.minutes(2)))
+@Suite("Shelf Copy Text ordering", .temporaryDirectory, .timeLimit(.minutes(2)))
 @MainActor
 struct ShelfCopyTextOrderTests {
     private actor Reader {
@@ -40,7 +41,7 @@ struct ShelfCopyTextOrderTests {
             defaults = try #require(UserDefaults(suiteName: suite))
             tray = ShelfTrayModel(defaults: defaults)
             board = NSPasteboard(name: .init(suite))
-            root = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+            root = TestTemporaryDirectory.currentURL.appendingPathComponent(suite, isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             board.clearContents()
             board.setString("Previous clipboard", forType: .string)

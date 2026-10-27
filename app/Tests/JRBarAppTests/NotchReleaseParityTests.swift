@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarLEDS
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("0.9.17.2 notch parity")
+@Suite("0.9.17.2 notch parity", .temporaryDirectory)
 @MainActor
 struct NotchReleaseParityTests {
     nonisolated private static let render = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -13,14 +14,14 @@ struct NotchReleaseParityTests {
     private let depth: CGFloat = 32
 
     private func fixture() -> (NotchToy, ToysStore) {
-        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-notch-parity.sock")
+        let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-notch-parity.sock")
         core.apply(.state(CoreState(sessions: [
             CoreSession(id: "claude:sample", provider: "claude", label: "Sample task", mode: "working"),
             CoreSession(id: "codex:sample", provider: "codex", label: "Sample check", mode: "working"),
         ])))
         let defaults = UserDefaults(suiteName: "jrbar-notch-parity-\(UUID().uuidString)")!
         let tray = ShelfTrayModel(defaults: defaults)
-        let timers = ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+        let timers = ShelfTimerModel(storeURL: TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-notch-parity-\(UUID().uuidString).json"), schedulingEnabled: false)
         let power = AlcovePowerState(hasBattery: true, onAC: true, charging: false, percent: 100, fullyCharged: true)
         let model = NotchCardModel(timers: timers, tray: tray, utility: ShelfUtilityModel(power: power), runtimeEnabled: false)

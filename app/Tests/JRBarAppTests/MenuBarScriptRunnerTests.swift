@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarApp
 import JRBarCore
 
-@Suite("Menu Bar script ownership", .serialized, .timeLimit(.minutes(2)))
+@Suite("Menu Bar script ownership", .temporaryDirectory, .serialized, .timeLimit(.minutes(2)))
 struct MenuBarScriptRunnerTests {
     private final class Receipts: @unchecked Sendable {
         private let lock = NSLock()
@@ -242,7 +242,7 @@ struct MenuBarScriptRunnerTests {
     }
 
     private func scratch() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -282,7 +282,7 @@ struct MenuBarScriptRunnerTests {
         let acknowledgedFD: Int32
 
         init() throws {
-            directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             ready = directory.appendingPathComponent("ready")
             blocked = directory.appendingPathComponent("blocked")

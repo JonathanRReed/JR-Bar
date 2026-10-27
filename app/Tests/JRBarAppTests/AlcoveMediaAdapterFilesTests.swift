@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -6,11 +7,11 @@ import Testing
 /// against its pinned hash before perl loads it, and the copies older
 /// builds left in the temporary folder are removed. All of it runs in a
 /// scratch folder.
-@Suite struct AlcoveMediaAdapterFilesTests {
+@Suite(.temporaryDirectory) struct AlcoveMediaAdapterFilesTests {
     private static let payload = Data("synthetic dylib bytes".utf8)
 
     private func scratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-alcove-files-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

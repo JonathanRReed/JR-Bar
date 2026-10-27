@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import CoreAudio
 import Foundation
@@ -15,7 +16,7 @@ import Testing
 /// PNG; only the card's battery line reads this Mac's own charge. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Utility parity render proof", .serialized)
+@Suite("Utility parity render proof", .temporaryDirectory, .serialized)
 @MainActor
 struct UtilityParityRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -45,7 +46,7 @@ struct UtilityParityRenderProofTests {
         try process.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-parity-proof.sock")
+        let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-parity-proof.sock")
         core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
                                           document: try JSONDecoder().decode(JSONValue.self, from: data))))
         return SettingsStore(core: core)
@@ -108,7 +109,7 @@ struct UtilityParityRenderProofTests {
         let monitor = NotchSurfaceRenderProofTests.ProofMonitor()
         let model = NotchCardModel(
             timers: ShelfTimerModel(storeURL: URL(fileURLWithPath:
-                NSTemporaryDirectory() + "jrbar-parity-timers-\(UUID().uuidString).json")),
+                (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-parity-timers-\(UUID().uuidString).json")),
             tray: ShelfTrayModel(),
             utility: ShelfUtilityModel(feed: MediaFeed(monitor: monitor)),
             runtimeEnabled: false)
@@ -149,7 +150,7 @@ struct UtilityParityRenderProofTests {
     }
 
     private static func files(_ names: [String]) -> [URL] {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "jrbar-parity-tray")
+        let dir = TestTemporaryDirectory.currentURL.appending(path: "jrbar-parity-tray")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return names.map { name in
             let url = dir.appending(path: name)

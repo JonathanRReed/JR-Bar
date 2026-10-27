@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import CoreGraphics
 import Foundation
@@ -8,7 +9,7 @@ import JRBarCore
 /// The Item Bar's photographed glyphs: lifting a glyph off the bar,
 /// rejecting mid-fade frames, filing per item and appearance, and the
 /// native-width tiles they buy.
-@Suite("Menu Bar — the glyph cache")
+@Suite("Menu Bar — the glyph cache", .temporaryDirectory)
 struct MenuBarGlyphCacheTests {
     typealias Raster = MenuBarGlyphProcessing.Raster
 
@@ -47,7 +48,7 @@ struct MenuBarGlyphCacheTests {
     }
 
     private func tempDirectory() -> URL {
-        FileManager.default.temporaryDirectory
+        TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-glyphs-\(UUID().uuidString)", isDirectory: true)
     }
 

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -10,7 +11,7 @@ import Testing
 /// keys an old Replace build's hide left — kept because a Mac that bar
 /// left hidden must still get Apple's Dock back.
 @MainActor
-@Suite struct DockEnhanceTests {
+@Suite(.temporaryDirectory) struct DockEnhanceTests {
 
     // MARK: Hover debounce
 
@@ -1071,7 +1072,7 @@ import Testing
     // MARK: Folder pop
 
     @Test func aFolderPopListsDirectoriesFirstThenFinderNameOrder() throws {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1088,13 +1089,13 @@ import Testing
     }
 
     @Test func aMissingFolderPopsEmptyAndAnUnreadableOneToo() {
-        let missing = FileManager.default.temporaryDirectory
+        let missing = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
         #expect(DockEnhanceController.folderEntries(of: missing).isEmpty)
     }
 
     @Test func aForbiddenFolderReadsDeniedNotEmpty() throws {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try FileManager.default.setAttributes(
@@ -1170,7 +1171,7 @@ import Testing
     }
 
     @Test func aModifiedSortedPopListsTheLatestFileFirst() throws {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-pop-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

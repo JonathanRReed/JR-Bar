@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarCore
@@ -5,11 +6,11 @@ import Testing
 /// `AquariumSaveFile` is the game's own document (docs/TOYS.md), kept
 /// out of app-state.json: round-trips, tolerant decode, corrupt-file
 /// recovery.
-@Suite("Aquarium save file")
+@Suite("Aquarium save file", .temporaryDirectory)
 struct AquariumSaveTests {
     @Test("flush retries a retained save after a temporary write failure")
     func retriesFailedSave() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
+        let root = TestTemporaryDirectory.currentURL.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let blocked = root.appending(path: "state")
@@ -27,7 +28,7 @@ struct AquariumSaveTests {
 
     @Test("a newer save replaces a retained failed save")
     func newerSaveReplacesFailedSave() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
+        let root = TestTemporaryDirectory.currentURL.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let blocked = root.appending(path: "state")
@@ -45,7 +46,7 @@ struct AquariumSaveTests {
     }
 
     private func tempFile() -> (file: AquariumSaveFile, url: URL) {
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-aqtest-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json")
         return (AquariumSaveFile(url: url), url)

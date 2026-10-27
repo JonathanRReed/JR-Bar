@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup persistence", .serialized)
+@Suite("Setup persistence", .temporaryDirectory, .serialized)
 struct SetupPersistenceTests {
     nonisolated static var isolatedDefaultPersistence: Bool {
         ProcessInfo.processInfo.environment["JRBAR_SETUP_PERSISTENCE_PROBE"] == "1"
@@ -45,7 +46,7 @@ struct SetupPersistenceTests {
 
     @Test(arguments: [false, true])
     func failedFinishRetainsDurableStateAndRunOutcomesUntilRetry(openToys: Bool) throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = SetupStateFile(url: directory.appending(path: "setup.json"))
         let prior = SetupState(completedSteps: ["welcome"], skippedSteps: ["agents"],

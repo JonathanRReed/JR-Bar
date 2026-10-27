@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Shelf clear during move")
+@Suite("Shelf clear during move", .temporaryDirectory)
 struct ShelfClearMoveRecoveryTests {
     @MainActor
     private struct Fixture {
@@ -13,7 +14,7 @@ struct ShelfClearMoveRecoveryTests {
         let tray: ShelfTrayModel
 
         init() throws {
-            root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
             defaults = try #require(UserDefaults(suiteName: suite))
             tray = ShelfTrayModel(defaults: defaults)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

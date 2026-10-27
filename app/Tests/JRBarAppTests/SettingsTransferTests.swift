@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import Testing
@@ -6,7 +7,7 @@ import Testing
 /// Settings export and import: what travels and what stays, the file
 /// round-trips, a stranger's file is refused by name, and an import
 /// writes only what this monitor knows and what actually changes.
-@Suite struct SettingsTransferTests {
+@Suite(.temporaryDirectory) struct SettingsTransferTests {
     private let document: JSONValue = .object([
         "global_brightness_scale": .number(0.6),
         "claude_plan_limits_enabled": .bool(true),
@@ -458,7 +459,7 @@ import Testing
     }
 
     @Test func theExportIsPrivateAndAReplaceStaysPrivate() throws {
-        let folder = FileManager.default.temporaryDirectory
+        let folder = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-transfer-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -480,7 +481,7 @@ import Testing
     }
 
     @Test func aHugeFileIsRefusedBeforeItIsLoaded() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-huge-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         FileManager.default.createFile(atPath: url.path, contents: nil)

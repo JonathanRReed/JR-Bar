@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -7,11 +8,11 @@ import JRBarCore
 /// Focus is on or a call has the mic, no toast, no reward card and no
 /// visitor parade — but the game still counts every one, and the card
 /// comes out once the room clears. Scratch save file, never the real one.
-@Suite("Aquarium hush")
+@Suite("Aquarium hush", .temporaryDirectory)
 @MainActor
 struct AquariumHushTests {
     private func scratch() -> AquariumSaveFile {
-        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-hush-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
     }

@@ -4,11 +4,11 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch utility reliability", .serialized)
+@Suite("Notch utility reliability", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchUtilityReliabilityTests {
     private func storeURL() -> URL {
-        URL(fileURLWithPath: NSTemporaryDirectory() + "jrbar-notch-timers-\(UUID().uuidString).json")
+        URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-notch-timers-\(UUID().uuidString).json")
     }
 
     @Test("pause, resume and expiry use the supplied clock without a run-loop timer")
@@ -231,13 +231,13 @@ struct NotchUtilityReliabilityTests {
     }
 }
 
-@Suite("Notch timer row render proof", .serialized)
+@Suite("Notch timer row render proof", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchTimerRowRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func firedTimerAfterClockMovesBackward() throws {
         var clock = Date()
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clock-back-\(UUID().uuidString).json")
+        let url = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-clock-back-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         let model = ShelfTimerModel(storeURL: url, schedulingEnabled: false, clock: { clock })
         let timer = model.add(label: "Tea", duration: 3600, now: clock)
@@ -272,7 +272,7 @@ struct NotchTimerRowRenderProofTests {
                                     ("notch-timers-many", 8, false),
                                     ("notch-timers-done", 2, true)] {
             let now = Date()
-            let model = ShelfTimerModel(storeURL: URL(fileURLWithPath: NSTemporaryDirectory()
+            let model = ShelfTimerModel(storeURL: URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/")
                 + "jrbar-proof-timers-\(UUID().uuidString).json"), schedulingEnabled: false)
             for index in 0..<count {
                 let entry = model.add(label: index == 0 ? "Tea" : "Review \(index)", duration: 300,
@@ -290,7 +290,7 @@ struct NotchTimerRowRenderProofTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func shelfAccessibilityTiles() throws {
-        let folder = FileManager.default.temporaryDirectory
+        let folder = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-shelf-keys-\(UUID().uuidString)", isDirectory: true)
         let references = folder.appendingPathComponent("Reference", isDirectory: true)
         let notes = folder.appendingPathComponent("Notes", isDirectory: true)

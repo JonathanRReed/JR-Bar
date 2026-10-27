@@ -1,13 +1,14 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarCore
 
 /// The app's remembered facts in `app-state.json`: defaults when the file
 /// is missing, tolerant reads, atomic writes and the state-directory rule.
-@Suite("App state file")
+@Suite("App state file", .temporaryDirectory)
 struct AppStateTests {
     private func temporaryFile() -> AppStateFile {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-app-state-\(UUID().uuidString.prefix(8))")
         return AppStateFile(url: directory.appending(path: "app-state.json"))
     }

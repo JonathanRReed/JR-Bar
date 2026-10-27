@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import Testing
@@ -6,7 +7,7 @@ import Testing
 /// The reporter between the notch's sensor monitor and the daemon: what
 /// it sends and when, whether it asks the monitor to run, and the call
 /// fact it hands the toys. The daemon is a closure that records.
-@Suite("Presence reporter", .timeLimit(.minutes(2)))
+@Suite("Presence reporter", .temporaryDirectory, .timeLimit(.minutes(2)))
 @MainActor
 struct PresenceReporterTests {
     /// The daemon side: connected or not, its presence document, and
@@ -221,7 +222,7 @@ struct PresenceReporterTests {
     func mirrorOnACard() async {
         let suite = ScratchDefaults.suiteName("presence-mirror")
         defer { ScratchDefaults.remove(suite) }
-        let timers = ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+        let timers = ShelfTimerModel(storeURL: TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-presence-timers-\(UUID().uuidString).json"))
         let mirror = ShelfMirrorModel(driver: ShelfMirrorStateTests.Driver(), authorization: { .authorized })
         let noBattery = AlcovePowerState(hasBattery: false, onAC: false, charging: false,
@@ -255,7 +256,7 @@ struct PresenceReporterTests {
                                      requestAccess: { _ in })
         let noBattery = AlcovePowerState(hasBattery: false, onAC: false, charging: false,
                                          percent: nil, fullyCharged: false)
-        let card = NotchCardModel(timers: ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+        let card = NotchCardModel(timers: ShelfTimerModel(storeURL: TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-presence-timers-\(UUID().uuidString).json")),
                                  tray: ShelfTrayModel(defaults: ScratchDefaults.open(suite)),
                                  utility: ShelfUtilityModel(power: noBattery),
@@ -273,7 +274,7 @@ struct PresenceReporterTests {
 
 /// The Focus re-read's cache: a granted answer is asked for once a minute,
 /// not on every 15 s beat.
-@Suite("Focus read cache")
+@Suite("Focus read cache", .temporaryDirectory)
 @MainActor
 struct FocusReadCacheTests {
     /// The clock and the two system probes, counted.

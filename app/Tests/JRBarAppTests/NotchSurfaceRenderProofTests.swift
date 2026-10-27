@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -16,7 +17,7 @@ import JRBarUI
 /// judge it the way it sits under the real notch. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write `notch-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Notch surfaces render proof")
+@Suite("Notch surfaces render proof", .temporaryDirectory)
 @MainActor
 struct NotchSurfaceRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -66,7 +67,7 @@ struct NotchSurfaceRenderProofTests {
     private static func proofCardModel(_ monitor: ProofMonitor) -> NotchCardModel {
         NotchCardModel(
             timers: ShelfTimerModel(storeURL: URL(fileURLWithPath:
-                NSTemporaryDirectory() + "jrbar-proof-timers-\(UUID().uuidString).json")),
+                (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-proof-timers-\(UUID().uuidString).json")),
             tray: ShelfTrayModel(),
             utility: ShelfUtilityModel(feed: MediaFeed(monitor: monitor)),
             runtimeEnabled: false)
@@ -607,7 +608,7 @@ struct NotchSurfaceRenderProofTests {
         monitor.onChange?(media())
         model.timers.add(label: "Tea", duration: 240)
         model.timers.add(label: "Standup with the design team", duration: 1500)
-        let dir = FileManager.default.temporaryDirectory.appending(path: "jrbar-proof-tray")
+        let dir = TestTemporaryDirectory.currentURL.appending(path: "jrbar-proof-tray")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var urls: [URL] = []
         for name in ["Screenshot 2026-09-24.png", "notes.md", "design-review.pdf"] {

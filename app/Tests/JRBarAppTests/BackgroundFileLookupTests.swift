@@ -4,7 +4,7 @@ import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
-@Suite("Background file lookups", .serialized, .timeLimit(.minutes(1)))
+@Suite("Background file lookups", .temporaryDirectory, .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct BackgroundFileLookupTests {
     private final class Deadline: @unchecked Sendable {
@@ -138,7 +138,7 @@ struct BackgroundFileLookupTests {
 
     @Test("an unregistered app keeps its declared bundle icon")
     func declaredBundleIcon() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-icon-\(UUID().uuidString)")
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-icon-\(UUID().uuidString)")
         let app = root.appendingPathComponent("Synthetic.app")
         let resources = app.appendingPathComponent("Contents/Resources")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)

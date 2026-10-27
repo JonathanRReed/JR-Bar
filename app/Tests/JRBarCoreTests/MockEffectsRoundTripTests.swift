@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarCore
@@ -6,7 +7,7 @@ import Testing
 /// command through the real client: usage_history, refresh_usage,
 /// list_effects, render_effect, list_assignments, set_assignment and
 /// clear_assignment, export_effect_pack and import_effect_pack.
-@Suite("Mock core round trips", .serialized, .timeLimit(.minutes(2)))
+@Suite("Mock core round trips", .temporaryDirectory, .serialized, .timeLimit(.minutes(2)))
 struct MockEffectsRoundTripTests {
     @MainActor
     static func connectedModel(socket: String) async throws -> CoreModel {
@@ -188,7 +189,7 @@ struct MockEffectsRoundTripTests {
         #expect(document.assignments.count == 5, "clearing twice is harmless")
 
         // Export a pack from registry and pack effects, then import it back.
-        let directory = FileManager.default.temporaryDirectory.appending(path: "jrbar-pack-\(UUID().uuidString.prefix(6))")
+        let directory = TestTemporaryDirectory.currentURL.appending(path: "jrbar-pack-\(UUID().uuidString.prefix(6))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let exported = directory.appending(path: "My Looks.json")

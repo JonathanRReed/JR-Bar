@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -6,7 +7,7 @@ import Testing
 /// The shelf's Paste chip: offered for what the shelf can take, read by
 /// types alone until the click, and never offered twice for one copy.
 /// A private named pasteboard stands in for the general one.
-@Suite("Shelf paste")
+@Suite("Shelf paste", .temporaryDirectory)
 @MainActor
 struct ShelfPasteTests {
     private func privatePasteboard() -> NSPasteboard {
@@ -32,7 +33,7 @@ struct ShelfPasteTests {
 
     @Test("copied files paste as themselves")
     func files() {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-paste-\(UUID().uuidString)")
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-paste-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let board = privatePasteboard()
         defer { board.releaseGlobally() }

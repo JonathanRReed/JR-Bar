@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import Testing
 @testable import JRBarApp
 
-@Suite("Isolated preview configuration")
+@Suite("Isolated preview configuration", .temporaryDirectory)
 struct IsolatedPreviewRuntimeTests {
     private let bundleID = "com.jonathanreed.jrbar.preview.v114"
 
@@ -19,8 +20,8 @@ struct IsolatedPreviewRuntimeTests {
 
     @Test("preview paths and preferences have a separate identity")
     func validPreview() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-native-preview-fixture")
-        let configuration = try IsolatedPreviewRuntime.read(bundleID: bundleID, environment: environment(root: root))
+        let root = TestTemporaryDirectory.currentURL.appending(path: "jrbar-native-preview-fixture")
+        let configuration = try IsolatedPreviewRuntime.read(bundleID: bundleID, environment: environment(root: root), temporaryDirectory: TestTemporaryDirectory.currentURL)
         let preview = try #require(configuration)
         #expect(preview.file("app-state.json").path.hasSuffix("/state/jrbar/app-state.json"))
         let state = preview.reviewState()
@@ -35,7 +36,7 @@ struct IsolatedPreviewRuntimeTests {
 
     @Test("preview state rejects descendant symlinks", arguments: [false, true])
     func rejectsStateSymlink(fileLink: Bool) throws {
-        let temporary = FileManager.default.temporaryDirectory
+        let temporary = TestTemporaryDirectory.currentURL
         let root = temporary.appending(path: "jrbar-native-preview-\(UUID().uuidString)")
         let outside = temporary.appending(path: "jrbar-preview-outside-\(UUID().uuidString)")
         defer {
@@ -49,13 +50,13 @@ struct IsolatedPreviewRuntimeTests {
         let link = parent.appending(path: fileLink ? "app-state.json" : "jrbar")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
         #expect(throws: IsolatedPreviewRuntime.Failure.self) {
-            try IsolatedPreviewRuntime.read(bundleID: bundleID, environment: environment(root: root))
+            try IsolatedPreviewRuntime.read(bundleID: bundleID, environment: environment(root: root), temporaryDirectory: TestTemporaryDirectory.currentURL)
         }
     }
 
     @Test("a requested preview rejects production identity and paths")
     func rejectsUnsafeConfiguration() {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-native-preview-fixture")
+        let root = TestTemporaryDirectory.currentURL.appending(path: "jrbar-native-preview-fixture")
         let safe = environment(root: root)
         #expect(throws: IsolatedPreviewRuntime.Failure.self) {
             try IsolatedPreviewRuntime.read(bundleID: "com.jonathanreed.jrbar", environment: safe)

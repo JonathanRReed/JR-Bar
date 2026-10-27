@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarCore
@@ -5,9 +6,10 @@ import Testing
 /// The bearer token the loopback endpoint requires lives in the state
 /// directory. A file somebody else left there is not trusted: a link is
 /// not followed and a file others can read is not reused.
+@Suite(.temporaryDirectory)
 struct ServeTokenTests {
     private func scratch() throws -> String {
-        let directory = NSTemporaryDirectory() + "jrbar-serve-token-\(UUID().uuidString)"
+        let directory = (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-serve-token-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         return directory
     }

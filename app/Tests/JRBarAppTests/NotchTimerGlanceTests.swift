@@ -1,8 +1,9 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch timer glance")
+@Suite("Notch timer glance", .temporaryDirectory)
 @MainActor
 struct NotchTimerGlanceTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -54,7 +55,7 @@ struct NotchTimerGlanceTests {
     @Test("quick controls pause, resume and dismiss through the existing timer model")
     func controls() throws {
         var clock = now
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let timers = ShelfTimerModel(storeURL: directory.appendingPathComponent("timers.json"),
@@ -79,7 +80,7 @@ struct NotchTimerGlanceTests {
     @Test("a stale Pause click cannot dismiss a timer which just finished")
     func expiryBetweenDrawAndClick() throws {
         var clock = now
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let timers = ShelfTimerModel(storeURL: directory.appendingPathComponent("timers.json"),

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -7,7 +8,7 @@ import Testing
 /// Quit JR-Bar and open it again: the menu bar item must be there, every
 /// time. The pure decisions behind that, with fakes for everything that
 /// would touch the real bar, the real agent or the real lock.
-@Suite("Menu bar — relaunch keeps the icon")
+@Suite("Menu bar — relaunch keeps the icon", .temporaryDirectory)
 struct MenuBarRelaunchTests {
     private let t0 = Date(timeIntervalSince1970: 1_000_000)
 
@@ -127,7 +128,7 @@ struct MenuBarRelaunchTests {
     // MARK: The single-instance lock and a fast reopen
 
     private func lockDirectory() -> String {
-        NSTemporaryDirectory() + "jrbar-relaunch-lock-\(UUID().uuidString)"
+        (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-relaunch-lock-\(UUID().uuidString)"
     }
 
     @Test("a predecessor that is quitting is waited for, then the new launch takes the lock")

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -6,7 +7,7 @@ import JRBarCore
 /// The real aquarium save is opt-in: only the app's own store asks for
 /// it. Any other store — headless or not, however a suite builds it —
 /// must never read or write the user's real tank.
-@Suite("Toys store isolation")
+@Suite("Toys store isolation", .temporaryDirectory)
 @MainActor
 struct ToysStoreIsolationTests {
     @Test("a store with the runtime on still keeps a scratch tank unless told otherwise")
@@ -37,7 +38,7 @@ struct ToysStoreIsolationTests {
     @Test("an explicit save file wins")
     func explicitSave() {
         let core = CoreModel()
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-explicit-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json")
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),

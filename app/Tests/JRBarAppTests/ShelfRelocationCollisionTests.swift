@@ -1,14 +1,15 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Shelf relocation collisions")
+@Suite("Shelf relocation collisions", .temporaryDirectory)
 struct ShelfRelocationCollisionTests {
     @MainActor
     private struct Fixture {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         let suite = "jrbar-shelf-collision-\(UUID().uuidString)"
         let defaults: UserDefaults
         let tray: ShelfTrayModel

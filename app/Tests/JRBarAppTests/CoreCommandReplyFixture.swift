@@ -1,10 +1,12 @@
 import Foundation
+import JRBarTestSupport
 import Testing
 import Observation
 @testable import JRBarCore
 
 @MainActor
 final class CoreCommandReplyFixture {
+    private let temporaryDirectory: TestTemporaryDirectory
     let root: URL
     let core: CoreModel
     private let process = Process()
@@ -14,7 +16,8 @@ final class CoreCommandReplyFixture {
     private let exits = AsyncStream<Void>.makeStream()
 
     init() throws {
-        root = URL(fileURLWithPath: "/tmp/jrbar-clear-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectory = try TestTemporaryDirectory()
+        root = temporaryDirectory.url
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         core = CoreModel(socketPath: root.appendingPathComponent("s").path, replyClock: replyClock.clock)
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")

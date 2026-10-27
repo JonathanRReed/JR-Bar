@@ -85,7 +85,8 @@ let package = Package(
         .executable(name: "JRBarApp", targets: ["JRBarApp"]),
     ],
     targets: [
-        .target(name: "JRBarTestSupport", path: "Tests/JRBarTestSupport"),
+        .target(name: "JRBarTestSupport", path: "Tests/JRBarTestSupport",
+                swiftSettings: testSwiftSettings, linkerSettings: testLinkerSettings),
         // Pure Swift LEDS DSL model, parser and sampler. No AppKit.
         .target(name: "JRBarLEDS"),
         // The core daemon protocol: NDJSON over a Unix socket, Codable

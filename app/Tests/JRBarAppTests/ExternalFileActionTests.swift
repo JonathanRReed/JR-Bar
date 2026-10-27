@@ -5,11 +5,11 @@ import SwiftUI
 @testable import JRBarApp
 
 @MainActor
-@Suite("Fresh external file actions", .serialized, .timeLimit(.minutes(1)))
+@Suite("Fresh external file actions", .temporaryDirectory, .serialized, .timeLimit(.minutes(1)))
 struct ExternalFileActionTests {
     @Test("loaded files deleted before an action are refused")
     func deletedShelfAction() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("file.txt")
@@ -37,7 +37,7 @@ struct ExternalFileActionTests {
 
     @Test("attachment requests read replacements and reject deletions without waiting for preview expiry")
     func currentAttachment() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("image.png")
@@ -62,7 +62,7 @@ struct ExternalFileActionTests {
 
     @Test("an explicit local symlink resolves but an automatic probe does not follow it")
     func explicitSymlink() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let target = root.appendingPathComponent("target.txt")
@@ -119,7 +119,7 @@ struct ExternalFileActionTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 for Shelf proofs"))
     func shelfFileProofs() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         let folder = root.appendingPathComponent("Files")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

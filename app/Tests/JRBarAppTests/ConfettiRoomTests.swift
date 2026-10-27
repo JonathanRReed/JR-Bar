@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import AVFoundation
 import CoreAudio
@@ -11,7 +12,7 @@ import JRBarCore
 /// hold while a call or quiet has the room, the smaller replay once it
 /// clears, and fullscreen screens skipped. The overlay windows are
 /// replaced by a counter, so nothing lands on the test machine's screen.
-@Suite("Confetti room")
+@Suite("Confetti room", .temporaryDirectory)
 @MainActor
 struct ConfettiRoomTests {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
@@ -421,7 +422,7 @@ struct ConfettiRoomTests {
             return preferences
         }
         player.microphoneLive = { false }
-        player.synthesizedFolder = FileManager.default.temporaryDirectory
+        player.synthesizedFolder = TestTemporaryDirectory.currentURL
             .appending(path: "confetti-sound-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
         var plays: [SoundPlayer.SynthesizedPlay] = []
@@ -440,7 +441,7 @@ struct ConfettiRoomTests {
 
 /// The burst's optional voice, synthesized: short, normalized under
 /// full scale, fading to silence, and a well-formed WAV.
-@Suite("Confetti sound")
+@Suite("Confetti sound", .temporaryDirectory)
 @MainActor
 struct ConfettiSoundTests {
     @Test("the mix is short, quiet and ends in silence")
@@ -462,7 +463,7 @@ struct ConfettiSoundTests {
             return preferences
         }
         player.microphoneLive = { micLive }
-        player.synthesizedFolder = FileManager.default.temporaryDirectory
+        player.synthesizedFolder = TestTemporaryDirectory.currentURL
             .appending(path: "confetti-sound-\(UUID().uuidString)")
         let box = Box()
         player.synthesizedOutput = { box.plays.append($0) }
@@ -540,7 +541,7 @@ struct ConfettiSoundTests {
             return preferences
         }
         player.microphoneLive = { false }
-        player.synthesizedFolder = FileManager.default.temporaryDirectory
+        player.synthesizedFolder = TestTemporaryDirectory.currentURL
             .appending(path: "confetti-sound-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: player.synthesizedFolder) }
         let events = CuttingAlertOutput()
