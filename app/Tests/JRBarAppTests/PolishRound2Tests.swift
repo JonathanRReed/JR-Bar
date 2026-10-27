@@ -74,7 +74,7 @@ struct PolishRound2Tests {
         for name in Self.windowNames {
             let lines = UsageOverviewHeader.titleLines(for: name)
             #expect(lines.count <= 2)
-            #expect(lines.joined(separator: " ") == name + " used")
+            #expect(lines.joined(separator: " ") == UsageWindowLabel.column(name) + " used")
             let host = NSHostingView(rootView: Text(lines.joined(separator: "\n")).font(JRBarTokens.TypeStyle.caption.font).fixedSize())
             #expect(host.fittingSize.width <= width)
         }

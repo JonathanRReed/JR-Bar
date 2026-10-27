@@ -8,7 +8,13 @@ struct UsageOverviewTable: View {
     @Bindable var store: UsageCenterStore
     let showCost: Bool
     let select: (String) -> Void
-    private var windows: [String] { UsageGaugeRow.orderedWindowNames(store.providers.flatMap { $0.windows.map(\.name) }) }
+    private var windows: [String] {
+        Self.windowNames(providers: store.providers, now: store.now.timeIntervalSince1970, connected: store.isLive)
+    }
+
+    static func windowNames(providers: [CoreProviderUsage], now: Double, connected: Bool) -> [String] {
+        UsageGaugeRow.compactWindowNames(providers: providers, now: now, connected: connected)
+    }
 
     var body: some View {
         let columnWidth = UsageOverviewHeader.columnWidth(for: windows)
@@ -117,19 +123,9 @@ struct UsageOverviewProviderRow: View {
 
     var body: some View {
         Button(action: select) {
-            if provider.availability == "absent" {
-                HStack(spacing: JRBarTokens.Space.sm) {
-                    ProviderLogoTile(provider: provider.id, dim: true)
-                    Text(name).font(JRBarTokens.TypeStyle.headline.font)
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, JRBarTokens.Space.sm)
-                .padding(.horizontal, JRBarTokens.Space.md)
-            } else {
-                UsageGaugeRow(provider: provider, name: name, now: now, connected: connected, style: .compact,
-                    windowNames: windowNames, snapshotReceivedAt: snapshotReceivedAt,
-                    suppressDisconnectedStatus: true, compactColumnWidth: columnWidth)
-            }
+            UsageGaugeRow(provider: provider, name: name, now: now, connected: connected, style: .compact,
+                windowNames: windowNames, snapshotReceivedAt: snapshotReceivedAt,
+                suppressDisconnectedStatus: true, compactColumnWidth: columnWidth, includeAbsent: true)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(name)
@@ -141,7 +137,7 @@ struct UsageOverviewHeader: View {
     let windowNames: [String]
 
     static func titleLines(for name: String) -> [String] {
-        let title = "\(name) used"
+        let title = "\(UsageWindowLabel.column(name)) used"
         let words = title.split(separator: " ")
         guard words.count > 1 else { return [title] }
         return (1..<words.count).map { cut in
