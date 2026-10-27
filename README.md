@@ -188,7 +188,7 @@ Install** links it as `~/.local/bin/jrbar` (put `~/.local/bin` on your
 and Remove takes it away again.
 
 ```sh
-jrbar usage           # every provider's windows: "Claude  5h 58% left · resets 2h14m" (--json, --brief)
+jrbar usage           # every provider's windows: "Claude  5h 42% used · resets in 2h 14m" (--json, --brief)
 jrbar hooks doctor    # what each provider's config runs today, and the sockets
 jrbar doctor          # daemon commit, memory, checks
 jrbar status          # sessions and asks right now (--json for scripts)

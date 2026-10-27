@@ -7,7 +7,7 @@ prints a stable document for scripts.
 ## Quota and usage
 
 ```sh
-jrbar usage                    # one line per window: "Claude  5h 58% left · resets 2h14m"
+jrbar usage                    # one line per window: "Claude  5h 42% used · resets in 2h 14m"
 jrbar usage --brief            # a table
 jrbar usage --json             # the usage block, with "schema": 1
 jrbar usage --provider codex   # one provider
