@@ -105,7 +105,7 @@ struct PanelAgentsSection: View {
     private var emptyLabel: String {
         if !store.isLive { return "Agents appear when the monitor connects" }
         if !store.trimmedFindQuery.isEmpty { return "No matching agents" }
-        return store.visibleAskRows.isEmpty ? "Start an agent" : "No other recent sessions"
+        return store.visibleAskRows.isEmpty ? "Start an agent" : "No other agents running"
     }
 
     var body: some View {

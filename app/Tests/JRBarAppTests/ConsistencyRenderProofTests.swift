@@ -71,7 +71,7 @@ struct ConsistencyRenderProofTests {
                         HStack {
                             Text(item.title)
                             Spacer()
-                            Text(item.keyEquivalent.isEmpty ? "" : "⌘" + item.keyEquivalent.uppercased())
+                            Text(item.keyEquivalent.isEmpty ? "" : (item.keyEquivalentModifierMask.contains(.shift) ? "⇧⌘" : "⌘") + item.keyEquivalent.uppercased())
                                 .foregroundStyle(.secondary)
                         }
                         .jrbarType(.body)
