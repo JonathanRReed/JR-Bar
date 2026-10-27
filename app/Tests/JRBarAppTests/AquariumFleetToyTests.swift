@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -7,7 +8,7 @@ import JRBarCore
 /// about the work lands as a reward card and saves at once. The store
 /// here watches an empty core of its own, so its tank (the real save
 /// file) never sees these sessions; the tank under test saves to scratch.
-@Suite("Aquarium fleet on the tank")
+@Suite("Aquarium fleet on the tank", .temporaryDirectory)
 @MainActor
 struct AquariumFleetToyTests {
     @Test("a school of six in the document: the card, the pearls, the save")
@@ -24,7 +25,7 @@ struct AquariumFleetToyTests {
         enabledState.aquarium.enabled = true
         let store = ToysStore(core: quiet, settings: SettingsStore(core: quiet), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
-        let file = AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        let file = AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-fleet-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }

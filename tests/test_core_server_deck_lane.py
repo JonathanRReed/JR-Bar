@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 import threading
-from pathlib import Path
 
 import pytest
 from test_core_server import _connect, _read_frames
@@ -12,8 +10,8 @@ from jrbar.core_server import CommandRouter, CoreServer, encode_frame
 
 
 @pytest.fixture
-def sock_dir():
-    path = Path(tempfile.mkdtemp(prefix="jrbar-deck-"))
+def sock_dir(short_tmp_path):
+    path = short_tmp_path
     try:
         yield path
     finally:

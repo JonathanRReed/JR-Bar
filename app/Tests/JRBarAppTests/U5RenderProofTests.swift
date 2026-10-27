@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -7,7 +8,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("U5 key-window render proofs", .serialized)
+@Suite("U5 key-window render proofs", .temporaryDirectory, .serialized)
 @MainActor
 struct U5RenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -90,7 +91,7 @@ struct U5RenderProofTests {
                 ], fidelity: "official", state: "ready", readAt: Self.stamp - 120)
                 provider.tokenHistoryState = state
                 if state == "no-quota" { provider.windows = []; provider.quotaSource = false }
-                let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-u5-proof.sock")
+                let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-u5-proof.sock")
                 core.handle(.connected)
                 let settings = CoreSettings(document: .object(["token_history_enabled": .bool(state != "disabled"), "usage_graph_days": .number(30)]))
                 core.apply(.settings(settings))
@@ -166,7 +167,7 @@ struct U5RenderProofTests {
             try await U5Proof.render(UsageOverviewChart(graph: graph, states: ["claude": "ready", "codex": "failed", "gemini": "disk_full"])
                 .padding(24), name: "usage-overview-stale", width: 850, dark: dark)
             for mode in ["running", "paused", "done"] {
-                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: directory) }
                 let timers = ShelfTimerModel(storeURL: directory.appendingPathComponent("timers.json"), schedulingEnabled: false, clock: { now })
@@ -179,7 +180,7 @@ struct U5RenderProofTests {
             }
             var provider = CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 42)])
             provider.tokenHistoryState = "ready"
-            let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-u5-unpriced.sock")
+            let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-u5-unpriced.sock")
             core.handle(.connected)
             core.apply(.state(CoreState(usage: CoreUsage(providers: [provider]))))
             let store = UsageCenterStore(core: core)

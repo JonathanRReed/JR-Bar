@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Synthetic Usage Center activation cost", .serialized,
+@Suite("Synthetic Usage Center activation cost", .temporaryDirectory, .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["JRBAR_USAGE_ACTIVATION_PROBE"] == "1"))
 struct UsageCenterActivationCostTests {
     private struct Sample: Encodable {
@@ -36,7 +37,7 @@ struct UsageCenterActivationCostTests {
         let python = try #require(ProcessInfo.processInfo.environment["JRBAR_HISTORY_RPC_PYTHON"])
         let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let temporary = URL(fileURLWithPath: "/tmp/jrbar-activation-\(UUID().uuidString)", isDirectory: true)
+        let temporary = TestTemporaryDirectory.currentURL.appendingPathComponent("activation", isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)

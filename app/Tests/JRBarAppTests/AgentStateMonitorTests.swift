@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import Testing
@@ -7,11 +8,11 @@ import Testing
 /// asked to — the delegate stops it while the daemon is live — and
 /// reads at once when it starts again. A scratch folder stands in for
 /// the real state directory.
-@Suite("Agent state monitor")
+@Suite("Agent state monitor", .temporaryDirectory)
 @MainActor
 struct AgentStateMonitorTests {
     private func scratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-monitor-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

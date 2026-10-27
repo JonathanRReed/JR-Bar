@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import JRBarCore
 @testable import JRBarApp
 
 @MainActor
-@Suite("Shelf keyboard focus")
+@Suite("Shelf keyboard focus", .temporaryDirectory)
 struct ShelfKeyboardFocusTests {
     @Test("Paste has a visible keyboard focus ring", .enabled(if: renderEnabled))
     func pasteFocusRender() throws {
@@ -39,7 +40,7 @@ struct ShelfKeyboardFocusTests {
     private func model() -> NotchCardModel {
         let defaults = UserDefaults(suiteName: "jrbar-keyboard-focus-\(UUID().uuidString)")!
         return NotchCardModel(
-            timers: ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+            timers: ShelfTimerModel(storeURL: TestTemporaryDirectory.currentURL
                 .appendingPathComponent("jrbar-keyboard-timer-\(UUID().uuidString).json")),
             tray: ShelfTrayModel(defaults: defaults), runtimeEnabled: false)
     }
@@ -181,7 +182,7 @@ struct ShelfKeyboardFocusTests {
     func selectedTileRender() throws {
         let suite = "jrbar-keyboard-render-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent(suite)
         defer {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: root)

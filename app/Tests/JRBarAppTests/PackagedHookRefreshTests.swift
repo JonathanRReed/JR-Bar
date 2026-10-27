@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import Testing
 @testable import JRBarApp
 
-@Suite("Packaged hook refresh")
+@Suite("Packaged hook refresh", .temporaryDirectory)
 struct PackagedHookRefreshTests {
     @Test("only a connected supervised peer can receive the upgrade refresh")
     func refreshRequiresConnectedMatchingPeer() {
@@ -78,7 +79,7 @@ struct PackagedHookRefreshTests {
 
     @Test("the bundled-core loader reads the build number from Info.plist")
     func loaderCarriesBuildNumber() throws {
-        let bundle = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-stamp-\(UUID().uuidString).app")
+        let bundle = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-stamp-\(UUID().uuidString).app")
         defer { try? FileManager.default.removeItem(at: bundle) }
         let helpers = bundle.appendingPathComponent("Contents/Helpers")
         let executable = helpers.appendingPathComponent("jrbar-core.app/Contents/MacOS/jrbar-core")

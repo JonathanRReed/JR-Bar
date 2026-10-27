@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import JRBarCore
 
 /// W12's shelf timers: absolute-deadline countdowns persisted to disk,
 /// so they span sleep, restart, and clock changes (T51). Expiry is
@@ -85,6 +86,7 @@ final class ShelfTimerModel {
     private(set) var armedFor: Date?
     private var observers: [NSObjectProtocol] = []
     private let storeURL: URL
+    private var scratchDirectory: ScratchDirectory?
     private let clock: @MainActor () -> Date
     private let schedulingEnabled: Bool
     private var enabled = true
@@ -117,6 +119,14 @@ final class ShelfTimerModel {
     isolated deinit {
         tick?.invalidate()
         removeObservers()
+    }
+
+    static func scratch(directory: ScratchDirectory = ScratchDirectory(),
+                        schedulingEnabled: Bool = false) -> ShelfTimerModel {
+        let model = ShelfTimerModel(storeURL: directory.url.appendingPathComponent("timers.json"),
+                                    schedulingEnabled: schedulingEnabled)
+        model.scratchDirectory = directory
+        return model
     }
 
     /// `storeURL` is injectable so tests never touch the real file.
@@ -315,6 +325,9 @@ final class ShelfTimerModel {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(entries) else { return }
+        if let scratchDirectory {
+            try? FileManager.default.createDirectory(at: scratchDirectory.url, withIntermediateDirectories: true)
+        }
         try? data.write(to: storeURL, options: .atomic)
     }
 }

@@ -1,8 +1,9 @@
+import JRBarTestSupport
 import AppKit
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf thumbnail ownership")
+@Suite("Shelf thumbnail ownership", .temporaryDirectory)
 @MainActor
 struct ShelfThumbnailOrderTests {
     @MainActor
@@ -16,7 +17,7 @@ struct ShelfThumbnailOrderTests {
         init() throws {
             defaults = try #require(UserDefaults(suiteName: suite))
             tray = ShelfTrayModel(defaults: defaults)
-            root = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+            root = TestTemporaryDirectory.currentURL.appendingPathComponent(suite, isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             tray.loadThumbnail = { [weak self] _, completion in self?.replies.append(completion) }
         }

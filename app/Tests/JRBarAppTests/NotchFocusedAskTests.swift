@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch focused asks", .serialized)
+@Suite("Notch focused asks", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchFocusedAskTests {
     @Test("the focused waiting ask keeps its controls and incoming priority")
@@ -66,7 +67,7 @@ struct NotchFocusedAskTests {
         defer { fixture.cleanUp() }
         var settings = ToysState()
         settings.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
-        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-focused-ask-fixture.sock")
+        let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-focused-ask-fixture.sock")
         let ask = NotchFocusedAskFixture.ask()
         core.apply(.state(CoreState(sessions: [
             CoreSession(id: NotchFocusedAskFixture.session, provider: "claude", label: "review-patch", ask: ask),
@@ -93,7 +94,7 @@ struct NotchFocusedAskTests {
     }
 }
 
-@Suite("Notch focused ask render proof", .serialized)
+@Suite("Notch focused ask render proof", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchFocusedAskRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -143,7 +144,7 @@ private struct NotchFocusedAskFixture {
     private let suite: String
 
     init(media: AlcoveMedia? = nil) throws {
-        let fixtureDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fixtureDirectory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: fixtureDirectory, withIntermediateDirectories: true)
         let fixtureSuite = ScratchDefaults.suiteName("NotchFocusedAskTests")
         let fixtureDefaults = try #require(UserDefaults(suiteName: fixtureSuite))

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import ImageIO
@@ -10,7 +11,7 @@ import JRBarCore
 /// W12's shelf utilities: tray revalidation, persisted timers with
 /// sleep/clock semantics, and the calendar's safe-URL rule.
 @MainActor
-@Suite struct ShelfTests {
+@Suite(.temporaryDirectory) struct ShelfTests {
 
     // MARK: - Tray (T49)
 
@@ -137,7 +138,7 @@ import JRBarCore
         let tray = ShelfTrayModel()
         defer { defaults.removeObject(forKey: "jrbar.shelfTray.paths") }
 
-        let real = FileManager.default.temporaryDirectory
+        let real = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-tray-\(UUID().uuidString).txt")
         try? "hi".write(to: real, atomically: true, encoding: .utf8)
         let gone = URL(fileURLWithPath: "/tmp/jrbar-never-existed-\(UUID().uuidString)")
@@ -171,7 +172,7 @@ import JRBarCore
     }
 
     @Test func aWebLinkDropMaterialisesAWebLoc() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let link = URL(string: "https://example.com/page?q=1")!
         let loc = try #require(ShelfTrayDrop.webLoc(for: link, directory: directory))
@@ -188,7 +189,7 @@ import JRBarCore
     }
 
     @Test func trayURLsPassesFilesThroughAndConvertsLinks() {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = URL(fileURLWithPath: "/tmp/real.txt")
         let link = URL(string: "https://example.com/x")!
@@ -415,7 +416,7 @@ import JRBarCore
     }
 
     @Test func aTextDropMaterialisesATxt() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let text = "remember the milk\nand the eggs"
         let loc = try #require(ShelfTrayDrop.textLoc(for: text, directory: directory))
@@ -436,7 +437,7 @@ import JRBarCore
     // MARK: - Timers (T51)
 
     private func tempStore() -> URL {
-        FileManager.default.temporaryDirectory
+        TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-timers-\(UUID().uuidString).json")
     }
 
@@ -525,8 +526,7 @@ import JRBarCore
 @MainActor
 func makeTestCardModel() -> NotchCardModel {
     NotchCardModel(
-        timers: ShelfTimerModel(storeURL: URL(fileURLWithPath:
-            NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")),
+        timers: ShelfTimerModel.scratch(),
         tray: ShelfTrayModel(),
         runtimeEnabled: false)
 }
@@ -537,7 +537,7 @@ func makeTestCardModel() -> NotchCardModel {
 /// and clobber each other's persist, so the surfaces must share
 /// identity, not just file paths.
 @MainActor
-@Suite("Shared card shelf")
+@Suite("Shared card shelf", .temporaryDirectory)
 struct SharedCardShelfTests {
     @Test func bothCardSurfacesShareTheOneStores() {
         let cardModel = makeTestCardModel()
@@ -557,7 +557,7 @@ struct SharedCardShelfTests {
     /// and both surfaces' entries run through it — even with both card
     /// models alive.
     @Test func aDueTimerDeliversOnceAcrossBothSurfaces() {
-        let url = FileManager.default.temporaryDirectory
+        let url = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-shared-timers-\(UUID().uuidString).json")
         let timers = ShelfTimerModel(storeURL: url)
         let tray = ShelfTrayModel()
@@ -602,7 +602,7 @@ extension ShelfTests {
     }
 
     private func scratchFolder() throws -> URL {
-        let folder = FileManager.default.temporaryDirectory
+        let folder = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-shelf-test-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder

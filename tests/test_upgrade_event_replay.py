@@ -12,8 +12,6 @@ reconnect anchors immediately.
 from __future__ import annotations
 
 import socket
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -27,11 +25,11 @@ from jrbar.core_server import (
 
 
 @pytest.fixture
-def sock_dir():
+def sock_dir(short_tmp_path):
     """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
     import shutil
 
-    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    path = short_tmp_path
     try:
         yield path
     finally:

@@ -90,6 +90,8 @@ include = ["jrbar*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-config", "--strict-markers"]
+tmp_path_retention_count = 0
+tmp_path_retention_policy = "none"
 
 [tool.ruff]
 # Keep the lint surface deterministic. The retained controller sits behind

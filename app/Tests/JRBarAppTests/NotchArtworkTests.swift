@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -7,7 +8,7 @@ import JRBarCore
 /// Album art is decoded once per cover, small, and off the main thread;
 /// the helper's lines are parsed off the main thread too, and a cover
 /// re-sent with a pause or a seek is not decoded again.
-@Suite("Notch artwork")
+@Suite("Notch artwork", .temporaryDirectory)
 @MainActor
 struct NotchArtworkTests {
     /// A cover made in memory — a gradient, so it is a real image.
@@ -154,7 +155,7 @@ struct NotchArtworkTests {
         let monitor = ArtMonitor()
         let model = NotchCardModel(
             timers: ShelfTimerModel(storeURL: URL(fileURLWithPath:
-                NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")),
+                (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-test-timers-\(UUID().uuidString).json")),
             tray: ShelfTrayModel(), utility: ShelfUtilityModel(feed: MediaFeed(monitor: monitor)),
             runtimeEnabled: false)
         model.utility.start()

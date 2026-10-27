@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import shutil
 import socket
-import tempfile
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -70,9 +68,9 @@ def test_a_loopback_connect_still_works() -> None:
                 assert connection.recv(4) == b"ping"
 
 
-def test_a_unix_socket_connect_still_works() -> None:
+def test_a_unix_socket_connect_still_works(short_tmp_path) -> None:
     # AF_UNIX paths are capped at 104 bytes; pytest's tmp_path can be longer.
-    folder = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    folder = short_tmp_path
     try:
         path = str(folder / "guard.sock")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 @testable import JRBarCore
 import Observation
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch provider carousel")
+@Suite("Notch provider carousel", .temporaryDirectory)
 struct NotchProviderCarouselTests {
     @Test("a six-second cadence leaves the default provider cadence at three seconds")
     func independentCadences() {
@@ -179,13 +180,13 @@ struct NotchProviderCarouselTests {
     }
 }
 
-@Suite("Notch provider focus", .serialized)
+@Suite("Notch provider focus", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchProviderFocusTests {
     private final class ObservationChange: @unchecked Sendable { var fired = false }
 
     private func makeCore() -> CoreModel {
-        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-provider-carousel-fixture.sock")
+        let core = CoreModel(socketPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-provider-carousel-fixture.sock")
         core.handle(.connected)
         return core
     }
@@ -350,7 +351,7 @@ struct NotchProviderFocusTests {
         let suite = ScratchDefaults.suiteName("NotchProviderFocusTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         let noBattery = AlcovePowerState(hasBattery: false, onAC: false, charging: false, percent: nil, fullyCharged: false)
         let card = NotchCardModel(timers: ShelfTimerModel(storeURL: url, schedulingEnabled: false),
             tray: ShelfTrayModel(defaults: defaults), utility: ShelfUtilityModel(power: noBattery), runtimeEnabled: false)

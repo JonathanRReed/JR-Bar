@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -7,11 +8,11 @@ import JRBarCore
 /// fish that can eat, exactly as if each were tapped — the daily cap
 /// still counts. The toy saves to a scratch file here, never the real
 /// state directory.
-@Suite("Aquarium feed from anywhere")
+@Suite("Aquarium feed from anywhere", .temporaryDirectory)
 @MainActor
 struct AquariumFeedAllTests {
     private func scratch() -> AquariumSaveFile {
-        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-feedall-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
     }

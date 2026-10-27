@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -7,7 +8,7 @@ import JRBarCore
 /// (a record that omits it or serves a string can't sink the whole
 /// `/api/search` array) and `durationSeconds` never traps on a
 /// server-supplied absurdity.
-@Suite(.timeLimit(.minutes(2))) struct LyricsStoreTests {
+@Suite(.temporaryDirectory, .timeLimit(.minutes(2))) struct LyricsStoreTests {
 
     @MainActor
     @Test("memory misses expire while playing and after reset", arguments: [false, true])
@@ -38,7 +39,7 @@ import JRBarCore
     @MainActor
     @Test("a promoted disk miss keeps its original expiry")
     func diskMissKeepsExpiry() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("lyrics.json")
         var clock = Date(timeIntervalSince1970: 1_000)

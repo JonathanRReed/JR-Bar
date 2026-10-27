@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -11,7 +12,7 @@ import SwiftUI
 /// mappings — all against an injected `SetupModel`, so no test touches
 /// TCC, EventKit, UserNotifications or a socket.
 @MainActor
-@Suite struct SetupStoreTests {
+@Suite(.temporaryDirectory) struct SetupStoreTests {
     /// Records everything the store sends through the model and the
     /// persist closure.
     final class Recorder {
@@ -441,7 +442,7 @@ import SwiftUI
 /// `setup.json`: the tolerant decode, the XDG-aware default location,
 /// and the round-trip the launch gate reads.
 @MainActor
-@Suite struct SetupStateFileTests {
+@Suite(.temporaryDirectory) struct SetupStateFileTests {
     @Test func roundTripThroughJSON() throws {
         let state = SetupState(completedSteps: ["welcome", "agents"],
                                skippedSteps: ["permissions"],
@@ -454,7 +455,7 @@ import SwiftUI
         let decoded = try JSONDecoder().decode(SetupState.self, from: Data("{\"version\":1}".utf8))
         #expect(decoded == SetupState())
         // A file that is not JSON at all loads as the defaults.
-        let directory = FileManager.default.temporaryDirectory
+        let directory = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-setup-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = SetupStateFile(url: directory.appending(path: "setup.json"))
@@ -471,7 +472,7 @@ import SwiftUI
     }
 
     @Test func fileRoundTripFeedsTheLaunchGate() throws {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-setup-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         let file = SetupStateFile(url: directory.appending(path: "setup.json"))
         try file.save(SetupState(presentedCount: 1))
@@ -489,7 +490,7 @@ import SwiftUI
 /// The walkthrough's window: what waits for it to go, and the Screen
 /// Bar's story on its first step (the retired first-run card's).
 @MainActor
-@Suite struct SetupWindowTests {
+@Suite(.temporaryDirectory) struct SetupWindowTests {
     final class Ran { var count = 0 }
 
     @Test func whatWaitsForSetupRunsAtOnceWhenItIsNotUp() {

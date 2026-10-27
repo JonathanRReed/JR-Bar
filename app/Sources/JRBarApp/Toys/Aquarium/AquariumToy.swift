@@ -108,9 +108,7 @@ final class AquariumToy: Toy {
     /// A save of its own in the temporary directory — the default for
     /// every tank the app didn't explicitly point at the real one.
     static func scratchSave() -> AquariumSaveFile {
-        AquariumSaveFile(url: FileManager.default.temporaryDirectory
-            .appending(path: "jrbar-scratch-\(UUID().uuidString)")
-            .appending(path: "aquarium-save.json"))
+        AquariumSaveFile(scratchDirectory: ScratchDirectory())
     }
 
     init(core: CoreModel, store: ToysStore, saveFile: AquariumSaveFile = AquariumToy.scratchSave()) {

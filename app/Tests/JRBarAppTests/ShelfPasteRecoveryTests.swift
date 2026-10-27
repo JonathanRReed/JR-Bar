@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf paste recovery")
+@Suite("Shelf paste recovery", .temporaryDirectory)
 @MainActor
 struct ShelfPasteRecoveryTests {
     @MainActor
@@ -19,7 +20,7 @@ struct ShelfPasteRecoveryTests {
             defaults = try #require(UserDefaults(suiteName: suite))
             tray = ShelfTrayModel(defaults: defaults)
             board = NSPasteboard(name: .init(suite))
-            root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+            root = TestTemporaryDirectory.currentURL.appendingPathComponent(suite)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         }
 

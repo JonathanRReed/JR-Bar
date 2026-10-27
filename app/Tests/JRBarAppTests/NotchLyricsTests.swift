@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -8,11 +9,11 @@ import JRBarCore
 /// launches, and the switch that sends nothing until it is agreed to.
 /// No network — every store here answers from its disk cache, a
 /// recording stub or not at all.
-@Suite("Notch lyrics")
+@Suite("Notch lyrics", .temporaryDirectory)
 @MainActor
 struct NotchLyricsTests {
     private func tempURL() -> URL {
-        URL(fileURLWithPath: NSTemporaryDirectory() + "jrbar-test-lyrics-\(UUID().uuidString).json")
+        URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-test-lyrics-\(UUID().uuidString).json")
     }
 
     @Test("the offset tag moves every stamp, sooner for a positive offset")

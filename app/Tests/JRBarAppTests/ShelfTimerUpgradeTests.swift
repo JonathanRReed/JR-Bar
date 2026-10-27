@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import JRBarCore
@@ -7,11 +8,11 @@ import JRBarCore
 /// done chip's snooze, a timer set to a quota reset, and the agent
 /// nudge that retires quietly once its run has finished. Each model
 /// writes to its own temporary file.
-@Suite("Shelf timer upgrades")
+@Suite("Shelf timer upgrades", .temporaryDirectory)
 @MainActor
 struct ShelfTimerUpgradeTests {
     private func makeModel() -> ShelfTimerModel {
-        ShelfTimerModel(storeURL: URL(fileURLWithPath: NSTemporaryDirectory()
+        ShelfTimerModel(storeURL: URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/")
             + "jrbar-test-timers-\(UUID().uuidString).json"))
     }
 
@@ -44,7 +45,7 @@ struct ShelfTimerUpgradeTests {
 
     @Test("a sweep that fires the due timer re-arms for the next and leaves the fired one alone")
     func sweepRearms() throws {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")
+        let url = URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-test-timers-\(UUID().uuidString).json")
         let due = ShelfTimerModel.Entry(id: "due", label: "Due", deadline: Date().addingTimeInterval(-5), fired: false)
         let later = ShelfTimerModel.Entry(id: "later", label: "Later", deadline: Date().addingTimeInterval(120),
                                           fired: false)
@@ -121,7 +122,7 @@ struct ShelfTimerUpgradeTests {
 
     @Test("a timers file from before pause and nudges still loads")
     func legacyFile() throws {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory() + "jrbar-test-timers-\(UUID().uuidString).json")
+        let url = URL(fileURLWithPath: (TestTemporaryDirectory.currentURL.path + "/") + "jrbar-test-timers-\(UUID().uuidString).json")
         let future = Date().addingTimeInterval(600).timeIntervalSinceReferenceDate
         try Data(#"[{"id":"a","label":"Old","deadline":\#(future),"fired":false}]"#.utf8).write(to: url)
         let model = ShelfTimerModel(storeURL: url)
@@ -151,5 +152,25 @@ struct ShelfTimerUpgradeTests {
         #expect(toy.activeCapsule?.subtitle == "still working")
         #expect(toy.sessionStillWorking("claude:w"))
         #expect(!toy.sessionStillWorking("claude:gone"))
+    }
+}
+
+@MainActor
+@Suite("Scratch timer ownership", .temporaryDirectory)
+struct ScratchTimerOwnershipTests {
+    @Test func scratchTimersPersistAndRemoveTheirStoreOnRelease() throws {
+        func makeModel() -> (ShelfTimerModel, URL) {
+            let directory = ScratchDirectory(parent: TestTemporaryDirectory.currentURL)
+            return (ShelfTimerModel.scratch(directory: directory), directory.url)
+        }
+        func create() -> URL {
+            let (model, directory) = makeModel()
+            model.add(label: "Tea", duration: 60)
+            let url = directory.appendingPathComponent("timers.json")
+            #expect(ShelfTimerModel.load(from: url).count == 1)
+            return directory
+        }
+        let directory = create()
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
     }
 }

@@ -13,7 +13,6 @@ import inspect
 import os
 import shlex
 import subprocess
-import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -176,7 +175,9 @@ def bench(tmp_path: Path, *, result: ResignInResult | None = None, auth: str = '
     scratch_dirs: list[str] = []
 
     def make_scratch() -> str:
-        path = tempfile.mkdtemp(prefix="jrbar-signin-", dir=scratch_root)
+        directory = scratch_root / f"signin-{len(scratch_dirs)}"
+        directory.mkdir()
+        path = str(directory)
         scratch_dirs.append(path)
         return path
 

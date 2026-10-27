@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Optional feature teardown", .serialized)
+@Suite("Optional feature teardown", .temporaryDirectory, .serialized)
 struct FeatureLifecycleTests {
     private func stopped(_ resources: [String: Int], feature: String) {
         #expect(resources.values.allSatisfy { $0 == 0 }, "\(feature): \(resources)")
@@ -210,7 +211,7 @@ struct FeatureLifecycleTests {
             #expect(!model.running && !model.watchingOutputs)
             #expect(power == 0 && watches == 0 && !feed.isRunning)
         case "shelf-timers":
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let folder = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: folder) }
             let timers = ShelfTimerModel(storeURL: folder.appendingPathComponent("timers.json"))
             _ = timers.add(label: "Fixture", duration: 3600)

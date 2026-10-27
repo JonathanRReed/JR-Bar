@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch timer glance render proof", .serialized)
+@Suite("Notch timer glance render proof", .temporaryDirectory, .serialized)
 @MainActor
 struct NotchTimerGlanceRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -12,7 +13,7 @@ struct NotchTimerGlanceRenderProofTests {
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write timer glance PNGs"))
     func runningPausedAndDone() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         for mode in ["running", "paused", "done"] {

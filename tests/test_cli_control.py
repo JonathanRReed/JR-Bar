@@ -93,8 +93,8 @@ SETTINGS = {"global_brightness_scale": 0.8, "colors": {"agent_colors": {"claude"
 
 
 @pytest.fixture
-def core():
-    directory = Path(tempfile.mkdtemp(prefix="jrc-", dir=tempfile.gettempdir()))
+def core(short_tmp_path):
+    directory = short_tmp_path
     fake = FakeCore(
         directory / "core.sock",
         state=STATE,

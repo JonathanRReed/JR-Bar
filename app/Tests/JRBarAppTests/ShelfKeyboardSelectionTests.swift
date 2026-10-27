@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Shelf keyboard selection")
+@Suite("Shelf keyboard selection", .temporaryDirectory)
 struct ShelfKeyboardSelectionTests {
     @Test("Clear retires the keyboard cursor and Undo restores the same selected tile")
     func clearUndoRestoresKeyboardCursor() async throws {
@@ -208,7 +209,7 @@ struct ShelfKeyboardSelectionTests {
         init() throws {
             suite = "jrbar-shelf-selection-\(UUID().uuidString)"
             defaults = try #require(UserDefaults(suiteName: suite))
-            root = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+            root = TestTemporaryDirectory.currentURL.appendingPathComponent(suite, isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             tray = ShelfTrayModel(defaults: defaults)
         }

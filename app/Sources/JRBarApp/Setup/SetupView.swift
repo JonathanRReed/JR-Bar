@@ -629,11 +629,10 @@ struct SetupAsksStep: View {
 
     static func makePreview() -> NotchCardModel {
         let previewID = "jrbar-setup-preview-" + UUID().uuidString
-        let timerURL = FileManager.default.temporaryDirectory.appendingPathComponent(previewID + ".json")
         let defaults = UserDefaults(suiteName: previewID)!
         let power = AlcovePowerState(hasBattery: true, onAC: true, charging: false, percent: 100, fullyCharged: true)
         let utility = ShelfUtilityModel(power: power)
-        let model = NotchCardModel(timers: ShelfTimerModel(storeURL: timerURL, schedulingEnabled: false),
+        let model = NotchCardModel(timers: ShelfTimerModel.scratch(),
             tray: ShelfTrayModel(defaults: defaults), utility: utility, runtimeEnabled: false)
         model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "claude"), label: "Sample project",
             word: "Needs you", clickSession: nil, explanation: nil)

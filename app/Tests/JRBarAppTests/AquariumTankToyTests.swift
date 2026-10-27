@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -6,7 +7,7 @@ import JRBarCore
 
 /// The tank toy's own housekeeping, on a scratch save: the care records
 /// stay trimmed even while the window is closed.
-@Suite("Aquarium tank toy")
+@Suite("Aquarium tank toy", .temporaryDirectory)
 @MainActor
 struct AquariumTankToyTests {
     @Test("terminal shutdown saves current state and ignores later events or reactivation")
@@ -54,7 +55,7 @@ struct AquariumTankToyTests {
         withExtendedLifetime(toys) {}
     }
     private func scratch() -> AquariumSaveFile {
-        AquariumSaveFile(url: FileManager.default.temporaryDirectory
+        AquariumSaveFile(url: TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-tank-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
     }

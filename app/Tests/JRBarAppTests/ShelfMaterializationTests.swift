@@ -1,12 +1,13 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf materialization")
+@Suite("Shelf materialization", .temporaryDirectory)
 @MainActor
 struct ShelfMaterializationTests {
     private func scratchDirectory() -> URL {
-        FileManager.default.temporaryDirectory
+        TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-materialization-\(UUID().uuidString)")
     }
 

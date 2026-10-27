@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -6,6 +7,7 @@ import Testing
 /// The Dock utility's ownership: which halves run for which settings,
 /// and the card copy that explains a shared chord.
 @MainActor
+@Suite(.temporaryDirectory)
 struct DockUtilityTests {
     @Test("the key tap runs for the switcher alone and for the watcher's keys")
     func halves() {
@@ -88,7 +90,7 @@ struct DockUtilityTests {
 
     @Test("the exclusion menu names installed apps that aren't running, once each, never listed twice")
     func installedApps() throws {
-        let root = FileManager.default.temporaryDirectory
+        let root = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-apps-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         func makeApp(_ dir: String, _ file: String, id: String, name: String?) throws {

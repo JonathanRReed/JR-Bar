@@ -102,7 +102,7 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
 def test_final_command_runs_the_swift_suites_but_the_fast_gate_does_not():
     makefile = (ROOT / "Makefile").read_text()
     target = makefile.split("\nswift-test:\n", 1)[1].split("\n\n", 1)[0]
-    assert target.strip() == "cd app && swift test"
+    assert target.strip() == "$(PYTHON) scripts/check_temp_leaks.py --swift"
     fast = makefile.split("\nfast:\n", 1)[1].split("\n\n", 1)[0]
     assert "swift" not in fast
     assert "make swift-test" in (ROOT / "scripts/final-test.sh").read_text()

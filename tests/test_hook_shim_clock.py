@@ -22,7 +22,6 @@ import re
 import shutil
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -44,9 +43,9 @@ HANG_BOUND_SECONDS = 15.0
 
 
 @pytest.fixture
-def sock_dir():
+def sock_dir(short_tmp_path):
     """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
-    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    path = short_tmp_path
     try:
         yield path
     finally:

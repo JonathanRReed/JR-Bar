@@ -155,7 +155,8 @@ from jrbar import core_runtime, provider_usage_runtime, status_bar
 # parent was deleting it ("Directory not empty").
 provider_usage_runtime._default_collectors = lambda: {}
 
-tmp = Path(tempfile.mkdtemp())
+scratch = tempfile.TemporaryDirectory()
+tmp = Path(scratch.name)
 status_bar.default_settings_path = lambda: tmp / "settings.json"
 status_bar.default_latest_state_path = lambda: tmp / "latest.json"
 status_bar.default_activity_ledger_path = lambda: tmp / "activity-ledger.json"

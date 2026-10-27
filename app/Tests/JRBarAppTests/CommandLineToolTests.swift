@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -5,9 +6,9 @@ import Testing
 /// The `jrbar` link: created where nothing is, moved off an older
 /// JR-Bar, never written over somebody else's file. Everything happens
 /// in a throwaway folder.
-@Suite struct CommandLineToolTests {
+@Suite(.temporaryDirectory) struct CommandLineToolTests {
     private func sandbox() throws -> (root: URL, link: URL, bundled: String) {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-cli-\(UUID().uuidString)")
+        let root = TestTemporaryDirectory.currentURL.appending(path: "jrbar-cli-\(UUID().uuidString)")
         let helpers = root.appending(path: "JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS")
         try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
         let binary = helpers.appending(path: "jrbar-core")

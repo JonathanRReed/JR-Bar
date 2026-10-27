@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -5,10 +6,10 @@ import Testing
 /// `LEDFeed.resolveDevicePath` -- the mounted-volume rules the daemon uses:
 /// a name hint or STATUS.TXT beside LEDS.LED makes a device, the serial
 /// outranks the name, and a strip wins over a Dot.
-@Suite("LED feed device discovery")
+@Suite("LED feed device discovery", .temporaryDirectory)
 struct LEDFeedTests {
     private func makeVolumesRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
+        let root = TestTemporaryDirectory.currentURL
             .appendingPathComponent("jrbar-volumes-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root

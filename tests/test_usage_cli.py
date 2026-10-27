@@ -10,9 +10,10 @@ from __future__ import annotations
 import io
 import json
 import socket
-import tempfile
 import threading
 from pathlib import Path
+
+import pytest
 
 from jrbar.usage_cli import main, reset_words
 
@@ -54,8 +55,10 @@ USAGE = {
 class FakeCore:
     """A Unix socket that answers like the monitor: hello, then state."""
 
+    directory: Path
+
     def __init__(self, usage: dict) -> None:
-        self.path = Path(tempfile.mkdtemp(prefix="jrbar-usage-cli-")) / "core.sock"
+        self.path = self.directory / "core.sock"
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.path))
         self.server.listen(1)
@@ -78,6 +81,12 @@ class FakeCore:
     def close(self) -> None:
         self.server.close()
         self.thread.join(timeout=5.0)
+        self.path.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def fake_core_directory(short_tmp_path, monkeypatch):
+    monkeypatch.setattr(FakeCore, "directory", short_tmp_path, raising=False)
 
 
 def run(*args: str, usage: dict | None = None, store: dict | None = None) -> tuple[int, str, str]:

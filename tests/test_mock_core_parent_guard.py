@@ -19,7 +19,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 from pathlib import Path
 from typing import IO
@@ -89,9 +88,9 @@ def _exited(pid: int, timeout: float) -> bool:
 
 
 @pytest.fixture()
-def socket_path():
+def socket_path(short_tmp_path):
     # AF_UNIX paths are capped at 104 bytes; pytest's tmp_path can be longer.
-    directory = tempfile.mkdtemp(prefix="jrbar-guard-")
+    directory = str(short_tmp_path)
     yield os.path.join(directory, "mock.sock")
     shutil.rmtree(directory, ignore_errors=True)
 

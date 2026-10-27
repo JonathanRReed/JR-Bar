@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import CoreVideo
 import Foundation
@@ -8,7 +9,7 @@ import JRBarCore
 /// Fold without Screen Recording: the wallpaper, laid out the way the
 /// desktop lays it out, drawn into the same kind of buffer a capture
 /// delivers — rows top first, BGRA.
-@Suite("Fold wallpaper")
+@Suite("Fold wallpaper", .temporaryDirectory)
 @MainActor
 struct FoldWallpaperTests {
     @Test("the desktop's options map to its layout; nothing said is fill")
@@ -79,7 +80,7 @@ struct FoldWallpaperTests {
 
     @Test("the wallpaper file decodes into a frame off the main actor; a missing one says so")
     func decodesFromDisk() async throws {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = TestTemporaryDirectory.currentURL
             .appending(path: "jrbar-fold-wallpaper-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

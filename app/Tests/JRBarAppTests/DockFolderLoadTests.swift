@@ -1,11 +1,12 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite struct DockFolderLoadTests {
+@Suite(.temporaryDirectory) struct DockFolderLoadTests {
     @Test func missingFoldersAndFilesAreFailuresRatherThanEmptyFolders() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-folder-state-\(UUID().uuidString)")
+        let root = TestTemporaryDirectory.currentURL.appendingPathComponent("jrbar-folder-state-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let missing = root.appendingPathComponent("missing")
