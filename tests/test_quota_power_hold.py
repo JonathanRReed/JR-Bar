@@ -550,3 +550,36 @@ def test_a_finished_agents_lease_does_not_hold_the_mac_for_the_working_one() -> 
 
     assert run(first, 110.0) is AgentMode.WORKING
     assert run(second, 165.0) is AgentMode.IDLE_READY
+
+
+
+def test_workers_keep_their_own_provider_hold_until_their_quota_is_exhausted():
+    from datetime import datetime, timezone
+
+    from jrbar.models import AgentStatus, ParentLink
+
+    source = SourceKey("codex", "hooks", "local", "live_agent_events")
+    worker_key = WorkKey(source, WorkIdentifier("worker"))
+    root = AgentStatus("claude", "claude:session:root", "Orchestrator", AgentMode.WORKING,
+                       datetime.fromtimestamp(100.0, timezone.utc), "Stop", quota_working=False)
+    worker = AgentStatus("codex", "codex:session:worker", "Worker", AgentMode.WORKING,
+                         datetime.fromtimestamp(100.0, timezone.utc), "PreToolUse", work_key=worker_key,
+                         parent_links=(ParentLink("codex:session:worker", root.agent_id, "t3code", 100.0),))
+    first, context, binding = _runtime_capacity(110.0, 0.0)
+    holds = QuotaPowerHoldCoordinator()
+    common = dict(statuses=(root, worker), bindings_by_work={worker_key: binding},
+                  context=context, coordinator=holds)
+    # The first zero reading cannot release a worker's active lease.
+    assert quota_adjusted_work_mode(AgentMode.WORKING, capacity_by_provider={"codex": first},
+                                    now=110.0, **common) is AgentMode.WORKING
+    second, _, _ = _runtime_capacity(120.0, 0.0)
+    assert quota_adjusted_work_mode(AgentMode.WORKING, capacity_by_provider={"codex": second},
+                                    now=165.0, **common) is AgentMode.IDLE_READY
+    # A worker without a proven account remains active, regardless of the head's quota.
+    common["bindings_by_work"] = {}
+    common["coordinator"] = QuotaPowerHoldCoordinator()
+    assert quota_adjusted_work_mode(AgentMode.WORKING, capacity_by_provider={"codex": second},
+                                    now=300.0, **common) is AgentMode.WORKING
+    common["statuses"] = (root, replace(worker, stale=True))
+    assert quota_adjusted_work_mode(AgentMode.WORKING, capacity_by_provider={},
+                                    now=300.0, **common) is AgentMode.IDLE_READY

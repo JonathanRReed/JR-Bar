@@ -277,7 +277,7 @@ def quota_adjusted_work_mode(
     """Apply bound quota leases before the legacy aggregate keep-awake mode.
 
     Unbound work keeps the original mode. This adapter only suppresses the
-    aggregate work hold when every active main agent has an explicit account
+    aggregate work hold when every active agent has an explicit account
     binding and its own lease has stopped renewing.
     """
     from .capacity_authority import evaluate_lane_authority
@@ -352,7 +352,8 @@ def quota_adjusted_work_mode(
     #: "holding" would keep a quota-exhausted Mac awake all night.
     active_keys = []
     for status in statuses:
-        if getattr(status, "is_subagent", True) or getattr(status, "mode", None) not in work_modes:
+        if (getattr(status, "stale", False) or getattr(status, "quota_working", None) is False
+                or getattr(status, "mode", None) not in work_modes):
             continue
         work_key = getattr(status, "work_key", None)
         binding = bindings_by_work.get(work_key)
