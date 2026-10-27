@@ -927,10 +927,9 @@ struct BuddyFigure: View {
                 // Falling asleep the nightcap fades in as the outfit
                 // fades out, over the handoff; outside one it is either.
                 let asleep = moods.share(of: .asleep)
-                if asleep < 1, wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
                 characterBody
                 if asleep > 0 { cap.opacity(asleep) }
-                if asleep < 1, !wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
+                if asleep < 1, !wearsUnderEyes, let wearing { outfit(wearing).opacity(1 - asleep) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -1016,7 +1015,7 @@ struct BuddyFigure: View {
                         phase: phase, still: still)
         case .crab:
             CrabBody(moods: moods, tint: tint, pose: pose, lid: lid,
-                     phase: phase, still: still)
+                     phase: phase, still: still, wear: crabWear)
         case .mushroom:
             MushroomBody(moods: moods, tint: tint, pose: pose, lid: lid,
                          phase: phase, still: still)
@@ -1074,10 +1073,18 @@ struct BuddyFigure: View {
         .offset(y: -6.7)
     }
 
-    /// The crab's eyes stand on stalks above its crown, so what it wears
-    /// sits behind them: the stalks and eyes stay in front of the hat
-    /// rather than vanishing under it.
-    private var wearsBehind: Bool { character == .crab }
+    /// The crab's eyes stand on stalks above its shell. What it wears
+    /// sits on the shell in front of the stalks, and the eyes stay on
+    /// top of it: drawn behind the stalks, a hat squeezed between them
+    /// and read as a smudge. `CrabBody` takes the piece in that layer.
+    private var wearsUnderEyes: Bool { character == .crab }
+
+    /// The crab's piece, handed to `CrabBody` to draw under its eyes.
+    private var crabWear: AnyView? {
+        let asleep = moods.share(of: .asleep)
+        guard asleep < 1, let wearing else { return nil }
+        return AnyView(outfit(wearing).opacity(1 - asleep))
+    }
 
     /// Where a worn piece sits on each body: the crown's centre, the line
     /// a hat's cuff rests on, and how wide the head is to the hat. The
@@ -1091,7 +1098,8 @@ struct BuddyFigure: View {
         case .owl: return (0, -3.2, 1)
         case .slime: return (0, -3.6, 0.82)
         case .axolotl: return (0, -2.6, 1)
-        case .crab: return (0, -1.6, 0.78)
+        // On the shell's front, a size down; `CrabBody` lifts it 0.6.
+        case .crab: return (0, 0.2, 0.7)
         case .mushroom: return (0, -3.6, 1.04)
         case .ufo: return (0, -3.2, 0.8)
         }

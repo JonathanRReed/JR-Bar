@@ -131,6 +131,8 @@ struct CrabBody: View {
     let lid: Double
     let phase: TimeInterval
     let still: Bool
+    /// What it wears, drawn on the shell under the eyes.
+    var wear: AnyView? = nil
 
     /// How wide the pincers gape: they clap for asks & hops, hold a
     /// casual gape on patrol, and shut tight when down or asleep.
@@ -169,6 +171,7 @@ struct CrabBody: View {
             legs(left: false)
             stalks
             shell
+            if let wear { wear }
             eyeballs
                 .offset(y: -5.9)
             BuddyEyes(pose: pose, lid: lid, pupilColor: buddyHole, lidColor: tint,
