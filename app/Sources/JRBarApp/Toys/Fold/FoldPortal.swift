@@ -547,10 +547,16 @@ enum FoldPortalModel {
 /// toward the top.
 ///
 /// Away from the hinge the picture softens and darkens, measured in the
-/// picture's own rows (e = 0 at the hinge row, 1 at the far edge): blur
-/// σ grows as e^1.35, the hinge-side fifth never darkens, and the far
-/// edge is black by half-closed. Both ride an eased `motion` with zero
-/// slope at the start, so the first degrees look like nothing at all.
+/// picture's own rows (e = 0 at the hinge row, 1 at the far edge). The
+/// blur is a front (`BlurShape.front`): a row's pyramid level grows in a
+/// straight line with its distance from the hinge and with the travel,
+/// so σ grows by octaves. The hinge side stays sharp well into the
+/// close, the outer band frosts hard by a third of it, and a reopen
+/// clears from the hinge outward, the far edge last. Under a pixel of
+/// blur nothing is drawn differently, so the first degrees look like
+/// nothing at all. The hinge-side fifth never darkens, and the far edge
+/// is black by half-closed, on an eased `motion` with zero slope at the
+/// start.
 /// The whole glass fades to black as a seated eye loses it edge-on, so
 /// the fold is black well before the closed-lid pause.
 ///
@@ -562,9 +568,35 @@ enum FoldDuoModel {
     /// The seated eye at the default Perspective: 2.6 H toward the
     /// person and 2.0 H up (about 51 cm and 39 cm on a 14-inch panel).
     static let baseEye = SIMD2<Double>(2.6, 2.0)
-    /// σ at the far edge at full motion and Blur 1, in screen heights.
-    /// 0.10 H is about the Duo's own softness; the default 0.6 sits a
-    /// notch under it.
+    /// Which blur the Duo draws. `front` is the default from 0.10.1;
+    /// `classic` is the 0.10.0 curve, σ = 0.10·Blur·motion·e^1.35, kept
+    /// for one release behind a hidden default (`classicKey`) so the two
+    /// can be compared on the lid.
+    enum BlurShape: Equatable, Sendable {
+        case front
+        case classic
+
+        static let classicKey = "jrbar.foldClassicBlur"
+
+        static func current(defaults: UserDefaults = .standard) -> BlurShape {
+            defaults.bool(forKey: classicKey) ? .classic : .front
+        }
+    }
+
+    /// The front's σ for a fully frosted row at Blur 1, in screen
+    /// heights. The default Blur 0.6 gives 0.14 H, the frost the replay
+    /// of Apple's own product-page renderer reaches by a third of a close.
+    static let frontScale = 0.14 / 0.6
+    /// The octaves σ climbs from a sharp row to a fully frosted one.
+    static let frontOctaves = 8.0
+    /// The hinge-side share of the picture that the front never blurs.
+    static let frontStart = 0.07
+    /// The travel, as a share of the fade (`blurProgress`), at which the
+    /// far edge is fully frosted; a row at distance r is fully frosted
+    /// from r·progress ≥ `frontSaturate`.
+    static let frontSaturate = 0.5
+    /// The classic blur's σ at the far edge at full motion and Blur 1,
+    /// in screen heights.
     static let blurScale = 0.10
     /// The darkening gain at Shade 1. The default 0.67 gives the Duo's
     /// "twice the transition": the far edge is black once motion ≥ 0.5.
@@ -578,8 +610,10 @@ enum FoldDuoModel {
     static let endFadeSpan = 20.0
     /// Degrees of travel over which the overlay fades in at the start.
     static let alphaSpan = 2.0
-    /// Gaussian pyramid levels the renderer builds.
-    static let pyramidLevels = 8
+    /// Gaussian pyramid levels the renderer builds: enough to carry the
+    /// front's full frost on a Retina picture (0.14 H is level 8.4 of a
+    /// 1964-pixel-tall one).
+    static let pyramidLevels = 10
     /// Pyramid level L, read as a cubic B-spline, carries σ ≈ 0.82·2^L
     /// base pixels: the levels' own 5-tap binomials add (4^L − 1)/3 px²
     /// and the B-spline another 4^L/3.
@@ -650,8 +684,29 @@ enum FoldDuoModel {
         return smoothstep(0, 1, delta / span)
     }
 
-    /// Blur σ, in screen heights, at picture row `e`.
-    static func sigma(e: Double, motion: Double, blur: Double) -> Double {
+    /// The front's progress, 0…1: the travel as a straight share of the
+    /// same span `motion` eases over. No easing: the octave spacing keeps
+    /// the first degrees under a pixel of blur on its own.
+    static func blurProgress(delta: Double, reference: Double, fadeLength: Double) -> Double {
+        guard delta.isFinite, delta > 0 else { return 0 }
+        let span = FoldSettings.clampFadeLength(fadeLength) * max(1, reference - FoldPause.closedAngle)
+        return min(1, delta / span)
+    }
+
+    /// The front's σ, in screen heights, at picture row `e`: the row's
+    /// frost `a` rises in a straight line with its distance past
+    /// `frontStart` and with the progress, and σ climbs `frontOctaves`
+    /// octaves from 0 at a = 0 to the full frost at a = 1.
+    static func frontSigma(e: Double, progress: Double, blur: Double) -> Double {
+        let b = blur.isFinite ? min(1, max(0, blur)) : 0
+        let r = min(1, max(0, (e - frontStart) / (1 - frontStart)))
+        let p = progress.isFinite ? min(1, max(0, progress)) : 0
+        let a = min(1, r * p / frontSaturate)
+        return frontScale * b * (exp2(frontOctaves * a) - 1) / (exp2(frontOctaves) - 1)
+    }
+
+    /// The classic blur's σ, in screen heights, at picture row `e`.
+    static func classicSigma(e: Double, motion: Double, blur: Double) -> Double {
         let b = blur.isFinite ? min(1, max(0, blur)) : 0
         return blurScale * b * motion * pow(min(1, max(0, e)), gamma)
     }
@@ -712,10 +767,13 @@ enum FoldDuoModel {
     /// the picture on the glass with no blur: it darkens only.
     static func apply(to p: inout FoldRenderer.Params, reference: Double, theta: Double,
                       hold: Double, perspective: Double, blur: Double, shade: Double,
-                      fadeLength: Double, reduceMotion: Bool) {
+                      fadeLength: Double, reduceMotion: Bool, shape: BlurShape = .front) {
         let delta = max(0, reference - theta)
         let e = eye(perspective: perspective)
         let m = motion(delta: delta, reference: reference, fadeLength: fadeLength)
+        let b = blur.isFinite ? min(1, max(0, blur)) : 0
+        let scale = shape == .front ? frontScale : blurScale
+        let progress = blurProgress(delta: delta, reference: reference, fadeLength: fadeLength)
         p.delta = Float(radians(delta))
         p.thetaRef = Float(radians(reference))
         p.theta = Float(radians(theta))
@@ -723,7 +781,11 @@ enum FoldDuoModel {
         p.eyeU = Float(e.y)
         p.hold = reduceMotion ? 0 : Float(hold.isFinite ? min(1, max(0, hold)) : 1)
         p.motion = Float(m)
-        p.blurMax = reduceMotion ? 0 : Float(blurScale * (blur.isFinite ? min(1, max(0, blur)) : 0))
+        p.blurMax = reduceMotion ? 0 : Float(scale * b)
+        p.blurFront = shape == .front ? 1 : 0
+        p.blurReach = Float(progress / frontSaturate)
+        p.frontOctaves = Float(frontOctaves)
+        p.frontStart = Float(frontStart)
         p.darkGain = Float(darkScale * (shade.isFinite ? min(1, max(0, shade)) : 0))
         p.endFade = Float(endFade(theta: theta, eye: e))
         p.opacity = Float(alpha(delta: delta))

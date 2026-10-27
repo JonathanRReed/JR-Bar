@@ -158,13 +158,126 @@ struct FoldDuoModelTests {
         }
     }
 
-    @Test("blur grows from a sharp hinge to 0.10 H at Blur 1")
-    func blurCurve() {
-        #expect(FoldDuoModel.sigma(e: 0, motion: 1, blur: 1) == 0)
-        #expect(abs(FoldDuoModel.sigma(e: 1, motion: 1, blur: 1) - 0.10) < 1e-12)
-        #expect(abs(FoldDuoModel.sigma(e: 1, motion: 1, blur: 0.6) - 0.06) < 1e-12)
-        #expect(FoldDuoModel.sigma(e: 1, motion: 0, blur: 1) == 0)
-        #expect(FoldDuoModel.sigma(e: 0.5, motion: 1, blur: 1) < 0.05, "e^1.35 keeps the middle crisper")
+    @Test("the classic blur grows from a sharp hinge to 0.10 H at Blur 1")
+    func classicBlurCurve() {
+        #expect(FoldDuoModel.classicSigma(e: 0, motion: 1, blur: 1) == 0)
+        #expect(abs(FoldDuoModel.classicSigma(e: 1, motion: 1, blur: 1) - 0.10) < 1e-12)
+        #expect(abs(FoldDuoModel.classicSigma(e: 1, motion: 1, blur: 0.6) - 0.06) < 1e-12)
+        #expect(FoldDuoModel.classicSigma(e: 1, motion: 0, blur: 1) == 0)
+        #expect(FoldDuoModel.classicSigma(e: 0.5, motion: 1, blur: 1) < 0.05, "e^1.35 keeps the middle crisper")
+    }
+
+    /// The front's progress at `angle` from a lid resting at 110°, at the
+    /// default fade.
+    private func progress(_ angle: Double) -> Double {
+        FoldDuoModel.blurProgress(delta: 110 - angle, reference: 110, fadeLength: 0.55)
+    }
+
+    @Test("the front's progress is the straight share of the fade span, capped at 1")
+    func frontProgress() {
+        let span = 0.55 * (110 - FoldPause.closedAngle)
+        #expect(FoldDuoModel.blurProgress(delta: 0, reference: 110, fadeLength: 0.55) == 0)
+        #expect(FoldDuoModel.blurProgress(delta: -3, reference: 110, fadeLength: 0.55) == 0)
+        #expect(abs(FoldDuoModel.blurProgress(delta: span / 4, reference: 110, fadeLength: 0.55) - 0.25) < 1e-12)
+        #expect(FoldDuoModel.blurProgress(delta: span * 3, reference: 110, fadeLength: 0.55) == 1)
+        #expect(FoldDuoModel.blurProgress(delta: .nan, reference: 110, fadeLength: 0.55) == 0)
+    }
+
+    @Test("the front is sharp at the hinge and at rest, and fully frosted at 0.14 H by the default Blur")
+    func frontEnds() {
+        for e in stride(from: 0.0, through: FoldDuoModel.frontStart - 0.001, by: 0.01) {
+            #expect(FoldDuoModel.frontSigma(e: e, progress: 1, blur: 1) == 0, "hinge row e \(e)")
+        }
+        for e in stride(from: 0.0, through: 1.0, by: 0.1) {
+            #expect(FoldDuoModel.frontSigma(e: e, progress: 0, blur: 1) == 0, "at rest, e \(e)")
+        }
+        #expect(abs(FoldDuoModel.frontSigma(e: 1, progress: 0.5, blur: 0.6) - 0.14) < 1e-12)
+        #expect(abs(FoldDuoModel.frontSigma(e: 1, progress: 1, blur: 1) - 0.14 / 0.6) < 1e-12)
+        #expect(FoldDuoModel.frontSigma(e: 1, progress: 1, blur: 0) == 0, "Blur 0 is sharp")
+    }
+
+    @Test("the front is log-spaced: each eighth of the frost doubles the blur")
+    func frontOctaves() {
+        // σ + σ₀ doubles for every 1/8 of frost, σ₀ the curve's own floor.
+        let floor = FoldDuoModel.frontScale / (exp2(FoldDuoModel.frontOctaves) - 1)
+        let start = FoldDuoModel.frontStart
+        func sigma(frost a: Double) -> Double {
+            // A row whose frost is a at full progress: r = a·frontSaturate.
+            let r = a * FoldDuoModel.frontSaturate
+            return FoldDuoModel.frontSigma(e: start + r * (1 - start), progress: 1, blur: 1)
+        }
+        for step in 0..<8 {
+            let a = Double(step) / 8
+            let ratio = (sigma(frost: a + 1.0 / 8) + floor) / (sigma(frost: a) + floor)
+            #expect(abs(ratio - 2) < 1e-9, "frost \(a): ratio \(ratio)")
+        }
+    }
+
+    @Test("the first degrees stay under a pixel of blur on a Retina picture")
+    func frontStartsInvisibly() {
+        let height = 1964.0
+        for angle in [109.0, 108.0] {
+            let worst = FoldDuoModel.frontSigma(e: 1, progress: progress(angle), blur: 0.6) * height
+            #expect(worst < FoldDuoModel.levelSigma, "\(angle)°: \(worst) px")
+        }
+        // Ten degrees from rest the far edge is still soft: it clears last.
+        let tenDown = FoldDuoModel.frontSigma(e: 1, progress: progress(100), blur: 0.6) * height
+        #expect(tenDown > 4, "the far edge 10° from rest: \(tenDown) px")
+    }
+
+    @Test("the front keeps the hinge side sharper and frosts the outer band harder than the classic blur")
+    func frontAgainstClassic() {
+        // A third of the close: lid at 75° from 110°.
+        let angle = 75.0
+        let m = FoldDuoModel.motion(delta: 110 - angle, reference: 110, fadeLength: 0.55)
+        let p = progress(angle)
+        for e in [0.15, 0.25, 0.4] {
+            let front = FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6)
+            let classic = FoldDuoModel.classicSigma(e: e, motion: m, blur: 0.6)
+            #expect(front < classic, "e \(e): front \(front), classic \(classic)")
+        }
+        for e in [0.8, 0.9, 1.0] {
+            let front = FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6)
+            let classic = FoldDuoModel.classicSigma(e: e, motion: m, blur: 0.6)
+            #expect(front > 3 * classic, "e \(e): front \(front), classic \(classic)")
+        }
+        // The outer band is fully frosted by then.
+        #expect(abs(FoldDuoModel.frontSigma(e: 0.95, progress: p, blur: 0.6) - 0.14) < 1e-12)
+    }
+
+    @Test("a reopen clears as a front: the fully frosted band retreats to the far edge, the hinge side first")
+    func frontClearsFromTheHinge() {
+        // Walk a reopen from 55° back up to the 110° rest: every row only
+        // ever sharpens, and the first fully frosted row moves outward.
+        var lastFrosted = 0.0
+        var lastSigma: [Double] = Array(repeating: .infinity, count: 21)
+        for angle in stride(from: 55.0, through: 110, by: 5) {
+            let p = progress(angle)
+            var frosted = 1.01
+            for i in 0...20 {
+                let e = Double(i) / 20
+                let sigma = FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6)
+                #expect(sigma <= lastSigma[i] + 1e-12, "row \(e) got softer at \(angle)°")
+                lastSigma[i] = sigma
+                if frosted > 1, abs(sigma - 0.14) < 1e-9 { frosted = e }
+            }
+            #expect(frosted >= lastFrosted, "the frosted band moved toward the hinge at \(angle)°")
+            lastFrosted = frosted
+        }
+        #expect(lastFrosted > 1, "nothing frosted at rest")
+    }
+
+    @Test("the hidden comparison switch picks the classic blur; nothing set is the front")
+    func blurShapeSwitch() {
+        let name = "devin.jrbar.test.foldblur.\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: name)!
+        defer { suite.removePersistentDomain(forName: name) }
+        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .front)
+        suite.set(true, forKey: FoldDuoModel.BlurShape.classicKey)
+        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .classic)
+        suite.set(false, forKey: FoldDuoModel.BlurShape.classicKey)
+        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .front)
+        #expect(FoldDuoModel.BlurShape.classicKey == "jrbar.foldClassicBlur")
     }
 
     @Test("the end fade is black at edge-on + 2° and clear from edge-on + 22°")
@@ -200,7 +313,11 @@ struct FoldDuoModelTests {
         #expect(abs(p.theta - Float(80 * Double.pi / 180)) < 1e-6)
         #expect(p.eyeF == 2.6 && p.eyeU == 2.0)
         #expect(p.hold == 1)
-        #expect(abs(p.blurMax - 0.06) < 1e-6)
+        #expect(abs(p.blurMax - 0.14) < 1e-6)
+        #expect(p.blurFront == 1)
+        let reach = FoldDuoModel.blurProgress(delta: 30, reference: 110, fadeLength: 0.55) / 0.5
+        #expect(abs(Double(p.blurReach) - reach) < 1e-6)
+        #expect(p.frontOctaves == 8 && abs(p.frontStart - 0.07) < 1e-7)
         #expect(abs(p.darkGain - 2) < 1e-5)
         #expect(p.motion > 0.4 && p.motion < 0.7)
         #expect(p.endFade == 0)
@@ -208,6 +325,12 @@ struct FoldDuoModelTests {
         #expect(p.blackout == 0)
         #expect(p.imageSize == SIMD2<Float>(2560, 1662), "the upload's size survives the tick")
         #expect(p.lodCount == 8)
+        // The classic blur, from the hidden comparison switch.
+        FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
+                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: false,
+                           shape: .classic)
+        #expect(abs(p.blurMax - 0.06) < 1e-6)
+        #expect(p.blurFront == 0)
         // Reduce Motion: no warp and no blur, darkening only.
         FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
                            blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: true)
@@ -232,14 +355,18 @@ struct FoldDuoModelTests {
         #expect(MemoryLayout<P>.offset(of: \P.blackout) == 132)
         #expect(MemoryLayout<P>.offset(of: \P.lodCount) == 136)
         #expect(MemoryLayout<P>.offset(of: \P.pyramidShift) == 140)
-        #expect(MemoryLayout<P>.stride == 144)
+        #expect(MemoryLayout<P>.offset(of: \P.blurFront) == 144)
+        #expect(MemoryLayout<P>.offset(of: \P.blurReach) == 148)
+        #expect(MemoryLayout<P>.offset(of: \P.frontOctaves) == 152)
+        #expect(MemoryLayout<P>.offset(of: \P.frontStart) == 156)
+        #expect(MemoryLayout<P>.stride == 160)
     }
 
     @Test("the pyramid level carries the asked-for blur, clamped to the levels built")
     func lodMapping() {
         #expect(FoldDuoModel.lod(sigmaPixels: 0) == 0)
         #expect(abs(FoldDuoModel.lod(sigmaPixels: 0.82 * 8) - 3) < 1e-9)
-        #expect(FoldDuoModel.lod(sigmaPixels: 1e6) == 7)
+        #expect(FoldDuoModel.lod(sigmaPixels: 1e6) == 9)
         #expect(FoldDuoModel.lod(sigmaPixels: 1e6, levels: 4) == 3)
     }
 

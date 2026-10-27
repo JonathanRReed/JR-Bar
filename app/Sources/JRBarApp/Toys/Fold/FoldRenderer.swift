@@ -46,7 +46,7 @@ private func foldLogThrottled(_ message: String) {
 /// The fold's Metal renderer, with one pipeline per look.
 ///
 /// **Duo** (`duoFragment`): the iPhone Duo's fold. One captured frame
-/// lands in a persistent Gaussian pyramid (MPS, with plain mipmaps as
+/// lands in a persistent 10-level Gaussian pyramid (MPS, with plain mipmaps as
 /// the fallback), sRGB-encoded so every read and every level's filter
 /// mixes light rather than encoded numbers; each glass pixel samples the
 /// picture point a seated eye saw behind it on the resting lid
@@ -250,7 +250,8 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         var eyeU: Float = 2.0
         /// The eased 0…1 transition that drives blur and darkening.
         var motion: Float = 0
-        /// Far-edge blur σ at full motion.
+        /// σ at full frost (the front) or at the far edge at full motion
+        /// (classic), in screen heights.
         var blurMax: Float = 0
         /// Darkening gain (2 is the Duo's own).
         var darkGain: Float = 0
@@ -264,6 +265,15 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         /// pixels right and down of where they belong, and the read
         /// shifts them back. 0 for plain mipmaps, which stay centred.
         var pyramidShift: Float = 0
+        /// 1 draws the front blur, 0 the classic one (`FoldDuoModel.BlurShape`).
+        var blurFront: Float = 1
+        /// The front's progress over its saturation: a row at distance r
+        /// past `frontStart` is fully frosted once r·blurReach ≥ 1.
+        var blurReach: Float = 0
+        /// The octaves the front's σ climbs, and the hinge-side share it
+        /// never blurs.
+        var frontOctaves: Float = 8
+        var frontStart: Float = 0.07
     }
 
     let device: MTLDevice
@@ -696,12 +706,16 @@ struct FoldParams {
     float eyeF;         // the seated eye, toward the person
     float eyeU;         // and up from the deck
     float motion;       // eased 0..1 transition for blur and darkening
-    float blurMax;      // far-edge sigma at motion 1, fraction of H
+    float blurMax;      // sigma at full frost (front) or far edge at motion 1 (classic), H
     float darkGain;     // darkening gain (2 = the Duo's 2x)
     float endFade;      // 0..1 to black as the eye loses the glass
     float blackout;     // 1 = flat black
     float lodCount;     // pyramid levels
     float pyramidShift; // 1 = undo MPS's decimation offset
+    float blurFront;    // 1 = the front blur, 0 = classic
+    float blurReach;    // the front's progress over its saturation
+    float frontOctaves; // octaves from sharp to full frost
+    float frontStart;   // hinge-side share the front never blurs
 };
 
 struct FoldOut {
@@ -985,7 +999,18 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
     // Blur and darkening follow the PICTURE's rows, not the glass: e is
     // 0 at the hinge row and 1 at the far edge.
     float e = clamp(1.0 - src.y, 0.0, 1.0);
-    float sigma = p.blurMax * p.motion * pow(e, 1.35);
+    float sigma;
+    if (p.blurFront > 0.5) {
+        // The front: the row's frost rises in a straight line with its
+        // distance from the hinge and with the travel, and sigma climbs
+        // by octaves with it, so the hinge side stays sharp while the
+        // outer band frosts hard, and a reopen clears from the hinge out.
+        float r = clamp((e - p.frontStart) / (1.0 - p.frontStart), 0.0, 1.0);
+        float a = clamp(r * p.blurReach, 0.0, 1.0);
+        sigma = p.blurMax * (exp2(p.frontOctaves * a) - 1.0) / (exp2(p.frontOctaves) - 1.0);
+    } else {
+        sigma = p.blurMax * p.motion * pow(e, 1.35);
+    }
     // Pyramid level L read as a B-spline carries sigma ~= 0.82 * 2^L
     // base pixels; between levels the two reads blend. Under a level of
     // blur the base is read as it is, so a still picture stays exact.
