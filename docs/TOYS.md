@@ -393,7 +393,14 @@ study of Apple's own model (MIT).
   on (`FoldShaderCache`), so the first fold never waits on it.
   - **Duo** (`duoFragment`, `FoldDuoModel`): each captured frame lands
     in an 8-level Gaussian pyramid (`MPSImageGaussianPyramid`; plain
-    mipmaps where MPS can't run). Units are screen heights in the lid's
+    mipmaps where MPS can't run). The pyramid is sRGB-encoded
+    (`bgra8Unorm_srgb`), so MPS's filter and every read mix light rather
+    than encoded numbers: a black-and-white checker blurs to about
+    184/255, the average of its light, where blurring the numbers gave
+    135 and greyed bright detail out. The shader encodes the result back
+    and adds a fixed ±1-step triangular dither wherever the fold changed
+    the picture, so long dark ramps come out as grain, not bands; the
+    resting frame stays the desktop's own bytes and black stays black. Units are screen heights in the lid's
     side view, hinge at the origin. The seated eye sits at (2.6, 2.0)·(1.6
     − Perspective): 2.6 H toward you, 2.0 H up at the default. Each glass
     pixel, on a lid drawn at θref − Hold·(θref − θ), casts a ray from the

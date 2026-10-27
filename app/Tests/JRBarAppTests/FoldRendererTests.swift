@@ -303,7 +303,9 @@ import Testing
     @Test func duoPyramidReadsAsAGaussian() throws {
         // The blur is one pyramid level read as a B-spline — no disc, so
         // no ghost copies. Read levels 2 and 3 with the renderer's own
-        // `duoLevel` and compare with a CPU Gaussian of σ 0.82·2^L.
+        // `duoLevel` and compare with a CPU Gaussian of σ 0.82·2^L. The
+        // pyramid holds light, so the read and the Gaussian are both in
+        // linear light, on a 0…255 scale.
         let n = 256
         let shapes: (Int, Int) -> UInt8 = { x, y in
             var v = 0.25
@@ -347,7 +349,7 @@ import Testing
         // on the renderer's queue waits the build out, so a loaded run
         // never probes a level MPS is still writing.
         #expect(renderer.render(to: out, size: CGSize(width: n, height: n)))
-        let base = (0..<(n * n)).map { Double(shapes($0 % n, $0 / n)) }
+        let base = (0..<(n * n)).map { 255 * Self.linear(Double(shapes($0 % n, $0 / n)) / 255) }
         for level in [2.0, 3.0] {
             let command = try #require(queue.makeCommandBuffer())
             let pass = MTLRenderPassDescriptor()
@@ -375,6 +377,32 @@ import Testing
             }
             #expect(worst < 6, "level \(level) reads \(worst)/255 off a Gaussian")
         }
+    }
+
+    /// An sRGB-encoded value, 0…1, as light, 0…1.
+    private static func linear(_ v: Double) -> Double {
+        v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+    }
+
+    @Test func theDuoBlurMixesLightNotNumbers() throws {
+        // A black-and-white checker (20 and 250) blurred flat: mixed as
+        // encoded numbers it greys out to their average, 135; mixed as
+        // light, the way a defocused lens mixes it, it lands near 184.
+        let width = 256, height = 160
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { x, y in
+            ((x / 4) + (y / 4)) % 2 == 0 ? 250 : 20
+        })
+        // Glass rows 6–20 at 70° show picture rows e ≈ 0.60–0.67: blurred
+        // well past the 4 px cells, and clear of the picture's feathered edge.
+        Self.duo(renderer, theta: 70, blur: 0.6, shade: 0)
+        let out = try Self.makeTarget(renderer.device, width: width, height: height)
+        #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
+        let px = Self.grays(out)
+        let far = Self.stats(px, width: width, rows: 6..<20, columns: 96..<160)
+        let lightMean = 255 * (Self.linear(20.0 / 255) + Self.linear(250.0 / 255)) / 2
+        let expected = 255 * (1.055 * pow(lightMean / 255, 1 / 2.4) - 0.055)
+        #expect(far.sd < 6, "the far band is blurred flat (sd \(far.sd))")
+        #expect(abs(far.mean - expected) < 8, "far band \(far.mean), light's own average \(expected)")
     }
 
     /// A separable Gaussian blur, edges clamped.

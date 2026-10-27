@@ -46,12 +46,15 @@ private func foldLogThrottled(_ message: String) {
 /// The fold's Metal renderer, with one pipeline per look.
 ///
 /// **Duo** (`duoFragment`): the iPhone Duo's fold. One captured frame
-/// lands in a persistent 8-level Gaussian pyramid (MPS, with plain
-/// mipmaps as the fallback); each glass pixel samples the picture point
-/// a seated eye saw behind it on the resting lid (`FoldDuoModel`), reads
-/// the level that carries its blur as a smooth B-spline — no disc, so
-/// no ghost copies — darkens away from the hinge, and fades to black as
-/// the eye loses the glass. The void is pure black; no sheen, no seam.
+/// lands in a persistent Gaussian pyramid (MPS, with plain mipmaps as
+/// the fallback), sRGB-encoded so every read and every level's filter
+/// mixes light rather than encoded numbers; each glass pixel samples the
+/// picture point a seated eye saw behind it on the resting lid
+/// (`FoldDuoModel`), reads the level that carries its blur as a smooth
+/// B-spline — no disc, so no ghost copies — darkens away from the hinge,
+/// and fades to black as the eye loses the glass. The output is
+/// re-encoded and dithered wherever the fold changed it. The void is
+/// pure black; no sheen, no seam.
 /// `blackout` draws the closed-lid hold as the clear alone: no pipeline
 /// and no texture.
 ///
@@ -277,8 +280,9 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             textureGeneration &+= 1
         }
     }
-    /// The Duo's picture: the newest frame as an 8-level Gaussian
-    /// pyramid, persistent and reused every frame.
+    /// The Duo's picture: the newest frame as a Gaussian pyramid,
+    /// sRGB-encoded so it filters in linear light, persistent and reused
+    /// every frame.
     private(set) var duoPyramid: MTLTexture?
     /// MPS's pyramid kernel, or nil where MPS can't run on this device —
     /// then the pyramid is plain mipmaps.
@@ -449,9 +453,12 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+        // The Duo reads the frame as the sRGB-encoded picture it is, so
+        // its pyramid holds light; the Room keeps the encoded numbers.
+        let format: MTLPixelFormat = look == .duo ? .bgra8Unorm_srgb : .bgra8Unorm
         var wrapped: CVMetalTexture?
         let status = CVMetalTextureCacheCreateTextureFromImage(
-            kCFAllocatorDefault, textureCache, pixelBuffer, nil, .bgra8Unorm,
+            kCFAllocatorDefault, textureCache, pixelBuffer, nil, format,
             width, height, 0, &wrapped)
         guard status == kCVReturnSuccess, let wrapped,
               let source = CVMetalTextureGetTexture(wrapped) else {
@@ -552,6 +559,9 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
 
     /// The Duo's persistent pyramid, recreated only when the capture's
     /// size changes. Usage includes shaderWrite: MPS writes the levels.
+    /// It is sRGB-encoded: MPS and the shader read it as linear light
+    /// and the levels are stored back in the encoding, so an 8-bit level
+    /// keeps its precision where the eye needs it.
     private func ensureDuoPyramid(width: Int, height: Int) -> MTLTexture? {
         if let pyramid = duoPyramid, pyramid.width == width, pyramid.height == height {
             return pyramid
@@ -559,7 +569,7 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         let fit = Int(log2(Double(max(1, max(width, height))))) + 1
         let levels = max(1, min(FoldDuoModel.pyramidLevels, fit))
         let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: levels > 1)
+            pixelFormat: .bgra8Unorm_srgb, width: width, height: height, mipmapped: levels > 1)
         desc.mipmapLevelCount = levels
         desc.usage = [.shaderRead, .shaderWrite]
         desc.storageMode = .private
@@ -902,6 +912,33 @@ static float2 duoHeldUV(float x, float h, float thE, constant FoldParams &p,
     return float2(t * x / p.aspect + 0.5, 1.0 - dot(hit, u0));
 }
 
+// The pyramid holds light; the panel takes the sRGB curve, which Display
+// P3 shares. Exact to well under half a step, so the resting frame
+// round-trips to the captured bytes.
+static float3 duoEncode(float3 c) {
+    c = clamp(c, 0.0, 1.0);
+    float3 curve = 1.055 * pow(c, float3(1.0 / 2.4)) - 0.055;
+    return select(curve, c * 12.92, c <= 0.0031308);
+}
+
+// A fixed triangular noise per pixel, -1..1 of an 8-bit step: a long dark
+// ramp comes out as grain finer than a step instead of bands. Static, so
+// it never crawls; one value for all three channels, so it is grain and
+// never colour noise.
+static float duoDither(float2 position) {
+    uint2 q = uint2(position);
+    uint a = (q.x * 0x8da6b343u) ^ (q.y * 0xd8163841u);
+    a = (a ^ (a >> 16)) * 0x7feb352du;
+    a = (a ^ (a >> 15)) * 0x846ca68bu;
+    a ^= a >> 16;
+    uint b = a * 0x9e3779b9u + 0x632be5abu;
+    b = (b ^ (b >> 16)) * 0x7feb352du;
+    b ^= b >> 15;
+    float u = float(a >> 8) * (1.0 / 16777216.0);
+    float v = float(b >> 8) * (1.0 / 16777216.0);
+    return (u + v - 1.0) / 255.0;
+}
+
 // One pyramid level read as a cubic B-spline through four bilinear taps.
 // A single bilinear tap of a decimated level draws the blur as a chain
 // of straight ramps; the B-spline draws it as a Gaussian (sigma about
@@ -972,8 +1009,19 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
     // far edge to black once the motion is under way.
     float g = clamp((e - 0.2) / 0.8, 0.0, 1.0);
     float dark = min(1.0, p.darkGain * p.motion * pow(g, 1.35));
-    c *= cov.x * cov.y * (1.0 - dark) * (1.0 - clamp(p.endFade, 0.0, 1.0));
-    return float4(c, 1.0);
+    float k = cov.x * cov.y * (1.0 - dark) * (1.0 - clamp(p.endFade, 0.0, 1.0));
+    // The blur mixed light; the darkening and the fades scale the encoded
+    // value, the way they were tuned.
+    float3 shown = duoEncode(c) * k;
+    // Grain only where the fold changed the picture, and never past black
+    // or white: the resting frame stays the desktop's own bytes, and the
+    // void stays pure black.
+    if (lod > 0.0 || k < 0.998) {
+        float3 steps = shown * 255.0;
+        float3 room = clamp(min(steps, 255.0 - steps), 0.0, 1.0);
+        shown += room * duoDither(in.position.xy);
+    }
+    return float4(shown, 1.0);
 }
 """
 
