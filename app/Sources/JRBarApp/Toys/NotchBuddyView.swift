@@ -45,6 +45,16 @@ struct NotchBuddyView: View {
     /// False while the panel is fully covered (a fullscreen Space, a
     /// window over the floating pet): nothing on screen, nothing to draw.
     @ViewState private var visible = true
+    /// The eyes on the pointer (`BuddyGaze`), listening only while
+    /// `followsPointer` holds.
+    @ViewState private var gaze = BuddyGaze()
+
+    /// On screen, awake, moving and not Mini: the only time the eyes
+    /// follow the pointer, so the pointer watch is let go otherwise.
+    private var followsPointer: Bool {
+        BuddyGaze.wanted(visible: visible, awake: toy.sessionDigest().isAwake,
+                         still: motionStill, mini: toy.showsDot)
+    }
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
     private static let hopDuration: TimeInterval = 1.1
@@ -106,6 +116,12 @@ struct NotchBuddyView: View {
         .padding(.vertical, 6 * scale)
         .fixedSize()
         .background(WindowVisibilityReader { visible = $0 })
+        .background(BuddyGazeAnchor(gaze: gaze))
+        .onChange(of: followsPointer, initial: true) { _, follows in
+            gaze.scale = scale
+            gaze.setActive(follows)
+        }
+        .onDisappear { gaze.setActive(false) }
         .contentShape(Rectangle())
         // The tap's own point rides along: while an ask is open, only a
         // tap on the "!" badge overhead opens the session asking — a pat
@@ -146,7 +162,8 @@ struct NotchBuddyView: View {
             stage: toy.stage,
             wearing: toy.wearing,
             turn: toy.turnFrame(at: now, still: motionStill),
-            handoff: motionStill ? nil : toy.handoff(at: now)
+            handoff: motionStill ? nil : toy.handoff(at: now),
+            gaze: motionStill ? .rest : gaze.look(at: now.timeIntervalSince1970)
         )
     }
 
@@ -426,6 +443,11 @@ struct BuddyFigure: View {
     /// A mood change still easing in: the old mood's pose fades into the
     /// new one's (`BuddyHandoff`). nil is the new mood whole.
     var handoff: BuddyHandoff? = nil
+    /// Where the pointer is, as a look (`BuddyGaze`): the pupils ease
+    /// toward it while it is near. An ask keeps its eyes on the "!",
+    /// a slump stays downcast and sleep stays shut, so only the moods
+    /// that look around follow it.
+    var gaze: BuddyGaze.Look = .rest
 
     /// The stage's proportions, applied to the body only — the shadow,
     /// the "!" and the effects keep their places.
@@ -517,7 +539,20 @@ struct BuddyFigure: View {
         var pose = still ? stillPose : movingPose
         applyCare(&pose)
         if let trick, !still { applyTrick(trick, &pose) }
+        if !still, gaze.weight > 0 { applyGaze(&pose) }
         return pose
+    }
+
+    /// The pupils toward the pointer, by how near it is and by the share
+    /// of the moods that look around. Pupils only: nothing else moves.
+    private func applyGaze(_ pose: inout Pose) {
+        let shares = moods
+        let looking = shares.share(of: .pacing) + shares.share(of: .gathering)
+            + shares.share(of: .celebrating)
+        let w = gaze.weight * min(1, looking)
+        guard w > 0 else { return }
+        pose.look.width += (gaze.x - pose.look.width) * w
+        pose.look.height += (gaze.y - pose.look.height) * w
     }
 
     private var movingPose: Pose {
