@@ -1640,7 +1640,7 @@ final class PanelStore {
         }
     }
 
-    static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date) -> UsageTag? {
+    static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date, runOutStyle: UsageRunOutStyle = .timeLeft) -> UsageTag? {
         if usage.isStale { return .stale }
         // Past its reset the figure is the old window's: the reset line says
         // so, and "Used up" would claim a limit that has already turned over.
@@ -1650,7 +1650,7 @@ final class PanelStore {
         // resets before the forecast runs dry is on track.
         if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
            primary?.resetsAt.map({ exhaustsAt < $0 }) ?? true {
-            return .runsOut(UsageTime.runOutWhen(at: exhaustsAt, now: now.timeIntervalSince1970))
+            return .runsOut(UsageTime.runOutWhen(at: exhaustsAt, now: now.timeIntervalSince1970, style: runOutStyle))
         }
         if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
         return nil

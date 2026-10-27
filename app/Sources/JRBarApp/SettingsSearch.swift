@@ -174,6 +174,7 @@ enum SettingsSearch {
               keywords: ["menu bar meters", "menu bar", "meter", "icon"]),
         .init(.usage, "Display", "Lead with"),
         .init(.usage, "Display", "Graph range"),
+        .init(.usage, "Usage", "Run-out time", keywords: ["forecast", "time left", "clock"]),
         .init(.usage, "Usage", "Graph providers"),
         .init(.usage, "Usage Center", "Usage Center", subtitle: "See provider history, token counts, cost and pace.",
               keywords: ["graphs", "dashboard", "history", "tokens", "cost", "pace"]),

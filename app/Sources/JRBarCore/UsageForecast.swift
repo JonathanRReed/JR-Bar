@@ -86,6 +86,7 @@ public struct UsageForecast: Hashable, Sendable {
         case daemon, local, none
     }
 
+    public var runOutStyle: UsageRunOutStyle = .timeLeft
     public var window: String
     /// Nil when the provider stated no number for this window.
     public var usedPct: Double?
@@ -129,8 +130,8 @@ public struct UsageForecast: Hashable, Sendable {
         }
     }
 
-    /// A forecast in used percentages and the reader's local clock.
-    public func headline(now: Date, timeZone: TimeZone = .current) -> String {
+    /// A forecast in used percentages and the chosen time style.
+    public func headline(now: Date, timeZone: TimeZone = .current, locale: Locale = .autoupdatingCurrent) -> String {
         guard let remainingPct else {
             // Nothing was measured: say so, and say the one thing that IS
             // known -- when the window turns over.
@@ -147,7 +148,10 @@ public struct UsageForecast: Hashable, Sendable {
             }
             return "\(UsageStatus.usedUp.word): the \(window) window is exhausted"
         case .runsOut(let at):
-            return "\(UsageTime.runsOut(at: at, now: now.timeIntervalSince1970, timeZone: timeZone)) at this pace for the \(window) window"
+            guard at > now.timeIntervalSince1970 else { return "Forecast passed: waiting for a new reading for the \(window) window" }
+            let when = UsageTime.runsOut(at: at, now: now.timeIntervalSince1970,
+                                        locale: locale, timeZone: timeZone, style: runOutStyle)
+            return "\(when) at this pace for the \(window) window"
         case .comfortable:
             if heldIdle {
                 return "Holding at \(used) used: no agent is working on it here"
@@ -364,10 +368,11 @@ extension UsageForecast {
         }
     }
 
-    public func verdictWord(timeZone: TimeZone = .current, now: Date? = nil) -> String {
+    public func verdictWord(timeZone: TimeZone = .current, now: Date = Date(),
+                            locale: Locale = .autoupdatingCurrent) -> String {
         if case .runsOut(let at) = verdict {
-            if let now { return UsageTime.runsOut(at: at, now: now.timeIntervalSince1970, timeZone: timeZone) }
-            return "\(status.word) \(Self.clock(at, timeZone: timeZone))"
+            return UsageTime.runsOut(at: at, now: now.timeIntervalSince1970,
+                                    locale: locale, timeZone: timeZone, style: runOutStyle)
         }
         return status.word
     }

@@ -32,7 +32,7 @@ struct UsageBreadthTests {
 
     @Test("verdicts read in a word")
     func verdictWords() {
-        #expect(Self.burning(used: 40, rate: 40).verdictWord(timeZone: Self.utc).hasPrefix("Runs out "))
+        #expect(Self.burning(used: 40, rate: 40).verdictWord(timeZone: Self.utc, now: Date(timeIntervalSince1970: Self.now)).hasPrefix("Runs out "))
         #expect(Self.burning(used: 40, rate: 20).verdictWord() == "Resets first")
         var guarded = Self.burning()
         guarded.verdict = .guarded(reason: "stale_samples")

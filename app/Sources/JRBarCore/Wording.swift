@@ -24,6 +24,13 @@ public enum UsageNumber {
     }
 }
 
+public enum UsageRunOutStyle: String, CaseIterable, Sendable {
+    case timeLeft = "time_left"
+    case clock
+
+    public init(setting: String?) { self = Self(rawValue: setting ?? "") ?? .timeLeft }
+}
+
 public enum UsageTime {
     public static func settingMinutes(_ value: Double) -> String {
         "\(Int(saturating: value.rounded())) min" // jrbar-token-exception: a setting value keeps the SI space
@@ -95,7 +102,7 @@ public enum UsageTime {
         if remaining < 1, let fix, !fix.isEmpty { return fix }
         if remaining <= 0 { return remaining > -30 ? "Reset now" : "Reset \(ago(-remaining))" }
         if remaining < 30 { return "now" }
-        if remaining < 3600 { return runOutWhen(at: epoch, now: now) }
+        if remaining < 3600 { return "in \(duration(ceil(remaining / 60) * 60))" }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let date = Date(timeIntervalSince1970: epoch)
@@ -110,17 +117,59 @@ public enum UsageTime {
     }
 
     public static func runsOut(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
-                               timeZone: TimeZone = .current) -> String {
-        "\(UsageStatus.runsOut.word) \(runOutWhen(at: epoch, now: now, locale: locale, timeZone: timeZone))"
+                               timeZone: TimeZone = .current, style: UsageRunOutStyle = .timeLeft) -> String {
+        runOutForms(at: epoch, now: now, locale: locale, timeZone: timeZone, style: style)[0]
     }
 
     public static func runOutWhen(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
-                                 timeZone: TimeZone = .current) -> String {
-        if epoch - now < 3600 {
-            let minutes = max(1, Int(saturating: ceil(max(0, epoch - now) / 60)))
-            return "in \(duration(Double(minutes) * 60))"
+                                 timeZone: TimeZone = .current, style: UsageRunOutStyle = .timeLeft) -> String {
+        guard epoch.isFinite, now.isFinite, epoch > now else { return "earlier" }
+        if style == .timeLeft {
+            let minutes = max(1, ceil((epoch - now) / 60))
+            return "in \(duration(minutes * 60))"
         }
-        return clock(epoch, locale: locale, timeZone: timeZone)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let date = Date(timeIntervalSince1970: epoch)
+        let today = Date(timeIntervalSince1970: now)
+        let time = clock(epoch, locale: locale, timeZone: timeZone)
+        if calendar.isDate(date, inSameDayAs: today) { return time }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: today),
+           calendar.isDate(date, inSameDayAs: tomorrow) { return "tomorrow \(time)" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: today),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate(days < 7 ? "EEEjm" : "MMM d jm")
+        return formatter.string(from: date)
+    }
+
+    /// All notch forms retain the day. Only the day period and leading words shrink.
+    public static func runOutForms(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
+                                   timeZone: TimeZone = .current, style: UsageRunOutStyle = .timeLeft) -> [String] {
+        guard epoch.isFinite, now.isFinite, epoch > now else {
+            return Array(repeating: "Forecast passed", count: 4)
+        }
+        let when = runOutWhen(at: epoch, now: now, locale: locale, timeZone: timeZone, style: style)
+        let full = "\(UsageStatus.runsOut.word) \(when)"
+        if style == .timeLeft {
+            let duration = String(when.dropFirst("in ".count))
+            return [full, "Out \(when)", "\(duration) left", "\(duration) left"]
+        }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        let periods = [formatter.amSymbol, formatter.pmSymbol].filter { !$0.isEmpty }
+        let short = periods.reduce(when) { $0.replacingOccurrences(of: $1, with: "") }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Tomorrow is a full sentence word; the shortest form uses its weekday.
+        var minimal = short
+        if short.hasPrefix("tomorrow ") {
+            formatter.timeZone = timeZone
+            formatter.setLocalizedDateFormatFromTemplate("EEE")
+            minimal = formatter.string(from: Date(timeIntervalSince1970: epoch)) + " " + short.dropFirst("tomorrow ".count)
+        }
+        return [full, "Runs out \(short)", "Out \(short)", "Out \(minimal)"]
     }
 
     public static func spokenAge(_ seconds: Double) -> String {

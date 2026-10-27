@@ -30,17 +30,26 @@ public struct UsageGaugeReading: Equatable, Sendable {
         default: return .secondary
         }
     }
+    public var footnoteForms: [String] {
+        guard case .runsOut(let at) = forecast?.verdict else { return [footnote] }
+        return UsageTime.runOutForms(at: at, now: timestamp, locale: locale,
+                                    timeZone: timeZone, style: forecast?.runOutStyle ?? .timeLeft)
+    }
     public var forecastHelp: String {
-        [forecast?.headline(now: Date(timeIntervalSince1970: timestamp)),
+        [forecast?.headline(now: Date(timeIntervalSince1970: timestamp), timeZone: timeZone, locale: locale),
          forecast.flatMap { SessionAwarePace.roomText($0, now: timestamp) },
          resetFootnote.isEmpty ? nil : (elapsed ? resetFootnote : "Resets \(resetFootnote)")].compactMap { $0 }.joined(separator: ". ")
     }
     private let timestamp: Double
+    private let locale: Locale
+    private let timeZone: TimeZone
 
     public init(window: CoreUsageWindow, provider: CoreProviderUsage, now: Double, connected: Bool = true,
                 locale: Locale = .current, timeZone: TimeZone = .current, forecast: UsageForecast? = nil,
                 abbreviatesMinutes: Bool = false) {
         timestamp = now
+        self.locale = locale
+        self.timeZone = timeZone
         id = window.id
         title = window.name
         elapsed = window.elapsed || (window.resetsAt.map { $0 <= now } ?? false)
@@ -56,7 +65,7 @@ public struct UsageGaugeReading: Equatable, Sendable {
         switch self.forecast?.verdict {
         case .exhausted?: footnote = UsageStatus.usedUp.word
         case .runsOut(let at)?:
-            footnote = UsageTime.runsOut(at: at, now: now, locale: locale, timeZone: timeZone)
+            footnote = UsageTime.runsOut(at: at, now: now, locale: locale, timeZone: timeZone, style: forecast?.runOutStyle ?? .timeLeft)
         default: footnote = resetFootnote
         }
     }
@@ -412,8 +421,18 @@ private struct CompactUsageGaugeColumn: View {
                     .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Text(reading.footnote).font(JRBarTokens.TypeStyle.caption.font)
+            Text(reading.footnoteForms.last ?? reading.footnote)
                 .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .hidden().accessibilityHidden(true)
+                .overlay(alignment: .trailing) {
+                    ViewThatFits(in: .horizontal) {
+                        ForEach(Array(reading.footnoteForms.enumerated()), id: \.offset) { _, form in
+                            Text(form).fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                }
+                .font(JRBarTokens.TypeStyle.caption.font)
                 .preference(key: UsageGaugeEvidence.self, value: [reading.id: reading])
                 .foregroundStyle(captionColor).lineLimit(1)
                 .help(reading.forecastHelp)

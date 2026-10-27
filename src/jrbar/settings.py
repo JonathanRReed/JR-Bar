@@ -733,6 +733,7 @@ class AgentMonitorSettings:
     # "tokens" leads with token counts (cost approximated in parens,
     # the CodexBar presentation); "cost" leads with dollars.
     usage_display_mode: str = "tokens"
+    usage_run_out_style: str = "time_left"
     usage_graph_providers: tuple[str, ...] = ("claude", "codex")
     codex_percent_enabled: bool = True
     escalation_webhook_url: str = ""
@@ -1288,6 +1289,11 @@ class AgentMonitorSettings:
         if not any(rule["id"] == LEGACY_RULE_ID for rule in normalized["rules"]):
             path = ""
         return replace(self, usage_hooks=normalized, usage_event_hook_path=path)
+
+    def with_usage_run_out_style(self, style: str) -> AgentMonitorSettings:
+        if style not in ("time_left", "clock"):
+            raise ValueError("run-out style is time_left or clock")
+        return replace(self, usage_run_out_style=style)
 
     def with_usage_display_mode(self, mode: str) -> AgentMonitorSettings:
         if mode not in ("tokens", "cost", "sessions", "percent"):
@@ -1982,6 +1988,7 @@ class AgentMonitorSettings:
             ),
             "usage_graph_days": self.usage_graph_days,
             "usage_display_mode": self.usage_display_mode,
+            "usage_run_out_style": self.usage_run_out_style,
             "usage_graph_providers": list(self.usage_graph_providers),
             "codex_percent_enabled": self.codex_percent_enabled,
             "escalation_webhook_url": self.escalation_webhook_url,
@@ -2503,6 +2510,11 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
         # "percent" is a legal, UI-offered mode: the loader used to
         # accept only the transcript metrics, so picking Percent left
         # silently reverted to tokens on relaunch (audit, 2026-08-26).
+        usage_run_out_style=(
+            data.get("usage_run_out_style")
+            if data.get("usage_run_out_style") in ("time_left", "clock")
+            else "time_left"
+        ),
         usage_display_mode=(
             data.get("usage_display_mode")
             if data.get("usage_display_mode")

@@ -276,7 +276,8 @@ setting `global_brightness_scale`, `active_scene`, `colors`, `led_display`,
 `screen_bar_bracket_style`, `screen_bar_min_glow`,
 `screen_bar_phase_offset_ms`, `screen_bar_gauges_enabled`,
 `screen_bar_show_in_full_screen`, `menu_bar_icon_style`, `tips_enabled`,
-`usage_graph_days` or `usage_display_mode`, or `devices.<n>.<field>` for
+`usage_graph_days`, `usage_display_mode` or `usage_run_out_style`, or
+`devices.<n>.<field>` for
 `led_display`, `brightness`, `auto_brightness_enabled`, `red_gain`,
 `green_gain`, `blue_gain`, `resting_glow`, `blend_mode`, `provider_pin`,
 `signal_policy`, `led_direction` or `dot_travel_style`. Every other setting
@@ -288,6 +289,9 @@ ones: `serve_enabled`, `serve_answer_enabled`, the serve and access tokens,
 `closed_lid_*`, `global_action_shortcuts`, anything that names a path, and a
 setting added after this was written. A `reset_settings` whose `paths` include
 any privileged path is privileged.
+
+`usage_run_out_style` defaults to `time_left`, including when an older settings
+file has no value. `clock` shows the local time with the day when it is not today.
 
 Privileged commands: everything else. That is every command that answers,
 approves, denies or types into an agent (`answer_ask`, `deck_answer`,

@@ -1296,6 +1296,7 @@ def default_settings_document() -> dict:
         "transcript_monitoring": {"claude": False, "codex": False, "gemini": False, "pi": False},
         "token_history_enabled": True,
         "usage_display_mode": "tokens",
+        "usage_run_out_style": "time_left",
         "usage_event_hook_path": "",
         "usage_graph_days": 7,
         "usage_graph_providers": ["claude", "codex", "gemini"],

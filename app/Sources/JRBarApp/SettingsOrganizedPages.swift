@@ -36,6 +36,9 @@ struct SettingsUsageOptions: View {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)
+            SettingPicker(store, "Run-out time", path: "usage_run_out_style", options: [
+                ("time_left", "Time left"), ("clock", "Clock time"),
+            ], default: "time_left", segmented: true)
             Provided(store, "usage_graph_providers") {
                 MultiSelectMenu(store, "Graph providers", path: "usage_graph_providers",
                                 options: SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) })

@@ -6,15 +6,16 @@ import SwiftUI
 struct NotchMeterCaption {
     let reading: UsageGaugeReading?
     let reset: String?
-    private let dayPeriods: [String]
+    private let runOutForms: [String]
     private let resetIsFix: Bool
 
     init(meter: NotchIslandMeter, now: Date, locale: Locale = .current, timeZone: TimeZone = .current) {
         reset = PanelStore.countdown(to: meter.resetsAt, now: now, fix: meter.fix)
         resetIsFix = meter.fix != nil && reset == meter.fix
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        dayPeriods = [formatter.amSymbol, formatter.pmSymbol].filter { !$0.isEmpty }
+        if case .runsOut(let at) = meter.forecast?.verdict {
+            runOutForms = UsageTime.runOutForms(at: at, now: now.timeIntervalSince1970,
+                locale: locale, timeZone: timeZone, style: meter.forecast?.runOutStyle ?? .timeLeft)
+        } else { runOutForms = [] }
         if let provider = meter.usage, let window = provider.headlineWindow {
             reading = UsageGaugeReading(window: window, provider: provider, now: now.timeIntervalSince1970,
                 locale: locale, timeZone: timeZone, forecast: meter.forecast, abbreviatesMinutes: true)
@@ -41,14 +42,8 @@ struct NotchMeterCaption {
     var forms: [String] {
         guard let text else { return [] }
         let candidates: [String]
-        if tone == .attention, text.hasPrefix("Runs out in ") {
-            let duration = String(text.dropFirst("Runs out in ".count))
-            candidates = [text, text, "Out in \(duration)", "Out \(duration)"]
-        } else if tone == .attention, text.hasPrefix("Runs out ") {
-            let clock = String(text.dropFirst("Runs out ".count))
-            let shortClock = dayPeriods.reduce(clock) { $0.replacingOccurrences(of: $1, with: "") }
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            candidates = [text, "Runs out \(shortClock)", "Out \(shortClock)", "Out \(shortClock)"]
+        if tone == .attention, !runOutForms.isEmpty {
+            candidates = runOutForms
         } else if text.hasPrefix("resets in ") {
             candidates = [text, String(text.dropFirst("resets in ".count))]
         } else if resetIsFix {
@@ -99,7 +94,7 @@ struct NotchMeterCaptionFit: Equatable {
 
     var fittingForm: Int {
         let ordered = widths.keys.sorted()
-        return ordered.first { widths[$0]! <= (available ?? 0) } ?? ordered.last ?? 0
+        return ordered.first { widths[$0]! <= (available ?? 0) + 0.5 } ?? ordered.last ?? 0
     }
 }
 

@@ -236,6 +236,7 @@ OPEN_SETTING_ROOTS: Final = frozenset(
         "tips_enabled",
         "usage_graph_days",
         "usage_display_mode",
+        "usage_run_out_style",
     }
 )
 #: ``devices.<n>.<field>`` is a display preference for these fields; ``id``,

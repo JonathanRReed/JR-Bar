@@ -179,6 +179,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // Usage
             SettingsKey(.usage, "usage_graph_providers", .stringList),
             SettingsKey(.usage, "usage_display_mode", .string),
+            SettingsKey(.usage, "usage_run_out_style", .string),
             SettingsKey(.usage, "usage_graph_days", .number),
             SettingsKey(.usage, "claude_plan_limits_enabled", .bool),
             SettingsKey(.usage, "claude_plan_limits_consent_version", .number),

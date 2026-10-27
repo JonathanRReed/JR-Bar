@@ -1071,8 +1071,8 @@ extension SettingsRenderProofTests {
         }
         #expect(fixture.core.settings?.document == beforeSearch, "Search must not write settings to reveal a control")
         let settingsCount = expected.values.filter { !$0.hasPrefix("studio.") }.count
-        #expect(expected.count == 151)
-        #expect(settingsCount == 92)
+        #expect(expected.count == 152)
+        #expect(settingsCount == 93)
         print("Catalogue homes: \(expected.count) keys rendered exactly once by destination, \(settingsCount) Settings and \(expected.count - settingsCount) Studio")
     }
 

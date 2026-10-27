@@ -1246,15 +1246,12 @@ struct NotchCardView: View {
                     .hidden()
                     .accessibilityHidden(true)
                     .overlay(alignment: .leading) {
-                        ViewThatFits(in: .horizontal) {
-                            ForEach(Array(caption.forms.enumerated()).dropFirst(sharedForm), id: \.offset) { _, form in
-                                Text(form)
-                                    .fixedSize(horizontal: true, vertical: false)
-                                    .accessibilityLabel(caption.help)
-                                    .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: form])
-                                    .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: 10])
-                            }
-                        }
+                        let form = caption.forms[min(sharedForm, caption.forms.count - 1)]
+                        Text(form)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityLabel(caption.help)
+                            .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: form])
+                            .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: 10])
                     }
                     .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()

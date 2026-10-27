@@ -144,14 +144,18 @@ struct UsageForecastSurfaceTests {
         #expect(reset.captionTone == .secondary)
     }
 
-    @Test func futureDayRunOutKeepsItsMinutes() {
+    @Test func futureDayRunOutUsesTheChosenStyle() {
         let at = Self.stamp + 86400 + 12 * 60
         let window = CoreUsageWindow(name: "7d", usedPct: 70, resetsAt: Self.stamp + 2 * 86400)
-        let forecast = UsageForecast(window: "7d", usedPct: 70, resetsAt: window.resetsAt,
+        var forecast = UsageForecast(window: "7d", usedPct: 70, resetsAt: window.resetsAt,
             verdict: .runsOut(exhaustsAt: at), ratePctPerHour: 1, source: .daemon)
         let reading = UsageGaugeReading(window: window, provider: CoreProviderUsage(id: "codex", windows: [window]),
             now: Self.stamp, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, forecast: forecast)
-        #expect(reading.footnote == "Runs out 8:12\u{202F}AM")
+        #expect(reading.footnote == "Runs out in 1d 0h")
+        forecast.runOutStyle = .clock
+        let clockReading = UsageGaugeReading(window: window, provider: CoreProviderUsage(id: "codex", windows: [window]),
+            now: Self.stamp, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, forecast: forecast)
+        #expect(clockReading.footnote == "Runs out tomorrow 8:12\u{202F}AM")
         #expect(reading.footnote != "Runs out " + reading.resetFootnote)
     }
 
@@ -184,7 +188,7 @@ struct UsageForecastSurfaceTests {
         panel.core.apply(.state(CoreState(sessions: panel.core.sessions, usage: CoreUsage(providers: [provider]))))
         let meter = try #require(UsageCenterStore.notchMeters(core: panel.core, now: panel.now).first)
         let caption = NotchMeterCaption(meter: meter, now: panel.now, locale: Locale(identifier: "en_US"))
-        #expect(caption.text?.replacingOccurrences(of: "\u{202F}", with: " ") == "Runs out 12:45 PM")
+        #expect(caption.text?.replacingOccurrences(of: "\u{202F}", with: " ") == "Runs out in 2h 00m")
         var baseline = meter
         baseline.forecast = nil
         let card = NotchCardView(model: Self.notchModel(), style: .island, width: 320)

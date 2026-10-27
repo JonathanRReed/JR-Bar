@@ -152,6 +152,7 @@ enum SettingsCatalogueHomes {
         "transcript_monitoring.gemini": "privacy",
         "transcript_monitoring.pi": "privacy",
         "usage_display_mode": "agents",
+        "usage_run_out_style": "agents",
         "usage_graph_days": "agents",
         "usage_graph_providers": "agents",
         "usage_hooks.enabled": "agents/advanced",

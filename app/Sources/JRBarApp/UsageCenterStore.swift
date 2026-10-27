@@ -894,7 +894,9 @@ final class UsageCenterStore {
         let primary = window.id == Self.conventionalWindow(of: provider)?.id
         let daemon = window.forecast ?? (primary ? provider.forecast : nil)
         let samples = core.usageSamples.samples(provider: provider.identity, window: window.name)
-        let forecast = UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
+        var forecast = UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
+        let settings = core.settings.map { SettingsDocument($0.document) }
+        forecast.runOutStyle = UsageRunOutStyle(setting: settings?.string("usage_run_out_style"))
         // A hub account is spent by whoever uses the proxy, not by this
         // Mac's agents: they neither pace it nor hold it idle.
         guard core.isLive, !UsageSourceNotes.isHubInstance(provider.instance) else { return forecast }
