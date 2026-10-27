@@ -23,6 +23,15 @@ import Testing
 @Suite("Fold render proof")
 @MainActor
 struct FoldRenderProofTests {
+    /// The shaders compile off the main thread and a main-actor renderer
+    /// never waits for them, so the suite warms the cache itself and
+    /// passes whether it runs alone or after another Fold suite.
+    init() async {
+        await withCheckedContinuation { continuation in
+            FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+    }
+
     nonisolated static let width = 1512
     nonisolated static let height = 982
     static let rest = 110.0
