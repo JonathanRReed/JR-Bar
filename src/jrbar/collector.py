@@ -1417,7 +1417,8 @@ class AgentMonitor(LiveSessionMemory):
             for row in tail.rows.values():
                 if row.retained_bytes is None:
                     row.retained_bytes = (
-                        sys.getsizeof(vars(row)) + sys.getsizeof(row.text)
+                        # The tail's row dictionary already counts its text key.
+                        sys.getsizeof(vars(row))
                         + _transcript_object_bytes((row.decoded, row.context), {})
                         + _transcript_context_bytes(row.result)
                     )
