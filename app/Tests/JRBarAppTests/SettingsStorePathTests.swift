@@ -378,7 +378,7 @@ struct SettingsStorePathTests {
         let hardware = try #require(SettingsSearch.rows.first { $0.group == "Devices" && $0.title == "Brightness" })
         store.reveal(hardware)
         #expect(store.openFolds.isEmpty)
-        for title in ["Display", "Pin to", "Asks only", "Blend"] {
+        for title in ["Display", "Pin to", "Asks only", "Mix"] {
             let lighting = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
             #expect(lighting.chapter == .lighting)
             store.reveal(lighting)

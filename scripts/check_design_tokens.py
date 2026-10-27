@@ -29,6 +29,7 @@ PATTERNS = {
     "currency-table": re.compile(r'\bfunc\s+currencySymbol\b|"(?:EUR|GBP)"\s*:'),
     "token-math": re.compile(r"/\s*1_000(?:_000)*(?![\d_])"),
     "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)'),
+    "ui-name": re.compile(r'"[^"\n]*(?:Effect Studio|Lights Studio|One at a Time|Status Only|Global Mix|Blend mode)[^"\n]*"|"Blend"'),
     "block-meter": re.compile(r"[\u2580-\u259f\u25a0\u25a1\u25b0\u25b1]+"),
 }
 
@@ -101,7 +102,9 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "monitor-wording" and path.endswith("JRBarCore/StatusWords.swift"):
             continue
-        text_checks = {"block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording"}
+        if kind == "ui-name" and ("/Notch/" in path or "/Utilities/MenuBar/" in path or path.endswith("/WhatsNewCatalog.swift")):
+            continue
+        text_checks = {"block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

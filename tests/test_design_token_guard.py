@@ -92,6 +92,8 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('let count = tokens / 1_000', "token-math"),
     ('Text("Monitor offline")', "monitor-wording"),
     ('Text("The monitor is not answering")', "monitor-wording"),
+    ('Text("Effect Studio")', "ui-name"),
+    ('Text("Blend mode")', "ui-name"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))

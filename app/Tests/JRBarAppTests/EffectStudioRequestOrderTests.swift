@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio request order")
+@Suite("Studio request order")
 struct EffectStudioRequestOrderTests {
     private static func makeStore() -> EffectStudioStore {
         EffectStudioStore(core: CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-effects-" + UUID().uuidString + ".sock"))

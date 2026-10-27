@@ -264,7 +264,7 @@ final class LEDSStudioModel {
 
     /// Plays the compiled program on `surface` ("screen_bar", "hardware",
     /// "dot") for ten seconds, then the daemon reverts. The Screen Bar
-    /// needs no consent; a strip or Dot asks once, like Effect Studio.
+    /// needs no consent; a strip or Dot asks once, like Studio.
     func play(on surface: String, name: String) {
         guard analysis.playable, !inFlight else { return }
         if EffectStudioStore.needsConsent(surface: surface), let request = requestHardwareConsent {
@@ -377,7 +377,7 @@ final class LEDSStudioModel {
 
 // MARK: - View
 
-/// The Program room of Effect Studio.
+/// The Program room of Studio.
 struct LEDSStudioView: View {
     @Bindable var store: EffectStudioStore
     @Bindable var model: LEDSStudioModel

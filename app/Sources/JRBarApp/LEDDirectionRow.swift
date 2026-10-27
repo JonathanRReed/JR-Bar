@@ -4,7 +4,7 @@ import SwiftUI
 /// A device card's "Strip direction" row: which way round the strip is
 /// mounted, and a sweep that starts from LED 0 so you can match it to the
 /// strip on your desk. Reversed mirrors every agent light the monitor
-/// draws for this device, and Effect Studio's Play on strip, so a comet
+/// draws for this device, and Studio's Play on strip, so a comet
 /// that ran left to right still does after the strip is turned round
 /// (`devices.N.led_direction`). Only the Pro and the Dot have one (the
 /// Screen Bar is drawn on screen, the right way round already). A linked

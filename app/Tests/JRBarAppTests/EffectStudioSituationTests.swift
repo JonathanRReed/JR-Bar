@@ -6,7 +6,7 @@ import Testing
 /// "Try a situation" answers the way the daemon's
 /// `resolve_effect_assignment` does. The table is the one
 /// `tests/test_effect_situation_parity.py` checks the daemon against.
-@Suite("Effect Studio · situations")
+@Suite("Studio · situations")
 @MainActor
 struct EffectStudioSituationTests {
     private static let document = EffectAssignmentDocument(assignments: [

@@ -64,7 +64,7 @@ struct ComposeChoices: Equatable {
     }
 }
 
-/// Effect Studio › Program › Compose: a light built from layers — a base
+/// Studio › Program › Compose: a light built from layers — a base
 /// and its motion, a moving accent, LEDs held at their own colour, and a
 /// brightness — previewed on the strip, the Dot and the band as it is
 /// built, then handed to the editor as text. The composer says what it

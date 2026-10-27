@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio load recovery")
+@Suite("Studio load recovery")
 struct EffectStudioLoadTests {
     @Test("a failed initial load has a durable reason and permits another load")
     func failureSurvivesToast() async throws {

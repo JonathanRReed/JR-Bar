@@ -176,7 +176,7 @@ public enum LightExplainer {
         case .preview:
             return ("Preview", "Previewing a program", nil)
         case .studio:
-            return ("Preview", "Effect Studio is previewing", nil)
+            return ("Preview", "Studio is previewing", nil)
         case .unknown:
             // Today's daemon may send a word the table has no line for: say
             // what the light looks like and who is on top, never a UUID.

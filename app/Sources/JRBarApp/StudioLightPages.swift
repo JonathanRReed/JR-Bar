@@ -165,7 +165,7 @@ private struct StudioDeviceRows: View {
             }
             SettingsRow("\(device.name): Mix") {
                 Picker("\(device.name) mix", selection: settings.optionalString("\(device.prefix).blend_mode")) {
-                    Text("Global Mix").tag("")
+                    Text("Global mix").tag("")
                     ForEach(mixes) { Text($0.name).tag($0.id) }
                 }.labelsHidden().disabled(linked || mirrorsHardware).settingControl("\(device.prefix).blend_mode")
             }

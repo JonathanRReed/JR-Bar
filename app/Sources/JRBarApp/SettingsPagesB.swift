@@ -7,9 +7,7 @@ import UserNotifications
 
 // MARK: - Lighting
 
-struct LightingPage: View {
-    @Bindable var store: SettingsStore
-
+enum LightingPage {
     static let blendModes: [(value: String, label: String, detail: String)] = [
         // Smooth first: it is the default, and on the Screen Bar's blended
         // surface per-agent blocks average into mud.
@@ -20,138 +18,21 @@ struct LightingPage: View {
         ("relay", "Relay", "A scanner passes in each provider colour."),
         ("weave", "Weave", "Provider colours interleave and travel."),
         ("tide", "Tide", "Provider colours meet from both ends."),
-        ("cycle", "One at a Time", "The whole strip shows one agent, then the next."),
-        ("classic", "Status Only", "One colour for whatever needs you most. Agents are not shown."),
+        ("cycle", "One at a time", "The whole strip shows one agent, then the next."),
+        ("classic", "Status only", "One colour for whatever needs you most. Agents are not shown."),
     ]
 
     static let scenes: [(value: String, label: String)] = [
         ("calm", "Calm"), ("focus", "Focus"), ("night", "Night"), ("demo", "Demo"), ("travel", "Travel"), ("dnd", "Do Not Disturb"),
     ]
 
-    private let swatchColumns = [GridItem(.adaptive(minimum: 160), alignment: .leading)]
-
-    var body: some View {
-        SettingGroup("Provider colours and animations") {
-            SettingRow("Effect Studio") {
-                Button("Open Effect Studio…") { store.onOpenEffects?() }
-            }
-            // Twelve colour wells, each with a live preview: folded until
-            // asked for, since they are most of what the page costs to open.
-            SettingsFoldRow(store, id: SettingsFold.providerColours, title: "Colours",
-                            subtitle: "Each provider's colour, beside its working light under the blend below.") {
-                LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
-                    ForEach(SettingsKey.providers, id: \.self) { provider in
-                        ProviderSwatch(store: store, provider: provider)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            ColorVisionNote(store: store, colors: providerColorsInUse)
-        }
-
-        SettingGroup("Blend") {
-            Provided(store, "colors.blend_mode") {
-                Picker(selection: store.string("colors.blend_mode", default: "color_blend")) {
-                    ForEach(Self.blendModes, id: \.value) { Text($0.label).tag($0.value) }
-                } label: {
-                    SettingLabel(title: "Blend mode", subtitle: blendDetail)
-                }
-                .pickerStyle(.menu)
-            }
-            FleetPreviewRow(store: store)
-            SettingSlider(store, "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
-            SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
-                          path: "colors.done_celebration_enabled", default: true)
-            SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
-                FinishLookPreview(core: store.core)
-                    .frame(width: 168)
-                    .opacity((store.values.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
-                    .accessibilityLabel("Done celebration preview")
-            }
-            LightingMotionRows(store: store)
-        }
-
-        SettingGroup("State colours", note: "What each state looks like, whoever is running. Ask and Error are deliberately separate — set them to the same colour and the lights still pull them apart.") {
-            LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
-                ForEach(SettingsKey.modes, id: \.self) { mode in
-                    ModeSwatch(store: store, mode: mode)
-                }
-            }
-            .padding(.vertical, 2)
-            ColorVisionNote(store: store, colors: stateColors, others: providerColorsInUse)
-        }
-
-        SettingGroup("Dimming") {
-            // The one brightness cap: General points here.
-            SettingSlider(store, "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
-                          path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
-            SettingToggle(store, "Dim when idle", path: "idle_dim_enabled", default: true)
-            SettingSlider(store, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1, default: 10, format: SettingsStore.minutes)
-                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
-            SettingSlider(store, "Idle brightness", path: "idle_dim_fraction", in: 0.05...1, default: 0.3, format: SettingsStore.percent)
-                .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
-            SettingToggle(store, "Dim on display sleep", path: "sleep_dim_enabled", default: true)
-            SettingSlider(store, "Sleep brightness", path: "sleep_dim_fraction", in: 0.05...1, default: 0.2, format: SettingsStore.percent)
-                .disabled(!(store.values.bool("sleep_dim_enabled") ?? true))
-            SettingToggle(store, "Turn off when idle", subtitle: "After a long idle the lights switch off entirely.", path: "idle_auto_off_enabled")
-            SettingSlider(store, "Off after", path: "idle_auto_off_after_minutes", in: 5...1440, step: 5, default: 60, format: SettingsStore.minutes)
-                .disabled(!(store.values.bool("idle_auto_off_enabled") ?? false))
-        }
-
-        SettingGroup("Scene") {
-            SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
-                          path: "active_scene", options: Self.scenes, default: "calm")
-            ScenePackPicker(store: store)
-        }
-        DeviceLinkSettings(store: store)
-    }
-
-    /// The lit states' colours for the vision check — idle is the dark
-    /// resting whisper, never read against the others.
-    private var stateColors: [ColorVisionNote.Entry] {
-        SettingsKey.modes.filter { $0 != "idle" }.map { mode in
-            let path = "colors.mode_colors.\(mode)"
-            return ColorVisionNote.Entry(
-                id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized, path: path,
-                hex: store.values.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
-        }
-    }
-
-    /// The providers worth comparing: the ones this Mac actually runs —
-    /// a live session or an installed hook. Twelve hues all against each
-    /// other would flag pairs nobody will ever see side by side.
-    private var providerColorsInUse: [ColorVisionNote.Entry] {
-        let running = store.runningProviders
-        return SettingsKey.providers
-            .filter { running.contains($0) || (store.hookStatus($0).map { $0 != "missing" } ?? false) }
-            .map { provider in
-                let style = ProviderStyle.style(for: provider)
-                let path = "colors.agent_colors.\(provider)"
-                return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
-                                             hex: store.values.string(SettingsPath(path)) ?? style.accentHex)
-            }
-    }
-
-    private var blendDetail: String {
-        let mode = store.values.string("colors.blend_mode") ?? "color_blend"
-        return Self.blendModes.first { $0.value == mode }?.detail ?? ""
-    }
-
-    /// The colour the celebration plays in: the document's done colour when
-    /// it has one, else the firmware reference green.
-    private var celebrationColor: String {
-        for path in ["colors.done_celebration_color", "colors.mode_colors.done", "colors.status_colors.done", "colors.status_colors.completed"] {
-            if let hex = store.values.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
-        }
-        return "#00FF66"
-    }
 }
 
 /// Scene packs on the Lighting page: try one on the strip before it
 /// takes over, then use it — Hue Sync lets you look at an area before
 /// switching to it. The pack's tour (`preview_scene_pack`) plays one step
 /// per scene it overrides, in that scene's colour, at its brightness and
-/// motion. Installing and removing packs stays in Effect Studio. A core
+/// motion. Installing and removing packs stays in Studio. A core
 /// without scene-pack commands keeps the old one-line note.
 struct ScenePackPicker: View {
     @Bindable var store: SettingsStore
@@ -193,7 +74,7 @@ struct ScenePackPicker: View {
                     }
                 }
             } else if !active.isEmpty {
-                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
+                Text("Scene pack “\(active)” is active — its policies override the built-in scene's. Manage packs in Studio.")
                     .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -204,7 +85,7 @@ struct ScenePackPicker: View {
     }
 
     private var subtitle: String {
-        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Effect Studio." }
+        guard !shown.isEmpty else { return "The built-in scenes' own policies. Install packs in Studio." }
         let scenes = packs.first { $0.id == shown }?.scenes ?? []
         let overrides = scenes.isEmpty ? "" : " Overrides \(ScenePackPicker.sceneList(scenes))."
         return shown == active

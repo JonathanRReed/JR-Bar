@@ -19,7 +19,7 @@ struct StudioMixPage: View {
             SnapshotScrollView {
                 VStack(alignment: .leading, spacing: JRBarTokens.Space.xl) {
                     if lights.mix == "cycle", !store.spotlightExplained {
-                        StatusBanner("Spotlight is now One at a Time", detail: "Each provider gets the whole strip for 4 seconds.") {
+                        StatusBanner("Spotlight is now One at a time", detail: "Each provider gets the whole strip for 4 seconds.") {
                             Button("Dismiss") { store.spotlightExplained = true }
                         }
                     }

@@ -206,7 +206,7 @@ struct LightWhyEnumTests {
         let reminder = try #require(Self.explain("reminder", [Self.main], motion: "finite"))
         #expect(reminder.headline == "Orange sweep: A reminder is due")
         #expect(try #require(Self.explain("preview", [])).headline == "Preview: Previewing a program")
-        #expect(try #require(Self.explain("studio", [])).headline == "Preview: Effect Studio is previewing")
+        #expect(try #require(Self.explain("studio", [])).headline == "Preview: Studio is previewing")
         #expect(try #require(Self.explain("idle", [], motion: "breathe", fallback: "#020204")).headline == "Idle breath: Nothing is running")
     }
 

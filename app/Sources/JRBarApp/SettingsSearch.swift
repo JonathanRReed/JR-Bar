@@ -35,7 +35,8 @@ struct SettingsSearchEntry: Hashable, Identifiable, Sendable {
         self.group = group
         self.title = title
         self.subtitle = subtitle
-        self.keywords = keywords
+        let mixRow = group == "Mix" || title == "Mix" || title == "Mix mode"
+        self.keywords = mixRow && !keywords.contains("blend") ? keywords + ["blend"] : keywords
         self.card = card
     }
 }
@@ -84,7 +85,7 @@ enum SettingsSearch {
 
     private nonisolated static func currentEntry(_ entry: SettingsSearchEntry) -> SettingsSearchEntry? {
         // Lighting and animation controls moved into Studio.
-        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Role", "Also glow for finished runs", "Look", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
+        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Mix", "Role", "Also glow for finished runs", "Look", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
         if entry.group == "Calibration profiles" || (entry.chapter == .lighting && entry.title != "Maximum brightness") || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
             return SettingsSearchEntry(.lighting, entry.group, entry.title, subtitle: entry.subtitle,
                                        keywords: entry.keywords, card: entry.card, hint: entry.hint)
@@ -241,7 +242,7 @@ enum SettingsSearch {
               hint: "Shown when the monitor has reported Screen Bar device settings."),
         .init(.devices, "Screen Bar", "Asks only", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
-        .init(.devices, "Screen Bar", "Blend", keywords: ["screen bar"],
+        .init(.devices, "Screen Bar", "Mix", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
         .init(.devices, "Screen Bar", "Colour calibration", keywords: ["screen bar"],
               hint: "Shown when the monitor has reported Screen Bar device settings."),
@@ -267,13 +268,13 @@ enum SettingsSearch {
               keywords: ["accent", "color", "swatch", "hue"]),
         .init(.lighting, "State colours", "State colours", subtitle: "The colour of idle, working, done, ask and error.",
               keywords: ["idle", "working", "done", "ask", "error", "mode colours", "swatch"]),
-        .init(.lighting, "Blend", "Blend mode"),
-        .init(.lighting, "Blend", "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo."),
-        .init(.lighting, "Blend", "Celebrate completions", subtitle: "A flourish when a session settles into Done."),
-        .init(.lighting, "Blend", "Celebration preview", subtitle: "The finish the strip plays, once, when a session is done."),
-        .init(.lighting, "Blend", "Finish", subtitle: "Bloom, Land or Ripple: how a finished session is celebrated.",
+        .init(.lighting, "Mix", "Mix mode"),
+        .init(.lighting, "Mix", "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Studio keeps its own tempo."),
+        .init(.lighting, "Mix", "Celebrate completions", subtitle: "A flourish when a session settles into Done."),
+        .init(.lighting, "Mix", "Celebration preview", subtitle: "The finish the strip plays, once, when a session is done."),
+        .init(.lighting, "Mix", "Finish", subtitle: "Bloom, Land or Ripple: how a finished session is celebrated.",
               keywords: ["celebration", "done", "land", "ripple", "bloom"]),
-        .init(.lighting, "Blend", "Tint by tool", subtitle: "The working light's head takes the colour of the tool the agent is using.",
+        .init(.lighting, "Mix", "Tint by tool", subtitle: "The working light's head takes the colour of the tool the agent is using.",
               keywords: ["tool", "tint", "shell", "edit"]),
         .init(.lighting, "Pulse range", "Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness."),
         .init(.lighting, "Dimming", "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
@@ -286,7 +287,7 @@ enum SettingsSearch {
         .init(.lighting, "Dimming", "Turn off when idle", subtitle: "After a long idle the lights switch off entirely."),
         .init(.lighting, "Dimming", "Off after"),
         .init(.lighting, "Scene", "Active scene", subtitle: "Which scene's effect assignments are in force."),
-        .init(.lighting, "Provider colours and animations", "Effect Studio"),
+        .init(.lighting, "Provider colours and animations", "Studio"),
         .init(.lighting, "Ambient cues", "Scene pack", subtitle: "An installed Scene pack whose policy rows override the built-in scene's.",
               keywords: ["pack", "scene", "policy"]),
         .init(.lighting, "Ambient cues", "Also at night", subtitle: "Keeps the Rainstick drifting at night too.",

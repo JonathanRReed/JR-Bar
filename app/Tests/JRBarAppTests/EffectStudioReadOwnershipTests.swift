@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio read ownership", .serialized, .timeLimit(.minutes(2)))
+@Suite("Studio read ownership", .serialized, .timeLimit(.minutes(2)))
 struct EffectStudioReadOwnershipTests {
     @Test("canceling a reload without closing releases busy state without an error")
     func cancelledLoadSettles() async throws {

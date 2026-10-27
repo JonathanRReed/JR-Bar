@@ -80,7 +80,7 @@ struct StudioFleetPreview: Decodable, Hashable {
     @MainActor var motionNotice: String? { Self.motionNotice(played: played, program: program, ledCount: ledCount) }
 
     @MainActor static func motionNotice(played: String, program: String, ledCount: Int) -> String? {
-        let names = ["classic": "Status Only", "color_blend": "Smooth"]
+        let names = ["classic": "Status only", "color_blend": "Smooth"]
         guard let name = names[played],
               let sampler = LEDPreviewSamplers.sampler(for: program, ledCount: ledCount), !sampler.isStatic else { return nil }
         return "\(name) still moves the state light."

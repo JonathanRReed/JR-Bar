@@ -6,7 +6,7 @@ import Testing
 
 /// The Program room's composer sheet: its controls map onto the layer
 /// composer one to one, and its default is a light worth starting from.
-@Suite("Effect Studio · Compose")
+@Suite("Studio · Compose")
 @MainActor
 struct EffectStudioComposeTests {
     @Test func invalidChoicesStayWithinTheControlsBounds() {

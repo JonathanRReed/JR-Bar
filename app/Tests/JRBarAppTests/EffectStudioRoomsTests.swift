@@ -4,11 +4,11 @@ import JRBarCore
 import JRBarLEDS
 @testable import JRBarApp
 
-/// Effect Studio's Program and Moments rooms: everything they offer to
+/// Studio's Program and Moments rooms: everything they offer to
 /// play is a program the firmware parses and the compiler accepts, the
 /// shelf writes the daemon's shape, and a burn a monitor cannot do says
 /// so instead of claiming a write.
-@Suite("Effect Studio rooms")
+@Suite("Studio rooms")
 @MainActor
 struct EffectStudioRoomsTests {
     @Test func everyExampleIsPlayableOnBothDevices() {

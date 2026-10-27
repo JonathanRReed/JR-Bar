@@ -274,7 +274,7 @@ final class SettingsStore {
     /// The Utilities page's store, same seat as `toys`. Weak: the
     /// delegate owns it.
     weak var utilities: UtilitiesStore?
-    /// Lighting › Effects… opens the Effect Studio window.
+    /// Lighting › Effects… opens the Studio window.
     var onOpenStudioSearch: (@MainActor (SettingsSearchEntry) -> Void)?
     var onOpenStudioDevices: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?

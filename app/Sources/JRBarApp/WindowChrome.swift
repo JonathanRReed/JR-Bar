@@ -4,7 +4,7 @@ import SwiftUI
 // The pieces every titled window draws the same way: its cards, its
 // empty states, the one-line notices under the toolbar, the search
 // field, the capsule that says what just happened, and section titles.
-// History, the Usage Center, Effect Studio, the Creator Micro window and
+// History, the Usage Center, Studio, the Creator Micro window and
 // the Overview all take them from here, so the windows read as one app.
 
 /// Corner radii the windows share: cards, the wells inside them, and

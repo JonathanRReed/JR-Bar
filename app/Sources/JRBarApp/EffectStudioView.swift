@@ -1295,7 +1295,7 @@ struct AssignSheet: View {
 }
 
 /// A row that wraps: the daemon writes the chips' words, so their total
-/// width is not something the app can promise. Used for the Effect Studio's
+/// width is not something the app can promise. Used for the Studio's
 /// fact chips, where truncation would hide which surfaces an effect reaches.
 struct WrapRow: Layout {
     var spacing: CGFloat = 6

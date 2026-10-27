@@ -6,7 +6,7 @@ import JRBarCore
 /// pure over plain values plus a struct of verbs, so what a row says
 /// and which verbs it offers are tests; the wiring (`PaletteWiring`)
 /// binds the verbs to the stores that already own each write — the
-/// panel's answer path, the daemon's quiet, the Effect Studio's scene,
+/// panel's answer path, the daemon's quiet, the Studio's scene,
 /// the notch card's Control Center strip.
 
 // MARK: - Agents: open asks and sessions
@@ -958,7 +958,7 @@ enum WindowPaletteRows {
             window("history", "History", "What your agents did, newest first",
                    "clock.arrow.circlepath", Tone.neutral.color, keywords: ["log", "events"], chord: .command("y"),
                    run: verbs.history),
-            window("effects", "Effect Studio", "Light effects, scenes and assignments",
+            window("effects", "Studio", "Light effects, scenes and assignments",
                    "wand.and.stars", .pink, keywords: ["leds", "animations", "lights"], run: verbs.effects),
             window("deck", "Creator Micro", "Keys and rail",
                    "keyboard.fill", .purple, keywords: ["deck", "creator micro", "rail", "keys"], run: verbs.deck),

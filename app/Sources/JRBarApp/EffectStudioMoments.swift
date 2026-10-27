@@ -192,7 +192,7 @@ enum MomentSwitch: Equatable {
     }
 }
 
-/// The Moments room of Effect Studio: every ambient cue by name, what it
+/// The Moments room of Studio: every ambient cue by name, what it
 /// means, when it plays, its switch where it has one, and a sketch that
 /// can be played on the Screen Bar.
 struct LightMomentsView: View {
@@ -406,7 +406,7 @@ struct LidTransitionList: Decodable {
     let kinds: [LidTransition]
 }
 
-/// Effect Studio › Moments › Lid: the four lid transitions, each with its
+/// Studio › Moments › Lid: the four lid transitions, each with its
 /// looks as thumbnails. A thumbnail picks the look (it is written to the
 /// transition's setting); the play button runs the picked look on the
 /// strip and the Dot exactly as a lid change would. Iris is upstream
@@ -588,7 +588,7 @@ struct FinishLookList: Decodable {
     let looks: [Look]
 }
 
-/// Effect Studio › Moments › Finish: how a finished session is celebrated
+/// Studio › Moments › Finish: how a finished session is celebrated
 /// -- the shipped bloom, Land (a light falls to the far end, gathering
 /// speed, splashes and glows where it landed: "it arrived") or Ripple (one
 /// wide ring out from the middle). Picking one writes

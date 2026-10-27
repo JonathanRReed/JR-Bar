@@ -62,7 +62,7 @@ struct StudioLightsTests {
     @Test("calm modes report motion when the daemon sends a travelling program")
     func calmMotionIsNotHidden() {
         let source = "#0088FF #000000 #000000 #000000 #000000 #000000 #000000 #000000 100ms cosine\nroll-right 2s linear\nrepeat"
-        for (mode, name) in [("classic", "Status Only"), ("color_blend", "Smooth")] {
+        for (mode, name) in [("classic", "Status only"), ("color_blend", "Smooth")] {
             let moving = StudioFleetPreview(program: source, label: "Two providers", played: mode,
                                             reason: "Current state", warnings: [], ledCount: 8)
             #expect(moving.playbackWarnings == ["\(name) still moves the state light."])

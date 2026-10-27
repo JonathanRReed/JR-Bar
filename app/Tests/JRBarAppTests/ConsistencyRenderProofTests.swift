@@ -48,7 +48,7 @@ struct ConsistencyRenderProofTests {
                 try render(SettingsPageContainer(store: fixture.settings, page: page), "settings-\(page.rawValue)", 620)
             }
             try render(EffectStudioView(store: studio), "studio-mix", 1160)
-            try render(WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {}), "whats-new", 560)
+            try render(WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {}), "whats-new", WhatsNewView.width + 32)
             try render(StatusBanner("The monitor is not connected.", detail: "Reconnecting…"), "notice", 560)
             let icon = StatusIconRenderer().image(for: StatusIconSpec(style: .orbit, ringFraction: 0.42))
             try render(Image(nsImage: icon).frame(width: 32, height: 24), "menu-bar-item", 64)

@@ -626,7 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.onOpenReplay = { [weak historyWindow] in historyWindow?.showEvents() }
         historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
-        // Usage Center (⌘U) and Effect Studio windows.
+        // Usage Center (⌘U) and Studio windows.
         let usageStore = UsageCenterStore(core: core, sessionUsage: store.sessionUsage)
         let usageWindow = UsageCenterWindowController(store: usageStore)
         self.usageStore = usageStore
@@ -935,7 +935,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         // `JRBAR_OPEN_USAGE=1` opens the Usage Center; `JRBAR_OPEN_EFFECTS=1`
-        // (or an effect id) opens the Effect Studio, on that effect.
+        // (or an effect id) opens the Studio, on that effect.
         if environment["JRBAR_OPEN_USAGE"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak usageWindow] in
                 MainActor.assumeIsolated { usageWindow?.show() }
@@ -1401,7 +1401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(NSMenuItem(title: "Overview", action: #selector(openOverview(_:)), keyEquivalent: "o"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
-        appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Creator Micro…", action: #selector(openControlCenter(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
         let checkForUpdates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")

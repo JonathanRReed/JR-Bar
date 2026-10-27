@@ -4,7 +4,7 @@ import JRBarCore
 /// Binds the palette's row builders to the stores that already own
 /// each write, so the app delegate registers the whole palette in one
 /// call. Every verb here is a path some other surface already uses —
-/// the panel's guarded answer, `quiet`, the Effect Studio's scene, the
+/// the panel's guarded answer, `quiet`, the Studio's scene, the
 /// notch card's toggle strip, the Usage Center's focus — so the palette
 /// adds a way in, never a second implementation.
 @MainActor
@@ -153,7 +153,7 @@ enum PaletteWiring {
         })
     }
 
-    /// Scenes through the Effect Studio's store (which re-reads the
+    /// Scenes through the Studio's store (which re-reads the
     /// assignments after the write); brightness through the panel's
     /// slider path, only while a strip or Dot is attached — a menu of
     /// steps, or exactly what was typed ("brightness 40"); the Screen

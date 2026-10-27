@@ -199,7 +199,7 @@ struct StudioWorkspaceRenderProofTests {
             store.lightsStudio.requestPlan = {
                 StudioLightPlan(mixes: programs.plan.mixes, devices: [
                     StudioLightPlan.Device(device: "virtual:status-bar", ledCount: 8, requestedMix: "classic", played: state,
-                                          reason: state == "classic" ? "Working with Status Only." : "Current state: \(state).",
+                                          reason: state == "classic" ? "Working with Status only." : "Current state: \(state).",
                                           warnings: [], program: program, cueReason: nil)])
             }
             await store.lightsStudio.refreshPlan()

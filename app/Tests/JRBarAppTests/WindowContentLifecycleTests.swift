@@ -24,14 +24,14 @@ struct WindowContentLifecycleTests {
         weak var firstHost: NSViewController?
         weak var firstView: NSView?
         autoreleasepool {
-            let host = WindowContentLifecycle.attach(to: window, title: "Effect Studio", subtitle: "JR-Bar") {
+            let host = WindowContentLifecycle.attach(to: window, title: "Studio", subtitle: "JR-Bar") {
                 WindowContentLifecycle.hosting(Text("studio").frame(width: 300, height: 200))
             }
             firstHost = host
             firstView = host.view
             #expect(window.contentViewController === host)
         }
-        #expect(window.title == "Effect Studio")
+        #expect(window.title == "Studio")
         #expect(window.subtitle == "JR-Bar")
         window.minSize = NSSize(width: 600, height: 400)
         window.setFrame(NSRect(x: 80, y: 120, width: 760, height: 560), display: false)
@@ -50,7 +50,7 @@ struct WindowContentLifecycleTests {
         #expect(window.maxSize == maxSize)
 
         for _ in 0..<2 {
-            let host = WindowContentLifecycle.attach(to: window, title: "Effect Studio", subtitle: "JR-Bar") {
+            let host = WindowContentLifecycle.attach(to: window, title: "Studio", subtitle: "JR-Bar") {
                 WindowContentLifecycle.hosting(Text("studio").frame(width: 300, height: 200))
             }
             #expect(window.contentViewController === host)
