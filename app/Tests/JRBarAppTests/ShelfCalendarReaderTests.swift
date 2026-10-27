@@ -51,19 +51,26 @@ struct ShelfCalendarReaderTests {
 
     @Test("a store change never waits for a slow read and prevents caching that read")
     func invalidateDuringRead() async {
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
+        defer { gate.signal() }
         let entered = TestSignal()
         let reads = OSAllocatedUnfairLock(initialState: 0)
         let reader = ShelfCalendarReader(fetch: { _ in
             let count = reads.withLock { $0 += 1; return $0 }
-            if count == 1 { entered.signal(); #expect(gate.wait(timeout: .now() + 10) == .success) }
+            if count == 1 { entered.signal(); gate.wait() }
             return []
         })
         let fetch = Task.detached { reader.events(from: Self.now) }
         #expect(await entered.wait())
-        reader.invalidate()
+        let invalidated = TestSignal()
+        let invalidation = Task.detached {
+            reader.invalidate()
+            invalidated.signal()
+        }
+        #expect(await invalidated.wait())
         gate.signal()
         _ = await fetch.value
+        await invalidation.value
         _ = reader.events(from: Self.now)
         #expect(reads.withLock { $0 } == 2)
     }

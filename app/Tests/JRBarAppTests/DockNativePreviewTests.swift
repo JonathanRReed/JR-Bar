@@ -163,11 +163,12 @@ struct DockNativePreviewTests {
 
     @Test("closing or revoking access during a read drops its result", arguments: [false, true])
     func delayedReply(_ revoked: Bool) async {
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
+        defer { gate.signal() }
         let entered = TestSignal()
         let event = ShelfCalendarModel.Event(title: "Synthetic event", start: Self.now,
             end: Self.now.addingTimeInterval(600), url: nil)
-        let source = ShelfCalendarReader(fetch: { _ in entered.signal(); #expect(gate.wait(timeout: .now() + 10) == .success); return [event] })
+        let source = ShelfCalendarReader(fetch: { _ in entered.signal(); gate.wait(); return [event] })
         let calendar = DockCalendarPreview(reader: source)
         calendar.authorization = { .fullAccess }
         calendar.scheduleRefreshOverride = {}
