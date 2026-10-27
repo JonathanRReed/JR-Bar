@@ -22,6 +22,9 @@ struct NotchStateMachineTests {
         toy.islandVisible = true
         toy.menuBarHidden = { false }
         toy.reduceMotion = { false }
+        // The real pointer stays out of it: a hand resting near the top of
+        // the screen would otherwise hold the card open under the test.
+        toy.pointerLocation = { CGPoint(x: -10_000, y: -10_000) }
         let timers = ManualTimers()
         toy.hoverTimer = { delay, work in timers.arm(delay, work) }
         return (toy, store, timers)
