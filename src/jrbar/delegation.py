@@ -50,7 +50,7 @@ def _reconcile_delegating_parents(
                       for member in group.members if member != group.root_work_key}
     freshest_child: dict[str, datetime] = {}
     for status in statuses:
-        if status.mode not in {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS,
+        if status.stale or status.mode not in {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS,
                                AgentMode.WAITING_FOR_INPUT}:
             continue
         parent_id = root_by_member.get(status.agent_id)
@@ -75,6 +75,7 @@ def _reconcile_delegating_parents(
         replace(
             status,
             mode=AgentMode.WORKING,
+            quota_working=False,
             updated_at=max(status.updated_at, freshest_child[status.agent_id]),
         )
         if (

@@ -243,3 +243,34 @@ def test_five_unrelated_groups_of_two_providers_get_two_mix_shares(raw_snapshot)
     assert result["played"] == "round_robin"
     assert "contiguous provider shares" in result["reason"]
     assert not result["warnings"]
+
+
+@pytest.mark.parametrize("root_stale", [False, True])
+@pytest.mark.parametrize("root_mode", [AgentMode.WORKING, AgentMode.IDLE_READY, AgentMode.COMPLETED])
+@pytest.mark.parametrize("worker_mode,stale", [(AgentMode.WORKING, False), (AgentMode.COMPLETED, False), (AgentMode.WORKING, True)])
+def test_group_counts_and_own_provider_quota_activity_matrix(root_stale, root_mode, worker_mode, stale):
+    from jrbar.attention import project_attention
+    from jrbar.core_projection import aggregate_counts, project_session_rows
+
+    root = replace(status("claude:session:orchestrator", mode=root_mode), stale=root_stale)
+    workers = [replace(status(f"codex:session:worker-{index}", mode=worker_mode, links=[
+        ParentLink(f"codex:session:worker-{index}", root.agent_id, "t3code", NOW),
+    ]), stale=stale) for index in range(4)]
+    from jrbar.delegation import _reconcile_delegating_parents
+
+    reconciled = _reconcile_delegating_parents((root, *workers), datetime.fromtimestamp(NOW, timezone.utc))
+    state = snapshot(reconciled)
+    rows, _ = project_session_rows(state, now=NOW)
+    burns = [row for row in rows if not row["stale"] and row.get("quota_working", True)
+             and row["mode"] in {AgentMode.WORKING.value, AgentMode.TOOL_RUNNING.value, AgentMode.LONG_TASK_PROGRESS.value}]
+    assert sum(row["provider"] == "codex" for row in burns) == (4 if worker_mode is AgentMode.WORKING and not stale else 0)
+    assert sum(row["provider"] == "claude" for row in burns) == (1 if root_mode is AgentMode.WORKING and not root_stale else 0)
+    assert aggregate_counts(rows)["total"] == 1
+    assert aggregate_counts(rows)["active"] == int((root_mode is AgentMode.WORKING and not root_stale) or (worker_mode is AgentMode.WORKING and not stale))
+    assert sum(row["kind"] == "worker" for row in rows) == 4
+    assert all(row["parent"] == root.agent_id for row in rows if row["kind"] == "worker")
+    from jrbar.settings import AgentMonitorSettings
+
+    lights = project_attention(state, AgentMonitorSettings())
+    assert len(lights.light_rows) == 1
+    assert lights.light_rows[0].provider == "claude"

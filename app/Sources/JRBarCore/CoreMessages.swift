@@ -485,6 +485,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var sourceIntegration: String?
     public var groupId: String?
     public var unlinkedWorker: Bool
+    /// False when working summarizes the group rather than this session.
+    public var quotaWorking: Bool?
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
@@ -493,7 +495,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 workersWaiting: Int? = nil, snoozedUntil: Double? = nil, remote: Bool = false,
                 event: String? = nil, tool: String? = nil, message: String? = nil,
                 axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil,
-                groupId: String? = nil, unlinkedWorker: Bool = false, failureSignalUntil: Double? = nil) {
+                groupId: String? = nil, unlinkedWorker: Bool = false, failureSignalUntil: Double? = nil,
+                quotaWorking: Bool? = nil) {
         self.id = id
         self.provider = ProviderID.canonical(provider)
         self.kind = kind
@@ -522,6 +525,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.failureSignalUntil = failureSignalUntil
         self.groupId = groupId
         self.unlinkedWorker = unlinkedWorker
+        self.quotaWorking = quotaWorking
         self.sourceIntegration = sourceIntegration
     }
 
@@ -531,6 +535,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         case failureSignalUntil = "failure_signal_until"
         case groupId = "group_id"
         case unlinkedWorker = "unlinked_worker"
+        case quotaWorking = "quota_working"
         case sourceIntegration = "source_integration"
         case workersWaiting = "workers_waiting"
         case shortId = "short_id"
@@ -571,6 +576,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         failureSignalUntil = try? c.decodeIfPresent(Double.self, forKey: .failureSignalUntil)
         groupId = try? c.decodeIfPresent(String.self, forKey: .groupId)
         unlinkedWorker = (try? c.decodeIfPresent(Bool.self, forKey: .unlinkedWorker)) ?? false
+        quotaWorking = try c.decodeIfPresent(Bool.self, forKey: .quotaWorking)
         sourceIntegration = try? c.decodeIfPresent(String.self, forKey: .sourceIntegration)
     }
 }

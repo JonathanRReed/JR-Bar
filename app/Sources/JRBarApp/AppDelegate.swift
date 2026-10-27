@@ -1847,33 +1847,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let cap = StatusIconRenderer.maxMeters
         let now = Date().timeIntervalSince1970
         statusItem.meters = shown.prefix(cap).map { provider in
-            let window = UsageCenterStore.primaryWindow(of: provider)
-            let reading = Self.meterReading(of: provider, window: window, now: now)
-            // The percent styles need the window's reset stamp (the
-            // countdown swap) and its pace verdict (the compact tint).
-            // Same daemon-forecast pick the Usage Center card applies:
-            // the provider-level forecast only speaks for the
-            // conventional 5h lane.
-            let conventional = window?.id == UsageCenterStore.conventionalWindow(of: provider)?.id
-            let daemon = window?.forecast ?? (conventional ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
-            // An old or lapsed figure says nothing about where the window
-            // is heading now, so it gets no verdict to tint with.
-            var verdict: UsageForecast.Verdict?
-            if reading.current, let w = window {
-                let samples = core?.usageSamples.samples(provider: provider.identity, window: w.name) ?? []
-                verdict = UsageForecaster.forecast(window: w, daemon: daemon, samples: samples, now: now).verdict
-            }
-            var meter = StatusItemController.meter(for: provider.id,
-                                                   fraction: reading.fraction,
-                                                   approximate: provider.isDerived,
-                                                   document: document,
-                                                   resetsAt: window?.resetsAt,
-                                                   verdict: verdict)
-            meter.stale = reading.stale
-            return meter
+            Self.statusMeter(for: provider, core: store.core, document: document, now: now)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
         statusItem.dotState = dotState()
+    }
+
+    static func statusMeter(for provider: CoreProviderUsage, core: CoreModel,
+                            document: SettingsDocument? = nil, now: Double) -> StatusMeter {
+        let window = UsageCenterStore.primaryWindow(of: provider)
+        let reading = meterReading(of: provider, window: window, now: now)
+        let forecast = window.map {
+            UsageCenterStore.forecast(for: provider, window: $0, core: core, now: Date(timeIntervalSince1970: now))
+        }
+        var meter = StatusItemController.meter(for: provider.id, fraction: reading.fraction,
+                                               approximate: provider.isDerived, document: document,
+                                               resetsAt: window?.resetsAt,
+                                               verdict: reading.current ? forecast?.verdict : nil)
+        meter.stale = reading.stale
+        return meter
     }
 
     /// The `agents` strip: one dot per session in the panel's order (asks,

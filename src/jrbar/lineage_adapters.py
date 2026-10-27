@@ -557,7 +557,8 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
     for thread in threads:
         tid = thread["thread_id"]
         candidates = bindings_by_thread.get((tid, thread.get("active_provider_thread_id")), ())
-        candidates = [b for b in candidates if not b.get("status") or b["status"] not in {"closed", "archived", "deleted"}]
+        # Closed bindings still prove identity after the child's run ends.
+        candidates = [b for b in candidates if not b.get("status") or b["status"] not in {"archived", "deleted"}]
         valid = []
         for binding in candidates:
             payload = binding.get("payload_json", {})
@@ -798,7 +799,10 @@ def update_lineage_runtime(target) -> None:
     if not callable(publish):
         return
     snapshot = getattr(target, "last_snapshot", None)
-    providers = frozenset(s.provider for s in getattr(snapshot, "statuses", ()) if not s.stale)
+    # Lineage belongs to the retained roster, not just its live activity.
+    # Reading metadata must not promote a finished or stale child to a main.
+    retained = (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
+    providers = frozenset(s.provider for s in retained if s.event_name != "LineageObserved")
     reader = getattr(target, "_local_lineage_reader", None)
     if not providers:
         publish("lineage", ())
@@ -807,11 +811,9 @@ def update_lineage_runtime(target) -> None:
         reader = LocalLineageReader(Path.home())
         target._local_lineage_reader = reader
     paths = getattr(monitor, "lineage_paths_by_session", {})
-    active_paths = tuple(Path(path) for status in getattr(snapshot, "statuses", ()) if not status.stale
+    active_paths = tuple(Path(path) for status in retained
                          for key in (status.agent_id, status.parent_agent_id)
                          if (path := paths.get(key)))
-    active_keys = frozenset(s.agent_id for s in getattr(snapshot, "statuses", ()) if not s.stale)
+    active_keys = frozenset(s.agent_id for s in retained if s.event_name != "LineageObserved")
     rows = tuple(row for row in reader.request(providers, active_paths=active_paths, active_keys=active_keys) if row.provider in providers)
-    observed = frozenset(s.agent_id for s in (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
-                         if s.event_name != "LineageObserved")
-    publish("lineage", match_opencode_roster(rows, observed))
+    publish("lineage", match_opencode_roster(rows, active_keys))

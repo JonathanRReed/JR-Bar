@@ -914,24 +914,26 @@ def test_delegated_worker_without_native_binding_keeps_its_explicit_parent(tmp_p
     assert next(thread for thread in resumed.threads if thread.thread_id == 'child').to_agent_status().mode is AgentMode.COMPLETED
 
 
-def test_settled_native_children_keep_lineage_after_the_activity_window(tmp_path):
+@pytest.mark.parametrize("binding_status", ["idle", "closed"])
+@pytest.mark.parametrize("child_status", ["completed", "interrupted"])
+def test_settled_native_children_keep_lineage_after_the_activity_window(tmp_path, binding_status, child_status):
     from jrbar.agent_groups import resolve_agent_groups
     database = _v2(tmp_path)
     _thread(database, 'root', active_provider_thread_id='parent-binding')
     _run(database, 'root', 1, 'running')
     _thread(database, 'old-child', provider='codex', updated_at=EARLIER, active_provider_thread_id='child-binding')
-    _run(database, 'old-child', 1, 'interrupted')
+    _run(database, 'old-child', 1, child_status)
     with sqlite3.connect(database) as connection:
         connection.execute('CREATE TABLE orchestration_v2_projection_provider_threads '
                            '(provider_thread_id TEXT, thread_id TEXT, driver TEXT, status TEXT, payload_json TEXT)')
         for tid, handle, driver, native in [('root', 'parent-binding', 'claudeAgent', 'native-root'),
                                             ('old-child', 'child-binding', 'codex', 'native-child')]:
             connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
-                               (handle, tid, driver, 'idle', json.dumps({'nativeThreadRef': {'driver': driver, 'nativeId': native}})))
+                               (handle, tid, driver, binding_status, json.dumps({'nativeThreadRef': {'driver': driver, 'nativeId': native}})))
         connection.execute('CREATE TABLE orchestration_v2_projection_subagents '
                            '(thread_id TEXT, child_thread_id TEXT, provider_thread_id TEXT, status TEXT, updated_at TEXT, payload_json TEXT)')
         connection.execute('INSERT INTO orchestration_v2_projection_subagents VALUES (?,?,?,?,?,?)',
-                           ('root', 'old-child', 'child-binding', 'interrupted', EARLIER, '{}'))
+                           ('root', 'old-child', 'child-binding', child_status, EARLIER, '{}'))
     now = datetime.fromisoformat(NOW)
     observed = read_t3_snapshot(base_dir=tmp_path, now=lambda: now)
     assert observed.compatible

@@ -393,3 +393,78 @@ def test_active_header_is_reparsed_only_after_its_file_changes(tmp_path, monkeyp
     assert second[0].parent_links[0].parent.endswith("second")
     monkeypatch.setattr(Path, "open", lambda *a, **k: pytest.fail("unchanged file was read"))
     assert reader.read(frozenset({"codex"}), now=NOW, active_paths=(path,)) == second
+
+
+@pytest.mark.parametrize("mode,stale", [
+    (AgentMode.WORKING, False), (AgentMode.COMPLETED, False),
+    (AgentMode.COMPLETED, True), (AgentMode.WORKING, True),
+])
+def test_runtime_reads_lineage_for_every_retained_child(tmp_path, mode, stale):
+    from jrbar.lineage_adapters import update_lineage_runtime
+
+    path = tmp_path / ".codex/sessions/synthetic/child.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"type": "session_meta", "payload": {
+        "id": "child", "parent_thread_id": "delegated",
+    }}) + "\n")
+    os.utime(path, (NOW - 300, NOW - 300))
+    root = status("claude:session:orchestrator")
+    delegated = status("codex:session:delegated", links=[
+        ParentLink("codex:session:delegated", root.agent_id, "t3code", NOW - 300),
+    ])
+    child = replace(status("codex:session:child", mode=mode), stale=stale)
+    rows = (root, delegated, child)
+    reader = LocalLineageReader(tmp_path)
+    reader.request = lambda providers, **kwargs: reader.read(providers, now=NOW, **kwargs)
+    published = {}
+    target = SimpleNamespace(
+        last_snapshot=SimpleNamespace(statuses=tuple(row for row in rows if not row.stale),
+                                      stale_statuses=tuple(row for row in rows if row.stale)),
+        monitor=SimpleNamespace(lineage_paths_by_session={child.agent_id: str(path)},
+                                replace_external_statuses=lambda key, value: published.update({key: value})),
+        _local_lineage_reader=reader,
+    )
+    update_lineage_runtime(target)
+    merged = _merged_status_candidates([*rows, *published["lineage"]])
+    resolved = resolve_agent_groups(merged, now=NOW)
+    group, = resolved.groups
+    assert group.root_work_key == root.agent_id
+    assert set(group.members) == {row.agent_id for row in rows}
+    assert not resolved.unlinked_workers
+    recovered = next(row for row in merged if row.agent_id == child.agent_id)
+    assert (recovered.mode, recovered.stale, recovered.updated_at) == (child.mode, child.stale, child.updated_at)
+    # Stale-only rosters still supply evidence; removed rows stop supplying it.
+    target.last_snapshot = SimpleNamespace(statuses=(), stale_statuses=tuple(replace(row, stale=True) for row in rows))
+    update_lineage_runtime(target)
+    assert any(row.agent_id == child.agent_id for row in published["lineage"])
+    target.last_snapshot = SimpleNamespace(statuses=(), stale_statuses=())
+    update_lineage_runtime(target)
+    assert published["lineage"] == ()
+
+
+@pytest.mark.parametrize("binding_status", ["idle", "closed"])
+@pytest.mark.parametrize("child_mode,stale", [(AgentMode.COMPLETED, False), (AgentMode.COMPLETED, True)])
+def test_closed_native_t3_binding_keeps_completed_child_group(binding_status, child_mode, stale):
+    data = fixture("t3")
+    for binding in data["bindings"]:
+        binding["status"] = binding_status
+    keys, links = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW)
+    rows = [replace(status(key, mode=child_mode if tid != "root" else AgentMode.WORKING),
+                    stale=stale if tid != "root" else False) for tid, key in keys.items()]
+    result = resolve_agent_groups(rows, links, now=NOW)
+    group, = result.groups
+    assert group.root_work_key == "claude:session:native-root"
+    assert not result.unlinked_workers
+    assert len(group.members) == 4
+
+
+def test_closed_native_t3_binding_without_a_parent_stays_unlinked():
+    data = fixture("t3")
+    data["threads"] = [row for row in data["threads"] if row["thread_id"] != "root"]
+    for binding in data["bindings"]:
+        binding["status"] = "closed"
+    keys, links = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW)
+    rows = [replace(status(key, mode=AgentMode.COMPLETED), stale=True) for key in keys.values()]
+    result = resolve_agent_groups(rows, links, now=NOW)
+    assert not result.groups
+    assert result.unlinked_workers == set(keys.values())

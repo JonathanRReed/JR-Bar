@@ -172,6 +172,7 @@ class AgentStatus:
     parent_links: tuple[ParentLink, ...] = ()
 
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    quota_working: bool | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.provider, str):
@@ -251,6 +252,7 @@ class AgentStatus:
             "message": self.message,
             "origin": self.origin,
             "stale": self.stale,
+            **({"quota_working": False} if self.quota_working is False else {}),
             "work_key": (
                 work_key_to_payload(self.work_key)
                 if self.work_key is not None

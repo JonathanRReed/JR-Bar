@@ -4016,6 +4016,7 @@ def agent_status_from_dict(data: object) -> AgentStatus | None:
             message=_string_or_none(data.get("message")),
             origin=_string_or_none(data.get("origin")),
             stale=bool(data.get("stale", False)),
+            quota_working=False if data.get("quota_working") is False else None,
         )
     except Exception:
         return None
