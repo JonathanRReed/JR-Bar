@@ -345,6 +345,7 @@ class CodexTokens:
     #: an account has follows from this: a Pro account's Codex limit is a
     #: weekly ceiling with no 5-hour window, a Plus account's has both.
     plan_type: str | None = None
+    account_label: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - defensive
         return f"CodexTokens(account_id={self.account_id!r}, tokens=<redacted>)"
@@ -363,11 +364,11 @@ def default_codex_auth_path() -> Path:
 CODEX_ID_TOKEN_AUTH_CLAIM: Final = "https://api.openai.com/auth"
 
 
-def chatgpt_plan_type(id_token: object) -> str | None:
-    """The plan word from a Codex id_token, or None.
+def _codex_id_claims(id_token: object) -> dict | None:
+    """Display claims from the local Codex ID token, or None.
 
     The token is read, never verified: it is a local file Codex itself wrote
-    and the only thing taken from it is a display/applicability word. No
+    and only display and plan fields are used. No
     trust decision hangs on this value.
     """
     if not isinstance(id_token, str) or id_token.count(".") != 2:
@@ -382,10 +383,22 @@ def chatgpt_plan_type(id_token: object) -> str | None:
         return None
     if not isinstance(claims, dict):
         return None
+    return claims
+
+
+def chatgpt_plan_type(id_token: object) -> str | None:
+    claims = _codex_id_claims(id_token) or {}
     auth = claims.get(CODEX_ID_TOKEN_AUTH_CLAIM)
     plan = auth.get("chatgpt_plan_type") if isinstance(auth, dict) else None
-    if isinstance(plan, str) and plan.strip():
-        return plan.strip()[:64]
+    return plan.strip()[:64] if isinstance(plan, str) and plan.strip() else None
+
+
+def codex_account_label(id_token: object) -> str | None:
+    claims = _codex_id_claims(id_token) or {}
+    for key in ("email", "name"):
+        value = claims.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:160]
     return None
 
 
@@ -413,4 +426,5 @@ def read_codex_tokens(path: Path | None = None) -> CodexTokens | None:
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
         last_refresh=last_refresh if isinstance(last_refresh, str) else None,
         plan_type=chatgpt_plan_type(tokens.get("id_token")),
+        account_label=codex_account_label(tokens.get("id_token")),
     )

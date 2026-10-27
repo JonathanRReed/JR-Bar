@@ -1358,11 +1358,9 @@ final class UsageCenterStore {
         let account = provider.account ?? history?.account
         var parts: [String] = []
         if let plan = account?.plan, !plan.isEmpty { parts.append(plan) }
-        // Account labels are whatever the provider hands over: an email, an
-        // org slug, or a bare account UUID. A UUID is shortened the way
-        // every other id in the app is, rather than eating the line.
-        if let label = account?.label, !label.isEmpty {
-            parts.append(SessionLabel.looksLikeUUID(label) ? String(label.prefix(8)) : SessionLabel.shorteningUUIDs(label))
+        if let label = account?.label, !label.isEmpty,
+           label.contains("@") || label.range(of: #"\b[0-9a-fA-F]{8,}\b"#, options: .regularExpression) == nil {
+            parts.append(label)
         }
         // A provider that is off says so on its card; the line keeps only
         // who the account is.

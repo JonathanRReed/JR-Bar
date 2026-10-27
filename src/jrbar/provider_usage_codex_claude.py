@@ -122,8 +122,8 @@ def _default_provider_local_scan(
                 tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
             except Exception:
                 tokens = None
-            if tokens is not None and getattr(tokens, "account_id", None):
-                document["account_label"] = str(tokens.account_id)
+            if tokens is not None:
+                document["account_label"] = getattr(tokens, "account_label", None) or getattr(tokens, "account_id", None)
     return document
 
 
@@ -188,8 +188,8 @@ def _cached_provider_local_scan(
         try:
             from .credentials import read_codex_tokens
             tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
-            if tokens is not None and getattr(tokens, "account_id", None):
-                indexed["account_label"] = str(tokens.account_id)
+            if tokens is not None:
+                indexed["account_label"] = getattr(tokens, "account_label", None) or getattr(tokens, "account_id", None)
         except Exception:
             pass
     if indexed is None:

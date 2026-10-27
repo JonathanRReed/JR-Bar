@@ -485,3 +485,17 @@ def test_foreground_security_process_error_never_falls_through(tmp_path):
         security_runner=tool, runner=lambda _: pytest.fail("second dialog"),
     )
     assert result.outcome is CredentialOutcome.UNAVAILABLE
+
+
+def test_codex_account_caption_uses_email_or_name_and_never_the_subject(tmp_path):
+    import base64
+
+    from jrbar.credentials import read_codex_tokens
+    target = tmp_path / 'auth.json'
+    for claims, expected in [({'email': 'sample@example.test', 'name': 'Sample Person'}, 'sample@example.test'),
+                             ({'name': 'Sample Person'}, 'Sample Person'), ({'sub': 'opaque-account'}, None)]:
+        body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')
+        target.write_text(json.dumps({'tokens': {'access_token': 'synthetic', 'id_token': f'x.{body}.x', 'account_id': 'synthetic-account'}}))
+        tokens = read_codex_tokens(target)
+        assert tokens.account_label == expected
+        assert tokens.account_id == 'synthetic-account'
