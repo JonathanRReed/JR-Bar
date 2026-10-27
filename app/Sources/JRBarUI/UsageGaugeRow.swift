@@ -123,6 +123,7 @@ public struct UsageGaugeRow: View {
     @Environment(\.jrbarInk) private var neutralInk
     public enum Style: Sendable { case compact, detail }
     public static let columnWidth: CGFloat = 64
+    public static let compactRowHeight: CGFloat = 36
     fileprivate static let compactIdentityWidth: CGFloat = 100
     fileprivate static let compactPercentWidth: CGFloat = 40
     public let provider: CoreProviderUsage
@@ -211,7 +212,7 @@ public struct UsageGaugeRow: View {
 
     private var identity: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1).truncationMode(.tail)
+            Text(name).font((style == .compact ? JRBarTokens.TypeStyle.callout : .headline).font).lineLimit(1).truncationMode(.tail)
                 .layoutPriority(1)
             if let status {
                 HStack(spacing: 3) {
@@ -244,7 +245,7 @@ public struct UsageGaugeRow: View {
             if provider.availability == "not_found" {
                 HStack(spacing: 10) {
                     ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: true)
-                    Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
+                    Text(name).font(JRBarTokens.TypeStyle.callout.font).lineLimit(1)
                     Text(status ?? "Not found on this Mac").font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail)
                         .help(status ?? "Not found on this Mac")
@@ -255,7 +256,11 @@ public struct UsageGaugeRow: View {
                 }
             } else {
                 if let onOpen {
-                    Button(action: onOpen) { compactWindows }
+                    Button(action: onOpen) {
+                        compactWindows
+                            .frame(minHeight: Self.compactRowHeight - JRBarTokens.Space.xs)
+                            .contentShape(Rectangle())
+                    }
                         .buttonStyle(.plain)
                         .accessibilityHint("Show provider usage")
                 } else {
@@ -265,8 +270,8 @@ public struct UsageGaugeRow: View {
                 actions.padding(.leading, 30)
             }
         }
-        .padding(.vertical, JRBarTokens.Space.xs).padding(.horizontal, JRBarTokens.Space.md)
-        .frame(minHeight: 44)
+        .padding(.vertical, JRBarTokens.Space.xs / 2).padding(.horizontal, JRBarTokens.Space.md)
+        .frame(minHeight: Self.compactRowHeight)
         .background(hovering ? neutralInk.hover : .clear, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
         .onHover { hovering = $0 }
     }
@@ -301,7 +306,7 @@ public struct UsageGaugeRow: View {
 
     @ViewBuilder private var compactIdentity: some View {
         if isStale && showsWindows {
-            Text(name).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1).truncationMode(.tail)
+            Text(name).font(JRBarTokens.TypeStyle.callout.font).lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             identity
@@ -394,7 +399,7 @@ private struct CompactUsageGaugeColumn: View {
     let accent: Color
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .trailing, spacing: 0) {
             if let used = reading.percentUsed {
                 HStack(spacing: JRBarTokens.Space.xs) {
                     Text("\(Int(used.rounded()))%")

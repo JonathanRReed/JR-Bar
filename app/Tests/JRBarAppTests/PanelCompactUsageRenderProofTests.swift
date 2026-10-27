@@ -23,15 +23,15 @@ struct PanelCompactUsageRenderProofTests {
         return [codex, claude, devin, grok]
     }
 
-    @Test func normalRowsFitFortyFourPointsAtBothWidths() {
+    @Test func normalRowsFitThirtySixPointsAtBothWidths() {
         for provider in ownerReadings() {
             for width: CGFloat in [372, 320] {
                 let row = UsageGaugeRow(provider: provider, name: ProviderPalette.displayName(for: provider.id),
                     now: Fixture.time, style: .compact, windowNames: ["5h", "7d"])
                 let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
-                #expect(host.fittingSize.height == 44)
+                #expect(host.fittingSize.height == 36)
                 #expect(host.fittingSize.width == width)
-                #expect(PanelComposition.usageHeight(provider) == 44)
+                #expect(PanelComposition.usageHeight(provider) == 36)
             }
         }
     }

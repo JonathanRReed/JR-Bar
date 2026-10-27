@@ -143,7 +143,8 @@ struct UsageForecastSurfaceTests {
                 let row = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider)
                 for width: CGFloat in [320, 372] {
                     let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
-                    #expect(host.fittingSize.height == 44)
+                    #expect(host.fittingSize.height == 36)
+                    #expect(PanelComposition.usageHeight(provider) == 36)
                 }
             }
         }

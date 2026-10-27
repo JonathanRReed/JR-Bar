@@ -90,9 +90,9 @@ struct PanelComposition {
     }
 
     static func usageHeight(_ usage: CoreProviderUsage) -> CGFloat {
-        if usage.availability == "not_found" { return rowHeight }
+        if usage.availability == "not_found" { return UsageGaugeRow.compactRowHeight }
         let action = usage.action?.isEmpty == false
-        return action || usage.availability == "failing" ? 88 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 64 : rowHeight)
+        return action || usage.availability == "failing" ? 88 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 64 : UsageGaugeRow.compactRowHeight)
     }
 }
 

@@ -157,7 +157,7 @@ struct FoundationComponentsTests {
         provider.statusText = "Not found on this Mac"
         let row = UsageGaugeRow(provider: provider, name: "Kiro", now: now, style: .compact, onAction: {})
         let host = NSHostingView(rootView: row.frame(width: 320).fixedSize(horizontal: false, vertical: true))
-        #expect(host.fittingSize.height == 44)
+        #expect(host.fittingSize.height == 36)
     }
 
     @Test func marksClearTheApprovedContentAndGlassPlates() {
