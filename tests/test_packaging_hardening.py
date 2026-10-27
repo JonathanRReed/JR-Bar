@@ -33,10 +33,18 @@ def run(tmp_path, body, **values):
         root = tmp_path / "notary-source"
         (root / "packaging").mkdir(parents=True, exist_ok=True)
         source = (SCRIPT.parent / "notarize.py").read_text()
-        # Replace waiting with a deterministic clock advance in the subprocess.
-        clock = "import time\n_now=[0.0]\ntime.monotonic=lambda: _now[0]\ntime.sleep=lambda seconds: _now.__setitem__(0, _now[0]+seconds)\n"
-        (root / "packaging/notarize.py").write_text(clock + source)
+        # Replace the notarizer's waiting with a deterministic clock advance.
+        # Only Notarizer gets the fake clock: patching the time module would
+        # also fake subprocess's timeouts, which then expire before the fake
+        # tool starts on a machine that booted recently.
+        clock = ("_now = [0.0]\n"
+                 "Notarizer.__init__.__kwdefaults__.update(clock=lambda: _now[0],\n"
+                 "    sleep=lambda seconds: _now.__setitem__(0, _now[0] + seconds))\n\n\n")
+        guard = 'if __name__ == "__main__":'
+        (root / "packaging/notarize.py").write_text(source.replace(guard, clock + guard))
         env["ROOT_DIR"] = str(root)
+        # The deadline counts on the same fake clock.
+        env.setdefault("NOTARY_DEADLINE", "100")
     return subprocess.run(["/bin/bash", "-c", "set -euo pipefail\n" + functions() + body],
                           env=env, capture_output=True, text=True, timeout=10)
 

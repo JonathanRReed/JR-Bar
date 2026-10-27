@@ -47,7 +47,12 @@ def test_native_table_identifies_this_process_without_starting_a_child(monkeypat
     entry = table[os.getpid()]
     assert entry.ppid == os.getppid()
     assert entry.started_at_epoch > 0
-    assert entry.executable == os.path.realpath(sys.executable)
+    # A framework Python's bin/python3.12 re-executes Python.app, so the
+    # image the kernel reports is the one dyld loaded, not sys.executable.
+    size = ctypes.c_uint32(4096)
+    image = ctypes.create_string_buffer(size.value)
+    assert ctypes.CDLL(None)._NSGetExecutablePath(image, ctypes.byref(size)) == 0
+    assert entry.executable == os.path.realpath(image.value.decode())
     assert entry.command == pt.launch_path(os.getpid())
 
 

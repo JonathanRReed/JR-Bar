@@ -7,9 +7,11 @@ import Testing
 struct NotchWordingParityTests {
     @Test func resetCountdown() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        for (seconds, text) in [(0.0, "reset — waiting for a new reading"),
-                                (1, "resets in 1m"), (62 * 60, "resets in 1h 02m"),
-                                (3600, "resets in 1h 00m"), (3 * 86400 + 20 * 3600, "resets in 3d 20h")] {
+        // Typed tables keep CI's older type checker inside its time limit.
+        let cases: [(Double, String)] = [(0, "reset — waiting for a new reading"),
+                                         (1, "resets in 1m"), (3720, "resets in 1h 02m"),
+                                         (3600, "resets in 1h 00m"), (331_200, "resets in 3d 20h")]
+        for (seconds, text) in cases {
             #expect(PanelStore.countdown(to: now.timeIntervalSince1970 + seconds, now: now) == text)
         }
         #expect(PanelStore.countdown(to: nil, now: now) == nil)
@@ -17,15 +19,17 @@ struct NotchWordingParityTests {
 
     @Test func percent() {
         #expect(UsageWindowLabel.percent(nil) == "—")
-        for (value, text) in [(-1.0, "0%"), (42, "42%"), (99.6, "99%"), (99.95, "100%"), (101, "100%")] {
+        let cases: [(Double, String)] = [(-1, "0%"), (42, "42%"), (99.6, "99%"), (99.95, "100%"), (101, "100%")]
+        for (value, text) in cases {
             #expect(UsageWindowLabel.percent(value) == text)
         }
     }
 
     @Test func askAge() {
-        for (seconds, text) in [(-1.0, "a while"), (59, "under a minute"), (60, "1 minute"),
-                                (120, "2 minutes"), (3600, "1 hour"), (47 * 3600, "47 hours"),
-                                (48 * 3600, "2 days"), (3 * 86400, "3 days")] {
+        let cases: [(Double, String)] = [(-1, "a while"), (59, "under a minute"), (60, "1 minute"),
+                                         (120, "2 minutes"), (3600, "1 hour"), (169_200, "47 hours"),
+                                         (172_800, "2 days"), (259_200, "3 days")]
+        for (seconds, text) in cases {
             #expect(CoreAsk.ageWords(seconds) == text)
         }
     }
