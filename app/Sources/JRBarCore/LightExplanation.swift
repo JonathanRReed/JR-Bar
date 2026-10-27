@@ -337,7 +337,7 @@ public enum LightExplainer {
             if let motion = surface.motion, !motion.isEmpty { parts.append(motion) }
             if let colour = surface.staticFallback.flatMap(dominantColourName) { parts.append(colour) }
             if let brightness = surface.brightness { parts.append("\(Int((brightness * 100).rounded()))% bright") }
-            if let anchor = surface.anchor, let ago = elapsed(seconds: context.now.timeIntervalSince1970 - anchor) { parts.append("started \(ago) ago") }
+            if let anchor = surface.anchor, elapsed(seconds: context.now.timeIntervalSince1970 - anchor) != nil { parts.append("started \(UsageTime.ago(context.now.timeIntervalSince1970 - anchor))") }
             if parts.isEmpty { parts.append(surface.program.isEmpty ? "no program" : "\(surface.program.split(separator: "\n").count) lines") }
             result.append(.init(label: label, value: parts.joined(separator: " · ")))
             // The Dot's role decides its program and its `why`, so the
@@ -568,7 +568,7 @@ extension LightExplainer.Context {
     /// "12 s ago" from the session's last change, else from `seconds_in_state`.
     func agoText(for id: String?, fallback seconds: Double?) -> String? {
         if let id, let session = state?.session(withID: id), let text = LightExplainer.ago(session.updatedAt ?? session.since, now: now) { return text }
-        if let seconds, let text = LightExplainer.elapsed(seconds: seconds) { return "\(text) ago" }
+        if let seconds, LightExplainer.elapsed(seconds: seconds) != nil { return UsageTime.ago(seconds) }
         return nil
     }
 }

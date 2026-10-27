@@ -135,7 +135,7 @@ public struct UsageForecast: Hashable, Sendable {
             // Nothing was measured: say so, and say the one thing that IS
             // known -- when the window turns over.
             if let resetsAt {
-                return "\(UsageStatus.noReading.word) for the \(window) window · \(Self.resetPhrase(resetsAt, now: now))"
+                return "\(UsageStatus.noReading.word) for the \(window) window · \(Self.resetPhrase(resetsAt, now: now, timeZone: timeZone))"
             }
             return "\(UsageStatus.noReading.word) for the \(window) window"
         }
@@ -143,7 +143,7 @@ public struct UsageForecast: Hashable, Sendable {
         switch verdict {
         case .exhausted:
             if let resetsAt {
-                return "\(UsageStatus.usedUp.word): the \(window) window \(Self.resetPhrase(resetsAt, now: now))"
+                return "\(UsageStatus.usedUp.word): the \(window) window \(Self.resetPhrase(resetsAt, now: now, timeZone: timeZone))"
             }
             return "\(UsageStatus.usedUp.word): the \(window) window is exhausted"
         case .runsOut(let at):
@@ -204,8 +204,8 @@ public struct UsageForecast: Hashable, Sendable {
     /// "resets in 1h 12m", or "reset — waiting for a new reading" once the
     /// time has gone by: the figure beside it is the old window's until the
     /// next reading lands, and "resets now" would promise one.
-    static func resetPhrase(_ epoch: Double, now: Date) -> String {
-        let line = UsageTime.resetLine(epoch, now: now.timeIntervalSince1970)
+    static func resetPhrase(_ epoch: Double, now: Date, timeZone: TimeZone = .current) -> String {
+        let line = UsageTime.resetLine(epoch, now: now.timeIntervalSince1970, timeZone: timeZone)
         if epoch <= now.timeIntervalSince1970 { return line.prefix(1).lowercased() + line.dropFirst() }
         return "resets \(line)"
     }

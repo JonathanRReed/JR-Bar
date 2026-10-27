@@ -671,7 +671,7 @@ enum DeviceHealthLine {
             parts.append("the last write failed (\(error.replacingOccurrences(of: "_", with: " ")))")
         }
         if let written = device.lastWrite {
-            parts.append("written \(age(now.timeIntervalSince1970 - written)) ago")
+            parts.append("written \(UsageTime.ago(now.timeIntervalSince1970 - written))")
         } else {
             parts.append("not written since the monitor started")
         }
