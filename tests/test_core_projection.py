@@ -715,7 +715,7 @@ def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id__a
     sid = "fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
     common = dict(provider="claude", session_id=sid, agent_id=f"claude:session:{sid}")
     # The collector's content-free fallback carries nothing a person can read.
-    assert session_label(display_name=f"Claude {sid}", cwd=None, extras=None, **common) == "Claude fca1eb06"
+    assert session_label(display_name=f"Claude {sid}", cwd=None, extras=None, **common) == "Claude session"
     assert session_label(display_name=f"Claude {sid}", cwd="/Users/j/Downloads/JR-Bar", extras=None, **common) == "JR-Bar"
     assert (
         session_label(display_name=f"Claude {sid}", cwd=None, extras=SessionExtras(cwd="/tmp/notes/"), **common)
@@ -740,7 +740,7 @@ def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id__a
             is_worker=True,
             parent_label="jr-bar-67",
         )
-        == "jr-bar-67 worker a327411d"
+        == "jr-bar-67 worker 1"
     )
     assert short_session_id(sid) == "fca1eb06"
     assert short_session_id(None, "claude:agent:a327411d618c21da0") == "a327411d"
@@ -749,7 +749,7 @@ def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id__a
     by_id = {row["id"]: row for row in document["sessions"]}
     assert by_id[CLAUDE_ID]["short_id"] == CLAUDE_SID[:8]
     assert by_id[CLAUDE_ID]["cwd"] == "/Users/j/Downloads/JR-Bar"
-    assert by_id[CLAUDE_WORKER_ID]["label"] == f"jr-bar-b7 worker {CLAUDE_SID[:8]}"
+    assert by_id[CLAUDE_WORKER_ID]["label"] == "jr-bar-b7 worker 1"
     assert by_id[CLAUDE_WORKER_ID]["short_id"] == CLAUDE_SID[:8]
 
     # --- scenario: usage_window_names_are_the_panels_short_forms

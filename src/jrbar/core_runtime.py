@@ -8039,13 +8039,23 @@ def build_headless_controller_class() -> type:
                     return status
             return None
 
-        @staticmethod
-        def _core_label(status) -> str | None:
+        def _core_label(self, status) -> str | None:
             if status is None:
                 return None
-            from .core_projection import strip_session_short_id
+            from .core_projection import session_label
 
-            return strip_session_short_id(status.display_name, status.session_id) or status.agent_id
+            # Events use the same projected title and ordinal as the panel.
+            document = (getattr(self, "_core_documents", None) or {}).get("state") or {}
+            for row in document.get("sessions", ()):
+                if row.get("id") == status.agent_id:
+                    return row["label"]
+            cached = (getattr(self, "_core_extras", None) or {}).get(status.agent_id)
+            return session_label(
+                provider=status.provider, session_id=status.session_id,
+                agent_id=status.agent_id, display_name=status.display_name,
+                cwd=status.cwd, extras=cached[1] if cached else None,
+                is_worker=status.is_subagent,
+            )
 
         def _core_extras_for(self, status) -> SessionExtras | None:
             cached = self._core_extras.get(status.agent_id)
