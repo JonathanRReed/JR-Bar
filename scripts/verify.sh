@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
-PYTHON="${PYTHON:-$VENV_DIR/bin/python}"
+source "$(dirname "$0")/python-env.sh"
 BOOTSTRAP=1
 FIX=0
 PORTABLE=0

@@ -4,44 +4,46 @@
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
 # dist/appcast.xml. Signs with the best identity in the keychain and
 # notarizes when the jrbar-notary profile exists (packaging/README.md).
-PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
+PYTHON ?= $(shell ROOT_DIR="$(CURDIR)" bash scripts/python-env.sh --print-python)
+export PYTHON
+export PYTHONPATH := $(CURDIR)/src$(if $(PYTHONPATH),:$(PYTHONPATH))
 VERSION := $(shell sed -n 's/^version = "\([^"]*\)"$$/\1/p' pyproject.toml | head -1)
 
 bootstrap:
 	./scripts/bootstrap-dev.sh
 
 fast:
-	.venv/bin/python scripts/verify_fast.py
+	"$(PYTHON)" scripts/verify_fast.py
 
 fast-fix:
-	.venv/bin/python scripts/verify_fast.py --fix
+	"$(PYTHON)" scripts/verify_fast.py --fix
 
 final-test:
 	./scripts/final-test.sh
 
-format: bootstrap
-	.venv/bin/python -m ruff check --fix src tests packaging scripts
+format:
+	"$(PYTHON)" -m ruff check --fix src tests packaging scripts
 
-lint: bootstrap
-	.venv/bin/python -m ruff check src tests packaging scripts
+lint:
+	"$(PYTHON)" -m ruff check src tests packaging scripts
 
 # One worker per core, each taking whole files: a file's tests share its
 # fixtures and module state, and the conftest sandbox is per process.
 # test-serial is the one-process run, for a failure that only shows there.
-test: bootstrap
-	.venv/bin/python -m pytest tests -q -n auto --dist loadfile
+test:
+	"$(PYTHON)" -m pytest tests -q -n auto --dist loadfile
 
-test-serial: bootstrap
-	.venv/bin/python -m pytest tests -q
+test-serial:
+	"$(PYTHON)" -m pytest tests -q
 
-test-portable: bootstrap
+test-portable:
 	./scripts/verify.sh --no-bootstrap --portable --skip-build
 
 # The app's Swift suites (SwiftPM, Command Line Tools). final-test runs this,
 # so a crashing suite fails the final gate; `make package` and `make release`
 # do not, so run final-test before them. `make fast` stays Python-only.
 swift-test:
-	$(PYTHON) scripts/check_temp_leaks.py --swift
+	"$(PYTHON)" scripts/check_temp_leaks.py --swift
 
 package:
 	./packaging/build_macos_pkg.sh
@@ -57,11 +59,11 @@ install-pkg:
 	./scripts/install-agents.sh --pkg dist/JR-Bar-$(VERSION).pkg
 
 # The Python wheel and sdist (developer artifacts), not the app.
-package-python: bootstrap
+package-python:
 	rm -rf build/python-release dist/jrbar-*.whl dist/jrbar-*.tar.gz
-	.venv/bin/python -m build --no-isolation --outdir dist
-	.venv/bin/python -m twine check dist/jrbar-*.whl dist/jrbar-*.tar.gz
-	.venv/bin/python scripts/verify_clean_install.py
+	"$(PYTHON)" -m build --no-isolation --outdir dist
+	"$(PYTHON)" -m twine check dist/jrbar-*.whl dist/jrbar-*.tar.gz
+	"$(PYTHON)" scripts/verify_clean_install.py
 
 verify:
 	./scripts/verify.sh

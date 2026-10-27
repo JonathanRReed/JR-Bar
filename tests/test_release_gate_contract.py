@@ -114,6 +114,7 @@ def _run_release_ref_gate(
     (repo / "scripts").mkdir()
     (repo / "packaging").mkdir()
     shutil.copy2(ROOT / "scripts" / "verify_macos_release.sh", repo / "scripts")
+    shutil.copy2(ROOT / "scripts/python-env.sh", repo / "scripts")
     _write_executable(repo / "packaging" / "build_macos_pkg.sh", "#!/bin/bash\necho PACKAGING_REACHED\nexit 73\n")
     if reused_inputs is not None:
         shutil.copy2(ROOT / "packaging" / "build_input_manifest.py", repo / "packaging")

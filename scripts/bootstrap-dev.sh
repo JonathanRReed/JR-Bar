@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
+source "$ROOT_DIR/scripts/python-env.sh"
 CONSTRAINTS="$ROOT_DIR/requirements/release-constraints.txt"
 PINNED_PIP="26.1.2"
 
@@ -32,6 +33,13 @@ select_python() {
     return 1
 }
 
+if [ -x "$VENV_DIR/bin/python" ] && ! "$VENV_DIR/bin/python" -c \
+    'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' 2>/dev/null; then
+    echo "The existing virtual environment at $VENV_DIR does not use Python 3.12." >&2
+    echo "Choose a new JRBAR_DEV_VENV or remove and recreate that environment." >&2
+    exit 2
+fi
+
 PYTHON_BIN="$(select_python || true)"
 if [ -z "$PYTHON_BIN" ]; then
     echo "JR-Bar development and release tooling requires Python 3.12." >&2
@@ -43,14 +51,11 @@ if [ ! -f "$CONSTRAINTS" ]; then
     exit 2
 fi
 
-if [ -x "$VENV_DIR/bin/python" ]; then
-    if ! "$VENV_DIR/bin/python" -c \
-        'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' 2>/dev/null; then
-        echo "The existing virtual environment at $VENV_DIR does not use Python 3.12." >&2
-        echo "Choose a new JRBAR_DEV_VENV or remove and recreate that environment." >&2
-        exit 2
-    fi
-else
+# Reuse a selected virtual environment instead of creating a worktree copy.
+SELECTED_VENV="$(dirname "$PYTHON_BIN")/.."
+if [ -f "$SELECTED_VENV/pyvenv.cfg" ]; then
+    VENV_DIR="$(cd "$SELECTED_VENV" && pwd)"
+elif [ ! -x "$VENV_DIR/bin/python" ]; then
     "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi
 

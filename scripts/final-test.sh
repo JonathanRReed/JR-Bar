@@ -40,12 +40,9 @@ trap 'code=$?; printf "%s\n" "$code" > "$REPORT_DIR/exit-code.txt"; printf "Veri
 VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
 {
     if [ "$BOOTSTRAP" -eq 1 ]; then
-        # Bootstrap uses the caller's base Python, not an as-yet absent venv.
         ./scripts/bootstrap-dev.sh
-        PYTHON="$VENV_DIR/bin/python"
-    else
-        PYTHON="${PYTHON:-$VENV_DIR/bin/python}"
     fi
+    source "$ROOT_DIR/scripts/python-env.sh"
     export PYTHON
     "$PYTHON" -m pip freeze > "$REPORT_DIR/environment.txt"
     PYTEST_ADDOPTS= "$PYTHON" scripts/verify_fast.py

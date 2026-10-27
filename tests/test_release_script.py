@@ -24,6 +24,7 @@ def _repo(tmp_path: Path, *, changelog_top: str = "## 1.2.3 (2026-09-24)") -> Pa
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(SCRIPT, repo / "scripts" / "release.sh")
+    shutil.copy2(ROOT / "scripts/python-env.sh", repo / "scripts")
     (repo / "pyproject.toml").write_text('[project]\nname = "jrbar"\nversion = "1.2.3"\n')
     (repo / "CHANGELOG.md").write_text(
         f"# Changelog\n\n{changelog_top}\n\n- The usage hooks run without a shell.\n\n## 1.2.2\n\n- Older.\n"
