@@ -70,7 +70,7 @@ struct DesignFixBRenderProofTests {
         }
     }
 
-    @Test(.enabled(if: SettingsRenderProofTests.enabled))
+    @Test(.enabled(if: SettingsRenderProofTests.enabled && DesignFixBProof.hasDaemonPrograms))
     func calmScreenBarUsesTheSameSteadyProgram() throws {
         let directory = DesignFixBProof.directory
         let programs = try JSONDecoder().decode(StudioWorkspaceRenderProofTests.Programs.self,

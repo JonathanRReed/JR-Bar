@@ -321,10 +321,10 @@ struct CalibrationSheet: View {
                     args: previewed.previewArguments(device: deviceID, companion: canMatchStrip && companion)
                 )
                 if !reply.ok {
-                    store.report(error: reply.error?.message ?? reply.error?.code ?? "Preview refused")
+                    store.report(error: reply.error?.sentence ?? "Preview refused")
                 }
             } catch {
-                store.report(error: "Preview failed: \(error)")
+                store.report(error: "Preview failed. " + MonitorWords.reason(error))
             }
         }
     }
@@ -365,12 +365,12 @@ final class CalibrationSubmission {
         do {
             let reply = try await operation()
             guard reply.ok else {
-                error = reply.error?.message ?? reply.error?.code ?? "Apply refused"
+                error = reply.error?.sentence ?? "Apply refused"
                 return false
             }
             return true
         } catch {
-            self.error = "Apply failed: \(error)"
+            self.error = "Apply failed. " + MonitorWords.reason(error)
             return false
         }
     }

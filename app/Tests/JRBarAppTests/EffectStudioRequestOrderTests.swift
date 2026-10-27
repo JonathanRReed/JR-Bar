@@ -130,7 +130,7 @@ struct EffectStudioRequestOrderTests {
         await store.loadScenePacks()
         #expect(store.scenePacks == [saved])
         #expect(store.scenePacksSupported)
-        #expect(store.lastError == "Could not load scene packs: try again")
+        #expect(store.lastError == "Could not load scene packs: Try again.")
         store.scenePackLoader = { throw CoreReplyError(code: "unknown_command") }
         await store.loadScenePacks()
         #expect(!store.scenePacksSupported)

@@ -67,7 +67,7 @@ struct KeepAwakeReadingTests {
         #expect(KeepAwakeReading(state: .off, display: true).chipHelp(now: now).contains("Manual locking and system security policies still apply"))
         let agents = KeepAwakeReading(state: .agents(count: 2)).chipHelp(now: now)
         #expect(agents.contains("2 agents"))
-        #expect(agents.contains("Settings › General › Power"))
+        #expect(agents.contains("Utilities & Toys › Keep Awake"))
         #expect(agents.contains("Click to keep it awake"))
         let countdown = KeepAwakeReading(state: .lease(.until(now.addingTimeInterval(90 * 60))), display: true)
             .chipHelp(now: now)

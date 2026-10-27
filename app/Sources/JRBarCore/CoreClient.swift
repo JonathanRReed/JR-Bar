@@ -1,13 +1,27 @@
 import Darwin
 import Foundation
 
-public enum CoreClientError: Error, Equatable, CustomStringConvertible {
+public enum CoreClientError: Error, Equatable, CustomStringConvertible, LocalizedError {
     case notConnected
     case disconnected
     case timeout
     case writeFailed(Int32)
     case stopped
 
+    /// What a person reads: a plain sentence, never errno text.
+    public var sentence: String {
+        switch self {
+        case .notConnected: return MonitorWords.sentence
+        case .disconnected: return "\(MonitorWords.sentence) The command was interrupted."
+        case .timeout: return "The monitor did not answer in time. Try again."
+        case .writeFailed: return "The command could not reach the monitor. Try again."
+        case .stopped: return "The connection to the monitor was closed."
+        }
+    }
+
+    public var errorDescription: String? { sentence }
+
+    /// The diagnostic form, for the log.
     public var description: String {
         switch self {
         case .notConnected: return MonitorWords.sentence

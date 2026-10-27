@@ -365,7 +365,7 @@ enum SettingsSearch {
               keywords: ["phone", "ntfy", "send test message"]),
         .init(.devices, "Stream Deck", "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote."),
         .init(.devices, "Stream Deck", "Endpoint"),
-        .init(.devices, "Stream Deck", "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts."),
+        .init(.devices, "Stream Deck", "Status link", subtitle: "Stream Deck reads redacted agent counts here, using the key.", keywords: ["status url"]),
         .init(.sounds, "Volume", "JR-Bar sounds", subtitle: "One volume for every JR-Bar sound.",
               keywords: ["volume", "loudness"]),
         .init(.sounds, "Output", "Play through the alert device", subtitle: "Sounds follow macOS's alert device instead of the current output.",

@@ -4,7 +4,7 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// `hooks_doctor` for Settings › Agents & Usage: one line per provider saying
+/// `hooks_doctor` for Settings › Providers: one line per provider saying
 /// how its hooks stand — how many events are hooked, when one last
 /// reached the monitor, what is queued while it was away — and, where
 /// something is off, why and a Repair (`install_hooks`) beside it. The
@@ -153,6 +153,9 @@ final class HooksDoctorModel {
     private(set) var entries: [String: HooksDoctorEntry] = [:]
     private(set) var checkedAt: Double?
     private(set) var receiverAnswers: Bool?
+    /// "3 hook events were refused today. The newest: …", or nil when
+    /// none were (the report's `rejected.sentence`).
+    private(set) var refusedLine: String?
     private(set) var loading = false
     /// The last read failed; the lines keep what they had.
     private(set) var failed = false
@@ -235,6 +238,8 @@ final class HooksDoctorModel {
                     let checkedAt = reply.result?["checked_at"]?.doubleValue
                     self.checkedAt = checkedAt.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
                     self.receiverAnswers = reply.result?["ingress_socket"]?["answers"]?.boolValue
+                    let refused = reply.result?["rejected"]?["sentence"]?.stringValue
+                    self.refusedLine = refused?.isEmpty == false ? refused : nil
                     self.failed = false
                 } else {
                     self.failed = true
@@ -260,6 +265,11 @@ struct HooksDoctorStatusRow: View {
                     Text(line)
                         .jrbarType(.caption)
                         .foregroundStyle(doctor.receiverAnswers == false ? Tone.failure.color : Color.secondary)
+                }
+                if let refused = doctor.refusedLine {
+                    Text(refused)
+                        .jrbarType(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)

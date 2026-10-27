@@ -74,7 +74,7 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
             })
             notices.deliverBanner("permission-health",
                                   lost.count == 1 ? "JR-Bar lost a permission" : "JR-Bar lost \(lost.count) permissions",
-                                  text + " Setup (Settings › General) grants \(lost.count == 1 ? "it" : "them") back.")
+                                  text + " Setup (Settings › Advanced) grants \(lost.count == 1 ? "it" : "them") back.")
         }
     }
 

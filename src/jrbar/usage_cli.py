@@ -4,7 +4,7 @@ It reads what the running monitor already knows (the ``usage`` block of
 its state over core.sock), and when no monitor answers, the last readings
 it saved. It never asks a provider anything itself.
 
-    jrbar usage                  one line per window: "Claude  5h 58% left · resets 2h14m"
+    jrbar usage                  one line per window: "Claude  5h 42% used · resets in 2h 14m"
     jrbar usage --brief          a table
     jrbar usage --json           the usage block with "schema": 1
     jrbar usage --provider codex only one provider
@@ -75,16 +75,17 @@ def reset_words(resets_at: float | None, now: float) -> str | None:
         return "reset passed, the reading is older"
     if seconds <= 60:
         return "resetting now"
-    # Run together, one table cell: "resets 2h14m". A whole hour or day
-    # drops its zeros ("resets 1h"), the app's rule (duration_words).
-    return "resets " + duration(seconds // 60 * 60).replace(" ", "")
+    # One table cell: "resets in 2h 14m". A whole hour or day drops its
+    # zeros ("resets in 1h"), the app's rule (duration_words).
+    return "resets in " + duration(seconds // 60 * 60)
 
 
-def _left(window: dict[str, Any]) -> str:
+def _used(window: dict[str, Any]) -> str:
+    """"42% used", the way the app says it."""
     used = window.get("used_pct")
     if not isinstance(used, (int, float)) or isinstance(used, bool):
         return "no reading"
-    return f"{max(0.0, 100.0 - float(used)):.0f}% left"
+    return f"{min(100.0, max(0.0, float(used))):.0f}% used"
 
 
 def _source_note(provider: dict[str, Any]) -> str | None:
@@ -128,7 +129,7 @@ def render_lines(document: dict[str, Any], *, now: float) -> list[str]:
         if isinstance(credits, int) and not isinstance(credits, bool) and credits > 0:
             suffix.append("1 reset credit" if credits == 1 else f"{credits} reset credits")
         for window in windows:
-            parts = [f"{window.get('name') or window.get('id') or '?'} {_left(window)}"]
+            parts = [f"{window.get('name') or window.get('id') or '?'} {_used(window)}"]
             reset = reset_words(window.get("resets_at"), now)
             if reset:
                 parts.append(reset)
@@ -140,7 +141,7 @@ def render_lines(document: dict[str, Any], *, now: float) -> list[str]:
 
 
 def render_brief(document: dict[str, Any], *, now: float) -> str:
-    rows = [("Provider", "Window", "Left", "Resets")]
+    rows = [("Provider", "Window", "Used", "Resets in")]
     for provider in document.get("providers") or []:
         if not isinstance(provider, dict):
             continue
@@ -155,8 +156,8 @@ def render_brief(document: dict[str, Any], *, now: float) -> str:
                 (
                     name,
                     str(window.get("name") or window.get("id") or "?"),
-                    _left(window).replace(" left", ""),
-                    reset.removeprefix("resets "),
+                    _used(window).replace(" used", ""),
+                    reset.removeprefix("resets in ").removeprefix("resets "),
                 )
             )
     widths = [max(len(row[column]) for row in rows) for column in range(4)]

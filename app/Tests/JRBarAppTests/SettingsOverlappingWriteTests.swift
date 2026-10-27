@@ -150,7 +150,7 @@ struct SettingsOverlappingWriteTests {
         #expect(store.values.double("devices.0.brightness") == 0.8)
         #expect(store.values.string("devices.0.id") == "fixture")
         store.set("devices.4.brightness", .number(0.9), throttled: true)
-        #expect(store.lastError?.contains("not present") == true)
+        #expect(store.lastError == "Couldn't save that setting. Another change to it is still being saved.")
         #expect(store.values.double("devices.0.brightness") == 0.8)
         let task = try #require(store.flush("devices"))
         await task.value

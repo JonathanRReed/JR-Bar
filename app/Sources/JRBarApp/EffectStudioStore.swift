@@ -652,7 +652,7 @@ final class EffectStudioStore {
                     self.hardwarePreviewUntil = Date().addingTimeInterval(Self.hardwarePreviewSeconds)
                     self.show(status: "Playing \(effect.label) on \(target.name) for \(Int(Self.hardwarePreviewSeconds)) s")
                 } else {
-                    self.fail(reply.error?.message ?? reply.error?.code ?? "Preview refused")
+                    self.fail(reply.error?.sentence ?? "Preview refused")
                 }
             } catch {
                 self.fail("Preview failed: \(Self.describe(error))")
@@ -1300,7 +1300,7 @@ final class EffectStudioStore {
             do {
                 let reply = try await self.core.importScenePack(path: url.path)
                 guard reply.ok else {
-                    self.fail("Scene pack import refused: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    self.fail("Scene pack import refused: \(reply.error?.sentence ?? "The monitor refused that.")")
                     return
                 }
                 await self.loadScenePacks()
@@ -1503,7 +1503,6 @@ final class EffectStudioStore {
     }
 
     static func describe(_ error: Error) -> String {
-        if let reply = error as? CoreReplyError { return reply.message ?? reply.code }
-        return "\(error)"
+        MonitorWords.reason(error)
     }
 }

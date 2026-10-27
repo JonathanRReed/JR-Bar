@@ -225,7 +225,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 : "Keep the Mac awake (the display may still sleep and lock)."
         case .agents(let count):
             if count > 0 {
-                text = "Held awake while \(Self.agents(count)) work — their own switch, under Settings › General › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
+                text = "Held awake while \(Self.agents(count)) work — their own switch, under Utilities & Toys › Keep Awake. It lets go a few minutes after they stop. Click to keep it awake after that too."
             } else if let end = graceEnd(now: now) {
                 text = "Held awake until \(clock(end)), a few minutes after the agents stopped. Click to keep it awake."
             } else {

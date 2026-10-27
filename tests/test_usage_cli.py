@@ -114,8 +114,8 @@ def test_text_is_one_line_per_window_in_words() -> None:
 
     assert code == 0
     assert out.splitlines() == [
-        "Claude    5h 58% left · resets 2h14m",
-        "Claude    7d 39% left · resets 3d5h",
+        "Claude    5h 42% used · resets in 2h 14m",
+        "Claude    7d 61% used · resets in 3d 5h",
         "OpenCode  no quota source",
         "Grok      sign-in required: Run grok login",
     ]
@@ -128,8 +128,8 @@ def test_brief_is_a_table() -> None:
 
     assert code == 0
     lines = out.splitlines()
-    assert lines[0].split() == ["Provider", "Window", "Left", "Resets"]
-    assert lines[1].split() == ["Claude", "5h", "58%", "2h14m"]
+    assert lines[0].split() == ["Provider", "Window", "Used", "Resets", "in"]
+    assert lines[1].split() == ["Claude", "5h", "42%", "2h", "14m"]
     assert "OpenCode" in lines[3] and "no quota source" in lines[3]
 
 
@@ -175,7 +175,7 @@ def test_without_a_monitor_it_reads_the_saved_readings_and_says_so() -> None:
 
 def test_reset_words() -> None:
     assert reset_words(None, NOW) is None
-    assert reset_words(NOW + 45 * 60, NOW) == "resets 45m"
+    assert reset_words(NOW + 45 * 60, NOW) == "resets in 45m"
     assert reset_words(NOW + 30, NOW) == "resetting now"
     assert reset_words(NOW - 3600, NOW) == "reset passed, the reading is older"
 
@@ -196,7 +196,7 @@ def test_reset_credits_are_counted_in_words() -> None:
     ]}
     code, out, _ = run(usage=usage)
     assert code == 0
-    assert out.strip() == "Codex  7d 70% left · resets 1h · 2 reset credits"
+    assert out.strip() == "Codex  7d 30% used · resets in 1h · 2 reset credits"
 
 
 def test_only_a_reference_only_window_is_called_detail() -> None:

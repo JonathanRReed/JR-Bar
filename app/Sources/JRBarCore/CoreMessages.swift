@@ -2724,12 +2724,43 @@ public struct CoreSettings: Codable, Hashable, Sendable {
 
 // MARK: - reply
 
-public struct CoreReplyError: Codable, Hashable, Sendable, Error {
+public struct CoreReplyError: Codable, Hashable, Sendable, Error, LocalizedError {
     public static let tokenHistoryOffMessage = "Token history is off"
     public var isTokenHistoryDisabled: Bool { code == "disabled" }
 
     public var code: String
     public var message: String?
+
+    /// What a person reads: the daemon's own message as a sentence, else
+    /// plain words for the code. Never the code itself.
+    public var sentence: String {
+        if let message = message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
+            // A message that opens with a setting key keeps its case.
+            let opener = message.prefix(while: { !$0.isWhitespace })
+            let keyed = opener.contains("_") || opener.contains(".")
+            let first = keyed ? message : message.prefix(1).uppercased() + message.dropFirst()
+            return ".!?…".contains(first.last ?? " ") ? first : first + "."
+        }
+        return Self.codeWords[code] ?? "The monitor refused that. Details are in the log."
+    }
+
+    public var errorDescription: String? { sentence }
+
+    /// Plain words for the reply codes that can arrive without a message.
+    static let codeWords: [String: String] = [
+        "not_found": "That is no longer there.",
+        "invalid_args": "The monitor did not accept that value.",
+        "invalid_value": "The monitor did not accept that value.",
+        "bad_command": "This monitor does not know that command. Update JR-Bar.",
+        "unknown_command": "This monitor does not know that command. Update JR-Bar.",
+        "busy": "The monitor is busy. Try again in a moment.",
+        "unauthenticated": "The monitor did not accept this app. Restart the monitor from the panel.",
+        "disabled": "That is turned off.",
+        "provider_unavailable": "That provider's usage source is not available.",
+        "frame_too_large": "That request was too large for the monitor.",
+        "internal": "The monitor hit an error. Details are in the log.",
+        "timeout": "The monitor did not answer in time. Try again.",
+    ]
 
     public init(code: String, message: String? = nil) {
         self.code = code

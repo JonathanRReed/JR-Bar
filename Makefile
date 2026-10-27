@@ -1,4 +1,4 @@
-.PHONY: bootstrap fast fast-fix final-test format lint test test-serial test-portable swift-test package package-python clean-install install-pkg verify verify-portable release release-check clean
+.PHONY: bootstrap fast fast-fix final-test format lint test test-serial test-portable swift-test proofs-smoke package package-python clean-install install-pkg verify verify-portable release release-check clean
 
 # The packaged app: build/macos-pkg/app/JR-Bar.app plus dist/JR-Bar-<version>.pkg,
 # dist/JR-Bar-<version>.zip and, with the Sparkle key in the keychain,
@@ -44,6 +44,14 @@ test-portable:
 # do not, so run final-test before them. `make fast` stays Python-only.
 swift-test:
 	"$(PYTHON)" scripts/check_temp_leaks.py --swift
+
+# The render-proof suites, which the normal run skips, drawn into a
+# throwaway folder so a stale expectation fails here instead of on the day
+# someone needs a proof. Set JRBAR_RENDER_PROOF_DIR yourself to keep the PNGs.
+proofs-smoke:
+	@dir="$${JRBAR_RENDER_PROOF_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/jrbar-proofs-smoke.XXXXXX")}"; \
+	cd app && JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR="$$dir" swift test --filter 'RenderProof'; status=$$?; \
+	if [ -z "$$JRBAR_RENDER_PROOF_DIR" ]; then rm -rf "$$dir"; fi; exit $$status
 
 package:
 	./packaging/build_macos_pkg.sh

@@ -831,7 +831,7 @@ final class UsageCenterStore {
                 _ = try await self.core.setSetting("claude_plan_limits_consent_version", value: .number(1))
                 let reply = try await self.core.setSetting("claude_plan_limits_enabled", value: .bool(true))
                 if !reply.ok {
-                    self.show(error: reply.error?.message ?? reply.error?.code ?? "Plan limits stayed off", action: .planLimits)
+                    self.show(error: reply.error?.sentence ?? "Plan limits stayed off", action: .planLimits)
                 } else {
                     self.actionSucceeded(.planLimits)
                 }
@@ -1333,29 +1333,26 @@ final class UsageCenterStore {
     /// not keep showing a choice the daemon did not keep.
     nonisolated static func refusal(_ reply: CoreReply) -> String? {
         guard !reply.ok else { return nil }
-        return reply.error?.message ?? reply.error?.code ?? "refused"
+        return reply.error?.sentence ?? "The monitor refused that."
     }
 
     static func describe(_ error: Error) -> String {
-        if let reply = error as? CoreReplyError {
-            return reply.message ?? reply.code
-        }
-        return "\(error)"
+        MonitorWords.reason(error)
     }
 
     // MARK: Formatting
 
     static func fidelityLabel(_ fidelity: String?) -> String {
         switch fidelity?.lowercased() {
-        case "official": return "Official"
-        case "derived", "estimated": return "Derived"
-        case "manual": return "Manual"
-        case nil, "": return "Unknown source"
-        case let other?: return other.capitalized
+        case "official": return "Official reading"
+        case "derived", "estimated": return "Estimated reading"
+        case "manual": return "Entered by hand"
+        case nil, "": return "Source not reported"
+        case let other?: return other.replacingOccurrences(of: "_", with: " ").capitalized + " reading"
         }
     }
 
-    /// "Max 20× · jonathan@… · Official" from whatever the daemon knows.
+    /// "Max 20× · jonathan@… · Official reading" from whatever the daemon knows.
     static func accountLine(_ provider: CoreProviderUsage, history: UsageHistory?) -> String {
         let account = provider.account ?? history?.account
         var parts: [String] = []
@@ -1368,11 +1365,10 @@ final class UsageCenterStore {
         // who the account is.
         if provider.usageIsOff { return parts.joined(separator: " · ") }
         // A source that is not ready carries the daemon's fix-it hint
-        // ("Reconnect Claude · authentication required"); that says more
-        // than repeating the badge's word.
+        // ("Reconnect Claude"); that says more than repeating the badge's
+        // word. The reason code stays out: the status sentence says why.
         if let action = provider.action, !action.isEmpty {
             parts.append(action)
-            if let reason = provider.reason, !reason.isEmpty { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
             return parts.joined(separator: " · ")
         }
         // With no quota source there is no figure for "Official" to vouch

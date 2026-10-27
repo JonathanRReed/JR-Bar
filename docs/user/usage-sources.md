@@ -8,13 +8,13 @@ numbers honest.
 
 ## Available and planned providers
 
-Supported usage integrations appear in Settings > Agents & Usage > Provider
+Supported usage integrations appear in Settings > Providers > Provider
 usage. Coming soon is a searchable list of planned integrations. Entries
 there are informational and become available as tested support ships.
 
 ## Factory subscription usage
 
-In Settings > Agents & Usage > Provider usage, choose Connect browser
+In Settings > Providers > Provider usage, choose Connect browser
 session under Factory. The same control is on Factory's Usage Center card,
 including a named account. Sign in at [Factory](https://app.factory.ai)
 in your browser, select that browser profile, then approve the import and
@@ -66,7 +66,7 @@ Turn a provider on in any of three places. Each says what it asks, of whom, and
 with whose sign-in, in the same words:
 
 - Setup, on the Agents step ("Show Claude usage?" with Turn on or Not now);
-- Settings > Agents & Usage > Provider usage;
+- Settings > Providers > Provider usage;
 - `jrbar providers usage claude on` (and `off`).
 
 | Provider | Asks | With |
@@ -182,7 +182,7 @@ providers' public status pages so the card says "incident" instead of
 looking like your fetch broke. This is a request that leaves your Mac, so
 it is **off until you turn it on**.
 
-Turn it on in Settings › Agents & Usage › Advanced › Incidents › Provider status pages, or:
+Turn it on in Settings › Providers › Advanced › Incidents › Provider status pages, or:
 
 ```sh
 jrbar set provider_status_feeds_enabled true

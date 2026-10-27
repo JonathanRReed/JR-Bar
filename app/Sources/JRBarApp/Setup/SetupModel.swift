@@ -125,7 +125,7 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .focusStatus:
             return "Whether Focus is on, for React to Focus modes, Menu Bar rules and the status item's moon. Mode names use Full Disk Access."
         case .lidHelper:
-            return "Agents keep running with the lid shut (General › Power). Copy the command, paste it in Terminal; it asks for your password once."
+            return "Agents keep running with the lid shut (Utilities & Toys › Keep Awake). Copy the command, paste it in Terminal; it asks for your password once."
         }
     }
 
@@ -363,9 +363,9 @@ extension SetupModel {
             try await core.setProviderUsageConsent(provider, enabled: on, source: "setup")
             return SetupNote(on ? "Usage on" : "Usage off", isError: false)
         } catch let error as CoreReplyError {
-            return SetupNote(error.message ?? error.code, isError: true)
+            return SetupNote(error.sentence, isError: true)
         } catch {
-            return SetupNote(String(describing: error), isError: true)
+            return SetupNote(MonitorWords.reason(error), isError: true)
         }
     }
 
@@ -378,7 +378,7 @@ extension SetupModel {
         do {
             let reply = try await core.installHooksNow(providers: [provider])
             if !reply.ok {
-                return SetupNote(reply.error?.message ?? reply.error?.code ?? "refused", isError: true)
+                return SetupNote(reply.error?.sentence ?? "The monitor refused that.", isError: true)
             }
             let result = reply.result?["results"]?[provider]
             if result?["ok"]?.boolValue == false {
@@ -389,7 +389,7 @@ extension SetupModel {
             }
             return SetupNote("Hooks installed", isError: false)
         } catch {
-            return SetupNote(String(describing: error), isError: true)
+            return SetupNote(MonitorWords.reason(error), isError: true)
         }
     }
 

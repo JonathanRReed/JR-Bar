@@ -227,8 +227,9 @@ public enum EventPolicy {
         case "quota_crossed":
             guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
             var delivery = EventDelivery(sound: sound(quotaSound))
-            delivery.notification = .init(identifier: quotaNotificationID(for: event, provider: provider), title: "\(quotaProviderName) usage \(event.detail ?? "threshold crossed")",
-                                          body: event.label ?? "The window is nearly spent; expect throttling.", session: nil)
+            let words = QuotaAlertWords.crossed(event, provider: quotaProviderName, usage: state?.usage, now: now)
+            delivery.notification = .init(identifier: quotaNotificationID(for: event, provider: provider),
+                                          title: words.title, body: words.body, session: nil)
             return delivery
 
         case "quota_pace":
@@ -315,5 +316,51 @@ public enum EventPolicy {
         case "takeover", "take_over", "all": return true
         default: return false
         }
+    }
+}
+
+/// The quota alert's words: which window, how much is used and when it
+/// resets. "Claude 5-hour window: 80% used" over "Resets 6:00 PM." The
+/// event names the window (`label`, "Claude five-hour") and the threshold
+/// (`detail`, "80%"); the reset comes from the same window's live reading.
+public enum QuotaAlertWords {
+    public static func crossed(_ event: CoreEvent, provider: String, usage: CoreUsage?,
+                               now: Double) -> (title: String, body: String) {
+        let window = matchingWindow(event, usage: usage)
+        let amount = used(event.detail)
+        let name = window.map { UsageWindowLabel.long(id: $0.key, name: $0.name) }
+        let title: String
+        if let name {
+            let windowWords = name.lowercased().contains("window") ? name : name + " window"
+            title = "\(provider) \(windowWords): \(amount)"
+        } else {
+            title = "\(provider) usage: \(amount)"
+        }
+        guard let resetsAt = window?.resetsAt, resetsAt > now else {
+            return (title, "The Usage Center shows when it resets.")
+        }
+        return (title, "Resets " + UsageTime.resetLine(resetsAt, now: now) + ".")
+    }
+
+    /// "80% used" from the daemon's "80%"; anything else as sent.
+    static func used(_ detail: String?) -> String {
+        guard let detail = detail?.trimmingCharacters(in: .whitespaces), !detail.isEmpty else { return "past an alert threshold" }
+        let bare = detail.range(of: #"^<?[0-9.]+%$"#, options: .regularExpression) != nil
+        return bare ? detail + " used" : detail
+    }
+
+    /// The live window the event's label ends with ("Claude five-hour" →
+    /// the `five-hour` window), for the event's provider and account.
+    static func matchingWindow(_ event: CoreEvent, usage: CoreUsage?) -> CoreUsageWindow? {
+        guard let provider = event.provider, let label = event.label?.lowercased(), !label.isEmpty else { return nil }
+        let instance = event.instance ?? "default"
+        let rows = usage?.providers.filter { $0.id == provider && ($0.instance ?? "default") == instance } ?? []
+        for row in rows {
+            for window in row.windows {
+                guard let key = window.key?.lowercased(), !key.isEmpty else { continue }
+                if label.hasSuffix(" " + key) || label == key { return window }
+            }
+        }
+        return nil
     }
 }
