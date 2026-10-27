@@ -364,7 +364,7 @@ struct SessionRowView: View {
     static let elapsedWidth: CGFloat = elapsedTextWidth("00h 00m")
 
     /// The same, on a working row gone quiet (`SessionRow.quietText`).
-    static let quietElapsedWidth: CGFloat = elapsedTextWidth("quiet 00h 00m")
+    static let quietElapsedWidth: CGFloat = elapsedTextWidth("Quiet 00h 00m")
 
     /// `text` in the elapsed line's type.
     static func elapsedTextWidth(_ text: String) -> CGFloat {

@@ -33,6 +33,13 @@ public enum UsageTime {
         value == 1 ? "1 minute" : "\(value) minutes"
     }
 
+    /// The calendar heads-up is part of the frozen notch copy.
+    public static func notchCalendarCountdown(to start: Double, now: Date) -> String {
+        let seconds = start - now.timeIntervalSince1970
+        guard seconds > 30 else { return "now" }
+        return "in \(Int(saturating: ceil(seconds / 60))) min" // jrbar-token-exception: frozen notch calendar copy
+    }
+
     public static func duration(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "unknown" }
         let whole = Int(saturating: max(0, seconds))

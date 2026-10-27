@@ -29,4 +29,11 @@ struct NotchWordingParityTests {
             #expect(CoreAsk.ageWords(seconds) == text)
         }
     }
+
+    @Test func calendarHeadsUp() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(ShelfMeetingWatch.countdown(to: now.addingTimeInterval(20), now: now) == "now")
+        #expect(ShelfMeetingWatch.countdown(to: now.addingTimeInterval(45), now: now) == "in 1 min")
+        #expect(ShelfMeetingWatch.countdown(to: now.addingTimeInterval(110), now: now) == "in 2 min")
+    }
 }
