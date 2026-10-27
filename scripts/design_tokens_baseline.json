@@ -1,10 +1,14 @@
 {
   "app/Sources/JRBarApp/AgentsHooksDoctor.swift": {
-    "semantic-font: .font(.caption": 6
+    "semantic-font: .font(.caption": 6,
+    "status-colour: Color.orange": 2,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/AskAnswerViews.swift": {
     "animation: duration: 1": 1,
-    "radius: cornerRadius: 4": 2
+    "radius: cornerRadius: 4": 2,
+    "status-colour: Color.orange": 1,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/AskDetailViews.swift": {
     "animation: duration: 0.14": 1,
@@ -17,12 +21,19 @@
     "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 5": 3
   },
+  "app/Sources/JRBarApp/CalibrationProfilesSection.swift": {
+    "status-colour: .green": 1
+  },
   "app/Sources/JRBarApp/CalibrationSheet.swift": {
     "semantic-font: .font(.callout": 4,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/ClaudeStatusLineSection.swift": {
-    "semantic-font: .font(.caption": 2
+    "semantic-font: .font(.caption": 2,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/ControlCenterView.swift": {
     "animation: duration: 0.01": 1,
@@ -44,11 +55,17 @@
     "radius: cornerRadius: 5": 1,
     "radius: cornerRadius: 8": 3,
     "semantic-font: .font(.callout": 8,
-    "semantic-font: .font(.caption": 14,
+    "semantic-font: .font(.caption": 15,
     "semantic-font: .font(.caption2": 1,
     "semantic-font: .font(.headline": 2,
     "semantic-font: .font(.title3": 4,
-    "semantic-small: .system(.caption": 2
+    "semantic-small: .system(.caption": 2,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 7,
+    "status-colour: .red": 2,
+    "status-colour: Color.green": 1,
+    "status-colour: Color.orange": 6,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/DeckRailController.swift": {
     "animation: duration: 0.15": 1,
@@ -63,11 +80,15 @@
     "radius: cornerRadius: 12": 1,
     "radius: cornerRadius: 5": 3,
     "radius: cornerRadius: 9": 1,
-    "semantic-font: .font(.caption": 4
+    "semantic-font: .font(.caption": 4,
+    "status-colour: Color.orange": 1,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/DemoAskPanel.swift": {
+    "font-floor: .system(size: 9.5": 1,
     "font: .system(size: 13": 1,
     "font: .system(size: 14": 1,
+    "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 8": 1,
     "semantic-font: .font(.callout": 1
   },
@@ -78,7 +99,8 @@
   "app/Sources/JRBarApp/EffectStudioCompose.swift": {
     "semantic-font: .font(.callout": 3,
     "semantic-font: .font(.caption": 2,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/EffectStudioMoments.swift": {
     "semantic-font: .font(.body": 3,
@@ -88,13 +110,21 @@
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
     "font: .system(size: 13": 2,
     "semantic-font: .font(.callout": 7,
-    "semantic-font: .font(.headline": 1
+    "semantic-font: .font(.headline": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 1,
+    "status-colour: .red": 2,
+    "status-colour: Color.red": 2
   },
   "app/Sources/JRBarApp/EffectStudioView.swift": {
     "semantic-font: .font(.callout": 9,
     "semantic-font: .font(.caption": 9,
     "semantic-font: .font(.title2": 1,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .orange": 8,
+    "status-colour: .red": 6,
+    "status-colour: Color.orange": 1,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/EventCoordinator.swift": {
     "elapsed-unit: \\(notice.label) quiet for \\(Int(notice.seconds / 60)) min": 1
@@ -107,31 +137,43 @@
   "app/Sources/JRBarApp/FirmwareCard.swift": {
     "font-floor: .system(size: 4": 1,
     "font: .system(size: 4": 1,
-    "semantic-font: .font(.callout": 1
+    "semantic-font: .font(.callout": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/FirmwareSheet.swift": {
     "semantic-font: .font(.callout": 1,
     "semantic-font: .font(.subheadline": 2,
-    "semantic-font: .font(.title3": 2
+    "semantic-font: .font(.title3": 2,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 4,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/HistoryStore.swift": {
     "elapsed-unit: \\(left / 60) min": 1
   },
   "app/Sources/JRBarApp/HistoryView.swift": {
-    "font-floor: .system(size: 10": 9,
+    "font-floor: .system(size: 10": 10,
     "font-floor: .system(size: 10.5": 1,
+    "font-floor: .system(size: 7.5": 1,
     "font-floor: .system(size: 8": 1,
     "font-floor: .system(size: 9": 4,
-    "font: .system(size: 10": 9,
+    "font: .system(size: 10": 10,
     "font: .system(size: 10.5": 1,
     "font: .system(size: 11": 13,
     "font: .system(size: 11.5": 2,
     "font: .system(size: 12": 2,
     "font: .system(size: 13": 2,
     "font: .system(size: 15": 1,
+    "font: .system(size: 7.5": 1,
     "font: .system(size: 8": 1,
     "font: .system(size: 9": 4,
-    "radius: cornerRadius: 7": 1
+    "radius: cornerRadius: 7": 1,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 8,
+    "status-colour: .red": 3,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/Intents/DeepWork.swift": {
     "elapsed-unit: \\(minutes) min": 2
@@ -146,13 +188,16 @@
     "semantic-font: .font(.caption": 2
   },
   "app/Sources/JRBarApp/LinkedSyncControls.swift": {
-    "semantic-font: .font(.subheadline": 2
+    "semantic-font: .font(.subheadline": 2,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/NotchHUD.swift": {
     "font-floor: .system(size: 8": 1,
     "font: .system(size: 12": 2,
     "font: .system(size: 13": 1,
-    "font: .system(size: 8": 1
+    "font: .system(size: 8": 1,
+    "status-colour: .red": 1,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/Overview/OverviewGraphScene.swift": {
     "colour: Color(red: 0.082": 1,
@@ -171,7 +216,11 @@
     "font: .system(size: 12": 1,
     "font: .system(size: 12.5": 1,
     "font: .system(size: 9": 1,
-    "radius: cornerRadius: 24": 1
+    "radius: cornerRadius: 24": 1,
+    "status-colour: .green": 3,
+    "status-colour: .orange": 6,
+    "status-colour: .red": 5,
+    "status-colour: Color.orange": 2
   },
   "app/Sources/JRBarApp/Overview/OverviewGraphView.swift": {
     "animation: duration: 0.14": 1,
@@ -188,7 +237,10 @@
     "font: .system(size: 12.5": 2,
     "font: .system(size: 9": 1,
     "radius: cornerRadius: 12": 4,
-    "radius: cornerRadius: 7": 1
+    "radius: cornerRadius: 7": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 4,
+    "status-colour: .red": 2
   },
   "app/Sources/JRBarApp/Overview/OverviewInspector.swift": {
     "font-floor: .system(size: 10": 4,
@@ -208,20 +260,27 @@
     "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 6": 1,
     "radius: cornerRadius: 7": 1,
-    "radius: cornerRadius: 9": 1
+    "radius: cornerRadius: 9": 1,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 2,
+    "status-colour: .red": 4,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/Overview/OverviewStrips.swift": {
     "font-floor: .system(size: 10": 1,
     "font-floor: .system(size: 10.5": 1,
     "font: .system(size: 10": 1,
     "font: .system(size: 10.5": 1,
-    "font: .system(size: 11": 3
+    "font: .system(size: 11": 3,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/Overview/OverviewView.swift": {
-    "font-floor: .system(size: 10": 9,
+    "font-floor: .system(size: 10": 10,
     "font-floor: .system(size: 8": 1,
     "font-floor: .system(size: 9": 4,
-    "font: .system(size: 10": 9,
+    "font: .system(size: 10": 10,
     "font: .system(size: 11": 10,
     "font: .system(size: 12": 3,
     "font: .system(size: 13": 1,
@@ -229,7 +288,11 @@
     "font: .system(size: 15": 3,
     "font: .system(size: 8": 1,
     "font: .system(size: 9": 4,
-    "radius: cornerRadius: 8": 3
+    "radius: cornerRadius: 8": 3,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 9,
+    "status-colour: .red": 2,
+    "status-colour: Color.orange": 1
   },
   "app/Sources/JRBarApp/Overview/ReconstructedTimelineView.swift": {
     "font-floor: .system(size: 10": 3,
@@ -244,7 +307,12 @@
     "font: .system(size: 8.5": 1,
     "font: .system(size: 9": 1,
     "radius: cornerRadius: 10": 2,
-    "radius: cornerRadius: 6": 2
+    "radius: cornerRadius: 6": 2,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 3,
+    "status-colour: .red": 3,
+    "status-colour: Color.orange": 4,
+    "status-colour: Color.red": 5
   },
   "app/Sources/JRBarApp/Overview/UsageComparisonView.swift": {
     "font-floor: .system(size: 10": 2,
@@ -279,7 +347,8 @@
     "font: .system(size: 8": 5,
     "font: .system(size: 9": 5,
     "radius: cornerRadius: 1.5": 2,
-    "radius: cornerRadius: 6": 3
+    "radius: cornerRadius: 6": 3,
+    "status-colour: .orange": 2
   },
   "app/Sources/JRBarApp/Overview/UsageIntegrationSourcesView.swift": {
     "font-floor: .system(size: 10": 1,
@@ -287,8 +356,16 @@
     "font: .system(size: 11": 1,
     "radius: cornerRadius: 8": 1
   },
+  "app/Sources/JRBarApp/Palette/PaletteHistory.swift": {
+    "status-colour: .orange": 2
+  },
+  "app/Sources/JRBarApp/Palette/PaletteSources.swift": {
+    "status-colour: .green": 4,
+    "status-colour: .orange": 6,
+    "status-colour: .red": 4
+  },
   "app/Sources/JRBarApp/Palette/PaletteView.swift": {
-    "font: .system(size: 11": 3,
+    "font: .system(size: 11": 4,
     "font: .system(size: 12": 5,
     "font: .system(size: 13": 7,
     "font: .system(size: 13.5": 1,
@@ -299,11 +376,23 @@
     "radius: cornerRadius: 12": 2,
     "radius: cornerRadius: 4": 1,
     "radius: cornerRadius: 7": 1,
-    "radius: cornerRadius: 9": 1
+    "radius: cornerRadius: 9": 1,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 2,
+    "status-colour: .red": 2,
+    "status-colour: Color.red": 2
   },
   "app/Sources/JRBarApp/PanelStore.swift": {
     "elapsed-unit: \\(minutes / 60) h \\(minutes % 60) min": 1,
     "elapsed-unit: \\(minutes) min": 1
+  },
+  "app/Sources/JRBarApp/PanelView.swift": {
+    "status-colour: .green": 1,
+    "status-colour: .orange": 2,
+    "status-colour: .red": 2,
+    "status-colour: Color.green": 1,
+    "status-colour: Color.orange": 4,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/ProviderComingSoonView.swift": {
     "semantic-font: .font(.callout": 3,
@@ -314,9 +403,15 @@
     "semantic-font: .font(.caption": 9,
     "semantic-font: .font(.headline": 1
   },
+  "app/Sources/JRBarApp/ProviderStyle.swift": {
+    "status-colour: .green": 1,
+    "status-colour: .orange": 1,
+    "status-colour: .red": 1
+  },
   "app/Sources/JRBarApp/ProviderUsageSwitches.swift": {
     "semantic-font: .font(.callout": 4,
-    "semantic-font: .font(.caption": 1
+    "semantic-font: .font(.caption": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/ScreenBarHiddenAppsRow.swift": {
     "semantic-font: .font(.callout": 1
@@ -336,19 +431,28 @@
   },
   "app/Sources/JRBarApp/ScreenBarWings.swift": {
     "font: .system(size: 13": 1,
-    "radius: cornerRadius: 4.5": 1
+    "radius: cornerRadius: 4.5": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 2,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/SettingsAtoms.swift": {
     "animation: duration: 0.28": 2,
     "font-floor: .system(size: 9": 1,
     "font: .system(size: 9": 1,
+    "semantic-font: .font(.caption": 1,
     "semantic-font: .font(.headline": 2,
     "semantic-font: .font(.subheadline": 5,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/SettingsPagesA.swift": {
     "semantic-font: .font(.callout": 1,
-    "semantic-font: .font(.caption": 5
+    "semantic-font: .font(.caption": 5,
+    "status-colour: .green": 4,
+    "status-colour: .orange": 5,
+    "status-colour: .red": 1,
+    "status-colour: Color.red": 2
   },
   "app/Sources/JRBarApp/SettingsPagesB.swift": {
     "animation: duration: 0.2": 1,
@@ -358,15 +462,25 @@
     "radius: cornerRadius: 8": 2,
     "semantic-font: .font(.callout": 14,
     "semantic-font: .font(.subheadline": 1,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .green": 2,
+    "status-colour: .orange": 5,
+    "status-colour: .red": 2,
+    "status-colour: Color.green": 1,
+    "status-colour: Color.red": 1
   },
   "app/Sources/JRBarApp/SettingsPagesShell.swift": {
     "semantic-font: .font(.callout": 2,
     "semantic-font: .font(.subheadline": 1,
-    "semantic-font: .font(.title3": 1
+    "semantic-font: .font(.title3": 1,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/SettingsPointers.swift": {
     "semantic-font: .font(.callout": 1
+  },
+  "app/Sources/JRBarApp/SettingsSealViews.swift": {
+    "status-colour: .green": 1,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/SettingsView.swift": {
     "elapsed-unit: \\(Int($0.rounded())) min": 1,
@@ -377,7 +491,13 @@
     "radius: cornerRadius: 14": 2,
     "radius: cornerRadius: 8": 1,
     "semantic-font: .font(.callout": 12,
-    "semantic-font: .font(.caption": 9
+    "semantic-font: .font(.caption": 9,
+    "status-colour: .green": 4,
+    "status-colour: .orange": 3,
+    "status-colour: .red": 2,
+    "status-colour: Color.green": 3,
+    "status-colour: Color.orange": 2,
+    "status-colour: Color.red": 2
   },
   "app/Sources/JRBarApp/ShortcutRecorder.swift": {
     "font: .system(size: 11.5": 1,
@@ -385,7 +505,8 @@
     "radius: cornerRadius: 7": 2,
     "semantic-font: .font(.callout": 2,
     "semantic-font: .font(.caption": 2,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.subheadline": 1,
+    "status-colour: .orange": 2
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumAmbient.swift": {
     "font: .system(size: 14": 1,
@@ -604,7 +725,9 @@
     "font: .system(size: 8": 1,
     "radius: cornerRadius: 10": 1,
     "radius: cornerRadius: 8": 1,
-    "radius: cornerRadius: 9": 1
+    "radius: cornerRadius: 9": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 2
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewCompletion.swift": {
     "colour: Color(red: 0.02": 1,
@@ -863,7 +986,8 @@
   },
   "app/Sources/JRBarApp/Toys/NotchControlsView.swift": {
     "semantic-font: .font(.callout": 2,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.subheadline": 1,
+    "status-colour: .green": 1
   },
   "app/Sources/JRBarApp/Toys/Toy.swift": {
     "animation: duration: 0.3": 1,
@@ -871,16 +995,23 @@
     "radius: cornerRadius: 10": 1,
     "semantic-font: .font(.body": 1,
     "semantic-font: .font(.caption": 2,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.subheadline": 1,
+    "status-colour: .green": 1,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/UsageCenterView.swift": {
     "semantic-font: .font(.callout": 1,
     "semantic-font: .font(.caption": 4,
-    "semantic-font: .font(.headline": 1
+    "semantic-font: .font(.headline": 1,
+    "status-colour: .green": 1,
+    "status-colour: .orange": 2,
+    "status-colour: Color.orange": 1
   },
   "app/Sources/JRBarApp/UsageHooksSection.swift": {
     "semantic-font: .font(.caption": 3,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.subheadline": 1,
+    "status-colour: .orange": 2,
+    "status-colour: .red": 1
   },
   "app/Sources/JRBarApp/Utilities/Agents/AgentAlertRulesTable.swift": {
     "semantic-font: .font(.callout": 3,
@@ -920,7 +1051,10 @@
     "radius: cornerRadius: 12": 4,
     "radius: cornerRadius: 4": 2,
     "radius: cornerRadius: 5": 1,
-    "radius: cornerRadius: 8": 3
+    "radius: cornerRadius: 8": 3,
+    "status-colour: .green": 1,
+    "status-colour: Color.green": 2,
+    "status-colour: Color.red": 2
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockPreviewSample.swift": {
     "colour: Color(red: 0.10": 1,
@@ -932,7 +1066,8 @@
     "font: .system(size: 11": 1,
     "font: .system(size: 13": 1,
     "radius: cornerRadius: 10": 2,
-    "radius: cornerRadius: 20": 1
+    "radius: cornerRadius: 20": 1,
+    "status-colour: Color.orange": 3
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockSwitcher.swift": {
     "animation: duration: 0.08": 1,
@@ -946,11 +1081,13 @@
     "radius: cornerRadius: 5": 2
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockUtilityCard.swift": {
-    "semantic-font: .font(.callout": 1
+    "semantic-font: .font(.callout": 1,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/Utilities/KeepAwake/KeepAwakeUtilityCard.swift": {
     "semantic-font: .font(.callout": 2,
-    "semantic-font: .font(.caption": 1
+    "semantic-font: .font(.caption": 1,
+    "status-colour: .orange": 1
   },
   "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarBar.swift": {
     "animation: duration: 0.08": 1,
@@ -998,6 +1135,9 @@
     "semantic-font: .font(.caption": 5,
     "semantic-font: .font(.subheadline": 1
   },
+  "app/Sources/JRBarApp/Utilities/RivalGuardView.swift": {
+    "status-colour: .orange": 1
+  },
   "app/Sources/JRBarApp/WindowChrome.swift": {
     "font: .system(size: 11": 3,
     "font: .system(size: 11.5": 2,
@@ -1005,7 +1145,9 @@
     "font: .system(size: 12.5": 1,
     "font: .system(size: 13": 1,
     "font: .system(size: 15": 1,
-    "font: .system(size: 24": 1
+    "font: .system(size: 24": 1,
+    "status-colour: Color.green": 1,
+    "status-colour: Color.orange": 1
   },
   "app/Sources/JRBarCore/KeepAwakeReading.swift": {
     "elapsed-unit: \\(hours) h": 1,
