@@ -16,6 +16,7 @@ class TranscriptRow:
     loaded: bool = False
     context: object = None
     result: Any = None
+    retained_bytes: int | None = None
 
     @property
     def value(self):
@@ -25,6 +26,7 @@ class TranscriptRow:
             except ValueError:
                 self.decoded = None
             self.loaded = True
+            self.retained_bytes = None
         return self.decoded
 
     def memo(self, context, build):
@@ -35,6 +37,7 @@ class TranscriptRow:
             # Do not retain a second parsed copy of the event's message bodies.
             self.decoded = None
             self.loaded = False
+            self.retained_bytes = None
         return self.result
 
 

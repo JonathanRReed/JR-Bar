@@ -254,6 +254,32 @@ def _transcript_metadata(record: HookEvent) -> HookEvent:
     return replace(record, raw={key: value for key, value in record.raw.items() if key != "tool_response"})
 
 
+def _transcript_cached_bytes(
+    records: tuple[HookEvent, ...],
+    previous: dict[int, tuple[HookEvent, int]],
+) -> tuple[int, dict[int, tuple[HookEvent, int]]]:
+    sizes = {}
+    total = sys.getsizeof(records)
+    for record in records:
+        identity = id(record)
+        entry = previous.get(identity)
+        if entry is None or entry[0] is not record:
+            entry = (record, _transcript_object_bytes(record, {}))
+        sizes[identity] = entry
+        total += entry[1]
+    return total, sizes
+
+
+def _transcript_context_bytes(value: object) -> int:
+    # Cached events are counted in records. Include the parser's surrounding
+    # state without charging a second copy of the same event bodies.
+    if isinstance(value, HookEvent):
+        return 0
+    if isinstance(value, tuple):
+        return sys.getsizeof(value) + sum(_transcript_context_bytes(item) for item in value)
+    return _transcript_object_bytes(value, {})
+
+
 def _transcript_object_bytes(value: object, sizes: dict[int, int]) -> int:
     identity = id(value)
     cached = sizes.get(identity)
@@ -280,6 +306,7 @@ class CachedTranscriptRecords:
     tail: TranscriptTail | None = None
     identity: tuple[int, int] | None = None
     mtime_ns: int = 0
+    record_bytes: dict[int, tuple[HookEvent, int]] | None = None
 
 
 @dataclass(frozen=True)
@@ -1379,10 +1406,22 @@ class AgentMonitor(LiveSessionMemory):
         # Tool results have already determined the event's success/failure.
         # Status reduction needs their metadata, not their message bodies.
         records = tuple(_transcript_metadata(record) for record in parsed)
-        retained_bytes = _transcript_retained_bytes(records)
+        previous_record_bytes = cached.record_bytes if cached is not None else None
+        retained_bytes, record_bytes = _transcript_cached_bytes(records, previous_record_bytes or {})
+        retained_bytes += sys.getsizeof(record_bytes) + sum(
+            sys.getsizeof(identity) + sys.getsizeof(entry) + sys.getsizeof(entry[1])
+            for identity, entry in record_bytes.items()
+        )
         if tail is not None:
             retained_bytes += _transcript_object_bytes(vars(tail), {})
-            retained_bytes += sum(_transcript_object_bytes((row.decoded, row.context), {}) for row in tail.rows.values())
+            for row in tail.rows.values():
+                if row.retained_bytes is None:
+                    row.retained_bytes = (
+                        sys.getsizeof(vars(row)) + sys.getsizeof(row.text)
+                        + _transcript_object_bytes((row.decoded, row.context), {})
+                        + _transcript_context_bytes(row.result)
+                    )
+                retained_bytes += row.retained_bytes
         self._transcript_records_cache[key] = CachedTranscriptRecords(
             mtime=stat.st_mtime,
             size=stat.st_size,
@@ -1391,6 +1430,7 @@ class AgentMonitor(LiveSessionMemory):
             tail=tail,
             identity=identity,
             mtime_ns=stat.st_mtime_ns,
+            record_bytes=record_bytes,
         )
         self._bound_record_caches()
         while len(self._transcript_records_cache) > self.transcript_records_cache_max_entries:
