@@ -164,45 +164,58 @@ extension AquariumView {
 
     /// A stationary route to the same inspector opened by a fish tap.
     func fishMenu(_ fish: [Fish]) -> some View {
-        let paused = AquariumFrameRates.livePaused(
-            power: PowerConditions.shared.policy,
-            occluded: toy?.windowOccluded ?? fixture?.paused ?? false)
-        return TimelineView(.animation(minimumInterval: AquariumFrameRates.heartbeat,
-                                       paused: paused)) { context in
-            let visible = AquariumInspection.visibleFish(fish, at: context.date)
-            Menu {
-                ForEach(visible) { fish in
-                    Button {
-                        selectedID = fish.id
-                    } label: {
-                        let title = AquariumInspection.title(for: fish, connected: toy?.core.isLive ?? true)
-                        if selectedID == fish.id {
-                            Label(title, systemImage: "checkmark")
-                        } else {
-                            Text(title)
-                        }
+        let visible = AquariumInspection.visibleFish(fish, at: fishMenuNow)
+        return Menu {
+            ForEach(visible) { fish in
+                Button {
+                    selectedID = fish.id
+                } label: {
+                    let title = AquariumInspection.title(for: fish, connected: toy?.core.isLive ?? true)
+                    if selectedID == fish.id {
+                        Label(title, systemImage: "checkmark")
+                    } else {
+                        Text(title)
                     }
                 }
-                if selectedID != nil {
-                    Divider()
-                    Button("Close inspector") { selectedID = nil }
-                }
-            } label: {
-                Image(systemName: "fish.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Circle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .glassEffect(.regular.interactive(), in: .circle)
-            .environment(\.colorScheme, .dark)
-            .accessibilityLabel("Inspect a fish")
-            .accessibilityValue("\(visible.count) fish")
-            .help(visible.isEmpty ? "No fish to inspect." : "Inspect a session, worker or resident.")
-            .disabled(visible.isEmpty)
+            if selectedID != nil {
+                Divider()
+                Button("Close inspector") { selectedID = nil }
+            }
+        } label: {
+            Image(systemName: "fish.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(visible.isEmpty ? 0.65 : 0.95))
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .glassEffect(.regular.interactive(), in: .circle)
+        .environment(\.colorScheme, .dark)
+        .accessibilityLabel("Inspect a fish")
+        .accessibilityValue("\(visible.count) fish")
+        .help(visible.isEmpty ? "No fish to inspect." : "Inspect a session, worker or resident.")
+        .disabled(visible.isEmpty)
+        .overlay {
+            if visible.isEmpty {
+                // Native disabled menu ink is too dark against the water.
+                Image(systemName: "fish.fill")
+                    .font(JRBarTokens.TypeStyle.callout.font.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+            }
+        }
+        .task(id: fish) {
+            fishMenuNow = Date()
+            while let next = AquariumInspection.nextRetirement(fish, after: fishMenuNow) {
+                do { try await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow))) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                fishMenuNow = Date()
+            }
         }
     }
 
@@ -288,18 +301,45 @@ extension AquariumView {
     func shopPanel(fish: [Fish]) -> some View {
         let game = self.game ?? AquariumGame()
         let adults = fish.filter { !$0.isFry && $0.state != .leaving }
-        return ScrollView {
-            shopShelves(game: game, adults: adults)
-                .padding(16)
+        return VStack(spacing: 12) {
+            Picker("Tank shop", selection: $shopGoals) {
+                Text("Shop").tag(false)
+                Text("Goals").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            if !shopGoals {
+                Picker("Category", selection: $shopCategory) {
+                    ForEach(ShopItem.Category.allCases, id: \.self) { category in
+                        Text(category.displayName).tag(category)
+                    }
+                }
+                .labelsHidden()
+            }
+            ScrollView {
+                if shopGoals {
+                    goalsShelf(game: game)
+                } else {
+                    shopShelves(game: game, adults: adults)
+                }
+            }
         }
-        .frame(width: 348, height: 480)
+        .padding(16)
+        .frame(width: 380, height: 480)
+    }
+
+    func goalsShelf(game: AquariumGame) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            shopHeader(game)
+            achievementsSection(game)
+        }
     }
 
     /// The shop's contents: the purse and its vitals, then each shelf.
     func shopShelves(game: AquariumGame, adults: [Fish]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             shopHeader(game)
-            ForEach(ShopItem.Category.allCases, id: \.self) { category in
+            ForEach([shopCategory], id: \.self) { category in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(category.displayName.uppercased())
                         .jrbarType(.caption).fontWeight(.semibold)
@@ -307,14 +347,13 @@ extension AquariumView {
                         .foregroundStyle(.secondary)
                         .padding(.leading, 4)
                     VStack(spacing: 2) {
-                        ForEach(ShopItem.allCases.filter { $0.category == category },
+                        ForEach(AquariumShopShelf.items(category: category, game: game),
                                 id: \.rawValue) { item in
                             shopRow(item, game: game, adults: adults)
                         }
                     }
                 }
             }
-            achievementsSection(game)
         }
     }
 
@@ -639,11 +678,11 @@ extension AquariumView {
         .disabled(game.pearls < item.price)
     }
 
-    /// The milestones, folded shut until asked: unlocked ones carry
-    /// their date, locked ones sit dimmed with what they take.
+    /// Goals shows every milestone: earned ones carry their date,
+    /// locked ones say what they take.
     private func achievementsSection(_ game: AquariumGame) -> some View {
         let earned = AquariumAchievement.allCases.filter { game.unlocked[$0.rawValue] != nil }.count
-        return DisclosureGroup {
+        return GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(AquariumAchievement.allCases, id: \.rawValue) { achievement in
                     let at = game.unlocked[achievement.rawValue]

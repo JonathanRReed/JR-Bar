@@ -144,9 +144,12 @@ struct AquariumFishRenderProofTests {
         // The hero sheet: every species big, in the provider it swims for.
         let all = FishSpecies.allCases
         let heroProviders: [FishSpecies: String] = [
-            .minnow: "grok", .clownfish: "claude", .angelfish: "gemini", .puffer: "antigravity",
+            .minnow: "generic", .clownfish: "claude", .angelfish: "gemini", .puffer: "antigravity",
             .shark: "codex", .seahorse: "hermes", .betta: "opencode", .tang: "devin", .tetra: "cursor",
         ]
+        for (species, provider) in heroProviders {
+            #expect(FishSpecies.forProvider(provider) == species)
+        }
         let cellW = 300.0, cellH = 230.0
         let hero = Self.sheet(width: cellW * 3, height: cellH * 3) { c, _ in
             for (i, species) in all.enumerated() {

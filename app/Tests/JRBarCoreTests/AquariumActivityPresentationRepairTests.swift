@@ -22,8 +22,8 @@ struct AquariumActivityPresentationRepairTests {
     @Test func disconnectedSwimmingIsOnlyLastKnown() {
         let text = AquariumActivityPresentation.summary(states: [.swimming], residents: 2,
                                                         connected: false)
-        #expect(text == "Disconnected · 0 confirmed working · 1 last-known session · 2 residents")
-        #expect(AquariumActivityPresentation.rewardHelp.contains("Idle fish earn no work-time pearls"))
-        #expect(AquariumActivityPresentation.rewardHelp.contains("Feeding and grown-fish rewards"))
+        #expect(text == "Not connected to the monitor, so the fish are resting. · 1 last-known session · 2 residents")
+        #expect(AquariumActivityPresentation.rewardHelp.contains("while their session works"))
+        #expect(AquariumActivityPresentation.rewardHelp.contains("Feeding, grown-fish rewards and finished runs pay separately"))
     }
 }

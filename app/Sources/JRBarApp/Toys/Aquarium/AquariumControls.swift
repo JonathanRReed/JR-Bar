@@ -62,6 +62,8 @@ struct AquariumControlsView: View {
             CardSectionHeader("Outside the window")
             outsideRows
         }
+        .toggleStyle(.switch)
+        .labeledContentStyle(CardLabeledContentStyle())
         .onChange(of: revealKey, initial: true) {
             if let row = toy.store?.revealRow, Self.fineTuneTitles.contains(row) {
                 fineTune = true
@@ -92,7 +94,7 @@ struct AquariumControlsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 220)
+            .frame(width: 220, alignment: .trailing)
         } label: {
             SettingLabel(title: "Motion", subtitle: "Still holds the scene. Session status and rewards keep updating; feeding works immediately.")
         }
@@ -107,7 +109,7 @@ struct AquariumControlsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 220)
+            .frame(width: 260, alignment: .trailing)
         } label: {
             SettingLabel(title: "Labels", subtitle: labelsSubtitle)
         }
@@ -228,9 +230,14 @@ struct AquariumControlsView: View {
     @ViewBuilder
     private var outsideRows: some View {
         LabeledContent {
-            Button("Fill screen") { toy.fillScreen() }
+            HStack {
+                if toy.isOn && !toy.game.windowOpen {
+                    Button("Show Aquarium") { toy.showAquarium() }
+                }
+                Button("Fill screen") { toy.fillScreen() }
+            }
         } label: {
-            SettingLabel(title: "Fill screen", subtitle: "The tank covers the whole screen. Esc leaves.")
+            SettingLabel(title: "Fill screen")
         }
         LabeledContent {
             wallpaperPicker
