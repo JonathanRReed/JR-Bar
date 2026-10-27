@@ -181,7 +181,7 @@ extension PanelStore {
             do {
                 let reply = try await self.requestUsageRefresh([usage.id])
                 guard reply.ok else { throw reply.error ?? CoreReplyError(code: "refused") }
-            } catch { self.show(toast: error.localizedDescription) }
+            } catch { self.show(toast: MonitorWords.reason(error)) }
         }
     }
 }

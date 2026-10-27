@@ -29,7 +29,8 @@ struct StateRejectedSurfacesTests {
         #expect(store.connectionDot == .fileFeeds)
         #expect(store.headerCounts == PanelStore.stateRejectedDetail)
         #expect(store.connectionDescription.contains("could not be read"))
-        #expect(store.connectionDescription.contains("2000000"))
+        // The decoder's own words stay in the log.
+        #expect(!store.connectionDescription.contains("2000000"))
 
         core.apply(.state(CoreState(
             sessions: [CoreSession(id: "claude:a", provider: "claude", mode: "working")])))

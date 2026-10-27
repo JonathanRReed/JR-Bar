@@ -27,6 +27,48 @@ struct PanelCompositionTests {
         }
     }
 
+    /// With the monitor down every row is stale and adds its "Read … ago"
+    /// line; the row's room must hold it at both widths, a sign-in row too.
+    @Test func disconnectedUsageRowsStayInsideTheirRoom() {
+        var signIn = Self.usage("kiro")
+        signIn.state = "needs_sign_in"
+        signIn.statusText = "Run kiro-cli login in Terminal, then Retry."
+        signIn.action = "Retry"
+        let readings = [Self.usage(), Self.usage("codex"), signIn,
+                        Self.usage("gemini", availability: "failing", action: "Sign in…")]
+        for reading in readings {
+            #expect(PanelComposition.usageHeight(reading, connected: false) >= 64)
+            for width: CGFloat in [320, 372] {
+                let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
+                                        now: Self.time + 2460, connected: false, style: .compact, windowNames: ["5h", "7d"],
+                                        snapshotReceivedAt: Self.time, suppressDisconnectedStatus: true,
+                                        onAction: reading.action == nil ? nil : {})
+                let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
+                #expect(host.fittingSize.height <= PanelComposition.usageHeight(reading, connected: false),
+                        "\(reading.id) at \(width) pt is \(host.fittingSize.height) pt tall")
+            }
+        }
+        let store = Self.store(usage: [Self.usage()])
+        store.core.handle(.disconnected(reason: "fixture"))
+        let composition = PanelComposition(store: store)
+        #expect(composition.totalHeight >= PanelComposition.usageHeight(Self.usage(), connected: false))
+    }
+
+    @Test func theDisconnectedBannerUsesTheSharedMonitorWords() {
+        let store = Self.store()
+        store.core.handle(.disconnected(reason: "core closed the socket"))
+        #expect(store.connectionTitle == MonitorWords.notConnected)
+        #expect(store.connectionDescription == "The monitor closed the connection.")
+        store.core.handle(.disconnected(reason: "connect: Connection refused"))
+        #expect(store.connectionDescription == "The monitor is not running.")
+        store.supervisorState = .backingOff(failures: 2, delay: 2.4)
+        #expect(store.connectionTitle == MonitorWords.reconnecting)
+        #expect(store.connectionDescription == "The monitor stopped. Restarting in 3 s.")
+        store.supervisorState = .crashed(failures: 10)
+        #expect(store.coreCrashDetail == "The monitor crashed 10 times. Restart it from the panel.")
+        #expect(ConnectionDot.spokenLabel(.fileFeeds) == MonitorWords.label)
+    }
+
     static func session(_ id: String, provider: String = "claude", mode: String = "working",
                         since: Double = time - 120, group: String? = nil, worker: Bool = false,
                         unlinked: Bool = false, workers: Int = 0, ask: CoreAsk? = nil) -> CoreSession {

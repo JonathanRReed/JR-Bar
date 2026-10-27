@@ -612,8 +612,8 @@ final class PanelStore {
     }
 
     var coreCrashDetail: String {
-        if case .crashed(let failures) = supervisorState { return "Monitor crashed \(failures)× in 2 min" }
-        return "Monitor crashed"
+        if case .crashed(let failures) = supervisorState { return MonitorWords.crashed(failures: failures) }
+        return MonitorWords.crashed(failures: 1)
     }
 
     var connectionDot: ConnectionDot {
@@ -631,23 +631,33 @@ final class PanelStore {
         return false
     }
 
+    /// The panel banner's title while the monitor is not live, in the
+    /// shared words: "Starting the monitor…", "Reconnecting…", "Not connected".
+    var connectionTitle: String {
+        if case .backingOff = supervisorState { return MonitorWords.reconnecting }
+        return MonitorWords.connection(core.connection, hasState: core.state != nil)
+    }
+
+    /// The connection in a plain sentence, for the banner's detail, the
+    /// dot's tooltip and the Agents card. The client's raw reason stays in
+    /// the log and Diagnostics.
     var connectionDescription: String {
         if case .backingOff(let failures, let delay) = supervisorState {
-            return "Monitor exited (\(failures)×); restarting in \(String(format: "%.1f", delay)) s"
+            return MonitorWords.restarting(failures: failures, delay: delay)
         }
-        if coreCrashed { return "\(coreCrashDetail). Restart it from the header." }
-        if let why = core.stateRejected {
-            return "Monitor connected, but its last update could not be read (\(why)). Showing the file feeds until a good one arrives."
+        if coreCrashed { return coreCrashDetail }
+        if core.stateRejected != nil {
+            return "Connected, but the monitor's last update could not be read. Showing the file feeds until a good one arrives."
         }
         switch core.connection {
         case .connected where core.state != nil:
-            let version = core.hello?.coreVersion ?? "?"
-            if let stale = staleUpdateText { return "Monitor \(version) connected — quiet, \(stale)" }
-            return "Monitor \(version) connected"
-        case .connected: return "Connected, waiting for state"
-        case .connecting: return MonitorWords.reconnecting
-        case .disconnected(let reason): return "\(MonitorWords.label): \(reason)"
-        case .idle: return "Monitor client idle"
+            if let stale = staleUpdateText { return "\(MonitorWords.connected), quiet: \(stale)" }
+            return MonitorWords.connected
+        case .connected: return MonitorWords.waiting
+        case .connecting(let attempt):
+            return attempt <= 1 ? "The app is starting the monitor." : "The connection dropped. JR-Bar is reconnecting."
+        case .disconnected(let reason): return MonitorWords.reason(reason)
+        case .idle: return MonitorWords.sentence
         }
     }
 
@@ -1413,7 +1423,7 @@ final class PanelStore {
             do {
                 let reply = try await self.core.quiet(mode: mode, seconds: seconds)
                 if !reply.ok {
-                    let reason = reply.error?.message ?? reply.error?.code ?? "refused"
+                    let reason = reply.error?.sentence ?? "The monitor refused that."
                     result = .refused("Quiet failed: \(reason)")
                 } else if seconds <= 0, reply.result?["until"] == JSONValue.null {
                     if let onApplied { onApplied(nil) }
@@ -1490,7 +1500,7 @@ final class PanelStore {
         Task { [weak self] in
             guard let self else { return }
             do { self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance, action: action)) }
-            catch { self.show(toast: error.localizedDescription) }
+            catch { self.show(toast: MonitorWords.reason(error)) }
         }
     }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
@@ -1940,7 +1950,7 @@ final class PanelStore {
                 if reply.ok {
                     self.show(toast: "Dismissed \(row.label) — it returns when it next speaks")
                 } else {
-                    self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
+                    self.show(toast: reply.error?.sentence ?? "Could not dismiss \(row.label).")
                 }
             } catch {
                 self.show(toast: MonitorWords.sentence)
@@ -1961,7 +1971,7 @@ final class PanelStore {
                 if reply.ok {
                     self.show(toast: "Dismissed — the agent was not told, and its own prompt is unchanged")
                 } else {
-                    self.show(toast: reply.error?.message ?? "Could not dismiss that ask")
+                    self.show(toast: reply.error?.sentence ?? "Could not dismiss that ask.")
                 }
             } catch {
                 self.show(toast: MonitorWords.sentence)
@@ -2033,7 +2043,7 @@ final class PanelStore {
                 let reply = try await self.sendClearCompleted(sessions)
                 guard self.clearRequestGeneration == generation else { return }
                 guard reply.ok else {
-                    self.show(toast: "Clear failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    self.show(toast: "Clear failed: \(reply.error?.sentence ?? "The monitor refused that.")")
                     return
                 }
                 let cleared = reply.result?["cleared"]?.arrayValue?.count ?? expected ?? sessions?.count ?? 0
@@ -2079,7 +2089,7 @@ final class PanelStore {
                     if let code = reply.error?.code, code == "expired" || code == "not_found" {
                         retainOfferOnFailure = false
                     }
-                    self.show(toast: "Undo failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    self.show(toast: "Undo failed: \(reply.error?.sentence ?? "The monitor refused that.")")
                 }
             } catch {
                 guard self.undoOfferGeneration == offerGeneration,

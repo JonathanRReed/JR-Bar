@@ -35,7 +35,9 @@ struct PanelComposition {
         let banner: CGFloat = store.coreCrashed || !store.isLive || store.providerList.failure != nil ? 70 : 0
         let rows = store.editingProviders ? store.panelEditProviders.count : store.panelUsage.count
         let header: CGFloat = store.editingProviders || !store.panelWindowNames.isEmpty ? 20 : 0
-        let minimumUsage = store.editingProviders ? Self.rowHeight : store.panelUsage.first.map(Self.usageHeight) ?? Self.rowHeight
+        let live = store.isLive
+        let usageHeights = store.panelUsage.map { Self.usageHeight($0, connected: live) }
+        let minimumUsage = store.editingProviders ? Self.rowHeight : usageHeights.first ?? Self.rowHeight
         let moreRoom: CGFloat = rows > 1 ? Self.sectionHeight : 0
         let sectionLabels = Self.sectionHeight * 2 + (asks.isEmpty ? 0 : Self.sectionHeight)
         let editHint: CGFloat = store.editingProviders ? 56 : 0
@@ -72,7 +74,7 @@ struct PanelComposition {
         let room = cap - fixed - header - moreRoom
         let candidates = store.editingProviders
             ? Array(repeating: Self.rowHeight, count: rows)
-            : store.panelUsage.map(Self.usageHeight)
+            : usageHeights
         var used: CGFloat = 0
         var capacity = 0
         for height in candidates.prefix(4) {
@@ -84,15 +86,23 @@ struct PanelComposition {
         usageLimit = capacity
         let heights = store.editingProviders
             ? CGFloat(min(rows, capacity)) * Self.rowHeight
-            : store.panelUsage.prefix(capacity).reduce(CGFloat.zero) { $0 + Self.usageHeight($1) }
+            : usageHeights.prefix(capacity).reduce(CGFloat.zero, +)
         let overflow = rows > capacity ? Self.sectionHeight : 0
         totalHeight = fixed + header + max(Self.rowHeight, heights) + overflow
     }
 
-    static func usageHeight(_ usage: CoreProviderUsage) -> CGFloat {
+    /// A row's height. With the monitor down every reading is stale and its
+    /// row adds a "Stale · Read 41m ago" line, so `connected: false` gives
+    /// it the stale row's room.
+    static func usageHeight(_ usage: CoreProviderUsage, connected: Bool = true) -> CGFloat {
         if usage.availability == "not_found" { return UsageGaugeRow.compactRowHeight }
         let action = usage.action?.isEmpty == false
-        return action || usage.availability == "failing" ? 88 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 64 : UsageGaugeRow.compactRowHeight)
+        // A neutral row with a button (a sign-in) has its status, the age
+        // line the monitor's absence adds, and the button on three lines.
+        if action, !connected, usage.availability != "failing" { return 96 }
+        if action || usage.availability == "failing" { return 88 }
+        let stale = !connected || usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability)
+        return stale ? 64 : UsageGaugeRow.compactRowHeight
     }
 }
 
@@ -265,7 +275,7 @@ struct PanelProviderSection: View {
                 }
                 ForEach(Array(store.panelUsage.prefix(composition.usageLimit)), id: \.identity) { usage in
                     gauge(usage)
-                        .frame(height: PanelComposition.usageHeight(usage))
+                        .frame(height: PanelComposition.usageHeight(usage, connected: store.isLive))
                 }
                 let more = store.panelUsage.count - composition.usageLimit
                 if more > 0 {

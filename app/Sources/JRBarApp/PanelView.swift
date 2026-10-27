@@ -17,7 +17,7 @@ struct PanelView: View {
                     Button("Restart") { store.restartCore() }
                 }.padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if !store.isLive {
-                StatusBanner(MonitorWords.reconnecting, detail: store.connectionDescription)
+                StatusBanner(store.connectionTitle, detail: store.connectionDescription)
                     .padding(.horizontal, JRBarTokens.Space.md).frame(height: 70)
             } else if let failure = store.providerList.failure {
                 StatusBanner("Provider list unavailable", kind: .failure, detail: failure)
@@ -289,7 +289,17 @@ struct ConnectionDot: View {
             }
         }
         .frame(width: 6, height: 6)
-        .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? MonitorWords.reconnecting : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
+        .accessibilityLabel(Self.spokenLabel(state))
+    }
+
+    /// What VoiceOver says for the dot, in the shared monitor words.
+    static func spokenLabel(_ state: PanelStore.ConnectionDot) -> String {
+        switch state {
+        case .live: return "Monitor connected"
+        case .connecting: return MonitorWords.reconnecting
+        case .crashed: return "Monitor stopped"
+        case .fileFeeds: return MonitorWords.label
+        }
     }
 }
 
