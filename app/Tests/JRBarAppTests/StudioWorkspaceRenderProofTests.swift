@@ -241,7 +241,7 @@ struct StudioWorkspaceRenderProofTests {
     }
 
     private func render<V: View>(_ view: V, name: String, dark: Bool, directory: URL, width: CGFloat = 1160) async throws {
-        try ProofRender.write(view, size: CGSize(width: width, height: 860),
+        try ProofRender.write(view.background(JRBarTokens.Ink.window), size: CGSize(width: width, height: 860),
                               name: "\(name)-\(dark ? "dark" : "light")", dark: dark, settle: 0)
     }
 
