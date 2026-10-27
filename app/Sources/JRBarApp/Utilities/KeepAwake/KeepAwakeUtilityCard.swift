@@ -45,7 +45,7 @@ final class KeepAwakeUtility: Toy {
         let reading = reading
         if reading.releaseFailed { return .paused("Still held") }
         if let why = reading.suspendedWords { return .paused("Paused · \(why)") }
-        if reading.holdFailed { return .paused("Not held") }
+        if reading.holdFailed { return .failed("Not held") }
         switch reading.state {
         case .off:
             return .off
@@ -60,6 +60,19 @@ final class KeepAwakeUtility: Toy {
             return .note("Until the agents finish")
         case .lease(.indefinite):
             return .on
+        }
+    }
+
+    /// Retry the same manual lease, preserving its deadline and kind.
+    func retryHold(now: Date) {
+        guard reading.holdFailed, !toggles.state.applying.contains(.keepAwake) else { return }
+        switch reading.state {
+        case .lease(.until(let end)):
+            let remaining = Int(ceil(end.timeIntervalSince(now)))
+            if remaining > 0 { toggles.holdAwake(seconds: remaining) }
+        case .lease(.agentsFinish): toggles.holdAwakeUntilAgentsFinish()
+        case .lease(.indefinite): toggles.holdAwake(seconds: nil)
+        case .off, .agents: break
         }
     }
 
@@ -89,6 +102,7 @@ struct KeepAwakeUtilityControls: View {
     @ViewState private var hasReadHolders = false
     @ViewState private var durations: [Int] = KeepAwakeMenu.durations()
     @ViewState private var newMinutes = "45"
+    @ViewState private var editingPresets = false
 
     private var toggles: SystemTogglesStore { utility.toggles }
 
@@ -127,6 +141,10 @@ struct KeepAwakeUtilityControls: View {
             Text(words)
                 .monospacedDigit()
             Spacer(minLength: 0)
+            if reading.holdFailed && reading.leaseInForce {
+                Button("Try again") { utility.retryHold(now: at) }
+                    .disabled(toggles.state.applying.contains(.keepAwake))
+            }
         }
         .jrbarType(.callout)
         .padding(.vertical, SettingsMetrics.rowPadding)
@@ -143,14 +161,30 @@ struct KeepAwakeUtilityControls: View {
         // The display switch is its own row below; Turn off shows only
         // while there is a hold to end (the menus keep it, greyed).
         let buttons = items.filter { $0.choice != .keepDisplayOn && ($0.choice != .turnOff || $0.enabled) }
-        return FlowLayout {
-            ForEach(buttons) { item in
-                Button(presetTitle(item)) { KeepAwakeMenu.perform(item.choice, on: toggles) }
-                    .controlSize(.small)
-                    .disabled(!item.enabled)
-                    .help(item.choice == .untilAgentsFinish && !item.enabled
-                          ? "Only the monitor knows when the agents finish, and it isn't running."
-                          : item.title)
+        return VStack(alignment: .trailing) {
+            Button(editingPresets ? "Done" : "Edit presets") { editingPresets.toggle() }
+                .controlSize(.small)
+            FlowLayout {
+                ForEach(buttons) { item in
+                    HStack(spacing: 4) {
+                        Button(presetTitle(item)) { KeepAwakeMenu.perform(item.choice, on: toggles) }
+                            .controlSize(.small)
+                            .disabled(!item.enabled || editingPresets)
+                            .help(item.choice == .untilAgentsFinish && !item.enabled
+                                  ? "Only the monitor knows when the agents finish, and it isn't running."
+                                  : item.title)
+                        if editingPresets, case .seconds(let seconds) = item.choice {
+                            Button {
+                                setDurations(durations.filter { $0 != seconds })
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(durations.count <= 1)
+                            .accessibilityLabel("Remove \(KeepAwakeMenu.title(seconds: seconds))")
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, SettingsMetrics.s)
@@ -212,31 +246,10 @@ struct KeepAwakeUtilityControls: View {
             SettingLabel(title: "Custom duration",
                          subtitle: "1 to 1,440 minutes. Start a one-time session or save one of eight presets for every Awake menu.")
         }
-        FlowLayout {
-            ForEach(durations, id: \.self) { seconds in
-                HStack(spacing: 4) {
-                    Text(KeepAwakeMenu.shortTitle(seconds: seconds))
-                    Button {
-                        setDurations(durations.filter { $0 != seconds })
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .disabled(durations.count <= 1)
-                    .accessibilityLabel("Remove \(KeepAwakeMenu.title(seconds: seconds))")
-                }
-                .jrbarType(.callout)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.primary.opacity(0.07)))
-            }
-            if durations != KeepAwakeMenu.defaultDurations {
-                Button("Reset") { setDurations(KeepAwakeMenu.defaultDurations) }
-                    .controlSize(.small)
-            }
+        if durations != KeepAwakeMenu.defaultDurations {
+            Button("Reset presets") { setDurations(KeepAwakeMenu.defaultDurations) }
+                .controlSize(.small)
         }
-        .padding(.vertical, SettingsMetrics.s)
     }
 
     private func setDurations(_ seconds: [Int]) {

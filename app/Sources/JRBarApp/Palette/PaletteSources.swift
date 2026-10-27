@@ -862,6 +862,18 @@ enum AquariumPaletteRows {
                     verbs.feed()
                 }]))
         }
+        var windowActions: [PaletteAction] = []
+        if isOn {
+            windowActions.append(PaletteAction(id: "show", title: "Show Aquarium", symbol: "macwindow") {
+                verbs.setOpen(true)
+                return nil
+            })
+        }
+        windowActions.append(PaletteAction(id: "toggle", title: isOn ? "Turn Aquarium off" : "Show Aquarium",
+                                           symbol: isOn ? "xmark.circle" : "macwindow") {
+            verbs.setOpen(!isOn)
+            return nil
+        })
         items.append(PaletteItem(
             id: "aquarium.window", title: "Aquarium",
             subtitle: "Every session is a fish",
@@ -869,11 +881,7 @@ enum AquariumPaletteRows {
             icon: .symbol("water.waves", .blue),
             tags: [PaletteTag(text: isOn ? "On" : "Off", tone: isOn ? .positive : .neutral)],
             kind: "Toy", section: .toys,
-            actions: [PaletteAction(id: "toggle", title: isOn ? "Turn Aquarium off" : "Open the Tank",
-                                    symbol: isOn ? "xmark.circle" : "macwindow") {
-                verbs.setOpen(!isOn)
-                return nil
-            }]))
+            actions: windowActions))
         return items
     }
 }

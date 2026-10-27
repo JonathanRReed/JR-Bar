@@ -234,7 +234,7 @@ enum PaletteWiring {
                     guard !fed.isEmpty else { return nil }
                     return fed.count == 1 ? "Fed the fish" : "Fed \(fed.count) fish"
                 },
-                setOpen: { tank.isOn = $0 }))
+                setOpen: { if $0 { tank.showAquarium() } else { tank.isOn = false } }))
         }
     }
 

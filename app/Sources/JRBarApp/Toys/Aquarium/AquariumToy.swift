@@ -328,11 +328,18 @@ final class AquariumToy: Toy {
             : "30 fps while the tank shows, none when covered"
         var parts = [drawing, cadence]
         if isOn { parts.append("the game's beat every \(Int(AquariumRules.tickInterval)) s") }
-        if (store?.state.aquarium.idleFillMinutes ?? 0) > 0 { parts.append("an idle check every 5 s") }
+        if isOn, (store?.state.aquarium.idleFillMinutes ?? 0) > 0 { parts.append("one idle deadline; input watch only while the screensaver shows") }
         return parts.joined(separator: " · ")
     }
 
-    var status: ToyStatus { isOn ? .on : .off }
+    var status: ToyStatus {
+        guard isOn else { return .off }
+        guard !game.windowOpen else { return .on }
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        return Self.closedStatus(wallpaper: settings.ambientDisplay,
+                                 connected: NSScreen.screens.map(\.localizedName),
+                                 saverMinutes: settings.idleFillMinutes)
+    }
 
     /// The chip with the tank window closed: a wallpaper on a connected
     /// display is drawing right now, so it comes first; an armed
@@ -340,10 +347,10 @@ final class AquariumToy: Toy {
     static func closedStatus(wallpaper: String?, connected: [String],
                              saverMinutes: Int) -> ToyStatus {
         if let wallpaper, connected.contains(wallpaper) {
-            return .note("Live wallpaper on \(wallpaper)")
+            return .note("Window closed · live wallpaper on \(wallpaper)")
         }
-        if saverMinutes > 0 { return .note("Screensaver after \(UsageTime.settingMinutes(Double(saverMinutes)))") }
-        return .note("Watching quietly")
+        if saverMinutes > 0 { return .note("Window closed · screensaver after \(UsageTime.settingMinutes(Double(saverMinutes)))") }
+        return .note("Window closed · still counting pearls")
     }
 
     var controls: AnyView {
@@ -413,6 +420,10 @@ final class AquariumToy: Toy {
 
     /// "Fill screen" opens the tank first when the toy is off — the
     /// button is a reason to look, not a trapdoor.
+    func showAquarium() {
+        if isOn { present(activate: true) } else { isOn = true }
+    }
+
     func fillScreen() {
         if isOn { present(activate: true) } else { isOn = true }
         windowController?.fillScreen()

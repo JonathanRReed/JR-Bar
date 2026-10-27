@@ -152,6 +152,9 @@ struct AquariumView: View {
     @ViewState var residentLog: (id: String, log: AquariumResidentLog)?
     /// The shop popover's open flag.
     @ViewState var showShop = false
+    @ViewState var shopCategory: ShopItem.Category = .decor
+    @ViewState var shopGoals = false
+    @ViewState var fishMenuNow = Date()
     /// Light or Dark, as the window wears it — a flip starts the ease.
     @Environment(\.colorScheme) private var colorScheme
     /// When the view last saw Light and Dark flip; nil once the ease

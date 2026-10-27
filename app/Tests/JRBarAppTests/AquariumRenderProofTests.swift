@@ -336,8 +336,8 @@ struct AquariumRenderProofTests {
         // a bloop and a pearl on its way home to the chip.
         if try Self.writePNG(Self.tapEvents(), size: CGSize(width: 640, height: 360),
                              name: "aquarium-events", into: dir) { written += 1 }
-        // The shop's shelves over a rich purse, light and dark — drawn
-        // without the popover's scroll view, which the renderer skips.
+        // The actual shop popover, including its category and Goals controls,
+        // hosted so native controls and the scroll view draw.
         var purse = Self.fixture(themeID: "classic", substrateID: "classic",
                                  backdropID: "classic", night: 0, visitor: nil)
         purse.game?.inventory = ["plant": 1, "rock": 1, "castle": 1, "themeReef": 1, "sandWhite": 1]
@@ -345,11 +345,9 @@ struct AquariumRenderProofTests {
         // Hosted, so the In tank switches draw as the shop shows them.
         purse.game?.stored = ["rock"]
         for dark in [false, true] {
-            let shelves = shopTank.shopShelves(game: purse.game ?? AquariumGame(), adults: purse.fish)
-                .padding(16)
-                .frame(width: 348, height: 3900, alignment: .top)
+            let shelves = shopTank.shopPanel(fish: purse.fish)
                 .background(Color(nsColor: .windowBackgroundColor))
-            let rep = try Self.hostedSnapshot(shelves, size: CGSize(width: 348, height: 3900), dark: dark)
+            let rep = try Self.hostedSnapshot(shelves, size: CGSize(width: 380, height: 480), dark: dark)
             if let png = rep.representation(using: .png, properties: [:]) {
                 try png.write(to: dir.appendingPathComponent("aquarium-shop-\(dark ? "dark" : "light").png"))
                 written += 1
@@ -389,8 +387,14 @@ struct AquariumRenderProofTests {
                 }
             }
         }
-        if try Self.writePNG(AquariumView(toy: toy), size: CGSize(width: 900, height: 520),
-                             name: "aquarium-hud", into: dir) { written += 1 }
+        // Menu is a native control. ImageRenderer substitutes a warning
+        // glyph, so capture the same hosting path used by the app.
+        let hud = try Self.hostedSnapshot(AquariumView(toy: toy),
+                                          size: CGSize(width: 900, height: 520), dark: true)
+        if let png = hud.representation(using: .png, properties: [:]) {
+            try png.write(to: dir.appendingPathComponent("aquarium-hud.png"))
+            written += 1
+        }
         // The chrome alone over a flat sea, drawn through a hosting
         // view — the image renderer leaves Liquid Glass out entirely.
         let chrome = AquariumView(toy: toy).gameChrome(fish: [])

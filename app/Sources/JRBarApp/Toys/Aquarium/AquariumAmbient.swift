@@ -30,13 +30,18 @@ final class AquariumAmbientController {
     /// popping up again five seconds later over the same idle stretch.
     private var armed = false
     private var idleTimer: Timer?
+    private var inputMonitors: [Any] = []
+    private let readIdle: () -> Double
+    var hasIdleDeadline: Bool { idleTimer != nil }
+    var watchingInput: Bool { watchTimer != nil }
     private var watchTimer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var distributedObservers: [NSObjectProtocol] = []
 
-    init(toy: AquariumToy) {
+    init(toy: AquariumToy, readIdle: @escaping () -> Double = AquariumAmbientController.idleSeconds) {
         self.toy = toy
+        self.readIdle = readIdle
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -47,16 +52,23 @@ final class AquariumAmbientController {
             }
         })
         let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.screensDidWakeNotification,
+                     NSWorkspace.sessionDidBecomeActiveNotification,
+                     NSWorkspace.didActivateApplicationNotification] {
+            workspaceObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleIdleDeadline() }
+            })
+        }
         for name in [NSWorkspace.screensDidSleepNotification,
                      NSWorkspace.sessionDidResignActiveNotification] {
             workspaceObservers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.dismissSaver() }
+                MainActor.assumeIsolated { self?.suspendSaver() }
             })
         }
         distributedObservers.append(DistributedNotificationCenter.default().addObserver(
             forName: FoldSessionState.lockedNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.dismissSaver() }
+            MainActor.assumeIsolated { self?.suspendSaver() }
         })
     }
 
@@ -66,29 +78,80 @@ final class AquariumAmbientController {
         for observer in distributedObservers { DistributedNotificationCenter.default().removeObserver(observer) }
         idleTimer?.invalidate()
         watchTimer?.invalidate()
+        for monitor in inputMonitors { NSEvent.removeMonitor(monitor) }
     }
 
     private var settings: AquariumSettings { toy?.store?.state.aquarium ?? AquariumSettings() }
 
-    /// Makes the panels and the idle poll match the settings.
+    /// One deadline for the remaining idle interval, never a repeating poll.
     func sync() {
         guard toy?.isOn == true else { tearDown(); return }
         syncWallpaper()
         if settings.idleFillMinutes > 0 {
-            if idleTimer == nil {
-                // A slow look at the idle clock: minutes matter, not
-                // seconds, and the read is one call.
-                let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.checkIdle() }
-                }
-                RunLoop.main.add(timer, forMode: .common)
-                idleTimer = timer
-            }
+            scheduleIdleDeadline()
         } else {
-            idleTimer?.invalidate()
-            idleTimer = nil
-            dismissSaver()
+            suspendSaver()
+            stopInputObservation()
         }
+    }
+
+    private func startInputObservation() {
+        guard inputMonitors.isEmpty, !WindowPresenter.suppressesDesktop else { return }
+        let mask: NSEvent.EventTypeMask = [.keyDown, .flagsChanged, .mouseMoved,
+            .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel,
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.inputReceived() }
+        }) { inputMonitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.inputReceived() }
+            return event
+        }) { inputMonitors.append(local) }
+    }
+
+    private func stopInputObservation() {
+        for monitor in inputMonitors { NSEvent.removeMonitor(monitor) }
+        inputMonitors.removeAll()
+    }
+
+    /// Input only re-arms a spent deadline; movement never creates a timer per event.
+    func inputReceived() {
+        guard toy?.isOn == true, settings.idleFillMinutes > 0 else { return }
+        if !savers.isEmpty { dismissSaver() }
+        armed = true
+        if idleTimer == nil {
+            scheduleIdleDeadline(idle: 0)
+        }
+    }
+
+    func scheduleIdleDeadline(idle: Double? = nil) {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        stopInputObservation()
+        guard toy?.isOn == true, settings.idleFillMinutes > 0, savers.isEmpty else { return }
+        guard let delay = AquariumScreensaver.deadlineDelay(
+            enabled: toy?.isOn == true, showing: !savers.isEmpty,
+            idleSeconds: idle ?? readIdle(), minutes: settings.idleFillMinutes) else {
+            startInputObservation()
+            return
+        }
+        armed = true
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.idleTimer = nil
+                self?.checkIdle()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        idleTimer = timer
+    }
+
+    private func suspendSaver() {
+        stopInputObservation()
+        idleTimer?.invalidate()
+        idleTimer = nil
+        armed = false
+        dismissSaver()
     }
 
     // MARK: Live wallpaper
@@ -122,17 +185,24 @@ final class AquariumAmbientController {
     // MARK: Screensaver
 
     /// Seconds since the last real input of any kind, session-wide.
-    static func idleSeconds() -> Double {
+    nonisolated static func idleSeconds() -> Double {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState,
                                                 eventType: CGEventType(rawValue: ~0)!)
     }
 
-    private func checkIdle() {
-        guard savers.isEmpty, let toy else { return }
+    func checkIdle() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+        guard toy?.isOn == true, savers.isEmpty, let toy else { return }
+        defer {
+            if savers.isEmpty && idleTimer == nil && settings.idleFillMinutes > 0 {
+                startInputObservation()
+            }
+        }
         let minutes = settings.idleFillMinutes
-        let idle = Self.idleSeconds()
+        let idle = readIdle()
         guard AquariumScreensaver.isIdle(idleSeconds: idle, minutes: minutes) else {
-            armed = true
+            scheduleIdleDeadline(idle: idle)
             return
         }
         guard armed else { return }
@@ -153,13 +223,14 @@ final class AquariumAmbientController {
         let saverIDs = Set(AquariumAmbientDisplays.saverIDs(displays, wallpaper: wallpaperDisplay))
         savers = screens.filter { saverIDs.contains(ScreenBarGeometry.displayID(of: $0)) }.map {
             let panel = AquariumAmbientPanel(screen: $0, toy: toy, mode: .screensaver)
-            panel.onTouch = { [weak self] in self?.dismissSaver() }
+            panel.onTouch = { [weak self] in self?.inputReceived() }
             panel.alphaValue = 0
             WindowPresenter.automatic.order(panel)
             panel.animator().alphaValue = 1
             return panel
         }
         guard !savers.isEmpty else { return }
+        stopInputObservation()
         // One tank takes the keyboard, so the key that wakes it lands on
         // the tank — not on a terminal hidden underneath, where Return
         // or 1 would answer an agent's prompt. A non-activating panel
@@ -180,9 +251,9 @@ final class AquariumAmbientController {
     /// clock resets on input we never see — that is the whole trick.
     private func watchForInput() {
         guard let idleBaseline else { return }
-        if idleBaseline.inputSinceShowing(idleSeconds: Self.idleSeconds(),
+        if idleBaseline.inputSinceShowing(idleSeconds: readIdle(),
                                           uptime: ProcessInfo.processInfo.systemUptime) {
-            dismissSaver()
+            inputReceived()
         }
     }
 
@@ -196,6 +267,7 @@ final class AquariumAmbientController {
 
     /// Everything down — the toy's owner is going away.
     func tearDown() {
+        stopInputObservation()
         dismissSaver()
         idleTimer?.invalidate()
         idleTimer = nil
@@ -229,6 +301,15 @@ enum AquariumAmbientDisplays {
 
 /// The screensaver's rules, pure so they can be pinned.
 enum AquariumScreensaver {
+    /// At the idle threshold the deadline is spent. A vetoed or dismissed
+    /// saver waits for input or a workspace event instead of polling the room.
+    static func deadlineDelay(enabled: Bool, showing: Bool, idleSeconds: Double,
+                              minutes: Int) -> TimeInterval? {
+        guard enabled, !showing, minutes > 0, idleSeconds.isFinite, idleSeconds >= 0 else { return nil }
+        let remaining = Double(minutes) * 60 - idleSeconds
+        return remaining > 0 ? remaining : nil
+    }
+
     struct IdleBaseline {
         let idleSeconds: Double
         let uptime: TimeInterval
@@ -239,8 +320,7 @@ enum AquariumScreensaver {
                                                    idleAtShow: self.idleSeconds)
         }
     }
-    /// The idle clock alone: at or past the chosen minutes. Cheap, so it
-    /// runs every poll; the room is only read once this says yes.
+    /// At or past the chosen minutes. Read the room only after this says yes.
     static func isIdle(idleSeconds: Double, minutes: Int) -> Bool {
         minutes > 0 && idleSeconds.isFinite && idleSeconds >= Double(minutes) * 60
     }

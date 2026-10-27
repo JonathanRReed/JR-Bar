@@ -900,7 +900,7 @@ extension AquariumView {
         // hairline tether — not a heavy slab glued underneath.
         if showLabels, !fish.isFry {
             var lc = canvas
-            lc.opacity = l.opacity * (fish.state == .sinking ? 0.45 : 0.85)
+            lc.opacity = fish.state == .sinking ? 1 : l.opacity * 0.85
             // Resolved glyphs are cached across frames — the label
             // doesn't change between reduces, only its anchor does.
             let (resolved, textSize) = textCache.chip(for: fish.label, canvas: canvas)
@@ -918,7 +918,7 @@ extension AquariumView {
                 lc.stroke(tether, with: .color(.white.opacity(0.16)), lineWidth: 0.7)
             }
             let pill = Path(roundedRect: chip, cornerRadius: chip.height / 2)
-            lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(0.38)))
+            lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(fish.state == .sinking ? 0.65 : 0.38)))
             // A glassy edge: brighter where the surface light catches it.
             lc.stroke(pill, with: .linearGradient(
                 Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),

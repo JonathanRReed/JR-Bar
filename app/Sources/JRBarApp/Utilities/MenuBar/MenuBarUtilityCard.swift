@@ -35,6 +35,7 @@ struct MenuBarUtilityControls: View {
     @ViewState private var showAdvanced = false
     @ViewState private var showOverrides = false
     @ViewState private var showExtras = false
+    @ViewState private var showDetails = false
 
     /// The card body, Advanced folded; a render proof opens it.
     init(utility: MenuBarUtility, showAdvanced: Bool = false) {
@@ -226,7 +227,12 @@ struct MenuBarUtilityControls: View {
                 .padding(.bottom, SettingsMetrics.xs)
         }
         if let suggestions = utility.suggestionsContent {
-            MenuBarSuggestionsPanel(content: suggestions) { utility.forgetSuggestion($0) }
+            MenuBarSuggestionsPanel(content: suggestions,
+                                    onForget: { utility.forgetSuggestion($0) },
+                                    onRecheck: {
+                                        MenuBarItemLister.noteBarActivity()
+                                        if !utility.running { utility.refreshListing() }
+                                    })
                 .padding(.bottom, SettingsMetrics.xs)
         }
         let content = utility.positionContent
@@ -259,9 +265,12 @@ struct MenuBarUtilityControls: View {
         CardNote(MenuBarPositionCopy.engineExplanation, symbol: "gearshape.2")
             .padding(.top, SettingsMetrics.xs)
         if utility.running {
-            CardSectionHeader("What JR-Bar sees")
-            MenuBarDividerReadoutView(readout: utility.dividerReadout)
-                .padding(.bottom, SettingsMetrics.xs)
+            DisclosureGroup("Details", isExpanded: $showDetails) {
+                MenuBarDividerReadoutView(readout: utility.dividerReadout)
+            }
+            // Settings flattens other card groups; diagnostics stay optional.
+            .disclosureGroupStyle(SettingsDisclosureStyle())
+            .padding(.vertical, SettingsMetrics.xs)
         }
     }
 

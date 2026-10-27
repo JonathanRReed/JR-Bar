@@ -467,12 +467,17 @@ struct PaletteSourcesTests {
         #expect(fed.first?.title == "Feed the tank")
         #expect(fed.first?.subtitle == "A pellet for each of 3 fish")
         #expect(fed.first?.primary?.run() == "Fed 3 fish")
-        #expect(fed.last?.primary?.title == "Open the Tank")
+        #expect(fed.last?.primary?.title == "Show Aquarium")
         _ = fed.last?.primary?.run()
         #expect(log.calls == ["feed", "open:true"])
         let empty = AquariumPaletteRows.items(fishCount: 0, isOn: true, verbs: verbs)
         #expect(empty.map(\.id) == ["aquarium.window"])
-        #expect(empty.first?.primary?.title == "Turn Aquarium off")
+        #expect(empty.first?.primary?.title == "Show Aquarium")
+        _ = empty.first?.primary?.run()
+        #expect(log.calls.last == "open:true")
+        #expect(empty.first?.actions.last?.title == "Turn Aquarium off")
+        _ = empty.first?.actions.last?.run()
+        #expect(log.calls.last == "open:false")
     }
 
     // MARK: Confetti

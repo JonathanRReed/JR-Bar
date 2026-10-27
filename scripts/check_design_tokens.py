@@ -88,6 +88,20 @@ def swift_regions(source: str) -> tuple[str, str]:
     return "".join(text), "".join(code)
 
 
+# These are drawing functions, never card labels or body copy. Each token has
+# one permitted figure context; adding another requires a reviewed guard change.
+ART_GLYPH_CONTEXTS = {
+    "app/Sources/JRBarApp/Toys/NotchBuddyView.swift": {
+        "buddyWorking": "workingBadge", "miniWorking": "MiniFigure",
+        "miniAsk": "MiniFigure", "buddyAsk": "effects", "buddyCrumb": "crumbView",
+        "buddySleep": "zView", "buddySparkle": "sparkleView", "buddyGear": "gearSparkleView",
+    },
+    "app/Sources/JRBarApp/Toys/Aquarium/AquariumViewOwnedDecor.swift": {
+        "snailSleep": "drawSnailBody",
+    },
+}
+
+
 def offenders(source: str, path: str = "") -> Counter[str]:
     text, code = swift_regions(source)
     exception_lines = {
@@ -96,6 +110,16 @@ def offenders(source: str, path: str = "") -> Counter[str]:
         if not text[match.start():match.end()].strip()
     }
     found: Counter[str] = Counter()
+    for match in re.finditer(r"JRBarTokens\.ArtGlyph\.(\w+)", code):
+        allowed = ART_GLYPH_CONTEXTS.get(path, {}).get(match[1])
+        # Find the nearest enclosing declaration by counting its braces.
+        contexts = []
+        for declaration in re.finditer(r"(?:func|struct|var)\s+(\w+)[^{}]*\{", code[:match.start()]):
+            region = code[declaration.end():match.start()]
+            if region.count("{") >= region.count("}"):
+                contexts.append(declaration[1])
+        if allowed is None or allowed not in contexts:
+            found[f"art-glyph: {match[1]} outside its figure"] += 1
     for kind, pattern in PATTERNS.items():
         if kind in {"semantic-font", "semantic-small", "font-floor", "status-colour", "elapsed-unit"} and "/Notch/" in path:
             continue

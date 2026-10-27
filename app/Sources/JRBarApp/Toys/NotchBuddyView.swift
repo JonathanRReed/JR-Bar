@@ -227,7 +227,7 @@ struct NotchBuddyView: View {
     @ViewBuilder private func workingBadge(for summary: NotchBuddyToy.BuddySummary) -> some View {
         if summary.working >= 2 {
             Text("\(summary.working)")
-                .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+                .font(JRBarTokens.ArtGlyph.buddyWorking.font(figure: 18)).fontWeight(.bold).fontDesign(.rounded)
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 2.4)
@@ -336,7 +336,7 @@ private struct MiniFigure: View {
                 .frame(width: 7, height: 7)
             if working > 1 {
                 Text("\(working)")
-                    .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+                    .font(JRBarTokens.ArtGlyph.miniWorking.font(figure: 18)).fontWeight(.bold).fontDesign(.rounded)
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .accessibilityHidden(true)
@@ -345,7 +345,7 @@ private struct MiniFigure: View {
         .overlay(alignment: .top) {
             if waiting > 0 {
                 Text(waiting > 1 ? "!\(waiting)" : "!")
-                    .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+                    .font(JRBarTokens.ArtGlyph.miniAsk.font(figure: 18)).fontWeight(.bold).fontDesign(.rounded)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 2.5).padding(.vertical, 0.5)
                     .background(Capsule().fill(Tone.ask.color))
@@ -1139,7 +1139,7 @@ struct BuddyFigure: View {
             // The ask's badge: white on an amber pill with a warm halo —
             // a sign held up, not a letter floating loose.
             Text(askCount > 1 ? "!\(askCount)" : "!")
-                .jrbarType(.caption).fontWeight(.black).fontDesign(.rounded)
+                .font(JRBarTokens.ArtGlyph.buddyAsk.font(figure: 18)).fontWeight(.black).fontDesign(.rounded)
                 .foregroundStyle(.white)
                 .padding(.horizontal, askCount > 1 ? 1.5 : 0)
                 .frame(minWidth: 6, minHeight: 6)
@@ -1194,7 +1194,7 @@ struct BuddyFigure: View {
             }
             let p = still ? 0 : min(1, max(0, (age - 0.2) / 0.75))
             Text("+1")
-                .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+                .font(JRBarTokens.ArtGlyph.buddyCrumb.font(figure: 18)).fontWeight(.bold).fontDesign(.rounded)
                 .foregroundStyle(.secondary)
                 .offset(x: 4.8, y: -7 - p * 5)
                 .opacity(still ? 0.8 : (p > 0.6 ? (1 - p) / 0.4 : 0.9))
@@ -1203,7 +1203,7 @@ struct BuddyFigure: View {
 
     private func zView(_ z: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Text("z")
-            .jrbarType(.caption).fontWeight(.bold).fontDesign(.rounded)
+            .font(JRBarTokens.ArtGlyph.buddySleep.font(figure: 18)).fontWeight(.bold).fontDesign(.rounded)
             .foregroundStyle(.secondary)
             .scaleEffect(z.scale)
             .offset(x: z.x, y: z.y)
@@ -1212,7 +1212,7 @@ struct BuddyFigure: View {
 
     private func sparkleView(_ s: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Image(systemName: "sparkle")
-            .jrbarType(.caption).fontWeight(.bold)
+            .font(JRBarTokens.ArtGlyph.buddySparkle.font(figure: 18)).fontWeight(.bold)
             .foregroundStyle(.white)
             .scaleEffect(s.scale)
             .offset(x: s.x, y: s.y)
@@ -1223,7 +1223,7 @@ struct BuddyFigure: View {
     /// spins instead of twinkling.
     private func gearSparkleView(_ s: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
         Image(systemName: "gear")
-            .jrbarType(.caption).fontWeight(.bold)
+            .font(JRBarTokens.ArtGlyph.buddyGear.font(figure: 18)).fontWeight(.bold)
             .foregroundStyle(Color(white: 0.8))
             .rotationEffect(.degrees(still ? 20 : phase * 160))
             .scaleEffect(s.scale)

@@ -141,13 +141,13 @@ struct AquariumAmbientTests {
     @Test("with the window closed, the chip names a scenery surface that still draws")
     func closedChip() {
         #expect(AquariumToy.closedStatus(wallpaper: nil, connected: ["Built-in"], saverMinutes: 0)
-                == .note("Watching quietly"))
+                == .note("Window closed · still counting pearls"))
         #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in", "LG"], saverMinutes: 10)
-                == .note("Live wallpaper on LG"), "drawing now outranks armed")
+                == .note("Window closed · live wallpaper on LG"), "drawing now outranks armed")
         #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in"], saverMinutes: 10)
-                == .note("Screensaver after 10 min"), "an unplugged display draws nothing")
+                == .note("Window closed · screensaver after 10 min"), "an unplugged display draws nothing")
         #expect(AquariumToy.closedStatus(wallpaper: "LG", connected: ["Built-in"], saverMinutes: 0)
-                == .note("Watching quietly"))
+                == .note("Window closed · still counting pearls"))
         #expect(ToyStatus.note("x").tint == ToyStatus.unavailable("x").tint,
                 "a closed tank that keeps count is a neutral fact, not the paused orange")
     }
@@ -158,7 +158,7 @@ struct AquariumAmbientTests {
         #expect(!ToyStatus.on.showsChip)
         #expect(!ToyStatus.off.showsChip)
         #expect(ToyStatus.paused("Island hidden").showsChip)
-        #expect(ToyStatus.note("Watching quietly").showsChip)
+        #expect(ToyStatus.note("Window closed · still counting pearls").showsChip)
         #expect(ToyStatus.needsPermission("Needs Accessibility").showsChip)
         #expect(ToyStatus.external("Alcove is rendering it").showsChip)
         #expect(ToyStatus.unavailable("Alcove isn't installed").showsChip)

@@ -3,7 +3,7 @@ import Foundation
 /// The visible fish's semantic states, not how fast their sprites move.
 /// Residents are counted separately because they no longer represent a run.
 public enum AquariumActivityPresentation {
-    public static let rewardHelp = "Idle fish earn no work-time pearls. Feeding and grown-fish rewards follow separate game rules. Completion rewards are separate and deduplicated."
+    public static let rewardHelp = "Fish earn pearls while their session works. Feeding, grown-fish rewards and finished runs pay separately."
 
     public static func summary(states: [FishState], residents: Int, connected: Bool) -> String {
         var parts: [String]
@@ -18,7 +18,7 @@ public enum AquariumActivityPresentation {
             let leaving = states.filter { $0 == .leaving }.count
             if leaving > 0 { parts.append("\(leaving) leaving") }
         } else {
-            parts = ["Disconnected", "0 confirmed working"]
+            parts = ["Not connected to the monitor, so the fish are resting."]
             if !states.isEmpty {
                 parts.append("\(states.count) last-known session\(states.count == 1 ? "" : "s")")
             }
