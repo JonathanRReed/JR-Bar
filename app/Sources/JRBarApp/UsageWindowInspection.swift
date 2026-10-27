@@ -54,6 +54,8 @@ struct UsageWindowInspection {
         }
     }
 
+    var showsVerdict: Bool { displayForecast.verdict != .unknown || readingNotice != nil }
+
     var verdictText: String {
         if !hasAmount { return UsageStatus.noReading.word }
         if readingNotice != nil { return UsageStatus.paused.word }
@@ -65,6 +67,20 @@ struct UsageWindowInspection {
         if !isLive { return "Forecasts resume when the monitor reconnects." }
         if readingNotice != nil { return "Forecasts resume with a fresh quota reading." }
         return displayForecast.headline(now: now)
+    }
+
+    var summaryText: String {
+        let sentence = explanation.hasSuffix(".") ? explanation : explanation + "."
+        let reset = resetText
+        let isNotice = reset.hasPrefix("Reset") || reset == provider.staleFix
+        let message = isNotice ? reset : "Resets \(reset)"
+        let ending = message.hasSuffix(".") ? message : message + "."
+        return "\(sentence) \(ending)"
+    }
+
+    var spokenReadingAge: String {
+        guard let date = readingDate else { return "Reading time unavailable" }
+        return "Read \(UsageTime.spokenAge(now.timeIntervalSince(date))) ago"
     }
 
     var projectedText: String? {
@@ -100,8 +116,8 @@ struct UsageWindowInspection {
     }
 
     var readingAge: String {
-        guard let date = readingDate, let age = PanelStore.elapsed(since: date, now: now) else { return "Reading time unavailable" }
-        return "Read \(age) ago"
+        guard readingDate != nil else { return "Reading time unavailable" }
+        return UsageCardCopy.readingAgeText(provider, now: now) ?? "Reading time unavailable"
     }
 
     var resetText: String {
@@ -147,7 +163,9 @@ struct UsageWindowInspectionView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Divider()
-            StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
+            if inspection.showsVerdict {
+                StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
+            }
             Text(inspection.explanation)
                 .font(JRBarTokens.TypeStyle.callout.font)
                 .fixedSize(horizontal: false, vertical: true)
@@ -155,7 +173,7 @@ struct UsageWindowInspectionView: View {
                 Text(evidence).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
-                Text(inspection.readingAge)
+                Text(inspection.readingAge).accessibilityLabel(inspection.spokenReadingAge)
                 if let date = inspection.readingDate {
                     Text(date.formatted(date: .abbreviated, time: .shortened))
                 }

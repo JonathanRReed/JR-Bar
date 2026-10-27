@@ -87,7 +87,8 @@ def test_usage_overview_uses_shared_window_and_time_words():
     assert "UsageTime" not in source, "The table must not format its own countdowns"
     gauge = (root / "JRBarUI/UsageGaugeRow.swift").read_text()
     assert "reading.stale && reading.elapsed" in gauge
-    assert "if status != nil || (isStale && showsWindows)" in gauge
+    assert "compactReadingStatus.padding(.leading, 30)" in gauge
+    assert "Text(UsageStatus.noReading.word)" in gauge
 
 
 def test_typography_migration_cannot_be_reopened_with_an_allowance():

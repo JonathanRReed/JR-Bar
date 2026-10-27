@@ -120,7 +120,8 @@ struct UsageForecastSurfaceTests {
         let shownRows = try await evidence(UsageGaugeEvidence.self, view: PanelProviderSection(store: panel, composition: PanelComposition(store: panel)))
         let shownForecasts = try await evidence(UsageForecastEvidence.self, view: detail)
         #expect(shownRows[window.id] == reading, "The panel must render its forecast reading")
-        #expect(shownForecasts[window.id + ".verdict"] == inspection.displayForecast, "Usage Center must render its verdict")
+        #expect(shownForecasts[window.id + ".verdict"] == (inspection.showsVerdict ? inspection.displayForecast : nil),
+            "An unknown pace has no duplicate verdict chip")
         #expect(shownForecasts[window.id + ".headline"] == inspection.displayForecast, "Usage Center must render its forecast sentence")
         let card = NotchCardView(model: Self.notchModel(), style: .island, width: 320)
         let shownCaptions = try await evidence(NotchMeterCaptionEvidence.self, view: card.meterRow(meter, now: panel.now))

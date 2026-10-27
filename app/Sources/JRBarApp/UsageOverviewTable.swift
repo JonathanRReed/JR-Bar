@@ -36,12 +36,12 @@ struct UsageOverviewTable: View {
                     Divider().gridCellUnsizedAxes(.horizontal)
                     ForEach(store.providers, id: \.identity) { provider in
                         GridRow {
+                            let today = today(for: provider)
                             UsageOverviewProviderRow(provider: provider, name: store.providerTitle(provider),
                                 now: store.now.timeIntervalSince1970, connected: store.isLive,
                                 windowNames: windows, columnWidth: columnWidth,
-                                snapshotReceivedAt: store.usageSnapshotReceivedAt) { select(provider.identity) }
+                                snapshotReceivedAt: store.usageSnapshotReceivedAt, today: today, showCost: showCost) { select(provider.identity) }
                                 .frame(width: quotaWidth)
-                            let today = today(for: provider)
                             Text(today.map { UsageFormat.tokens($0.totalTokens) } ?? "—").monospacedDigit()
                             if showCost { Text(today.map(Self.costLabel) ?? "—").monospacedDigit() }
                         }
@@ -119,7 +119,21 @@ struct UsageOverviewProviderRow: View {
     let windowNames: [String]
     let columnWidth: CGFloat
     let snapshotReceivedAt: Double?
+    var today: UsageHistoryDay? = nil
+    var showCost = false
     let select: () -> Void
+
+    var spokenValue: String {
+        var parts = [UsageGaugeRow(provider: provider, name: name, now: now, connected: connected,
+            snapshotReceivedAt: snapshotReceivedAt, suppressDisconnectedStatus: true, includeAbsent: true).accessibilityValue]
+        if let today {
+            parts.append("Today's tokens including cache reads: \(today.totalTokens)")
+            if showCost { parts.append("Estimated cost: \(UsageOverviewTable.costLabel(today))") }
+        } else {
+            parts.append("Today's tokens unavailable")
+        }
+        return parts.joined(separator: ". ")
+    }
 
     var body: some View {
         Button(action: select) {
@@ -129,6 +143,7 @@ struct UsageOverviewProviderRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(name)
+        .accessibilityValue(spokenValue)
         .accessibilityHint("Show provider usage")
     }
 }
@@ -203,7 +218,9 @@ struct UsageOverviewChart: View {
                             Text(ProviderPalette.displayName(for: provider)).font(JRBarTokens.TypeStyle.caption.font)
                             Text(UsageFormat.tokens(Int(total))).font(JRBarTokens.TypeStyle.heading.font).monospacedDigit()
                         }.foregroundStyle(hidden.contains(provider) ? JRBarTokens.Ink.stale : color(provider, index: providers.firstIndex(of: provider) ?? 0))
-                    }.buttonStyle(.plain).accessibilityValue(hidden.contains(provider) ? "Hidden" : "Shown")
+                    }.buttonStyle(.plain)
+                    .accessibilityLabel("\(ProviderPalette.displayName(for: provider)), \(Int(total)) tokens")
+                    .accessibilityValue(hidden.contains(provider) ? "Hidden" : "Shown")
                 }
             }
             ForEach(providers.filter { stale($0) }, id: \.self) { provider in

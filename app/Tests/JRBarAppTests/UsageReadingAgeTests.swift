@@ -26,9 +26,9 @@ struct UsageReadingAgeTests {
     @Test("a live card reads from its own time")
     func liveNamesTheAttempt() {
         let live = row(observedAgo: 90, readAgo: nil, state: "ready")
-        #expect(UsageCardCopy.readingAgeText(live, now: now) == "Read 1m 30s ago")
+        #expect(UsageCardCopy.readingAgeText(live, now: now) == "Read 1m ago")
         let sameTime = row(observedAgo: 90, readAgo: 90, state: "ready")
-        #expect(UsageCardCopy.readingAgeText(sameTime, now: now) == "Read 1m 30s ago")
+        #expect(UsageCardCopy.readingAgeText(sameTime, now: now) == "Read 1m ago")
     }
 
     @Test("a daemon that does not send read_at keeps the caption it always had")
