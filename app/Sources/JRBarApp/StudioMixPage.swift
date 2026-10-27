@@ -145,7 +145,7 @@ private struct StudioMixCard: View {
                 }
                 if let warning = preview?.playbackWarnings.first {
                     Label(warning, systemImage: "exclamationmark.triangle")
-                        .jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.attention).lineLimit(2)
+                        .jrbarType(.caption).foregroundStyle(Tone.neutral.color).lineLimit(2)
                         .help(preview?.playbackWarnings.joined(separator: " ") ?? warning)
                 } else if preview == nil {
                     Text("Preview unavailable").jrbarType(.caption).foregroundStyle(.secondary)

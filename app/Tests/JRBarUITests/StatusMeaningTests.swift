@@ -18,5 +18,7 @@ struct StatusMeaningTests {
         #expect(UsageStatus.noReading.word == "No reading")
         #expect(UsageStatus.runsOut.tone == .warning)
         #expect(UsageStatus.usedUp.tone == .failure)
+        #expect(UsageGaugeReading.CaptionTone.attention.tone == .warning)
+        #expect(UsageGaugeReading.CaptionTone.failure.tone == .failure)
     }
 }

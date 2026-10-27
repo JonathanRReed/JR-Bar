@@ -96,10 +96,12 @@ enum UsageSourceNotes {
     /// One detail window in words: "Monthly 7% used, resets in 6d 4h".
     static func detailText(_ window: CoreUsageWindow, now: Date, fix: String?) -> String {
         let reading = window.isUnknown ? "no reading" : "\(window.percentText) used"
-        guard let reset = PanelStore.countdown(to: window.resetsAt, now: now, fix: fix) else {
+        guard let stamp = window.resetsAt else {
             return "\(window.longName) \(reading)"
         }
-        return "\(window.longName) \(reading), \(reset)"
+        let reset = UsageTime.resetLine(stamp, now: now.timeIntervalSince1970, fix: fix)
+        let caption = stamp <= now.timeIntervalSince1970 ? reset : "Resets \(reset)"
+        return "\(window.longName) \(reading) · \(caption)"
     }
 }
 

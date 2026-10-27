@@ -74,9 +74,10 @@ public enum UsageTime {
     }
 
     public static func resetLine(_ epoch: Double?, now: Double, locale: Locale = .autoupdatingCurrent,
-                                 timeZone: TimeZone = .current) -> String {
+                                 timeZone: TimeZone = .current, fix: String? = nil) -> String {
         guard let epoch, epoch.isFinite, now.isFinite else { return "Waiting for a new reading" }
         let remaining = epoch - now
+        if remaining < 1, let fix, !fix.isEmpty { return fix }
         if remaining <= 0 { return remaining > -30 ? "Reset now" : "Reset \(ago(-remaining))" }
         if remaining < 3600 { return relative(to: epoch, now: Date(timeIntervalSince1970: now)) }
         var calendar = Calendar(identifier: .gregorian)
@@ -94,11 +95,16 @@ public enum UsageTime {
 
     public static func runsOut(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
                                timeZone: TimeZone = .current) -> String {
+        "\(UsageStatus.runsOut.word) \(runOutWhen(at: epoch, now: now, locale: locale, timeZone: timeZone))"
+    }
+
+    public static func runOutWhen(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
+                                 timeZone: TimeZone = .current) -> String {
         if epoch - now < 3600 {
             let minutes = max(1, Int(saturating: ceil(max(0, epoch - now) / 60)))
-            return "Runs out in \(duration(Double(minutes) * 60))"
+            return "in \(duration(Double(minutes) * 60))"
         }
-        return "Runs out \(clock(epoch, locale: locale, timeZone: timeZone))"
+        return clock(epoch, locale: locale, timeZone: timeZone)
     }
 
     public static func spokenAge(_ seconds: Double) -> String {

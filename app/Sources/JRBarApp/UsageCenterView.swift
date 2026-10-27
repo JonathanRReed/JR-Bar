@@ -230,12 +230,7 @@ enum UsageCardCopy {
         return text + " Subscription plans are not billed per token."
     }
     static func verdictTint(_ forecast: UsageForecast) -> Color {
-        switch forecast.verdict {
-        case .exhausted: return JRBarTokens.Ink.failure
-        case .runsOut: return JRBarTokens.Ink.attention
-        case .comfortable: return forecast.heldIdle ? .secondary : JRBarTokens.Ink.done
-        case .unknown, .guarded, .unmeasured: return .secondary
-        }
+        forecast.status.tone.color
     }
 }
 

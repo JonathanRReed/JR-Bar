@@ -12,12 +12,21 @@ public struct UsageGaugeReading: Equatable, Sendable {
     public let footnote: String
     public let resetFootnote: String
     public let forecast: UsageForecast?
-    public enum CaptionTone: Equatable, Sendable { case secondary, attention, failure }
+    public enum CaptionTone: Equatable, Sendable {
+        case secondary, attention, failure
+        public var tone: Tone {
+            switch self {
+            case .secondary: .neutral
+            case .attention: .warning
+            case .failure: .failure
+            }
+        }
+    }
     public var captionTone: CaptionTone {
         guard let forecast else { return .secondary }
-        switch forecast.verdict {
-        case .runsOut: return .attention
-        case .exhausted: return .failure
+        switch forecast.status.tone {
+        case .warning: return .attention
+        case .failure: return .failure
         default: return .secondary
         }
     }
@@ -194,7 +203,7 @@ public struct UsageGaugeRow: View {
             }
             if let incident = provider.incident, !incident.isEmpty {
                 Label("Incident", systemImage: "exclamationmark.triangle")
-                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.attention)
+                    .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(Tone.failure.color)
                     .help(incident)
             }
             if isStale && showsWindows {
@@ -397,8 +406,8 @@ private struct CompactUsageGaugeColumn: View {
     private var captionColor: Color {
         switch reading.captionTone {
         case .secondary: neutralInk.secondary
-        case .attention: JRBarTokens.Ink.attention
-        case .failure: JRBarTokens.Ink.failure
+        case .attention: Tone.warning.color
+        case .failure: Tone.failure.color
         }
     }
 }

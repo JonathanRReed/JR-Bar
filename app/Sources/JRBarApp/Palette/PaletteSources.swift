@@ -814,7 +814,7 @@ enum UsagePaletteRows {
             guard let window = provider.headlineWindow else { return nil }
             let style = ProviderStyle.style(for: provider.id)
             var subtitle = window.shortName
-            if let countdown = PanelStore.countdown(to: window.resetsAt, now: now, fix: provider.staleFix) {
+            if let countdown = UsageCenterStore.resetText(window, of: provider, now: now) {
                 subtitle += " · \(countdown)"
             }
             if let account = provider.instance, !account.isEmpty { subtitle += " · \(account)" }

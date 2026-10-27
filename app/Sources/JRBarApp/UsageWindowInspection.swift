@@ -57,7 +57,7 @@ struct UsageWindowInspection {
     var verdictText: String {
         if !hasAmount { return UsageStatus.noReading.word }
         if readingNotice != nil { return UsageStatus.paused.word }
-        return displayForecast.verdictWord()
+        return displayForecast.verdictWord(now: now)
     }
 
     var explanation: String {

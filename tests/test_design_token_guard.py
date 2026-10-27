@@ -94,6 +94,8 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('Text("The monitor is not answering")', "monitor-wording"),
     ('Text("Effect Studio")', "ui-name"),
     ('Text("Blend mode")', "ui-name"),
+    ('Text("42% left")', "usage-direction"),
+    ('view.foregroundStyle(JRBarTokens.Ink.attention)', "quota-tone"),
 ])
 def test_rejects_ui_drift(source, kind):
     assert any(hit.startswith(kind + ":") for hit in offenders(source))
@@ -107,6 +109,8 @@ def test_wording_and_notch_exceptions_are_narrow():
     assert offenders('func currencySymbol() {}', "app/Sources/JRBarApp/Other.swift")
     assert not offenders('let label = "Monitor not connected"', "app/Sources/JRBarCore/StatusWords.swift")
     assert not offenders('let paint = model.red + model.green')
+    assert not offenders('Text("42% left")', "app/Sources/JRBarUI/StatusIconRenderer.swift")
+    assert offenders('Text("42% left")', "app/Sources/JRBarApp/UsageProviderDetail.swift")
 
 
 @pytest.mark.parametrize("file,name", [

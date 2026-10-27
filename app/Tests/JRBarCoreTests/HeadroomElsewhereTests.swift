@@ -33,7 +33,7 @@ struct HeadroomElsewhereTests {
         let found = HeadroomElsewhere.find(for: claude, among: [claude, codex], now: now)
         #expect(found?.providerID == "codex")
         #expect(found?.remainingPercent == 82)
-        #expect(found?.line(providerName: "Codex", ago: nil) == "Codex has 82% left this 5h window.")
+        #expect(found?.line(providerName: "Codex", ago: nil) == "Codex is at 18% used in this 5h window.")
     }
 
     @Test("nothing shows while the card still has room")
@@ -92,8 +92,8 @@ struct HeadroomElsewhereTests {
         let codex = provider("codex", used: 20, state: "stale", readAt: 1_799_992_000)
         let found = HeadroomElsewhere.find(for: claude, among: [claude, codex], now: now)
         #expect(found?.stale == true)
-        #expect(found?.line(providerName: "Codex", ago: "2h 13m") == "Codex had 80% left this 5h window (stale, read 2h 13m ago).")
-        #expect(found?.line(providerName: "Codex", ago: nil) == "Codex had 80% left this 5h window (stale).")
+        #expect(found?.line(providerName: "Codex", ago: "2h 13m") == "Codex was at 20% used in this 5h window (stale, read 2h 13m ago).")
+        #expect(found?.line(providerName: "Codex", ago: nil) == "Codex was at 20% used in this 5h window (stale).")
     }
 
     @Test("a second account of the same provider is not another provider")

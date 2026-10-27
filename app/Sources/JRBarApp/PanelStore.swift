@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Foundation
 import JRBarCore
@@ -1620,6 +1621,15 @@ final class PanelStore {
         /// The vendor's status feed reports an outage.
         case incident(String)
 
+        var tone: Tone {
+            switch self {
+            case .stale: UsageStatus.stale.tone
+            case .usedUp: UsageStatus.usedUp.tone
+            case .runsOut: UsageStatus.runsOut.tone
+            case .incident: UsageStatus.incident.tone
+            }
+        }
+
         var text: String {
             switch self {
             case .stale: return UsageStatus.stale.word
@@ -1640,7 +1650,7 @@ final class PanelStore {
         // resets before the forecast runs dry is on track.
         if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
            primary?.resetsAt.map({ exhaustsAt < $0 }) ?? true {
-            return .runsOut(UsageForecast.relative(to: exhaustsAt, now: now))
+            return .runsOut(UsageTime.runOutWhen(at: exhaustsAt, now: now.timeIntervalSince1970))
         }
         if let incident = usage.incident, !incident.isEmpty { return .incident(incident) }
         return nil

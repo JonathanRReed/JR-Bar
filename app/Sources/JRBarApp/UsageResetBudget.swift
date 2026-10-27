@@ -52,7 +52,7 @@ struct UsageResetBudgetView: View {
     var body: some View {
         HStack(alignment: .top, spacing: JRBarTokens.Space.lg) {
             column("Recent pace", value: budget.recentText,
-                   color: budget.exceedsBudget ? JRBarTokens.Ink.attention : JRBarTokens.Ink.secondary)
+                   color: budget.exceedsBudget ? Tone.warning.color : JRBarTokens.Ink.secondary)
             column("To last until reset", value: budget.budgetText, color: .secondary)
         }
         .padding(.horizontal, JRBarTokens.Space.md)

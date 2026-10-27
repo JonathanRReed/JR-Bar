@@ -99,15 +99,12 @@ public struct HeadroomElsewhere: Hashable, Sendable {
         return reset > now.timeIntervalSince1970
     }
 
-    /// The line itself, numbers only: "Codex has 82% left this 5h window."
-    /// A stale reading says how old it is: "Codex had 82% left this 5h
-    /// window (stale, read 2h 05m ago)." `ago` is the caller's formatted
-    /// age; without one the line still says "stale".
+    /// The provider's used percentage, with the supplied age when stale.
     public func line(providerName: String, ago: String?) -> String {
         if stale {
             let age = ago.map { "stale, read \($0) ago" } ?? "stale"
-            return "\(providerName) had \(remainingPercent)% left this \(window) window (\(age))."
+            return "\(providerName) was at \(UsageNumber.percent(Double(100 - remainingPercent))) used in this \(window) window (\(age))."
         }
-        return "\(providerName) has \(remainingPercent)% left this \(window) window."
+        return "\(providerName) is at \(UsageNumber.percent(Double(100 - remainingPercent))) used in this \(window) window."
     }
 }

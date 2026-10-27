@@ -45,11 +45,12 @@ struct WholePercentTests {
         #expect(UsageWindowLabel.percent(100) == "100%")
     }
 
-    @Test("the forecast headline never says 0% left for a window with room")
+    @Test("the forecast headline never says 100% used for a window with room")
     func forecastHeadline() {
         let window = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 99.6, resetsAt: nil)
         let forecast = UsageForecaster.forecast(window: window, daemon: nil, samples: [], now: 1_788_982_892)
-        #expect(!forecast.headline(now: Date(timeIntervalSince1970: 1_788_982_892)).contains("0% left"))
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: 1_788_982_892)).contains("99% used"))
+        #expect(!forecast.headline(now: Date(timeIntervalSince1970: 1_788_982_892)).contains("100% used"))
     }
 }
 

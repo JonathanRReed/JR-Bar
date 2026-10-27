@@ -984,11 +984,12 @@ final class UsageCenterStore {
     }
 
     /// A window's reset as the Usage Center says it — under a ring, at
-    /// the end of a combined row: `PanelStore.countdown`, so a broken
+    /// the end of a combined row. A broken
     /// source names its fix ("Reconnect Claude") once the reset is past.
     /// Nil when there is no window or it names no reset.
     static func resetText(_ window: CoreUsageWindow?, of provider: CoreProviderUsage, now: Date) -> String? {
-        window.flatMap { PanelStore.countdown(to: $0.resetsAt, now: now, fix: provider.staleFix) }
+        guard let window, let reset = window.resetsAt else { return nil }
+        return UsageTime.resetLine(reset, now: now.timeIntervalSince1970, fix: provider.staleFix)
     }
 
     /// The caption under a card's headline percent: "5h window · resets

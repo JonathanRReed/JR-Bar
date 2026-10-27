@@ -123,11 +123,11 @@ struct UsageHookRuleRow: Identifiable, Hashable {
         "refresh_failed": "Refresh failed",
     ]
 
-    /// "Quota low · Claude · at or below 20% left".
+    /// "Quota low · Claude · at or above 80% used".
     var scopeText: String {
         var parts = [Self.eventWords[event] ?? event]
         if let provider { parts.append(ProviderStyle.style(for: provider).name) }
-        if let threshold { parts.append("at or below \(Int(saturating: threshold.rounded()))% left") }
+        if let threshold { parts.append("at or above \(UsageNumber.percent(100 - threshold)) used") }
         return parts.joined(separator: " · ")
     }
 
