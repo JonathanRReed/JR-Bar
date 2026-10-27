@@ -51,8 +51,14 @@ final class AgentUtility: Toy {
     /// every change to what it reads.
     func refreshSnapshot() {
         let next = Self.snapshot(of: core)
-        if next != snapshot { snapshot = next }
+        if next != snapshot {
+            snapshot = next
+            snapshotChanges.tick()
+        }
     }
+
+    /// Snapshot changes, for the cost line.
+    @ObservationIgnored let snapshotChanges = UtilityEventLog()
 
     static func snapshot(of core: CoreModel) -> Snapshot {
         var reporting = Set(core.allSessions.filter { !$0.isRemote }.map(\.provider))
@@ -87,6 +93,17 @@ final class AgentUtility: Toy {
     }
 
     var controls: AnyView { AnyView(AgentUtilityControls(utility: self)) }
+
+    /// What the card costs: it reads the monitor's feed and keeps no
+    /// timer, counted where its snapshot actually changes.
+    func cost(at now: TimeInterval) -> String? {
+        guard isOn else { return UtilityCost.off }
+        return Self.costLine(updates: snapshotChanges.count(at: now))
+    }
+
+    nonisolated static func costLine(updates: Int) -> String {
+        "Reads the monitor's feed, no timers of its own · \(UtilityCost.count(updates, "card update")) in the last minute"
+    }
 
     // MARK: Settings writes
 

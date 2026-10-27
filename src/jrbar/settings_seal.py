@@ -91,6 +91,7 @@ UNSEALED_PRIVILEGED: Final[Mapping[str, str]] = {
         (
             "agent_keep_awake_enabled",
             "keep_display_awake",
+            "keep_display_awake_default_version",
             "keep_awake_on_battery",
             "keep_awake_yield_low_power_mode",
         ),

@@ -39,6 +39,7 @@ from .capacity_types import (
     ResetState,
     SourceHealthKind,
 )
+from .duration_words import duration
 from .reset_policy import derive_reset_countdown
 
 # Two is not a layout budget and raising it changes nothing. The card is fed
@@ -163,13 +164,7 @@ def _duration_until(deadline: object, now: float) -> str | None:
     if seconds <= 0.0:
         return "now"
     total_minutes = max(1, int(math.ceil(seconds / 60.0)))
-    days, day_minutes = divmod(total_minutes, 24 * 60)
-    hours, minutes = divmod(day_minutes, 60)
-    if days:
-        return f"{days}d {hours}h" if hours else f"{days}d"
-    if hours:
-        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
-    return f"{minutes}m"
+    return duration(total_minutes * 60)
 
 
 @dataclass(frozen=True, slots=True)

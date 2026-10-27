@@ -16,7 +16,7 @@ struct RunOutWordingTests {
         let cases: [(Double, String)] = [
             (1, "in 1m"), (29, "in 1m"), (60, "in 1m"), (61, "in 2m"),
             (65 * 60, "in 1h 05m"), (200 * 60, "in 3h 20m"),
-            (52 * 3600, "in 2d 4h"), (9 * 86400, "in 9d 0h"),
+            (52 * 3600, "in 2d 4h"), (9 * 86400, "in 9d"),
         ]
         for (seconds, expected) in cases {
             #expect(UsageTime.runOutWhen(at: seconds, now: 0) == expected)
@@ -69,7 +69,7 @@ struct RunOutWordingTests {
         #expect(UsageTime.runOutWhen(at: after, now: midnight) == "in 20m")
         let zone = TimeZone(identifier: "America/Chicago")!
         let pairs: [(String, String, String)] = [
-            ("2027-03-13T18:00:00Z", "2027-03-14T17:00:00Z", "in 23h 00m"),
+            ("2027-03-13T18:00:00Z", "2027-03-14T17:00:00Z", "in 23h"),
             ("2027-11-06T17:00:00Z", "2027-11-07T18:00:00Z", "in 1d 1h"),
         ]
         for (start, end, duration) in pairs {

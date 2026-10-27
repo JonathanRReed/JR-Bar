@@ -16,7 +16,7 @@ struct MenuBarHealthTests {
 
     @Test("the lines describe hiding without divider coordinates")
     func lines() {
-        #expect(MenuBarEngineHealth.parked.line() == "Off")
+        #expect(MenuBarEngineHealth.parked.line() == "Not hiding anything")
         #expect(MenuBarEngineHealth.divider.line()
                 == "Items left of JR-Bar are hidden")
     }

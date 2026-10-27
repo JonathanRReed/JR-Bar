@@ -18,7 +18,7 @@ enum MenuBarEngineHealth: Equatable, Sendable {
     func line() -> String {
         switch self {
         case .parked:
-            return "Off"
+            return "Not hiding anything"
         case .divider:
             return "Items left of JR-Bar are hidden"
         }

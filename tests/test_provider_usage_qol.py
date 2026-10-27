@@ -133,7 +133,7 @@ def test_reset_event_requires_boundary_crossing_and_fresh_replenishment__and_2_m
     # --- scenario: countdown_copy_is_exact_and_human_readable
     assert format_reset_countdown(1000, now=1000) == "resetting now"
     assert format_reset_countdown(1061, now=1000) == "resets in 1m"
-    assert format_reset_countdown(4700, now=1000) == "resets in 1h 1m"
+    assert format_reset_countdown(4700, now=1000) == "resets in 1h 01m"
     assert format_reset_countdown(200000, now=1000) == "resets in 2d 7h"
 
 

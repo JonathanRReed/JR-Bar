@@ -91,6 +91,11 @@ LED_DISPLAY_CHOICES = (
     LED_DISPLAY_QUOTA_RUNWAY,
 )
 CURRENT_SETTINGS_SCHEMA_VERSION = 2
+#: 1: ``keep_display_awake`` defaults to off. A file without this stamp
+#: was written while the default was on, when nearly everyone held the
+#: display by default rather than by choice, so it reads as off once; the
+#: next save writes the stamp and the person's own choice stands from then.
+KEEP_DISPLAY_AWAKE_DEFAULT_VERSION = 1
 MIN_READABLE_SETTINGS_SCHEMA_VERSION = 1
 MIN_WRITABLE_SETTINGS_SCHEMA_VERSION = 1
 SETTINGS_SCHEMA_VERSION = CURRENT_SETTINGS_SCHEMA_VERSION
@@ -409,13 +414,15 @@ class AgentMonitorSettings:
     led_display: str = LED_DISPLAY_AGENT
     devices: tuple[DeviceDisplaySetting, ...] = ()
     virtual_status_device_enabled: bool = False
-    # Agent work keeps the Mac awake — and, by default, the display too:
-    # a screen that sleeps locks, and a locked Mac reads as "it went to
-    # sleep while my agents were running" however awake the CPU stayed.
-    # Both are the owner's to turn off (a long background task on a
-    # closed lid does not need the panel on).
+    # Agent work keeps the Mac awake; the display is allowed to sleep. A
+    # hold is about the computer running, not the screen: with the lid
+    # closed the panel goes dark while the agents carry on. Holding the
+    # display too is the owner's to turn on. The default was on until
+    # 0.10.1; ``keep_display_awake_default_version`` records the one-time
+    # move to off (see ``settings_from_data``).
     agent_keep_awake_enabled: bool = True
-    keep_display_awake: bool = True
+    keep_display_awake: bool = False
+    keep_display_awake_default_version: int = KEEP_DISPLAY_AWAKE_DEFAULT_VERSION
     closed_lid_awake_policy: str = CLOSED_LID_AWAKE_NEVER
     # How long (minutes) to keep holding the lid-closed awake state after
     # agent activity *looks* like it stopped, before actually letting the
@@ -1878,6 +1885,7 @@ class AgentMonitorSettings:
             "screen_bar_hidden_apps": list(self.screen_bar_hidden_apps),
             "agent_keep_awake_enabled": self.agent_keep_awake_enabled,
             "keep_display_awake": self.keep_display_awake,
+            "keep_display_awake_default_version": KEEP_DISPLAY_AWAKE_DEFAULT_VERSION,
             "closed_lid_awake_policy": self.closed_lid_awake_policy,
             "closed_lid_grace_minutes": self.closed_lid_grace_minutes,
             "keep_awake_on_battery": self.keep_awake_on_battery,
@@ -2275,7 +2283,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
         agent_keep_awake_enabled=_bool_setting(
             data.get("agent_keep_awake_enabled"), True
         ),
-        keep_display_awake=_bool_setting(data.get("keep_display_awake"), True),
+        keep_display_awake=_keep_display_awake_setting(data),
         closed_lid_awake_policy=_closed_lid_awake_policy(
             data.get("closed_lid_awake_policy"),
         ),
@@ -2782,6 +2790,18 @@ def _led_display_setting(value: object, default: str) -> str:
     if isinstance(value, str) and value in LED_DISPLAY_CHOICES:
         return value
     return default
+
+
+def _keep_display_awake_setting(data: dict[str, object]) -> bool:
+    """``keep_display_awake``, migrated once: a file stamped with the
+    current ``keep_display_awake_default_version`` keeps what it says; an
+    older file (the default was on) reads as off, the hold keeps the
+    computer awake and lets the display sleep. Saving writes the stamp, so
+    this never overrides a choice made after it."""
+    stamp = data.get("keep_display_awake_default_version")
+    if type(stamp) is int and stamp >= KEEP_DISPLAY_AWAKE_DEFAULT_VERSION:
+        return _bool_setting(data.get("keep_display_awake"), False)
+    return False
 
 
 def _closed_lid_awake_policy(value: object) -> str:

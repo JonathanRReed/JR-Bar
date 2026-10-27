@@ -152,7 +152,7 @@ struct UsageForecastSurfaceTests {
             verdict: .runsOut(exhaustsAt: at), ratePctPerHour: 1, source: .daemon)
         let reading = UsageGaugeReading(window: window, provider: CoreProviderUsage(id: "codex", windows: [window]),
             now: Self.stamp, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, forecast: forecast)
-        #expect(reading.footnote == "Runs out in 1d 0h")
+        #expect(reading.footnote == "Runs out in 1d")
         forecast.runOutStyle = .clock
         let clockReading = UsageGaugeReading(window: window, provider: CoreProviderUsage(id: "codex", windows: [window]),
             now: Self.stamp, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, forecast: forecast)
@@ -189,7 +189,7 @@ struct UsageForecastSurfaceTests {
         panel.core.apply(.state(CoreState(sessions: panel.core.sessions, usage: CoreUsage(providers: [provider]))))
         let meter = try #require(UsageCenterStore.notchMeters(core: panel.core, now: panel.now).first)
         let caption = NotchMeterCaption(meter: meter, now: panel.now, locale: Locale(identifier: "en_US"))
-        #expect(caption.text?.replacingOccurrences(of: "\u{202F}", with: " ") == "Runs out in 2h 00m")
+        #expect(caption.text?.replacingOccurrences(of: "\u{202F}", with: " ") == "Runs out in 2h")
         var baseline = meter
         baseline.forecast = nil
         let card = NotchCardView(model: Self.notchModel(), style: .island, width: 320)

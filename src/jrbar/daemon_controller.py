@@ -10648,6 +10648,9 @@ class StatusBarController(NSObject):
     def sync_closed_lid_awake(self) -> None:
         was_active = self.closed_lid_awake.active()
         self.closed_lid_awake.set_use_system_disable(sleep_helper_installed())
+        observe_lid = getattr(self.closed_lid_awake, "observe_lid", None)
+        if callable(observe_lid):
+            observe_lid(getattr(self, "last_lid_closed", None))
         self.closed_lid_awake.update(
             self.settings.closed_lid_awake_policy,
             agents_active=self.keep_awake.holding_requested,

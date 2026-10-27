@@ -115,12 +115,12 @@ struct StaleResetWordsTests {
         stale.windows = [CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42, resetsAt: now.timeIntervalSince1970 + 3 * 3600)]
         let meter = try #require(NotchIsland.meters(CoreUsage(providers: [stale])).first)
         #expect(meter.stale)
-        #expect(PanelStore.meterWingText(meter, now: now) == "42% · resets in 3h 00m · stale")
+        #expect(PanelStore.meterWingText(meter, now: now) == "42% · resets in 3h · stale")
         var live = stale
         live.state = "ready"
         live.fidelity = "official"
         let fresh = try #require(NotchIsland.meters(CoreUsage(providers: [live])).first)
         #expect(!fresh.stale)
-        #expect(PanelStore.meterWingText(fresh, now: now) == "42% · resets in 3h 00m")
+        #expect(PanelStore.meterWingText(fresh, now: now) == "42% · resets in 3h")
     }
 }

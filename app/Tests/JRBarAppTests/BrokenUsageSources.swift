@@ -44,7 +44,7 @@ enum BrokenUsageSources {
             (grok, "Run grok login"),
             (staleWithoutFix, "reset — waiting for a new reading"),
             (healthyPast, "reset — waiting for a new reading"),
-            (healthyAhead, "resets in 3h 00m"),
+            (healthyAhead, "resets in 3h"),
         ]
     }
 }

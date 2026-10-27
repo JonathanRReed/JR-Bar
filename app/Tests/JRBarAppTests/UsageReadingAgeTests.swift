@@ -20,7 +20,7 @@ struct UsageReadingAgeTests {
     @Test("a stale card whose poll failed a minute ago still says its numbers are five hours old")
     func staleNamesTheReadingsAge() {
         let stale = row(observedAgo: 60, readAgo: 5 * 3600)
-        #expect(UsageCardCopy.readingAgeText(stale, now: now) == "Read 5h 00m ago")
+        #expect(UsageCardCopy.readingAgeText(stale, now: now) == "Read 5h ago")
     }
 
     @Test("a live card reads from its own time")

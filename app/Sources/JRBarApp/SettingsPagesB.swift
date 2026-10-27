@@ -924,7 +924,7 @@ struct PowerGroup: View {
     var body: some View {
         SettingGroup("Power") {
             SettingToggle(store, "Keep Mac awake", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled", default: true)
-            SettingToggle(store, "Keep display awake", subtitle: KeepAwakeReading.displaySleepHelp, path: "keep_display_awake", default: true)
+            SettingToggle(store, "Keep display awake", subtitle: KeepAwakeReading.displayChoiceHelp, path: "keep_display_awake", default: false)
             SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
                 ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
             ], default: "never")

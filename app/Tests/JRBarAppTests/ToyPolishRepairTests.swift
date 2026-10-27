@@ -138,22 +138,20 @@ struct ToyPolishRepairTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = SystemTogglesStore.State(dockDriver: nil, defaults: defaults)
         state.takeAssertion = { _ in Issue.record("retry must use the connected monitor"); return nil }
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
         var sent: [CoreAwakeRequest?] = []
         state.sendLease = { request in sent.append(request); return .taken }
-        let utility = KeepAwakeUtility(toggles: SystemTogglesStore(state: state))
         let leases = [#"{"kind":"indefinite"}"#, #"{"kind":"agents"}"#,
                       #"{"kind":"duration","until":1800000120}"#]
         for lease in leases {
             let hold = try JSONDecoder().decode(CoreAwakeHold.self, from: Data(
                 "{\"state\":\"manual\",\"active\":false,\"lease\":\(lease)}".utf8))
             state.noteDaemonHold(hold, live: true)
-            utility.retryHold(now: now)
+            state.retryAwake()
             await state.leaseTask?.value
         }
         #expect(sent.count == 3)
         #expect(sent[0]?.shape == .indefinite)
         #expect(sent[1]?.shape == .untilAgentsFinish(sessions: nil))
-        #expect(sent[2]?.shape == .seconds(120))
+        #expect(sent[2]?.shape == .until(1_800_000_120), "a countdown keeps its own end")
     }
 }

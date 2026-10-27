@@ -709,7 +709,7 @@ struct StatusCompactPercentTests {
     func countdownRule() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         // Nearly spent: the countdown shows even with hours to go.
-        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 7200), now: now) == "2h 00m")
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 7200), now: now) == "2h")
         // Imminent reset on a comfortable window: same swap.
         #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.4, resetsAt: now.timeIntervalSince1970 + 12 * 60), now: now) == "12m")
         // Neither holds: the percent stands.
@@ -719,7 +719,7 @@ struct StatusCompactPercentTests {
         // No stamp, no countdown — but the near-spent percent still warns.
         #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94), now: now) == "6")
         // Days out on a spent window reads in days.
-        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 3 * 86400), now: now) == "3d 0h")
+        #expect(StatusIconRenderer.percentText(Self.meter("claude", 0.94, resetsAt: now.timeIntervalSince1970 + 3 * 86400), now: now) == "3d")
     }
 
     @Test("the tightest window wins the readout")

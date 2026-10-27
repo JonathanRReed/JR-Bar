@@ -176,8 +176,8 @@ struct LightExplanationTests {
     func implausibleDurations() {
         #expect(LightExplainer.elapsed(seconds: 0) == "0s")
         #expect(LightExplainer.elapsed(seconds: 45) == "45s")
-        #expect(LightExplainer.elapsed(seconds: 3 * 3600) == "3h 00m")
-        #expect(LightExplainer.elapsed(seconds: 5 * 86400) == "5d 0h")
+        #expect(LightExplainer.elapsed(seconds: 3 * 3600) == "3h")
+        #expect(LightExplainer.elapsed(seconds: 5 * 86400) == "5d")
         #expect(LightExplainer.elapsed(seconds: -1) == nil)
         // What the daemon actually sent on 2026-09-10: an epoch, which
         // would have read "20704 d" in the popover and in the headline.

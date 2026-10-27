@@ -43,6 +43,24 @@ def apply_power_hold_settings(ordinary, closed_lid, settings) -> PowerHoldChoice
     return choices
 
 
+def display_hold_wanted(
+    keep_display_awake: bool,
+    *,
+    lid_closed: bool | None,
+    external_display: bool | None,
+) -> bool:
+    """Whether a hold should keep the display awake too.
+
+    Only when the person asked for it, and never for a screen nobody can
+    see: with the lid shut and no external display known to be on, the
+    hold keeps the computer awake and lets the display sleep. An unknown
+    lid counts as open, so a desktop Mac or a lid that cannot be read keeps
+    the person's choice."""
+    if not keep_display_awake:
+        return False
+    return not (lid_closed is True and external_display is not True)
+
+
 def configure_caffeinate_display_assertion(
     command: Sequence[str],
     *,
@@ -97,4 +115,5 @@ __all__ = [
     "PowerHoldChoices",
     "apply_power_hold_settings",
     "configure_caffeinate_display_assertion",
+    "display_hold_wanted",
 ]
