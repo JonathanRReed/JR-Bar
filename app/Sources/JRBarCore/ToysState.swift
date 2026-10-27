@@ -20,6 +20,8 @@ public struct ToysState: Codable, Equatable, Sendable {
     /// reward cards and the hinge stays silent. On by default — calm
     /// first.
     public var hushDuringQuiet: Bool = true
+    /// Seasonal touches (`SeasonalSettings`): off by default.
+    public var seasonal = SeasonalSettings()
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),
                 notchBuddy: NotchBuddySettings = NotchBuddySettings(), confetti: ConfettiSettings = ConfettiSettings(),
@@ -37,6 +39,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         /// written — a saved file always lands under `notch`.
         case legacyAlcove = "alcove"
         case hushDuringQuiet
+        case seasonal
     }
 
     public init(from decoder: any Decoder) throws {
@@ -49,6 +52,7 @@ public struct ToysState: Codable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(NotchSettings.self, forKey: .legacyAlcove))
             ?? NotchSettings()
         hushDuringQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .hushDuringQuiet)) ?? true
+        seasonal = (try? c.decodeIfPresent(SeasonalSettings.self, forKey: .seasonal)) ?? SeasonalSettings()
         // `externalApps` was the Toys page's app list — the feature is
         // gone; an old file's key is now just an ignored unknown key.
     }
@@ -61,6 +65,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         try c.encode(confetti, forKey: .confetti)
         try c.encode(notch, forKey: .notch)
         try c.encode(hushDuringQuiet, forKey: .hushDuringQuiet)
+        try c.encode(seasonal, forKey: .seasonal)
     }
 }
 
