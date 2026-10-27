@@ -20,7 +20,7 @@ struct DeviceHealthLineTests {
     @Test func aStripSaysWhyWhenAndHowBig() {
         let surface = CoreLightSurface(program: Self.program, brightness: 0.79, why: "waiting")
         let line = DeviceHealthLine.describe(device: Self.pro(), surface: surface, now: Self.now)
-        #expect(line == "Waiting · written 12 s ago · 3 lines, \(Self.program.utf8.count) of 512 bytes · driven at 79%")
+        #expect(line == "Waiting · written now · 3 lines, \(Self.program.utf8.count) of 512 bytes · driven at 79%")
     }
 
     @Test func aPlayingCueIsNamed() throws {

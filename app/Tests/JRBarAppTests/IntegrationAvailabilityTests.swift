@@ -30,10 +30,10 @@ struct IntegrationAvailabilityTests {
 
     @Test func endpointEnablementIsNotAReceipt() {
         #expect(IntegrationStatus.server(live: true, enabled: false, running: true) == "Off")
-        #expect(IntegrationStatus.server(live: true, enabled: true, running: nil) == "Unknown")
+        #expect(IntegrationStatus.server(live: true, enabled: true, running: nil) == "Not connected")
         #expect(IntegrationStatus.server(live: true, enabled: true, running: false) == "Not connected")
         #expect(IntegrationStatus.server(live: true, enabled: true, running: true) == "Connected")
-        #expect(IntegrationStatus.server(live: false, enabled: true, running: true) == "Unknown")
+        #expect(IntegrationStatus.server(live: false, enabled: true, running: true) == "Not connected")
     }
 
     @Test func disabledAndDisconnectedHardwareNeverClaimsConnection() {
@@ -46,8 +46,8 @@ struct IntegrationAvailabilityTests {
         device.connected = false
         #expect(IntegrationStatus.device(device, live: true, firmware: "1.2.3") == "Not connected")
         device.connected = nil
-        #expect(IntegrationStatus.device(device, live: true, firmware: "1.2.3") == "Unknown")
-        #expect(IntegrationStatus.device(device, live: false, firmware: "1.2.3") == "Unknown")
+        #expect(IntegrationStatus.device(device, live: true, firmware: "1.2.3") == "Not connected")
+        #expect(IntegrationStatus.device(device, live: false, firmware: "1.2.3") == "Not connected")
         var deck = DeckState(device: DeckDevice(connected: true, approved: true))
         deck.settings.enabled = false
         #expect(IntegrationStatus.deck(deck, live: true) == "Off")
@@ -57,7 +57,7 @@ struct IntegrationAvailabilityTests {
         #expect(IntegrationStatus.deck(deck, live: true) == "Connected · Not enabled")
         deck.device?.connected = false
         #expect(IntegrationStatus.deck(deck, live: true) == "Not connected")
-        #expect(IntegrationStatus.deck(deck, live: false) == "Unknown")
+        #expect(IntegrationStatus.deck(deck, live: false) == "Not connected")
         deck.device?.connected = true
         deck.device?.conflict = "foreign_responses"
         #expect(IntegrationStatus.deck(deck, live: true).contains(DeckDevice.conflictText))

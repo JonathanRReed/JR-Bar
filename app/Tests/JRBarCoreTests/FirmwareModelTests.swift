@@ -285,7 +285,7 @@ struct FirmwareModelTests {
         #expect(result.lines.contains("The previous firmware 1.0.2 is kept in slot A."))
         #expect(result.lines.contains("JR-Bar tidied 2 hidden macOS files off the drive."))
         #expect(result.colourNote == "This firmware applies its own colour gains, so colour calibration may need a re-check.")
-        #expect(result.tookLine == "It took about 1 min 12 s.")
+        #expect(result.tookLine == "It took about 1m 12s.")
         let card = state(device: Self.proDevice, job: job, show: true)
         #expect(card.display == .succeeded)
         #expect(!state(device: Self.proDevice, job: job, show: false).isRunning)

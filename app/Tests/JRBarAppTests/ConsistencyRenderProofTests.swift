@@ -48,7 +48,7 @@ struct ConsistencyRenderProofTests {
             }
             try render(PanelView(store: panel, panelWidth: 372), "panel", 404)
             try render(PanelView(store: asking, panelWidth: 372), "panel-ask", 404)
-            try render(UsageGaugeRow(provider: unsupported, now: now, style: .compact, windowNames: ["5h", "7d"]),
+            try render(UsageGaugeRow(provider: unsupported, name: "Grok", now: now, style: .compact, windowNames: ["5h", "7d"]),
                        "no-quota-source", 320)
             try render(UsageOverviewTable(store: center, showCost: true, select: { _ in }), "usage-overview", 1000)
             try render(UsageProviderDetail(provider: usage.providers[0], store: center, showCost: true), "usage-detail", 780)

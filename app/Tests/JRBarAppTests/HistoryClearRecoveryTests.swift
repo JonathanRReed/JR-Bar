@@ -164,7 +164,7 @@ struct HistoryClearRecoveryTests {
             fixture.core.stop()
             await action.value
             #expect(store.notice?.isError == true)
-            #expect(store.notice?.text.contains("monitor is not answering") == true)
+            #expect(store.notice?.text.contains(MonitorWords.sentence) == true)
             #expect(store.pendingAction == nil)
             #expect(fixture.core.lastClear?.batch == "old")
         }

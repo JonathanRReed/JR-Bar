@@ -409,7 +409,7 @@ struct SettingsRenderProofTests {
                     CardNote("A warning, with its fix beside it.", symbol: "exclamationmark.triangle.fill", tint: .orange)
                     CardSectionHeader("Pills")
                     FlowLayout {
-                        ForEach(statuses, id: \.text) { StatusPill($0.text, tint: $0.tint) }
+                        ForEach(statuses, id: \.text) { StatusBadge($0.text, tint: $0.tint) }
                     }
                     .padding(.vertical, SettingsMetrics.s)
                 }

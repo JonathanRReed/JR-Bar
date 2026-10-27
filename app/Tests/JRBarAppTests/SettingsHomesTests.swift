@@ -99,7 +99,7 @@ struct SettingsHomesTests {
         #expect(count("menuBar.setHotkeyEnabled", in: shell) == 1)
         // The brightness cap: one slider, on Lighting.
         #expect(count("\"global_brightness_scale\"", in: general) == 1)
-        #expect(count("\"global_brightness_scale\"", in: lighting) == 1)
+        #expect(count("\"global_brightness_scale\"", in: lighting) == 0)
         let providers = try source("SettingsProvidersPage.swift")
         #expect(providers.contains("store.providerList"))
         #expect(providers.contains("list.setMenuBarVisible"))

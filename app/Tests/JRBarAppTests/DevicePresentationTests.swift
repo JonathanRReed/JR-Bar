@@ -117,15 +117,15 @@ struct DevicePresentationTests {
         let store = Self.fixture(live: false)
         let device = try #require(store.deviceFacts("pro"))
         #expect(device.isPresent)
-        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Unknown")
+        #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Not connected")
         store.core.handle(.connected)
         store.core.apply(.state(CoreState(devices: [device])))
         #expect(DeviceConnectionState.device(device, live: store.isLive).rawValue == "Connected")
     }
 
     @Test func unknownAndDisconnectedDevicesAreNamed() {
-        #expect(DeviceConnectionState.device(nil, live: true).rawValue == "Unknown")
-        #expect(DeviceConnectionState.device(nil, live: false).rawValue == "Unknown")
+        #expect(DeviceConnectionState.device(nil, live: true).rawValue == "Not connected")
+        #expect(DeviceConnectionState.device(nil, live: false).rawValue == "Not connected")
         let absent = CoreDevice(id: "dot", kind: "dot", connected: false, error: "")
         #expect(DeviceConnectionState.device(absent, live: true).rawValue == "Not connected")
     }

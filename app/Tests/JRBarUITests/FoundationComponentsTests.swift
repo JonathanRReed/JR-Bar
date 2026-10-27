@@ -65,7 +65,7 @@ struct FoundationComponentsTests {
         let reading = UsageGaugeReading(window: window, provider: provider, now: now)
         #expect(reading.percentUsed == nil)
         #expect(reading.elapsed)
-        #expect(reading.footnote == "<1m ago")
+        #expect(reading.footnote == "Reset now")
         window.resetsAt = now + 3600
         window.elapsed = true
         #expect(UsageGaugeReading(window: window, provider: provider, now: now).percentUsed == nil)

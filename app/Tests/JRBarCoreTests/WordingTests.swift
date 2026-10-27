@@ -40,7 +40,7 @@ struct WordingTests {
                 let resets: [Double?] = [nil, now.timeIntervalSince1970 + 3600]
                 for reset in resets {
                     var forecast = UsageForecast(window: "5h", usedPct: 42, resetsAt: reset,
-                                                 verdict: verdict, ratePctPerHour: 0)
+                                                 verdict: verdict, ratePctPerHour: 0, source: .none)
                     forecast.heldIdle = held
                     let line = forecast.headline(now: now)
                     #expect(line.contains("42% used"))

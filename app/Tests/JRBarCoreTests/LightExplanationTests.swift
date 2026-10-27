@@ -29,8 +29,8 @@ struct LightExplanationTests {
         let state = Self.state(sessions: [Self.codex, Self.claude], asks: [CoreAsk(session: "codex:1", kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 45, summary: "Run: rm -rf build")])
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "needs_you"), state: state, settings: nil, now: Self.now))
         #expect(explanation.motion == "Amber pulse")
-        #expect(explanation.reason == "Codex sidepulse-core is waiting on you (permission, 45 s)")
-        #expect(explanation.headline == "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)")
+        #expect(explanation.reason == "Codex sidepulse-core is waiting on you (permission, 45s)")
+        #expect(explanation.headline == "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45s)")
         #expect(explanation.session == "codex:1")
     }
 
@@ -72,7 +72,7 @@ struct LightExplanationTests {
         let state = Self.state(sessions: [Self.gemini, Self.claude])
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "completed_unseen"), state: state, settings: nil, now: Self.now))
         #expect(explanation.motion == "Green sweep")
-        #expect(explanation.reason == "Gemini docs-sweep finished 12 s ago")
+        #expect(explanation.reason == "Gemini docs-sweep finished now")
         #expect(explanation.session == "gemini:1")
     }
 
@@ -104,7 +104,7 @@ struct LightExplanationTests {
         var failed = Self.gemini
         failed.lifecycle = "failed"
         let failure = try #require(LightExplainer.explain(lights: Self.lights(why: "failed"), state: Self.state(sessions: [failed]), settings: nil, now: Self.now))
-        #expect(failure.headline == "Red flash: Gemini docs-sweep failed 12 s ago")
+        #expect(failure.headline == "Red flash: Gemini docs-sweep failed now")
         let unknown = try #require(LightExplainer.explain(lights: Self.lights(why: "Moon-Phase", motion: "sweep", fallback: "#AF52DE"), state: Self.state(), settings: nil, now: Self.now))
         #expect(unknown.why == "moon_phase")
         #expect(unknown.motion == "Purple sweep")
@@ -130,10 +130,10 @@ struct LightExplanationTests {
         driven.surfaces["dot"]?.role = "asks"
         let beacon = try #require(LightExplainer.explain(lights: driven, state: Self.state(), settings: document, now: Self.now))
         #expect(beacon.details.first { $0.label == "Dot role" }?.value == "Alert beacon")
-        #expect(explanation.details.first?.value == "8 LEDs · beat · red · 79% bright · started 12 s ago")
+        #expect(explanation.details.first?.value == "8 LEDs · beat · red · 79% bright · started now")
         #expect(explanation.details.first { $0.label == "Maximum brightness" }?.value == "80%")
         #expect(explanation.details.first { $0.label == "Idle dim" }?.value == "to 30% after 10 min")
-        #expect(explanation.details.first { $0.label == "Quiet hours" }?.value == "dark 22:00–07:00")
+        #expect(explanation.details.first { $0.label == "Quiet hours" }?.value == "dark \(UsageTime.clock(minutes: 1320))–\(UsageTime.clock(minutes: 420))")
     }
 
     @Test("the two links are named separately, and only claimed when real")
@@ -174,10 +174,10 @@ struct LightExplanationTests {
 
     @Test("a seconds_in_state that is really an epoch is not printed as a duration")
     func implausibleDurations() {
-        #expect(LightExplainer.elapsed(seconds: 0) == "0 s")
-        #expect(LightExplainer.elapsed(seconds: 45) == "45 s")
-        #expect(LightExplainer.elapsed(seconds: 3 * 3600) == "3 h")
-        #expect(LightExplainer.elapsed(seconds: 5 * 86400) == "5 d")
+        #expect(LightExplainer.elapsed(seconds: 0) == "0s")
+        #expect(LightExplainer.elapsed(seconds: 45) == "45s")
+        #expect(LightExplainer.elapsed(seconds: 3 * 3600) == "3h 00m")
+        #expect(LightExplainer.elapsed(seconds: 5 * 86400) == "5d 0h")
         #expect(LightExplainer.elapsed(seconds: -1) == nil)
         // What the daemon actually sent on 2026-09-10: an epoch, which
         // would have read "20704 d" in the popover and in the headline.

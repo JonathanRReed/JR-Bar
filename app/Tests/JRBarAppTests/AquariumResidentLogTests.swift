@@ -28,7 +28,7 @@ struct AquariumResidentLogTests {
         let log = AquariumResidentLog.make(sessionID: "s", care: care, rows: rows, calendar: utc)
         #expect(log.swam.hasPrefix("Swam "))
         #expect(log.swam.contains(" – "), "a span over days: \(log.swam)")
-        #expect(log.record == "Finished 2 runs · 1 ask answered · 1 failed · longest run 14 min")
+        #expect(log.record == "Finished 2 runs · 1 ask answered · 1 failed · longest run 14m")
     }
 
     @Test("one day reads as one day")

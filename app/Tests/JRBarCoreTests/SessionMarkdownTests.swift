@@ -118,16 +118,16 @@ struct SessionMarkdownTests {
         ]
         let story = SessionReconstructor.story(for: items)
         #expect(story.failingTurnSeconds == 192)
-        #expect(story.sentence.contains("It failed 3 min 12 s into the turn."))
+        #expect(story.sentence.contains("It failed 3m 12s into the turn."))
         // No message of yours before the error, or no stamp: nothing claimed.
         #expect(SessionReconstructor.story(for: [ReconstructedItem(seq: 0, at: 5, kind: .toolResult, isError: true)]).failingTurnSeconds == nil)
         #expect(SessionReconstructor.story(for: [
             ReconstructedItem(seq: 0, at: 5, kind: .message, role: "user"),
             ReconstructedItem(seq: 1, at: nil, kind: .toolResult, isError: true),
         ]).failingTurnSeconds == nil)
-        #expect(FailureStory.duration(42) == "42 s")
-        #expect(FailureStory.duration(180) == "3 min")
-        #expect(FailureStory.duration(3_840) == "1 h 4 min")
+        #expect(FailureStory.duration(42) == "42s")
+        #expect(FailureStory.duration(180) == "3m")
+        #expect(FailureStory.duration(3_840) == "1h 04m")
     }
 
     @Test("the story sentence and gap words are the timeline view's")

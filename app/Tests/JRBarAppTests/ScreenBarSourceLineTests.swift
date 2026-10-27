@@ -1,3 +1,4 @@
+import JRBarCore
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -18,7 +19,7 @@ struct ScreenBarSourceLineTests {
         #expect(line() == "Mirroring the strip, phase-locked")
         #expect(line(strip: false) == "Its own display — no strip to mirror")
         #expect(line(mirror: false) == "Its own display")
-        #expect(line(live: false).hasPrefix("Monitor offline"))
+        #expect(line(live: false).hasPrefix(MonitorWords.label))
     }
 
     @Test func aPhaseNudgeIsNamedWithItsSign() {
@@ -33,11 +34,11 @@ struct ScreenBarSourceLineTests {
                                          why: nil, rejection: nil, motionNote: nil, followingAlcove: false,
                                          offlineFeed: feed)
         }
-        #expect(offline(.strip) == "Monitor offline — playing the last program the strip was sent")
+        #expect(offline(.strip) == "Monitor not connected · playing the last program the strip was sent")
         // No strip mounted: the band breathes, and says so rather than
         // crediting a strip that is not there.
-        #expect(offline(.idleBreath) == "Monitor offline — playing the built-in idle breath")
-        #expect(offline(.file) == "Monitor offline — playing the feed file's program")
+        #expect(offline(.idleBreath) == "Monitor not connected · playing the built-in idle breath")
+        #expect(offline(.file) == "Monitor not connected · playing the feed file's program")
         #expect(offline(nil) == offline(.strip), "before the feed reports, the strip wording stands")
         #expect(ScreenBarSourceLine.OfflineFeed(.builtInIdle) == .idleBreath)
         #expect(ScreenBarSourceLine.OfflineFeed(.device("/Volumes/SIDEPULSE/LEDS.LED")) == .strip)

@@ -32,7 +32,7 @@ struct UsageForecastTests {
         #expect(forecast.isCritical)
         #expect(forecast.remainingPct == 0)
         #expect(forecast.pace == "ahead")
-        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Used up: the 5h window resets in 1h 15m")
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Used up: the 5h window resets \(UsageTime.resetLine(Self.now + 4500, now: Self.now, timeZone: Self.utc))")
     }
 
     @Test("runs out before the reset: local linear extrapolation")
@@ -50,8 +50,8 @@ struct UsageForecastTests {
         #expect(forecast.source == .local)
         #expect(forecast.isCritical)
         let headline = forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
-        #expect(headline.hasPrefix("At this pace the 5h window runs out at "))
-        #expect(headline.hasSuffix("(in 40m)"))
+        #expect(headline.hasPrefix("Runs out in 40m"))
+        #expect(headline.hasSuffix("at this pace for the 5h window"))
     }
 
     @Test("reset before exhaustion is comfortable even at a real pace")

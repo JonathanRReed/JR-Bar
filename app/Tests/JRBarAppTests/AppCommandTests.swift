@@ -304,11 +304,11 @@ import Testing
             CoreSession(id: "e", provider: "claude", mode: "completed", lifecycle: "completed"),
         ]
         #expect(DeepWork.summary(before: before, after: after, elapsedSeconds: 1500, early: false)
-                == "Deep work over (25 min): 2 sessions finished, 1 failed and 1 needs you.")
+                == "Deep work over (25 minutes): 2 sessions finished, 1 failed and 1 needs you.")
         #expect(DeepWork.summary(before: before, after: Array(after.prefix(2)), elapsedSeconds: 610, early: true)
-                == "Deep work ended after 10 min: 1 session finished.")
+                == "Deep work ended after 10 minutes: 1 session finished.")
         #expect(DeepWork.summary(before: before, after: [], elapsedSeconds: 20, early: true)
-                == "Deep work ended after 1 min: the agents had nothing new.")
+                == "Deep work ended after 1 minute: the agents had nothing new.")
     }
 
     @MainActor
@@ -340,14 +340,14 @@ import Testing
         sessions = [CoreSession(id: "a", provider: "claude", mode: "completed", lifecycle: "completed")]
         clock = clock.addingTimeInterval(1500)
         scheduled.first?.1.perform()
-        #expect(lines == ["Deep work over (25 min): 1 session finished."])
+        #expect(lines == ["Deep work over (25 minutes): 1 session finished."])
         #expect(!router.isInDeepWork)
 
         // Ending quiet by hand closes the stretch early, with its line.
         await router.perform(.deepWork(seconds: 1500))
         clock = clock.addingTimeInterval(300)
         await router.perform(.endQuiet)
-        #expect(lines.last == "Deep work ended after 5 min: the agents had nothing new.")
+        #expect(lines.last == "Deep work ended after 5 minutes: the agents had nothing new.")
         #expect(scheduled.last?.1.isCancelled == true)
 
         // Another quiet takes over without a word.
@@ -399,7 +399,7 @@ import Testing
         // now, long after the daemon's quiet lease lapsed on the wall clock.
         bench.advance(50_000)
         bench.scheduled.first?.1.perform()
-        #expect(bench.lines == ["Deep work over (25 min): 1 session finished."])
+        #expect(bench.lines == ["Deep work over (25 minutes): 1 session finished."])
         #expect(!bench.router.isInDeepWork)
     }
 
@@ -409,7 +409,7 @@ import Testing
         await slept.router.perform(.deepWork(seconds: 600))
         slept.advance(30_000)
         await slept.router.perform(.endQuiet)
-        #expect(slept.lines.last?.hasPrefix("Deep work ended after 10 min") == true)
+        #expect(slept.lines.last?.hasPrefix("Deep work ended after 10 minutes") == true)
 
         // A real early end is not inflated to the planned length.
         let early = DeepWorkBench()

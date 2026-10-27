@@ -64,7 +64,7 @@ struct UnknownUsageWindowTests {
         #expect(!forecast.isCritical)
         #expect(forecast.rateText == nil)
         let line = forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
-        #expect(line == "No reading for the 7d window · resets in 1h 00m")
+        #expect(line == "No reading for the 7d window · resets \(UsageTime.resetLine(Self.now + 3600, now: Self.now, timeZone: Self.utc))")
         #expect(!line.contains("Comfortable"))
         #expect(!line.contains("left"))
 

@@ -64,7 +64,7 @@ struct AutoDimTests {
         let partial = SettingsDocument(.object(["auto_dim": .object(["mode": .string("schedule")])]))
         let scheduled = AutoDimSettings(document: partial)
         #expect(scheduled.mode == .schedule && scheduled.scheduleFraction == 0.3)
-        #expect(scheduled.summary == "schedule 22:00–07:00 to 30%")
+        #expect(scheduled.summary == "schedule \(UsageTime.clock(minutes: 1320))–\(UsageTime.clock(minutes: 420)) to 30%")
     }
 
     @Test("the schedule window may wrap midnight and an empty window never matches")
@@ -136,9 +136,9 @@ struct AutoDimTests {
         #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 0.15, available: true, reading: 0.05)) == "Display: 5% → 15%")
         #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 1.0, available: false, reading: nil)) == "Display unreadable → 100%")
         let settings = AutoDimSettings.defaults
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390), settings: settings) == "Schedule: 23:10, inside the window → 30%")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 1.0, available: true, reading: 600), settings: settings) == "Schedule: 10:00, outside the window → 100%")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390)) == "Schedule: 23:10, inside the window → 30%", "without the settings the factor says which side")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390), settings: settings) == "Schedule: \(UsageTime.clock(minutes: 1390)), inside the window → 30%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 1.0, available: true, reading: 600), settings: settings) == "Schedule: \(UsageTime.clock(minutes: 600)), outside the window → 100%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390)) == "Schedule: \(UsageTime.clock(minutes: 1390)), inside the window → 30%", "without the settings the factor says which side")
         #expect(AutoDimReadout.line(CoreAutoDim(mode: "twilight", source: "twilight", factor: 0.5)) == "Twilight → 50%", "a future mode still reads")
     }
 
@@ -169,7 +169,7 @@ struct AutoDimTests {
         lights.surfaces["screen_bar"] = surface
         let dimmed = try #require(LightExplainer.explain(lights: lights, state: state, settings: document))
         #expect(dimmed.details.first { $0.label == "Dimming" }?.value == "Auto-dim (schedule) · 30%")
-        #expect(dimmed.details.first { $0.label == "Auto-dim" }?.value == "schedule 22:00–07:00 to 30% · Schedule: 23:10, inside the window → 30%")
+        #expect(dimmed.details.first { $0.label == "Auto-dim" }?.value == "schedule \(UsageTime.clock(minutes: 1320))–\(UsageTime.clock(minutes: 420)) to 30% · Schedule: \(UsageTime.clock(minutes: 1390)), inside the window → 30%")
         #expect(dimmed.headline.hasPrefix("Cyan chase: Claude jr-bar-67 is working") || dimmed.headline.contains("is working"), "the headline is the working one: \(dimmed.headline)")
 
         // Every other word keeps the plain spelling.
