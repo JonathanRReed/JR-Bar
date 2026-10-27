@@ -14,8 +14,7 @@ struct MixEffectRenderProofTests {
         let previousPolicy = application.activationPolicy()
         _ = application.setActivationPolicy(.regular)
         defer { _ = application.setActivationPolicy(previousPolicy) }
-        let url = DesignFixBProof.directory.appendingPathComponent("daemon-programs.json")
-        let programs = try JSONDecoder().decode(StudioWorkspaceRenderProofTests.Programs.self, from: Data(contentsOf: url))
+        let programs = StudioWorkspaceRenderProofTests.Programs.synthetic()
         let fixture = try CoreCommandReplyFixture()
         let suite = ScratchDefaults.suiteName("mix-effect-render")
         defer { ScratchDefaults.remove(suite) }

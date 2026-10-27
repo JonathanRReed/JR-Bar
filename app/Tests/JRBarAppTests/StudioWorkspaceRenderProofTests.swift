@@ -20,13 +20,39 @@ struct StudioWorkspaceRenderProofTests {
         let providers: [String: String]
         let cues: [LightCueState]
         let settings: JSONValue
+
+        @MainActor static func synthetic() -> Self {
+            let mixes = [("classic", "Status only"), ("cycle", "One at a time"), ("color_blend", "Smooth"),
+                         ("weave", "Weave"), ("alternate", "Alternate"), ("relay", "Relay"), ("tide", "Tide"),
+                         ("round_robin", "Everyone"), ("spatial_split", "Split"), ("effect", "Play an effect")]
+            let plan = StudioLightPlan(mixes: mixes.map { StudioMix(id: $0.0, name: $0.1, parameters: []) }, devices: [])
+            var previews: [String: StudioFleetPreview] = [:]
+            for scenario in EffectStudioLights.Scenario.allCases {
+                for (id, name) in mixes {
+                    previews["\(scenario.rawValue)|\(id)"] = StudioFleetPreview(program: "#1288FF", label: "Three agents working",
+                        played: id, reason: "\(name) plays because Claude and Codex are working.", warnings: [], ledCount: 8)
+                }
+            }
+            let effects = ["none", "steady", "comet", "marquee"].map { id in
+                EffectDefinition(id: id, label: id.capitalized, meaning: "Synthetic effect", parameters: [
+                    EffectParameter(name: "duration_seconds", type: .number, defaultValue: .number(2), minimum: 0.1, maximum: 8),
+                    EffectParameter(name: "trail_length", type: .integer, defaultValue: .number(3), minimum: 1, maximum: 8),
+                ], preview: EffectPreview(program: "#1288FF"))
+            }
+            let settings: JSONValue = .object([
+                "colors": .object(["blend_mode": .string("weave")]),
+                "providers": .object(["claude": .object(["enabled": .bool(true)]), "codex": .object(["enabled": .bool(true)])]),
+            ])
+            return Self(plan: plan, previews: previews, catalog: EffectCatalog(effects: effects),
+                        providers: ["claude": "#1288FF", "codex": "#1288FF"], cues: [], settings: settings)
+        }
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func integratedLightHomesAsKeyWindows() async throws {
         try U5Proof.pinDefaultAccent()
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u4-proof")
-        let programs = try JSONDecoder().decode(Programs.self, from: Data(contentsOf: directory.appendingPathComponent("daemon-programs.json")))
+        let programs = Programs.synthetic()
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-integration-proof-unused.sock")
         let suite = ScratchDefaults.suiteName("studio-integration-render")
         defer { ScratchDefaults.remove(suite) }
@@ -58,7 +84,7 @@ struct StudioWorkspaceRenderProofTests {
     func pagesAsKeyWindows() async throws {
         try U5Proof.pinDefaultAccent()
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u4-proof")
-        let programs = try JSONDecoder().decode(Programs.self, from: Data(contentsOf: directory.appendingPathComponent("daemon-programs.json")))
+        let programs = Programs.synthetic()
         let fixture = try CoreCommandReplyFixture()
         let suite = ScratchDefaults.suiteName("studio-render")
         defer { ScratchDefaults.remove(suite) }
@@ -215,8 +241,8 @@ struct StudioWorkspaceRenderProofTests {
     }
 
     private func render<V: View>(_ view: V, name: String, dark: Bool, directory: URL, width: CGFloat = 1160) async throws {
-        try await DesignFixBProof.write(view, name: name, title: "Studio",
-                                        size: CGSize(width: width, height: 860), dark: dark)
+        try ProofRender.write(view, size: CGSize(width: width, height: 860),
+                              name: "\(name)-\(dark ? "dark" : "light")", dark: dark, settle: 0)
     }
 
 }

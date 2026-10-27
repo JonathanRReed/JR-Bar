@@ -172,14 +172,14 @@ struct SettingsRenderProofTests {
 
     /// A Settings store over the mock document, with its toys and
     /// utilities built the way the delegate builds them but never started.
-    private struct Fixture {
+    struct Fixture {
         let core: CoreModel
         let settings: SettingsStore
         let toys: ToysStore
         let utilities: UtilitiesStore
     }
 
-    private static func fixture(firmware: FirmwareStore? = nil) throws -> Fixture {
+    static func fixture(firmware: FirmwareStore? = nil) throws -> Fixture {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-render-proof.sock")
         core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,
                                           document: try document())))
