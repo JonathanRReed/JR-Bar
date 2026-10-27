@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import Observation
 import SwiftUI
 
@@ -320,6 +321,15 @@ final class AquariumToy: Toy {
     /// the fish timeline ticks it.
     @ObservationIgnored let meter = ToyMeter()
 
+    /// The power facts the chip reads; a test hands in its own.
+    @ObservationIgnored var power: @MainActor () -> PowerPolicy = { PowerConditions.shared.policy }
+
+    /// The Mac is on battery and the card lets the tank's ornaments rest
+    /// (`AquariumSettings.restOnBattery`).
+    var batteryResting: Bool {
+        power().rests(keepGoing: !(store?.state.aquarium.restOnBattery ?? true))
+    }
+
     func cost(at now: TimeInterval) -> String? {
         let drawing = meter.drawing(at: now) ?? "Not drawing right now"
         let motion = store?.state.aquarium.motion ?? .live
@@ -327,6 +337,7 @@ final class AquariumToy: Toy {
             ? "Still scene; session status updates each second, none when covered"
             : "30 fps while the tank shows, none when covered"
         var parts = [drawing, cadence]
+        if isOn, batteryResting { parts.append("plants, light and bubbles resting on battery") }
         if isOn { parts.append("the game's beat every \(Int(AquariumRules.tickInterval)) s") }
         if isOn, (store?.state.aquarium.idleFillMinutes ?? 0) > 0 { parts.append("one idle deadline; input watch only while the screensaver shows") }
         return parts.joined(separator: " · ")
@@ -334,22 +345,29 @@ final class AquariumToy: Toy {
 
     var status: ToyStatus {
         guard isOn else { return .off }
-        guard !game.windowOpen else { return .on }
+        let resting = batteryResting
+        guard !game.windowOpen else { return resting ? .note("Resting on battery") : .on }
         let settings = store?.state.aquarium ?? AquariumSettings()
         return Self.closedStatus(wallpaper: settings.ambientDisplay,
                                  connected: NSScreen.screens.map(\.localizedName),
-                                 saverMinutes: settings.idleFillMinutes)
+                                 saverMinutes: settings.idleFillMinutes, resting: resting)
     }
 
     /// The chip with the tank window closed: a wallpaper on a connected
     /// display is drawing right now, so it comes first; an armed
-    /// screensaver next; otherwise the game just keeps count.
+    /// screensaver next; otherwise the game just keeps count. On battery
+    /// the wallpaper and screensaver show their still frame, and say so.
     static func closedStatus(wallpaper: String?, connected: [String],
-                             saverMinutes: Int) -> ToyStatus {
+                             saverMinutes: Int, resting: Bool = false) -> ToyStatus {
         if let wallpaper, connected.contains(wallpaper) {
+            if resting { return .note("Window closed · wallpaper on \(wallpaper) resting on battery") }
             return .note("Window closed · live wallpaper on \(wallpaper)")
         }
-        if saverMinutes > 0 { return .note("Window closed · screensaver after \(UsageTime.settingMinutes(Double(saverMinutes)))") }
+        if saverMinutes > 0 {
+            let after = UsageTime.settingMinutes(Double(saverMinutes))
+            if resting { return .note("Window closed · still screensaver after \(after) on battery") }
+            return .note("Window closed · screensaver after \(after)")
+        }
         return .note("Window closed · still counting pearls")
     }
 

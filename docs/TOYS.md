@@ -182,6 +182,17 @@ Motion keeps its own slow heartbeat. The rule is one small policy,
 `PowerPolicy` in `JRBarUI`, fed by the system's Low Power Mode and thermal
 notifications, with no timer of its own.
 
+On battery the tank's ornaments rest. The policy also carries whether the
+Mac runs on its battery, from the system's power-source change
+notification (`IOPSNotificationCreateRunLoopSource`), and only the
+ornaments that choose to rest read it: the tank's plants, light, bubbles,
+plankton and glows hold their place, and the live wallpaper and the
+screensaver show their still frame. The fish, pets and visitors keep
+swimming, so the game still reads. The chip says "Resting on battery", and
+the card's **Rest on battery** switch (on by default) keeps them going
+instead. Plugging in starts them again. The battery does not change the
+budget, so the notch, the buddy and the bars run as they do on mains.
+
 ## Fold (native)
 
 Closing the lid folds the desktop. Two looks, picked on the card:

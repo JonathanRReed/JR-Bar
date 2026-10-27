@@ -104,6 +104,7 @@ enum ToySearchCatalog {
             ToySearchRow("In the tank", keywords: ["fish", "sessions"]),
             ToySearchRow("Look", keywords: ["theme", "water", "floor", "back wall", "classic", "arcade"]),
             ToySearchRow("Motion", keywords: ["live", "still", "pause", "animation", "freeze"]),
+            ToySearchRow("Rest on battery", keywords: ["battery", "power", "laptop", "energy", "charger"]),
             ToySearchRow("Labels", keywords: ["names", "fish", "show labels", "hover"]),
             ToySearchRow("Day & night", keywords: ["dark", "light", "time of day", "appearance"]),
             ToySearchRow("Sound", keywords: ["plop", "audio", "clink"]),

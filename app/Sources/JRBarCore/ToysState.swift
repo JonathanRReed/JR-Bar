@@ -387,6 +387,10 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public var scenery: AquariumScenery = .full
     /// The occasional passers-by — whale, diver, submarine, alien.
     public var visitors: Bool = true
+    /// On battery, the tank's ornaments rest: the plants, the light, the
+    /// bubbles and plankton hold still and the wallpaper and screensaver
+    /// show their still frame. The fish keep swimming. On by default.
+    public var restOnBattery: Bool = true
 
     /// The screensaver's choices, in minutes; 0 is off.
     public static let idleFillChoices = [0, 5, 10, 15, 30]
@@ -414,6 +418,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         case idleFillMinutes, ambientDisplay, saverClock
         case swimPace, swimSpeed, fishScale
         case labelStyle, sound, maxFish, keepResidents, bubbles, scenery, visitors
+        case restOnBattery
     }
 
     public init(from decoder: any Decoder) throws {
@@ -458,6 +463,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         scenery = sceneryRaw.flatMap(AquariumScenery.init(rawValue:))
             ?? (density < 1 ? .light : .full)
         visitors = (try? c.decodeIfPresent(Bool.self, forKey: .visitors)) ?? true
+        restOnBattery = (try? c.decodeIfPresent(Bool.self, forKey: .restOnBattery)) ?? true
     }
 
     /// `value` when the picker offers it. A positive number it does not

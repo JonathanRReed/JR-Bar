@@ -1,4 +1,5 @@
 import Foundation
+import IOKit.ps
 import Observation
 
 /// How hard JR-Bar's decorative motion may work right now. The tank's
@@ -46,10 +47,23 @@ public struct PowerPolicy: Equatable, Sendable {
 
     public var lowPowerMode: Bool
     public var thermal: Thermal
+    /// Running on the Mac's battery rather than a charger. It does not
+    /// move the budget: only the ornaments that choose to rest on battery
+    /// read it (`rests`), so nothing else changes when the charger
+    /// comes out.
+    public var onBattery: Bool
 
-    public init(lowPowerMode: Bool = false, thermal: Thermal = .nominal) {
+    public init(lowPowerMode: Bool = false, thermal: Thermal = .nominal, onBattery: Bool = false) {
         self.lowPowerMode = lowPowerMode
         self.thermal = thermal
+        self.onBattery = onBattery
+    }
+
+    /// Whether an ornament that rests on battery stands still now: the
+    /// Mac is on its battery and the person hasn't asked it to keep going.
+    /// Plugging in resumes it.
+    public func rests(keepGoing: Bool = false) -> Bool {
+        onBattery && !keepGoing
     }
 
     /// Normal power.
@@ -80,13 +94,13 @@ public struct PowerPolicy: Equatable, Sendable {
 }
 
 /// The live power facts, read from the system and kept current. Low Power
-/// Mode and the thermal state each post a notification when they change,
-/// so nothing polls and no timer runs; views read `policy` in `body` and
-/// redraw when it moves.
+/// Mode, the thermal state and the power source (battery or charger) each
+/// post a notification when they change, so nothing polls and no timer
+/// runs; views read `policy` in `body` and redraw when it moves.
 @MainActor
 @Observable
 public final class PowerConditions {
-    public static let shared = PowerConditions()
+    public static let shared = PowerConditions(watchesPowerSource: true)
 
     /// The policy right now.
     public private(set) var policy: PowerPolicy
@@ -97,16 +111,25 @@ public final class PowerConditions {
 
     /// The system's own answer.
     public nonisolated static func systemPolicy(_ info: ProcessInfo = .processInfo) -> PowerPolicy {
-        PowerPolicy(lowPowerMode: info.isLowPowerModeEnabled, thermal: PowerPolicy.Thermal(info.thermalState))
+        PowerPolicy(lowPowerMode: info.isLowPowerModeEnabled, thermal: PowerPolicy.Thermal(info.thermalState),
+                    onBattery: PowerSourceWatch.onBattery())
     }
 
+    /// The power source's change notification, while this feed listens
+    /// to it (the app's own feed does; a test's doesn't).
+    @ObservationIgnored private var sourceWatch: PowerSourceWatch?
+
     /// `read` is the system's answer in the app; a test hands in its own
-    /// and a notification centre of its own.
+    /// and a notification centre of its own. `watchesPowerSource` also
+    /// listens for the charger coming and going.
     public init(read: @escaping @MainActor () -> PowerPolicy = { PowerConditions.systemPolicy() },
-                center: NotificationCenter = .default) {
+                center: NotificationCenter = .default, watchesPowerSource: Bool = false) {
         self.read = read
         self.center = center
         self.policy = read()
+        if watchesPowerSource {
+            sourceWatch = PowerSourceWatch { [weak self] in self?.refresh() }
+        }
         let names: [Notification.Name] = [.NSProcessInfoPowerStateDidChange,
                                           ProcessInfo.thermalStateDidChangeNotification]
         for name in names {
@@ -132,5 +155,39 @@ public final class PowerConditions {
     public func refresh() {
         let latest = read()
         if latest != policy { policy = latest }
+    }
+}
+
+/// The charger coming and going, from the system's power-source
+/// notification (`IOPSNotificationCreateRunLoopSource`) on the main run
+/// loop: it fires when the source changes, so nothing polls and no timer
+/// runs. Let go with the watch.
+final class PowerSourceWatch {
+    private var source: CFRunLoopSource?
+    private let changed: @MainActor () -> Void
+
+    @MainActor
+    init(changed: @escaping @MainActor () -> Void) {
+        self.changed = changed
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        guard let made = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            let watch = Unmanaged<PowerSourceWatch>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { watch.changed() }
+        }, context)?.takeRetainedValue() else { return }
+        source = made
+        CFRunLoopAddSource(CFRunLoopGetMain(), made, .commonModes)
+    }
+
+    deinit {
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+    }
+
+    /// Whether the Mac is drawing on its battery right now. A Mac with no
+    /// battery, or a reading that fails, is on mains.
+    static func onBattery() -> Bool {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() else { return false }
+        return (type as String) == kIOPSBatteryPowerValue
     }
 }
