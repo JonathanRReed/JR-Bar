@@ -27,7 +27,7 @@ final class ShelfCalendarModel {
     /// How far ahead the glance looks.
     nonisolated static let lookahead: TimeInterval = 24 * 3600
 
-    struct Event: Equatable {
+    struct Event: Equatable, Sendable {
         let title: String
         let start: Date
         let end: Date
@@ -35,6 +35,24 @@ final class ShelfCalendarModel {
         /// browser (T52's unsafe-URL rule). `url` is nil when the event
         /// carries none or an unsafe scheme.
         let url: URL?
+        var isAllDay = false
+        var calendarColor = CalendarColor(red: 0.3, green: 0.5, blue: 0.9)
+        var location: String?
+        var calendarTitle: String?
+        var calendarIdentifier: String?
+        var isBirthday = false
+
+        var shortLocation: String? {
+            guard let location = location?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !location.isEmpty, location.count <= 48, !location.contains(where: \.isNewline) else { return nil }
+            return location
+        }
+    }
+
+    struct CalendarColor: Equatable, Sendable {
+        let red: Double
+        let green: Double
+        let blue: Double
     }
 
     private(set) var state: State = .needsPermission
@@ -133,24 +151,16 @@ final class ShelfCalendarModel {
         readQueue.async(execute: work)
     }
 
-    /// One store for the glance's reads, made and used on a model's
-    /// `readQueue` only (`fetchUpcoming` runs nowhere else). Two cards
-    /// fetch on two queues, so the lock serializes them against the
-    /// shared store.
-    nonisolated(unsafe) private static var readStore: EKEventStore?
-    nonisolated private static let readStoreLock = NSLock()
+    /// Borrow the shared read store, retaining the notch's timed 24-hour window.
+    nonisolated static func fetchUpcoming(from now: Date, reader: ShelfCalendarReader = .shared) -> [Event] {
+        reader.events(from: now).filter {
+            !$0.isAllDay && $0.start < now.addingTimeInterval(lookahead) && $0.end > now
+        }.map(notchEvent)
+    }
 
-    /// The timed events in the lookahead window from `now`, projected.
-    nonisolated static func fetchUpcoming(from now: Date) -> [Event] {
-        readStoreLock.lock()
-        defer { readStoreLock.unlock() }
-        let store = readStore ?? EKEventStore()
-        readStore = store
-        let predicate = store.predicateForEvents(withStart: now, end: now.addingTimeInterval(lookahead),
-                                                 calendars: nil)
-        return store.events(matching: predicate)
-            .filter { !$0.isAllDay }
-            .map(project)
+    /// Preserve the notch's original event identity when only Dock metadata changes.
+    nonisolated static func notchEvent(_ event: Event) -> Event {
+        Event(title: event.title, start: event.start, end: event.end, url: event.url)
     }
 
     /// Soonest first, ended ones out (a meeting still running stays —
@@ -181,7 +191,17 @@ final class ShelfCalendarModel {
     nonisolated static func project(_ event: EKEvent) -> Event {
         Event(title: event.title?.isEmpty == false ? event.title! : "Untitled",
               start: event.startDate, end: event.endDate,
-              url: joinableURL(for: event))
+              url: joinableURL(for: event), isAllDay: event.isAllDay,
+              calendarColor: color(event.calendar?.cgColor), location: event.location,
+              calendarTitle: event.calendar?.title, calendarIdentifier: event.calendar?.calendarIdentifier,
+              isBirthday: event.calendar?.type == .birthday)
+    }
+
+    nonisolated private static func color(_ color: CGColor?) -> CalendarColor {
+        guard let color, let rgb = NSColor(cgColor: color)?.usingColorSpace(.sRGB) else {
+            return CalendarColor(red: 0.3, green: 0.5, blue: 0.9)
+        }
+        return CalendarColor(red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent)
     }
 
     /// The event's joinable link: `event.url` when http(s), else the
@@ -256,7 +276,6 @@ final class ShelfMeetingWatch {
     private(set) var running = false
     /// Heads-ups already given, so a re-read never repeats one.
     private var announced: Set<String> = []
-    private var store: EKEventStore?
     private var timer: Timer?
     private var changeObserver: NSObjectProtocol?
     /// The store's fetches run here — `events(matching:)` walks the
@@ -280,10 +299,8 @@ final class ShelfMeetingWatch {
         guard !running else { return }
         running = true
         if fetchEvents == nil {
-            let store = self.store ?? EKEventStore()
-            self.store = store
             changeObserver = NotificationCenter.default.addObserver(
-                forName: .EKEventStoreChanged, object: store, queue: .main
+                forName: ShelfCalendarReader.didChange, object: ShelfCalendarReader.shared, queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.read() }
             }
@@ -307,13 +324,6 @@ final class ShelfMeetingWatch {
     /// Fetch the window off main — a busy EventKit store has no business
     /// stalling the run loop — then hand the rows to `note`. A read that
     /// lands after a `stop` or a newer fetch is dropped.
-    /// The store handed to the serial fetch queue — EventKit objects are
-    /// not `Sendable`, but the queue is the only thread that ever calls
-    /// them, so the box carries the proof the compiler cannot see.
-    private struct StoreBox: @unchecked Sendable {
-        let store: EKEventStore
-    }
-
     func read() {
         guard running else { return }
         guard authorization() == .fullAccess else {
@@ -323,18 +333,13 @@ final class ShelfMeetingWatch {
         let fetch: @Sendable (Date) -> [Event]
         if let fetchEvents {
             fetch = fetchEvents
-        } else if let store {
-            let box = StoreBox(store: store)
-            fetch = { now in
-                // Back far enough to catch a long meeting already running.
-                let predicate = box.store.predicateForEvents(
-                    withStart: now.addingTimeInterval(-12 * 3600),
-                    end: now.addingTimeInterval(ShelfCalendarModel.lookahead), calendars: nil)
-                return box.store.events(matching: predicate)
-                    .filter { !$0.isAllDay }.map(ShelfCalendarModel.project)
-            }
         } else {
-            return
+            fetch = { now in
+                ShelfCalendarReader.shared.events(from: now).filter {
+                    !$0.isAllDay && $0.start < now.addingTimeInterval(ShelfCalendarModel.lookahead)
+                        && $0.end > now.addingTimeInterval(-12 * 3600)
+                }.map(ShelfCalendarModel.notchEvent)
+            }
         }
         readGeneration += 1
         let generation = readGeneration
