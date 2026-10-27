@@ -175,7 +175,7 @@ struct KeepAwakeUtilityControls: View {
         let steam = reading.steam(now: at)
         return HStack(spacing: SettingsMetrics.s) {
             KeepAwakeCup(steam: steam)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: steam)
+                .animation(reduceMotion ? nil : JRBarTokens.Motion.rowChange.animation, value: steam)
             Text(words)
                 .monospacedDigit()
             Spacer(minLength: 0)
