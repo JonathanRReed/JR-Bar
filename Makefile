@@ -50,7 +50,7 @@ swift-test:
 # someone needs a proof. Set JRBAR_RENDER_PROOF_DIR yourself to keep the PNGs.
 proofs-smoke:
 	@dir="$${JRBAR_RENDER_PROOF_DIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/jrbar-proofs-smoke.XXXXXX")}"; \
-	cd app && JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR="$$dir" swift test --filter 'RenderProof'; status=$$?; \
+	cd app && JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR="$$dir" swift test --no-parallel --filter 'RenderProof'; status=$$?; \
 	if [ -z "$$JRBAR_RENDER_PROOF_DIR" ]; then rm -rf "$$dir"; fi; exit $$status
 
 package:

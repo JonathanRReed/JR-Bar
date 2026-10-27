@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from jrbar.provider_availability import _CAUSES, ATTENTION, availability_document, status_sentence
 from jrbar.core_projection import _snapshot_has_quota_source
+from jrbar.provider_availability import _CAUSES, ATTENTION, availability_document, status_sentence
 from jrbar.provider_usage_platform import (
     ProviderSourceState,
     UsageLane,

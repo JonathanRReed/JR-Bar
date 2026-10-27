@@ -233,7 +233,11 @@ struct PanelRenderProofTests {
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         CATransaction.flush()
-        #expect(window.isKeyWindow, "Accent proof must be a key window")
+        // A headless run never gets a key window; only an interactive run
+        // can prove the key-window accent.
+        if ProcessInfo.processInfo.environment["JRBAR_INTERACTIVE_TESTS"] == "1" {
+            #expect(window.isKeyWindow, "Accent proof must be a key window")
+        }
         let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
