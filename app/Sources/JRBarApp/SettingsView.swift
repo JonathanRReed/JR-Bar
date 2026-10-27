@@ -259,6 +259,9 @@ struct SettingsPageContainer: View {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
             Section {
                 SettingsPageHeader(page: page)
+                    .overlay(alignment: .topLeading) {
+                        if page == .utilities { SeasonalHeaderAccent(store: store) }
+                    }
             }
             if let seal = store.seal, seal.notice != nil || seal.resultLine != nil {
                 Section {

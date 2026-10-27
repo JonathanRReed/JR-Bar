@@ -127,6 +127,8 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>JR-Bar's Mirror row shows the Mac's own camera in the notch card — and only while the row is on. Nothing is recorded or sent.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>JR-Bar shows the next event on the shelf and the Dock's Calendar tile, and only after you ask it to. Nothing leaves the Mac.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Seasonal touches read only your own birthday from your contact card, and only after you allow it. Nothing leaves the Mac.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>JR-Bar lists your next reminders on the shelf — and only after you ask it to. Checking one off writes back to Reminders; nothing else is sent anywhere.</string>
 	<key>NSLocationUsageDescription</key>

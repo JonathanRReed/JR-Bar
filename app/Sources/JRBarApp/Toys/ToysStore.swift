@@ -28,8 +28,15 @@ final class ToysStore {
             if state.aquarium != oldValue.aquarium { aquarium?.stateReplaced() }
             if state.notchBuddy.enabled != oldValue.notchBuddy.enabled { notchBuddy.syncRuntime() }
             if state.confetti.enabled != oldValue.confetti.enabled { confetti.roomChanged() }
+            if state.seasonal != oldValue.seasonal { seasonal.settingsChanged() }
         }
     }
+
+    /// Seasonal touches' day (`SeasonalStore`): the tank, the buddy, the
+    /// notch and Settings dress from it.
+    let seasonal: SeasonalStore
+    /// The garland under the closed notch's Screen Bar, in the app only.
+    @ObservationIgnored private var seasonalBand: SeasonalBandOverlay?
 
     /// The cards, in contract order: Fold, Aquarium, Notch Buddy,
     /// Confetti. The Notch toy lives on the Utilities page. The page
@@ -76,10 +83,14 @@ final class ToysStore {
     init(core: CoreModel, settings: SettingsStore, state: ToysState,
          cardModel: NotchCardModel, notchRuntimeEnabled: Bool = true,
          nativeSourcesEnabled: Bool = true,
-         aquariumSave: AquariumSaveFile? = nil) {
+         aquariumSave: AquariumSaveFile? = nil, seasonalSource: SeasonalSource? = nil) {
         self.core = core
         self.settings = settings
         self.state = state
+        // Only the app's own store reads the real calendars and card; any
+        // other store dates the holidays by the rules alone.
+        let source = seasonalSource ?? (notchRuntimeEnabled && nativeSourcesEnabled ? .system : .inert)
+        self.seasonal = SeasonalStore(settings: { SeasonalSettings() }, source: source)
         // Toys take `store: self`, so they are built only once every
         // stored property above has a value and `self` is complete.
         let notchBuddy = NotchBuddyToy(core: core)
@@ -103,6 +114,9 @@ final class ToysStore {
         // real macOS surface, so it is a utility, not a toy; `toys`
         // keeps only the page's cards.
         self.toys = cards
+        seasonal.settings = { [weak self] in self?.state.seasonal ?? SeasonalSettings() }
+        seasonal.settingsChanged()
+        if notchRuntimeEnabled { seasonalBand = SeasonalBandOverlay(seasonal: seasonal) }
     }
 
     isolated deinit {
@@ -113,6 +127,9 @@ final class ToysStore {
     func shutdown() {
         saveWork?.cancel()
         saveWork = nil
+        seasonal.stop()
+        seasonalBand?.stop()
+        seasonalBand = nil
         notch?.shutdown()
         fold?.shutdown()
         aquarium?.shutdown()

@@ -40,6 +40,8 @@ struct AquariumView: View {
         /// The power facts for the shot; nil is normal power, so a proof
         /// never depends on the Mac it renders on.
         var power: PowerPolicy?
+        /// A seasonal set for the shot (`SeasonalStore`); nil is none.
+        var season: SeasonalOccasion?
     }
 
     let toy: AquariumToy?
@@ -260,6 +262,7 @@ struct AquariumView: View {
                     // or streams stays on the live pass.
                     drawShopDecorStill(canvas: &canvas, size: size, t: t)
                     drawOwnedFrontStill(canvas: &canvas, size: size, t: t)
+                    drawSeasonProps(canvas: &canvas, size: size, t: t)
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
@@ -291,6 +294,8 @@ struct AquariumView: View {
                 // The ornaments' clock: the frame's own, or held where
                 // it was while the Mac rests on battery.
                 let ot = motion.ornamentClock.time(at: t, still: resting)
+                // The season's particles hold still under Reduce Motion too.
+                let st = motion.seasonClock.time(at: t, still: resting || reduceMotion)
                 // The card's measured frame rate.
                 let _ = toy?.meter.tick()
                 // Memoized on the fish array: the timeline ticks 30×/s
@@ -318,6 +323,7 @@ struct AquariumView: View {
                     drawPlankton(canvas: &canvas, size: size, t: ot,
                                  density: plankton, front: false)
                     drawBubbles(canvas: &canvas, size: size, t: ot, density: bubbles)
+                    drawSeasonParticles(canvas: &canvas, size: size, t: st)
                     // The passers-by and the sand/mid-water pets
                     // live behind the fish lane.
                     drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
@@ -658,6 +664,9 @@ struct AquariumView: View {
         let visualClock = AquariumMotionClock()
         /// The ornaments' clock, held while the Mac rests on battery.
         let ornamentClock = AquariumMotionClock()
+        /// The seasonal particles' clock: held on battery and under
+        /// Reduce Motion.
+        let seasonClock = AquariumMotionClock()
         private var rosterIDs: Set<String>?
 
         func retainFish(_ live: Set<String>) {

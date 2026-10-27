@@ -1362,6 +1362,54 @@ a parked island holds no listener and runs no clock.
 Blurb: "Who's working, up in the notch. Alcove or Boring Notch can
 draw it instead."
 
+## Seasonal touches
+
+On a holiday the toys dress for it. **Seasonal touches** sits under the
+toys on Settings › Utilities & Toys. It is off by default; turned on, every
+holiday has its own switch, all on to start, so Hanukkah or Easter can be
+turned off alone.
+
+- **The sets.** Seventeen: New Year, Lunar New Year, Groundhog Day,
+  Valentine's Day, St. Patrick's Day, Ramadan & Eid, Easter, Earth Day,
+  Pride (all of June), Independence Day, Halloween, Día de los Muertos,
+  Thanksgiving, Hanukkah (a candle more each night), Christmas, Kwanzaa (a
+  candle a day) and Birthdays. Memorial Day, Veterans Day, Good Friday, Ash
+  Wednesday, Yom Kippur, Ashura, MLK Day, Juneteenth, Election Day, Tax
+  Day and daylight saving stay plain on purpose. When two fall on one day,
+  a birthday wins, then a single day, then the shorter span.
+- **Where they show.** Closed, a garland hangs from the Screen Bar, only
+  as wide as the notch, in a click-through window of its own that follows
+  the band's panel by its window notifications. Open, the strip under the
+  Now · Shelf · Agent Overview row carries the garland, with the set's
+  centrepiece at the bottom right and a word when there is one ("Night 3",
+  "Alex's birthday"). Both are overlays: the notch's sizes, shapes and
+  motion don't change, and the release-parity tests are untouched. The
+  tank plants one or two props on the sand and drifts a few slow
+  particles (snow, leaves, petals, hearts, confetti, bats, stars, coins).
+  The buddy wears the set's piece in place of its wardrobe for the day,
+  seated like the beanie; on the crab a hat sits on the shell and a band
+  with ears or boppers balances on its eye stalks. Settings shows the
+  set's mark beside the Utilities & Toys header.
+- **Dates.** From the person's calendars when they list the day: the
+  holiday calendars (any calendar named for holidays) and Birthdays, read
+  through the app's one EventKit store (`SharedEventStore`), the same one
+  the notch's glance and meeting heads-up read, under the same Calendar
+  grant. Seasonal touches never asks for it. Any holiday the calendars
+  don't list, and all of them while access is off, follow JR-Bar's own
+  rules: the Easter computus, Foundation's Hebrew, Umm al-Qura and
+  Chinese calendars for Hanukkah, Ramadan and Eid, and Lunar New Year,
+  and fixed dates otherwise (Thanksgiving, Independence Day and Groundhog
+  Day follow the region). Settings says which.
+- **Birthdays.** The person's own comes from their contact card, once they
+  click Allow Contacts. People in the Birthdays calendar are listed to tag,
+  and only tagged people count. Names stay on this Mac.
+- **Cost.** Off, nothing listens and nothing is read. On, one read, then
+  again only on `NSCalendarDayChanged` or `EKEventStoreChanged`; switching
+  a holiday or a person recomputes from what was read. Drawings are still
+  except the tank's particles, which ride its live pass on a clock that
+  holds under Reduce Motion and while resting on battery, and stop with
+  the pass when the window is covered.
+
 ## Copy
 
 Every string on the page is in Jonathan's voice (see the jr-writing

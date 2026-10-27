@@ -63,6 +63,15 @@ In Settings > Utilities & Toys:
   play/pause button. Still holds the scene while session status, rewards and
   feeding keep updating. The fish button opens a menu of sessions, workers
   and residents. Pick one to open its inspector without chasing a fish.
+  Rest on battery (on by default) holds the plants, light, bubbles and the
+  wallpaper or screensaver still while the Mac runs on its battery; the
+  fish keep swimming and the chip says Resting on battery.
+- **Seasonal touches:** one switch, off by default. On a holiday the notch,
+  the tank and the buddy dress for it, and each holiday has its own switch.
+  Dates come from your holiday and Birthdays calendars when Calendar is on
+  for the notch, and from JR-Bar's own rules otherwise. Your own birthday
+  comes from your contact card after you click Allow Contacts; tag the
+  people whose birthdays you want celebrated.
 - **Agent Overview:** a failed Reply stays open with its error below the
   editor and your draft intact. If the send is unconfirmed, the reply may
   have landed. Check the session before answering again.

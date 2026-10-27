@@ -163,7 +163,8 @@ struct NotchBuddyView: View {
             wearing: toy.wearing,
             turn: toy.turnFrame(at: now, still: motionStill),
             handoff: motionStill ? nil : toy.handoff(at: now),
-            gaze: motionStill ? .rest : gaze.look(at: now.timeIntervalSince1970)
+            gaze: motionStill ? .rest : gaze.look(at: now.timeIntervalSince1970),
+            season: toy.store?.seasonal.occasion?.holiday
         )
     }
 
@@ -448,6 +449,9 @@ struct BuddyFigure: View {
     /// a slump stays downcast and sleep stays shut, so only the moods
     /// that look around follow it.
     var gaze: BuddyGaze.Look = .rest
+    /// A holiday in season (`SeasonalStore`): its outfit (`SeasonOutfit`)
+    /// takes the place of the wardrobe piece for the day.
+    var season: SeasonalHoliday? = nil
 
     /// The stage's proportions, applied to the body only — the shadow,
     /// the "!" and the effects keep their places.
@@ -964,7 +968,7 @@ struct BuddyFigure: View {
                 let asleep = moods.share(of: .asleep)
                 characterBody
                 if asleep > 0 { cap.opacity(asleep) }
-                if asleep < 1, !wearsUnderEyes, let wearing { outfit(wearing).opacity(1 - asleep) }
+                if asleep < 1, !wearsUnderEyes || crabBalancesPiece, hasOutfit { dressed.opacity(1 - asleep) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -1117,8 +1121,52 @@ struct BuddyFigure: View {
     /// The crab's piece, handed to `CrabBody` to draw under its eyes.
     private var crabWear: AnyView? {
         let asleep = moods.share(of: .asleep)
-        guard asleep < 1, let wearing else { return nil }
-        return AnyView(outfit(wearing).opacity(1 - asleep))
+        guard asleep < 1, hasOutfit, !crabBalancesPiece else { return nil }
+        return AnyView(dressed.opacity(1 - asleep))
+    }
+
+    /// Whether it wears anything: a holiday's piece or a wardrobe one.
+    private var hasOutfit: Bool { season != nil || wearing != nil }
+
+    /// The crab balances a headband's piece (ears, boppers, a sprout) on
+    /// top of its eye stalks, in front, rather than on its shell under
+    /// the eyes, where the stalks would hide it.
+    private var crabBalancesPiece: Bool {
+        guard character == .crab, let season else { return false }
+        return SeasonOutfit.isHeadband(season)
+    }
+
+    /// What it wears today: the holiday's piece while one is in season,
+    /// otherwise the wardrobe's.
+    @ViewBuilder private var dressed: some View {
+        if let season {
+            seasonal(season)
+        } else if let wearing {
+            outfit(wearing)
+        }
+    }
+
+    /// A holiday's piece at the seat: on the crown like the beanie, or
+    /// pinned at the side like the bow.
+    @ViewBuilder private func seasonal(_ holiday: SeasonalHoliday) -> some View {
+        let seat = self.seat
+        switch SeasonOutfit.placement(holiday) {
+        case .crown where crabBalancesPiece:
+            // On top of the eyes, which stand at -5.3 on 1.6 pt stalk tips.
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(0.66, anchor: .bottom)
+                .offset(x: 0, y: -6.2 - SeasonOutfit.box.height / 2)
+        case .crown:
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(seat.scale, anchor: .bottom)
+                .offset(x: seat.x, y: seat.y - SeasonOutfit.box.height / 2 + 0.6)
+        case .side:
+            // Where the flower goes: the robot's antenna holds the left.
+            let side: Double = character == .robot ? 1 : -1
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(seat.scale * 0.85)
+                .offset(x: seat.x + side * 3.9 * seat.scale, y: seat.y - 0.8)
+        }
     }
 
     /// Where a worn piece sits on each body: the crown's centre, the line

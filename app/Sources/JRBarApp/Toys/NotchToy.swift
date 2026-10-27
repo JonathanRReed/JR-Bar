@@ -298,6 +298,7 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
         }
         cardModel.onOpenRow = { [weak self] session in self?.openFromCard(session) }
+        cardModel.seasonalOccasion = { [weak store] in store?.seasonal.occasion }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.popoverHold.onChange = { [weak self] held in self?.cardPopoverHoldChanged(held) }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }

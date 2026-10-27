@@ -12,5 +12,8 @@ struct ToysPage: View {
             }
         }
         .id(SettingsStore.groupAnchor("Toys"))
+        if let toys = store.toys {
+            SeasonalSettingsSection(toys: toys)
+        }
     }
 }
