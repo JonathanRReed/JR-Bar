@@ -7,7 +7,7 @@ step. It only ever happens when you ask.
 
 ## What you do
 
-1. Open **Settings > Devices & Lighting**. Each device card has a
+1. Open **Settings > Devices**. Each device card has a
    **Firmware** row showing its version and update status. **Check firmware**
    reads `STATUS.TXT` from the device. It makes no network request.
 2. When an update is available, press **Review update...**. A sheet says exactly what will happen:

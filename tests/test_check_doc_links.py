@@ -86,3 +86,20 @@ def test_skipped_directories_are_never_listed(tmp_path: Path, monkeypatch) -> No
         if set(script._SKIP_PARTS) & set(path.relative_to(tmp_path).parts)
     ]
     assert entered == []
+
+
+def test_the_user_docs_name_only_current_settings_pages() -> None:
+    assert _script().retired_page_names(ROOT) == []
+
+
+def test_retired_page_names_are_caught_outside_code(tmp_path: Path) -> None:
+    script = _script()
+    (tmp_path / "docs" / "user").mkdir(parents=True)
+    (tmp_path / "docs" / "user" / "guide.md").write_text(
+        "Open **Settings > Agents &\nUsage**. `Devices & Lighting` is code.\n"
+        "```\nSettings > General > Power\n```\nSettings › General › Advanced\n")
+    (tmp_path / "README.md").write_text("Effect Studio\n")
+    (tmp_path / "docs" / "ARCHIVE.md").write_text("Agents & Usage\n")
+    found = {(source.name, name) for source, name in script.retired_page_names(tmp_path)}
+    assert found == {("guide.md", "Agents & Usage"), ("guide.md", "Settings › General › Advanced"),
+                     ("README.md", "Effect Studio")}

@@ -5,7 +5,8 @@ Checks ``[text](path)`` and ``[text](path#heading)`` links (and reference
 definitions, ``[name]: path``) in every tracked-looking ``*.md`` outside
 build output: the file must exist, and a ``#heading`` must name a heading
 in that Markdown file (GitHub's slug rules). Web links, ``mailto:`` and
-code blocks are skipped. ``make fast`` runs it, so a doc move that strands
+code blocks are skipped. The user guide and the README must not name a
+Settings page that no longer exists (``RETIRED_PAGES``). ``make fast`` runs it, so a doc move that strands
 a link fails before it merges (CodexBar's check-documentation-links and
 ccusage's lychee job are the idea; this is our own).
 
@@ -33,6 +34,15 @@ _LINK = re.compile(r"(?<!!)\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\
 _REFERENCE = re.compile(r"^\s{0,3}\[[^\]\n]+\]:\s*<?(\S+?)>?(?:\s+\"[^\"]*\")?\s*$", re.MULTILINE)
 _HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$", re.MULTILINE)
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+#: Settings pages and names that no longer exist. The same list guards the
+#: app's strings (``check_design_tokens.py`` "retired-page") and the
+#: daemon's (``tests/test_retired_page_names.py``).
+RETIRED_PAGES = re.compile(
+    r"Agents &\s+Usage|Devices &\s+Lighting|Effect Studio|Show a Demo Ask"
+    r"|Settings\s+[›>]\s+General\s+[›>]\s+(?:Power|Advanced)|Setup \(Settings\s+[›>]\s+General\)"
+)
+#: The pages people read: the user guide and the README.
+_USER_DOCS = ("README.md", "docs/user")
 
 
 def slug(heading: str) -> str:
@@ -97,6 +107,18 @@ def broken_links(root: Path) -> list[tuple[Path, str, str]]:
     return problems
 
 
+def retired_page_names(root: Path) -> list[tuple[Path, str]]:
+    """Each retired Settings page name the user docs still use."""
+    found: list[tuple[Path, str]] = []
+    for name in _USER_DOCS:
+        target = root / name
+        sources = sorted(target.rglob("*.md")) if target.is_dir() else [target] if target.exists() else []
+        for source in sources:
+            text = _prose(source.read_text(encoding="utf-8", errors="replace"))
+            found.extend((source, " ".join(match.group().split())) for match in RETIRED_PAGES.finditer(text))
+    return found
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=ROOT)
@@ -105,9 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     problems = broken_links(root)
     for source, target, why in problems:
         print(f"{source.relative_to(root)}: {target} ({why})")
+    retired = retired_page_names(root)
+    for source, name in retired:
+        print(f"{source.relative_to(root)}: names {name!r}, a Settings page that no longer exists")
     count = len(markdown_files(root))
-    if problems:
-        print(f"{len(problems)} broken link(s) in {count} Markdown files", file=sys.stderr)
+    if problems or retired:
+        print(f"{len(problems)} broken link(s) and {len(retired)} retired page name(s) in {count} Markdown files",
+              file=sys.stderr)
         return 1
     print(f"doc links: {count} Markdown files, every relative link resolves")
     return 0

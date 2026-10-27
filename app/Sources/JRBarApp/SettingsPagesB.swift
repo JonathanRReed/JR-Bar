@@ -917,7 +917,7 @@ struct NotificationsAdvanced: View {
     }
 }
 
-/// General › Power: whether JR-Bar holds the Mac awake while agents run.
+/// Utilities & Toys › Keep Awake › Power: whether JR-Bar holds the Mac awake while agents run.
 struct PowerGroup: View {
     @Bindable var store: SettingsStore
 

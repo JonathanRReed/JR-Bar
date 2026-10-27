@@ -34,7 +34,7 @@ make clean-install
 ```
 
 This builds `dist/JR-Bar-<version>.pkg`, installs the app in
-`~/Applications`, and opens it. Go to **Settings > Agents & Usage** to choose which
+`~/Applications`, and opens it. Go to **Settings > Providers** to choose which
 detected providers receive hooks. The [quick start](docs/user/quick-start.md)
 covers the first useful checks.
 
@@ -84,7 +84,7 @@ covers the first useful checks.
   ("At this pace the 5h window runs out at 22:00"), and daily or hourly
   token and cost graphs from your local transcripts with the cache savings
   spelled out. Claude's official usage endpoint is opt-in.
-- **Effect Studio.** A library of motions (Breathe, Heartbeat, Chase,
+- **Studio.** A library of motions (Breathe, Heartbeat, Chase,
   Gradient, Knight Rider, Comet, Twinkle, …) and data-only JSON packs,
   assignable by device, project, provider, scene or state, with parameters
   as native controls, a live strip preview, a 5 s preview on the real
@@ -162,7 +162,7 @@ them, the Screen Bar is the light.
 | Neighbours, not providers | T3 Code (read-only session projection, [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)); Alcove (the Screen Bar matches its capsule) |
 
 The app detects providers without changing their configs. Install, reinstall,
-or remove hooks one provider at a time in Settings › Agents & Usage. On an upgrade,
+or remove hooks one provider at a time in Settings › Providers. On an upgrade,
 JR-Bar refreshes only hooks its detector can prove JR-Bar already manages;
 inactive hooks stay inactive and custom log paths stay in place. Codex's
 trust hash is recomputed locally for the exact command written. How each
@@ -180,7 +180,7 @@ installed on the system. The download and the build from source are under
 `sudo installer -pkg dist/JR-Bar-<version>.pkg -target /` puts it in
 `/Applications` instead. On first launch the app starts its daemon, records
 the installed build, and registers itself as a login item. It does not edit
-provider hooks until you choose them in Settings › Agents & Usage. Click the icon for
+provider hooks until you choose them in Settings › Providers. Click the icon for
 the panel; right-click for the menu. The command
 line lives inside the bundle; **Settings › Shortcuts › Advanced › Command line ›
 Install** links it as `~/.local/bin/jrbar` (put `~/.local/bin` on your
@@ -253,7 +253,7 @@ differently is a different app to macOS and asks again.
   <img src="media/settings-devices.png" alt="Settings › Devices &amp; Lighting: the SidePulse strip with display mode, brightness, auto-brightness, provider pin, asks-only and colour calibration; the PulseDot below it" width="720">
 </p>
 <p align="center">
-  <img src="media/effect-studio.png" alt="Effect Studio: the effect library, the Beacon pack effect with its 8-LED preview, safety chips, cadence and colour parameters, and the assignment list by scope" width="720">
+  <img src="media/effect-studio.png" alt="Studio: the effect library, the Beacon pack effect with its 8-LED preview, safety chips, cadence and colour parameters, and the assignment list by scope" width="720">
 </p>
 <p align="center">
   <img src="media/control-center.png" alt="Control Center for the Creator Micro 2: the pad drawn with thirteen keys, dial and joystick, banks, and the session list beside it" width="720">

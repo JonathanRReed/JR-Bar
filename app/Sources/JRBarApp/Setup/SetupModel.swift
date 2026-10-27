@@ -125,7 +125,7 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .focusStatus:
             return "Whether Focus is on, for React to Focus modes, Menu Bar rules and the status item's moon. Mode names use Full Disk Access."
         case .lidHelper:
-            return "Agents keep running with the lid shut (General › Power). Copy the command, paste it in Terminal; it asks for your password once."
+            return "Agents keep running with the lid shut (Utilities & Toys › Keep Awake). Copy the command, paste it in Terminal; it asks for your password once."
         }
     }
 

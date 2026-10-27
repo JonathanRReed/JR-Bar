@@ -37,6 +37,12 @@ PATTERNS = {
     # A thrown error reaches people as `MonitorWords.reason(error)` or a
     # reply's `sentence`, never as a type dump, a reply code or Swift's
     # "The operation couldn't be completed".
+    # Settings pages that no longer exist; the same list as
+    # check_doc_links.RETIRED_PAGES.
+    "retired-page": re.compile(
+        r"Agents &\s+Usage|Devices &\s+Lighting|Effect Studio|Show a Demo Ask"
+        r"|Settings\s+[›>]\s+General\s+[›>]\s+(?:Power|Advanced)|Setup \(Settings\s+[›>]\s+General\)"
+    ),
     "error-words": re.compile(r'toast: error\.localizedDescription|String\(describing: error\)|\.message \?\? [\w$?.]*\.code\b|: \\\(error\)"'),
 }
 
@@ -115,7 +121,7 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
             continue
-        text_checks = {"error-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        text_checks = {"retired-page", "error-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

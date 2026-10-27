@@ -301,7 +301,7 @@ def finish(job: dict[str, Any] | None, device: dict[str, Any], *, out: TextIO, e
         if job.get("colour_check"):
             print(
                 "This firmware balances colour itself. If your colour calibration was tuned for the old "
-                "firmware, check it again in Settings > Devices & Lighting.",
+                "firmware, check it again in Settings › Devices.",
                 file=out,
             )
         return EXIT_OK

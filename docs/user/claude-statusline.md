@@ -11,7 +11,7 @@ JR-Bar can read them. It is off by default.
 
 Either:
 
-- Settings › Agents & Usage › Advanced › Claude Code status line › **Read Claude Code's
+- Settings › Providers › Advanced › Claude Code status line › **Read Claude Code's
   status line**; or
 - `jrbar agent-monitor install claude-statusline`.
 

@@ -2989,10 +2989,12 @@ def _require_usage_on(self, provider, instance):
     state = getattr(self, "provider_usage_state", None)
     for item in getattr(state, "snapshots", ()) or ():
         if getattr(item, "identity", None) == (provider, instance) and is_usage_off(item):
-            label = str(provider).replace("-", " ").title()
+            from .provider_ids import provider_display_name
+
+            label = provider_display_name(str(provider))
             raise CommandError(
                 "usage_off",
-                f"{label} usage is off. Turn it on in Settings > Agents & Usage first; "
+                f"{label} usage is off. Turn it on in Settings › Providers first; "
                 "nothing is read or sent until you do.",
             )
 
