@@ -1342,15 +1342,15 @@ final class UsageCenterStore {
 
     static func fidelityLabel(_ fidelity: String?) -> String {
         switch fidelity?.lowercased() {
-        case "official": return "Official"
-        case "derived", "estimated": return "Derived"
-        case "manual": return "Manual"
-        case nil, "": return "Unknown source"
-        case let other?: return other.capitalized
+        case "official": return "Official reading"
+        case "derived", "estimated": return "Estimated reading"
+        case "manual": return "Entered by hand"
+        case nil, "": return "Source not reported"
+        case let other?: return other.replacingOccurrences(of: "_", with: " ").capitalized + " reading"
         }
     }
 
-    /// "Max 20× · jonathan@… · Official" from whatever the daemon knows.
+    /// "Max 20× · jonathan@… · Official reading" from whatever the daemon knows.
     static func accountLine(_ provider: CoreProviderUsage, history: UsageHistory?) -> String {
         let account = provider.account ?? history?.account
         var parts: [String] = []
