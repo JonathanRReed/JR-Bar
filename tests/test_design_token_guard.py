@@ -183,3 +183,16 @@ def test_notices_use_the_shared_renderer(file, name):
     root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
     declaration = (root / file).read_text().split("struct " + name, 1)[1].split("\n}\n", 1)[0]
     assert "StatusBanner(" in declaration or "WindowEmptyState(" in declaration
+
+
+def test_art_glyph_tokens_only_belong_to_their_named_figures():
+    from scripts.check_design_tokens import ART_GLYPH_CONTEXTS
+
+    for file, glyphs in ART_GLYPH_CONTEXTS.items():
+        for glyph, context in glyphs.items():
+            call = f"JRBarTokens.ArtGlyph.{glyph}.font(figure: 18)"
+            figure = f"struct {context} {{ var body: some View {{ Text(\"!\").font({call}) }} }}"
+            assert not offenders(figure, file)
+            assert offenders(figure, "app/Sources/JRBarApp/Unrelated.swift")
+            assert offenders(f"struct ReadingLabel {{ var body: some View {{ Text(\"Read\").font({call}) }} }}", file)
+    assert offenders("Text(\"!\").font(.system(size: 5.2))", next(iter(ART_GLYPH_CONTEXTS)))

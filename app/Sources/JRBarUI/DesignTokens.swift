@@ -56,6 +56,34 @@ public enum JRBarTokens {
         }
     }
 
+    /// Marks drawn inside toy figures, exempt from the 11 pt reading floor.
+    /// Buddy figures draw on an 18 pt canvas and scale the entire drawing.
+    /// Only the named drawing functions allowed by check_design_tokens may use these.
+    public enum ArtGlyph: Sendable {
+        case buddyWorking, miniWorking, miniAsk, buddyAsk, buddyCrumb
+        case buddySleep, buddySparkle, buddyGear, snailSleep
+
+        public func size(figure: CGFloat, phase: Double = 0) -> CGFloat {
+            let points: CGFloat
+            switch self {
+            case .buddyWorking: points = 5.4
+            case .miniWorking: points = 8.5
+            case .miniAsk: points = 7
+            case .buddyAsk: points = 5.2
+            case .buddyCrumb: points = 4.6
+            case .buddySleep: points = 4.5
+            case .buddySparkle: points = 5
+            case .buddyGear: points = 5.5
+            case .snailSleep: points = 9 + min(1, max(0, phase)) * 3
+            }
+            return points * figure / 18
+        }
+
+        public func font(figure: CGFloat, phase: Double = 0) -> Font {
+            .system(size: size(figure: figure, phase: phase))
+        }
+    }
+
     public enum Radius {
         public static let swatch: CGFloat = 4
         public static let tile: CGFloat = 6
