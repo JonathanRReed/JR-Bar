@@ -12,9 +12,7 @@ struct NotchMeterCaption {
     init(meter: NotchIslandMeter, now: Date, locale: Locale = .current, timeZone: TimeZone = .current) {
         reset = PanelStore.countdown(to: meter.resetsAt, now: now, fix: meter.fix)
         resetIsFix = meter.fix != nil && reset == meter.fix
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        dayPeriods = [formatter.amSymbol, formatter.pmSymbol].filter { !$0.isEmpty }
+        dayPeriods = UsageTime.dayPeriods(locale: locale, timeZone: timeZone)
         if let provider = meter.usage, let window = provider.headlineWindow {
             reading = UsageGaugeReading(window: window, provider: provider, now: now.timeIntervalSince1970,
                 locale: locale, timeZone: timeZone, forecast: meter.forecast, abbreviatesMinutes: true)

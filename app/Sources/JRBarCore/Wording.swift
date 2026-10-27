@@ -74,11 +74,23 @@ public enum UsageTime {
     public static func clock(_ epoch: Double, locale: Locale = .autoupdatingCurrent,
                              timeZone: TimeZone = .current) -> String {
         guard epoch.isFinite else { return "" }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate("jm")
-        return formatter.string(from: Date(timeIntervalSince1970: epoch))
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template("jm")) {
+            $0.string(from: Date(timeIntervalSince1970: epoch))
+        }
+    }
+
+    public static func dayPeriods(locale: Locale = .current, timeZone: TimeZone = .current) -> [String] {
+        UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone, format: .template("jm")) {
+            [$0.amSymbol, $0.pmSymbol].filter { !$0.isEmpty }
+        }
+    }
+
+    public static func shortClock(_ date: Date, calendar: Calendar) -> String {
+        UsageDateFormatters.shared.withFormatter(locale: .current, timeZone: calendar.timeZone,
+                                                calendar: calendar, format: .shortTime) {
+            $0.string(from: date)
+        }
     }
 
     public static func clock(minutes: Int, now: Date = Date(), calendar: Calendar = .current,
@@ -102,11 +114,11 @@ public enum UsageTime {
         if calendar.isDate(date, inSameDayAs: Date(timeIntervalSince1970: now)) {
             return clock(epoch, locale: locale, timeZone: timeZone)
         }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate(remaining < 7 * 86400 ? "EEEjm" : "MMM d jm")
-        return formatter.string(from: date)
+        let template = remaining < 7 * 86400 ? "EEEjm" : "MMM d jm"
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template(template)) {
+            $0.string(from: date)
+        }
     }
 
     public static func runsOut(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,

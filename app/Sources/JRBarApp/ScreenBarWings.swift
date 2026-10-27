@@ -463,12 +463,8 @@ struct ScreenBarEarMarks: Equatable {
         switch lease.kind {
         case "duration":
             if let until = lease.until {
-                let formatter = DateFormatter()
-                formatter.calendar = calendar
-                formatter.timeZone = calendar.timeZone
-                formatter.dateStyle = .none
-                formatter.timeStyle = .short
-                text = "Held awake until \(formatter.string(from: Date(timeIntervalSince1970: until)))"
+                let clock = UsageTime.shortClock(Date(timeIntervalSince1970: until), calendar: calendar)
+                text = "Held awake until \(clock)"
             } else {
                 text = "Held awake"
             }
