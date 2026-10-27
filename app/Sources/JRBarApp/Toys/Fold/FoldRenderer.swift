@@ -1101,10 +1101,6 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 
-    /// How long the GPU spent on the last `render(to:size:)`, in seconds:
-    /// the proof harness's per-frame cost.
-    private(set) var lastRenderGPUTime: Double = 0
-
     /// Renders the room into an offscreen texture — the proof harness
     /// and tests draw without an MTKView. Synchronous: waits for the
     /// GPU before returning, and returns false on any failure.
@@ -1126,8 +1122,29 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
         encoder.endEncoding()
         command.commit()
         command.waitUntilCompleted()
-        lastRenderGPUTime = command.gpuEndTime - command.gpuStartTime
         return command.status == .completed
+    }
+
+    /// What one draw of the current params costs the GPU, in seconds:
+    /// `frames` passes into `target` back to back in one command buffer,
+    /// so the GPU runs at a steady clock, divided out. For the proof
+    /// harness; nil on any failure.
+    func gpuTimePerFrame(to target: MTLTexture, size: CGSize, frames: Int) -> Double? {
+        guard canDraw, frames > 0, let command = queue.makeCommandBuffer() else { return nil }
+        for _ in 0..<frames {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = target
+            pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].storeAction = .store
+            pass.colorAttachments[0].clearColor = clearColor
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return nil }
+            encodeFold(into: encoder, aspect: size.width / max(1, size.height))
+            encoder.endEncoding()
+        }
+        command.commit()
+        command.waitUntilCompleted()
+        guard command.status == .completed else { return nil }
+        return (command.gpuEndTime - command.gpuStartTime) / Double(frames)
     }
 }
 
