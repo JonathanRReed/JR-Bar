@@ -298,7 +298,9 @@ final class SeasonalBandOverlay {
             host?.rootView = AnyView(SeasonalGarland(occasion: occasion))
         }
         if panel.frame != frame { panel.setFrame(frame, display: true) }
-        if !panel.isVisible { panel.orderFrontRegardless() }
+        // Through the guarded presenter, so a test process never orders
+        // a real window in.
+        if !panel.isVisible { WindowPresenter.automatic.order(panel) }
     }
 
     private func makeWindow() -> NSPanel {
