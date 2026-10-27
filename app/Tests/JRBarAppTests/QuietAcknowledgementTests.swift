@@ -10,11 +10,11 @@ struct QuietAcknowledgementTests {
     @Test("a refused Quiet or End never announces success", arguments: [false, true])
     func refusalIsVisible(_ ending: Bool) async throws {
         try await withPanel { fixture, store in
-            if ending { store.endQuiet() } else { store.quietFor(seconds: 1800) }
+            let action = ending ? store.endQuiet() : store.quietFor(seconds: 1800)
             try await fixture.pending(1)
             #expect(store.toast == nil, "No success is shown while the daemon is deciding")
             try await fixture.release(error: "refused")
-            try #require(await fixture.until { fixture.core.inFlightCommands == 0 })
+            _ = await action.value
             #expect(store.toast == "Quiet failed: Synthetic refused")
         }
     }

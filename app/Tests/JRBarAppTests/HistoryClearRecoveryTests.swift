@@ -13,10 +13,10 @@ struct HistoryClearRecoveryTests {
             let store = HistoryStore(core: fixture.core, schedulingEnabled: false)
             var reads = 0
             store.readHistory = { reads += 1; return [] }
-            store.clearCompleted()
+            let action = try #require(store.clearCompleted())
             try await fixture.pending(1)
             try await fixture.release(error: "refused")
-            try #require(await fixture.until { fixture.core.inFlightCommands == 0 })
+            await action.value
             #expect(store.notice?.isError == true)
             #expect(store.notice?.text.contains("Synthetic refused") == true)
             #expect(reads == 0)
