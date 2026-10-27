@@ -1665,25 +1665,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         if changes.contains(.devices) { screenBar?.hardware = core.isLive ? core.devices : nil }
         refreshPackagedHooksIfNeeded(core: core)
-        switch core.connection {
-        case .connected where core.state != nil:
-            statusItem.setCore(description: "connected (\(core.hello?.coreVersion ?? "?"))")
-        case .connected:
-            statusItem.setCore(description: "connected, waiting for state")
-        case .connecting(let attempt):
-            statusItem.setCore(description: attempt <= 1 ? "connecting" : "reconnecting (try \(attempt))")
-        case .disconnected(let reason):
-            statusItem.setCore(description: "disconnected · \(reason)")
-        case .idle:
-            statusItem.setCore(description: "idle")
-        }
-        if let supervisor, let store, store.supervisorState != nil {
-            switch supervisor.state {
-            case .crashed(let failures): statusItem.setCore(description: "crashed \(failures)× · restart from the panel")
-            case .backingOff(let failures, let delay): statusItem.setCore(description: "exited (\(failures)×), restarting in \(String(format: "%.1f", delay)) s")
-            default: break
-            }
-        }
+        statusItem.setCore(description: StatusMenuLines.monitor(core.connection, hasState: core.state != nil,
+                                                                supervisor: store?.supervisorState))
         let live = core.isLive
         if rosterChanged, live { askAnnouncer.note(core.asks) }
         if wasLive, !live { events?.reset() }
@@ -1850,6 +1833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Self.statusMeter(for: provider, core: store.core, document: document, now: now)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
+        statusItem.setUsageLines(StatusMenuLines.usage(shown, live: store.isLive, now: now))
         statusItem.dotState = dotState()
     }
 
@@ -2007,8 +1991,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let core, let screenBar else { return }
         if core.isLive, let surface = core.lights?.screenBar, !surface.program.isEmpty {
             screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor, stripTransfer: surface.stripTransfer, sourceLedCount: surface.sourceLedCount)
-            let why = surface.why.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""
-            let description = "monitor" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
+            let description = StatusMenuLines.lights(live: true, explanation: store?.lightExplanation, offline: nil,
+                                                      refused: screenBar.lastRejection != nil, notes: lightsNotes(screenBar))
             if description != lastLightsSource {
                 lastLightsSource = description
                 statusItem?.setFeed(description: description)
@@ -2018,14 +2002,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// " · still under Reduce Motion · following Alcove": why the band is
+    /// "still under Reduce Motion", "following Alcove": why the band is
     /// not moving or what it is tracking, for the status menu's lights
     /// line. Render-path detail (frame counts) stays in the log.
-    private func lightsSuffix(_ screenBar: ScreenBarController) -> String {
-        var suffix = ""
-        if let note = screenBar.menuMotionNote { suffix += " · \(note)" }
-        if screenBar.capsule != nil { suffix += " · following Alcove" }
-        return suffix
+    private func lightsNotes(_ screenBar: ScreenBarController) -> [String] {
+        var notes: [String] = []
+        if let note = screenBar.menuMotionNote { notes.append(note) }
+        if screenBar.capsule != nil { notes.append("following Alcove") }
+        return notes
     }
 
     /// Puts the last file-feed program back on the bar (startup, or the
@@ -2038,7 +2022,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.apply(programText: last.text, anchorEpoch: last.anchor,
                         sourceLedCount: last.sourceLedCount)
         ScreenBarLiveStatus.shared.noteOfflineFeed(last.source)
-        let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
+        let description = StatusMenuLines.lights(live: false, explanation: nil,
+                                                  offline: ScreenBarSourceLine.OfflineFeed(last.source),
+                                                  refused: screenBar.lastRejection != nil, notes: lightsNotes(screenBar))
         if description != lastLightsSource {
             lastLightsSource = description
             statusItem?.setFeed(description: description)

@@ -48,6 +48,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private let detailItem = NSMenuItem()
     private let feedItem = NSMenuItem()
     private let coreItem = NSMenuItem()
+    /// One line per metered provider, under the lights line.
+    private(set) var usageItems: [NSMenuItem] = []
     private var lastCoreDescription: String?
     private let snoozedItem = NSMenuItem()
     private let escalationItem = NSMenuItem()
@@ -221,8 +223,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         menu.autoenablesItems = false
         menu.delegate = self
         update(state: .idle, detail: "Starting")
-        setFeed(description: "resolving")
-        setCore(description: "connecting")
+        setFeed(description: StatusMenuLines.lightsStarting)
+        setCore(description: StatusMenuLines.monitor(.connecting(attempt: 1), hasState: false))
     }
 
     /// Fires when the status item's menu opens — the app uses it to poke
@@ -937,17 +939,43 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
+    /// The lights line, whole (`StatusMenuLines.lights`).
     func setFeed(description: String) {
-        feedItem.attributedTitle = NSAttributedString(string: "Lights: \(description)", attributes: [
-            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-        ])
+        feedItem.attributedTitle = Self.infoLine(description)
     }
 
+    /// The monitor line, whole (`StatusMenuLines.monitor`).
     func setCore(description: String) {
         guard description != lastCoreDescription else { return }
         lastCoreDescription = description
-        coreItem.attributedTitle = NSAttributedString(string: "Monitor: \(description)", attributes: [
+        coreItem.attributedTitle = Self.infoLine(description)
+    }
+
+    /// The menu's usage lines, one per metered provider, below the lights
+    /// line. The same figures the meters draw, in words a screen reader and
+    /// the keyboard can reach.
+    func setUsageLines(_ lines: [String]) {
+        guard lines != usageItems.map(\.title) else { return }
+        for item in usageItems { menu.removeItem(item) }
+        usageItems = lines.map { line in
+            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            item.attributedTitle = NSAttributedString(string: line, attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+            return item
+        }
+        var index = menu.index(of: feedItem) + 1
+        for item in usageItems {
+            menu.insertItem(item, at: index)
+            index += 1
+        }
+    }
+
+    /// The menu's status lines, as text that is not a button.
+    private static func infoLine(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.tertiaryLabelColor,
         ])

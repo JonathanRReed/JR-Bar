@@ -3,8 +3,7 @@
     "error-words: : \\(error)\"": 1
   },
   "app/Sources/JRBarApp/AppDelegate.swift": {
-    "error-words: : \\(error)\"": 1,
-    "monitor-wording: disconnected \u00b7": 1
+    "error-words: : \\(error)\"": 1
   },
   "app/Sources/JRBarApp/AskAnswerViews.swift": {
     "animation: duration: 1": 1,
@@ -22,7 +21,6 @@
     "font: .system(size: 12.5": 1,
     "font: .system(size: 18": 1,
     "font: .system(size: 30": 3,
-    "icon-label: Image(systemName:) button without accessibilityLabel": 3,
     "radius: cornerRadius: 18": 1,
     "radius: cornerRadius: 30": 2,
     "radius: cornerRadius: 5": 1,
@@ -47,14 +45,8 @@
   "app/Sources/JRBarApp/DotRoleControls.swift": {
     "radius: cornerRadius: 7": 2
   },
-  "app/Sources/JRBarApp/EffectStudioMoments.swift": {
-    "icon-label: Image(systemName:) button without accessibilityLabel": 2
-  },
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
     "font: .system(size: 13": 2
-  },
-  "app/Sources/JRBarApp/EffectStudioView.swift": {
-    "icon-label: Image(systemName:) button without accessibilityLabel": 2
   },
   "app/Sources/JRBarApp/HistoryView.swift": {
     "radius: cornerRadius: 7": 1
@@ -136,13 +128,6 @@
     "radius: cornerRadius: 7": 1,
     "radius: cornerRadius: 9": 1
   },
-  "app/Sources/JRBarApp/PanelStore+Composition.swift": {
-    "error-words: toast: error.localizedDescription": 1
-  },
-  "app/Sources/JRBarApp/PanelStore.swift": {
-    "error-words: .message ?? reply.error?.code": 3,
-    "error-words: toast: error.localizedDescription": 1
-  },
   "app/Sources/JRBarApp/ScreenBarPeek.swift": {
     "font: .system(size: 11": 3,
     "font: .system(size: 12": 1,
@@ -178,9 +163,6 @@
     "font: .system(size: 11.5": 1,
     "radius: cornerRadius: 4.5": 2,
     "radius: cornerRadius: 7": 2
-  },
-  "app/Sources/JRBarApp/StatusItemController.swift": {
-    "monitor-wording: \"Monitor:": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumAmbient.swift": {
     "font: .system(size: 14": 1,
@@ -686,9 +668,6 @@
     "font: .system(size: 13": 1,
     "radius: cornerRadius: 5": 2
   },
-  "app/Sources/JRBarApp/Utilities/Dock/DockUtilityCard.swift": {
-    "icon-label: Image(systemName:) button without accessibilityLabel": 1
-  },
   "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarBar.swift": {
     "animation: duration: 0.08": 1,
     "animation: duration: 0.12": 1,
@@ -731,7 +710,6 @@
     "semantic-font: .font(.caption": 1
   },
   "app/Sources/JRBarApp/Utilities/MenuBar/MenuBarUtilityCard.swift": {
-    "icon-label: Image(systemName:) button without accessibilityLabel": 5,
     "semantic-font: .font(.callout": 10,
     "semantic-font: .font(.caption": 5,
     "semantic-font: .font(.subheadline": 1
