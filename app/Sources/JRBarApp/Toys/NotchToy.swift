@@ -1427,7 +1427,7 @@ final class NotchToy: Toy {
         let homes = sessionHomes(summary)
         if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
         cardModel.workingCount = summary.working
-        cardModel.meters = settings.showUsage ? NotchIsland.meters(core.state?.usage) : []
+        cardModel.meters = settings.showUsage ? UsageCenterStore.notchMeters(core: core, now: Date()) : []
     }
 
     /// Where each live local session works — the shelf gathers its files
@@ -2521,7 +2521,7 @@ final class NotchToy: Toy {
             notch: settings,
             summary: summary,
             asks: core.asks,
-            meters: settings.showUsage ? NotchIsland.meters(core.state?.usage) : [],
+            meters: settings.showUsage ? UsageCenterStore.notchMeters(core: core, now: Date()) : [],
             focus: core.focus,
             settingsGeneration: core.settings?.generation,
             screenBarShown: screenBarShown(),

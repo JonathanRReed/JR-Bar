@@ -29,7 +29,8 @@ public struct UsageGaugeReading: Equatable, Sendable {
     private let timestamp: Double
 
     public init(window: CoreUsageWindow, provider: CoreProviderUsage, now: Double, connected: Bool = true,
-                locale: Locale = .current, timeZone: TimeZone = .current, forecast: UsageForecast? = nil) {
+                locale: Locale = .current, timeZone: TimeZone = .current, forecast: UsageForecast? = nil,
+                abbreviatesMinutes: Bool = false) {
         timestamp = now
         id = window.id
         title = window.name
@@ -51,7 +52,7 @@ public struct UsageGaugeReading: Equatable, Sendable {
         case .runsOut(let at)?:
             if at - now < 3600 {
                 let minutes = max(1, Int(ceil(max(0, at - now) / 60)))
-                footnote = "Runs out in \(minutes) min"
+                footnote = "Runs out in \(minutes)\(abbreviatesMinutes ? "m" : " min")"
             } else {
                 let formatter = DateFormatter()
                 formatter.locale = locale

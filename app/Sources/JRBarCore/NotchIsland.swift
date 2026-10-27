@@ -135,10 +135,13 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
     public var stale: Bool
     /// All supplied windows and their reading time, retained for the card.
     public var usage: CoreProviderUsage?
+    /// The same session-aware forecast the panel and Usage Center read.
+    public var forecast: UsageForecast?
 
     public init(id: String, provider: String, window: String, percent: Double?,
                 resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false,
-                fix: String? = nil, stale: Bool = false, usage: CoreProviderUsage? = nil) {
+                fix: String? = nil, stale: Bool = false, usage: CoreProviderUsage? = nil,
+                forecast: UsageForecast? = nil) {
         self.id = id
         self.provider = provider
         self.window = window
@@ -149,6 +152,7 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
         self.fix = fix
         self.stale = stale
         self.usage = usage
+        self.forecast = forecast
     }
 
     /// `42%`, or `—` when the provider stated no number.

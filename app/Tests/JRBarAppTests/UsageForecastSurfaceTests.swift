@@ -10,6 +10,14 @@ import Testing
 struct UsageForecastSurfaceTests {
     static let stamp = 1_800_000_000.0
 
+    static func notchModel() -> NotchCardModel {
+        let power = AlcovePowerState(hasBattery: true, onAC: true, charging: false, percent: 100, fullyCharged: true)
+        let timers = ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-forecast-timers-\(UUID().uuidString).json"), schedulingEnabled: false)
+        let tray = ShelfTrayModel(defaults: ScratchDefaults.open(ScratchDefaults.suiteName("forecast-notch")))
+        return NotchCardModel(timers: timers, tray: tray, utility: ShelfUtilityModel(power: power), runtimeEnabled: false)
+    }
+
     static func fixture(_ state: String, providerID: String = "claude") -> (PanelStore, UsageCenterStore, CoreProviderUsage) {
         let exhausted = state == "used up"
         var provider = CoreProviderUsage(id: providerID, windows: [
@@ -36,12 +44,24 @@ struct UsageForecastSurfaceTests {
     }
 
     @Test(arguments: ["runs out", "used up", "comfortable", "no pace yet", "held idle", "stale", "guarded"])
-    func bothViewsUseTheSessionAwareForecast(_ state: String) async throws {
+    func allThreeViewsUseTheSessionAwareForecast(_ state: String) async throws {
         let (panel, store, provider) = Self.fixture(state)
         let window = try #require(provider.windows.first)
         let row = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider)
         #expect(row.onOpen != nil)
         let reading = row.reading(for: window)
+        let meter = try #require(UsageCenterStore.notchMeters(core: panel.core, now: panel.now).first)
+        let caption = NotchMeterCaption(meter: meter, now: panel.now)
+        #expect(meter.forecast == store.forecast(for: provider, window: window))
+        #expect(caption.forecast == reading.forecast)
+        #expect(caption.tone == reading.captionTone)
+        if ["runs out", "used up"].contains(state) {
+            #expect(caption.text == reading.footnote)
+            #expect(caption.help.contains(try #require(caption.reset)))
+        } else {
+            #expect(caption.text == PanelStore.countdown(to: window.resetsAt, now: panel.now, fix: provider.staleFix))
+            #expect(caption.tone == .secondary)
+        }
         let detail = UsageProviderDetail(provider: provider, store: store, showCost: true)
         let inspection = try #require(detail.inspections.first)
         #expect(detail.quotaRow.onInspect != nil)
@@ -102,6 +122,9 @@ struct UsageForecastSurfaceTests {
         #expect(shownRows[window.id] == reading, "The panel must render its forecast reading")
         #expect(shownForecasts[window.id + ".verdict"] == inspection.displayForecast, "Usage Center must render its verdict")
         #expect(shownForecasts[window.id + ".headline"] == inspection.displayForecast, "Usage Center must render its forecast sentence")
+        let card = NotchCardView(model: Self.notchModel(), style: .island, width: 320)
+        let shownCaptions = try await evidence(NotchMeterCaptionEvidence.self, view: card.meterRow(meter, now: panel.now))
+        #expect(shownCaptions[meter.id] == caption.text, "The notch must render the same verdict")
         // A secondary window never borrows the short window's run-out.
         let week = try #require(provider.windows.last)
         #expect(row.reading(for: week).captionTone == .secondary)
@@ -148,6 +171,56 @@ struct UsageForecastSurfaceTests {
                 }
             }
         }
+    }
+
+    @Test func notchCaptionFitsTheExistingRow() throws {
+        let (panel, _, original) = Self.fixture("runs out")
+        var provider = original
+        let at = DateComponents(calendar: Calendar(identifier: .gregorian), timeZone: TimeZone.current,
+            year: 2027, month: 1, day: 15, hour: 12, minute: 45).date!.timeIntervalSince1970
+        panel.now = Date(timeIntervalSince1970: at - 2 * 3600)
+        provider.windows[0].resetsAt = at + 2 * 3600
+        provider.forecast = CoreUsageForecast(exhaustsAt: at, pace: "ahead", ratePctPerHour: 15)
+        panel.core.apply(.state(CoreState(sessions: panel.core.sessions, usage: CoreUsage(providers: [provider]))))
+        let meter = try #require(UsageCenterStore.notchMeters(core: panel.core, now: panel.now).first)
+        let caption = NotchMeterCaption(meter: meter, now: panel.now, locale: Locale(identifier: "en_US"))
+        #expect(caption.text?.replacingOccurrences(of: "\u{202F}", with: " ") == "Runs out 12:45 PM")
+        var baseline = meter
+        baseline.forecast = nil
+        let card = NotchCardView(model: Self.notchModel(), style: .island, width: 320)
+        for width: CGFloat in [248, 272, 288, 348] {
+            let before = NSHostingView(rootView: card.meterRow(baseline, now: panel.now).frame(maxWidth: width)
+                .fixedSize(horizontal: false, vertical: true))
+            let after = NSHostingView(rootView: card.meterRow(meter, now: panel.now).frame(maxWidth: width)
+                .fixedSize(horizontal: false, vertical: true))
+            #expect(after.fittingSize.height == before.fittingSize.height)
+            #expect(after.fittingSize.width <= width)
+            if before.fittingSize.width == width {
+                #expect(after.fittingSize.width == before.fittingSize.width)
+            }
+        }
+        provider.windows[0].forecast = CoreUsageForecast(exhaustsAt: at - 80 * 60, pace: "ahead", ratePctPerHour: 45)
+        panel.core.apply(.state(CoreState(sessions: panel.core.sessions, usage: CoreUsage(providers: [provider]))))
+        let soon = try #require(UsageCenterStore.notchMeters(core: panel.core, now: panel.now).first)
+        #expect(NotchMeterCaption(meter: soon, now: panel.now).text == "Runs out in 40m")
+    }
+
+    @Test func notchUsageRemainsOptional() throws {
+        let (panel, _, _) = Self.fixture("runs out")
+        var state = ToysState()
+        state.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true, showUsage: false)
+        let owner = ToysStore(core: panel.core, settings: SettingsStore(core: panel.core), state: state,
+            cardModel: Self.notchModel(), notchRuntimeEnabled: false)
+        let toy = try #require(owner.notch)
+        toy.islandVisible = true
+        toy.noteInputsChanged()
+        #expect(toy.reconcileInputs.meters.isEmpty)
+        owner.state.notch.showUsage = true
+        toy.noteInputsChanged()
+        #expect(!toy.reconcileInputs.meters.isEmpty)
+        owner.state.notch.showUsage = false
+        toy.noteInputsChanged()
+        #expect(toy.reconcileInputs.meters.isEmpty)
     }
 
     @Test func unavailableReadingsNeverPromiseARunOut() throws {

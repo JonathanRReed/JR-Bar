@@ -863,6 +863,16 @@ final class UsageCenterStore {
         Self.forecast(for: provider, window: window, core: core, now: now)
     }
 
+    static func notchMeters(core: CoreModel, now: Date) -> [NotchIslandMeter] {
+        NotchIsland.meters(core.state?.usage).map { meter in
+            var result = meter
+            if let provider = meter.usage, let window = provider.headlineWindow {
+                result.forecast = forecast(for: provider, window: window, core: core, now: now)
+            }
+            return result
+        }
+    }
+
     /// The forecast every usage surface reads: the window's own daemon
     /// forecast (else the provider's, else a local fit), then made aware
     /// of what is running — a pace with no agent working here holds

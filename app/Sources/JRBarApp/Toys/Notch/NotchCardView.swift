@@ -1213,8 +1213,9 @@ struct NotchCardView: View {
     /// — with the reset countdown the ear's drain arc only hints at (a
     /// broken source's fix once the reset is past), and the status
     /// feed's incident mark when the vendor is having a day.
-    private func meterRow(_ meter: NotchIslandMeter) -> some View {
+    func meterRow(_ meter: NotchIslandMeter, now: Date = Date()) -> some View {
         let accent = NotchProviderTile.style(for: meter.provider).accent
+        let caption = NotchMeterCaption(meter: meter, now: now)
         return HStack(spacing: 7) {
             Text(NotchProviderTile.style(for: meter.provider).name)
                 .font(.system(size: 11.5, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
@@ -1226,12 +1227,17 @@ struct NotchCardView: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule(style: .continuous).fill(style.chipFaint))
-            if let countdown = PanelStore.countdown(to: meter.resetsAt, now: Date(), fix: meter.fix) {
+            if let countdown = caption.text {
                 Text(countdown)
                     .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
-                    .foregroundStyle(style.faintColor)
+                    .foregroundStyle(caption.color(fallback: style.faintColor))
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
+                    .help(caption.help)
+                    .accessibilityLabel(caption.help.isEmpty ? countdown : caption.help)
+                    .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: countdown])
             }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -1251,6 +1257,7 @@ struct NotchCardView: View {
                 .frame(width: 34, alignment: .trailing)
         }
         .contentShape(Rectangle())
+        .help(caption.help)
         .contextMenu {
             // A timer set to the window's own reset — "tell me when I
             // can go again" without watching a countdown.

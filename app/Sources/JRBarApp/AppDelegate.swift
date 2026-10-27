@@ -380,8 +380,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             NotchIsland.summarize(self?.core?.sessions ?? []).rows
         }
         notchCard.meters = { [weak self] in
-            guard self?.toysStore?.state.notch.showUsage ?? true else { return [] }
-            return NotchIsland.meters(self?.core?.state?.usage)
+            guard self?.toysStore?.state.notch.showUsage ?? true, let core = self?.core else { return [] }
+            return UsageCenterStore.notchMeters(core: core, now: Date())
         }
         notchCard.anchor = { [weak self] in
             self?.screenBar?.bandScreenRect
