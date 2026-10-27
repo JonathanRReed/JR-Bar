@@ -10,6 +10,12 @@ struct NotchMeterCaptionFitTests {
     nonisolated static let states = ["runs out", "imminent", "used up", "comfortable", "no pace yet",
         "held idle", "stale", "guarded", "reset passed", "source fix", "no reset"]
 
+    static var longestProviders: [String] {
+        ProviderStyle.table.values.sorted {
+            Self.textWidth($0.name, size: 11.5, weight: .medium) > Self.textWidth($1.name, size: 11.5, weight: .medium)
+        }.prefix(3).map(\.id)
+    }
+
     @Test(arguments: Set(ProviderID.aliases.values).sorted(), states)
     func everyProviderAndState(provider: String, state: String) async throws {
         let (meter, now) = try Self.makeMeter(provider: provider, state: state)
@@ -18,10 +24,7 @@ struct NotchMeterCaptionFitTests {
 
     @Test(arguments: ["runs out", "imminent", "comfortable", "mixed kinds", "mixed run outs", "unequal countdowns", "incident"])
     func visibleRowsShareTheLongestFittingForm(state: String) async throws {
-        let longest = ProviderStyle.table.values.sorted {
-            Self.textWidth($0.name, size: 11.5, weight: .medium) > Self.textWidth($1.name, size: 11.5, weight: .medium)
-        }.prefix(3).map(\.id)
-        for providers in [["claude", "codex"], ["claude", "codex", "hermes"], longest] {
+        for providers in [["claude", "codex"], ["claude", "codex", "hermes"], Self.longestProviders] {
             var meters: [NotchIslandMeter] = []
             var now = Date(timeIntervalSince1970: UsageForecastSurfaceTests.stamp)
             for (index, provider) in providers.enumerated() {
@@ -90,6 +93,89 @@ struct NotchMeterCaptionFitTests {
         }
         #expect(updates > settledUpdates)
         #expect(!window.isVisible)
+    }
+
+    @Test(arguments: [false, true])
+    func renderedCaptionsHaveTheSameTenPointGlyphSize(dark: Bool) async throws {
+        let longest = Self.longestProviders
+        for providers in [["claude", "codex"], ["claude", "codex", "hermes"], Array(longest.prefix(2)), longest] {
+            let fixtures = try providers.map { try Self.makeMeter(provider: $0, state: "runs out") }
+            let meters = fixtures.map { $0.0 }
+            let now = try #require(fixtures.first?.1)
+            let stage = NotchStageModel()
+            stage.noteFace(expanded: true, settled: true)
+            #expect(stage.sheet == .settled)
+            var captions: [String: String] = [:]
+            var fonts: [String: CGFloat] = [:]
+            let card = NotchCardView(model: UsageForecastSurfaceTests.notchModel(), style: .island, width: 320)
+            let rows = card.meterRows(meters, now: now)
+                .frame(width: 288)
+                .modifier(NotchSheetReveal())
+                .background(.black)
+                .environment(\.colorScheme, dark ? .dark : .light)
+                .environment(\.notchStage, stage)
+                .onPreferenceChange(NotchMeterCaptionEvidence.self) { captions = $0 }
+                .onPreferenceChange(NotchMeterCaptionFontEvidence.self) { fonts = $0 }
+            let host = NSHostingView(rootView: rows)
+            let size = CGSize(width: 288, height: CGFloat(meters.count) * 24)
+            let window = NSWindow(contentRect: CGRect(x: -20000, y: -20000, width: size.width, height: size.height),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.frame = CGRect(origin: .zero, size: size)
+            defer { window.contentView = nil; window.close() }
+            for _ in 0..<6 {
+                host.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                await drainMainQueue()
+            }
+            let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            bitmap.size = size
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            // Only the caption is orange to the left of the fixed bar/percent columns.
+            let glyphs = Self.captionGlyphBounds(bitmap, beforeX: 176 * 2)
+            #expect(!window.isVisible)
+            #expect(captions.count == meters.count)
+            #expect(Set(captions.values).count == 1)
+            #expect(fonts.values.allSatisfy { $0 == 10 }, "\(providers): selected fonts \(fonts)")
+            #expect(glyphs.count == meters.count, "\(providers): caption bounds \(glyphs)")
+            #expect(Set(glyphs.map(\.height)).count == 1, "\(providers): glyph heights \(glyphs)")
+            #expect(Set(glyphs.map(\.width)).count == 1, "\(providers): glyph widths \(glyphs)")
+            let text = try #require(captions.values.first)
+            let reference = try ProofRender.render(Text(text).font(.system(size: 10)).monospacedDigit()
+                .foregroundStyle(dark ? Color(red: 1, green: 159 / 255, blue: 10 / 255)
+                    : Color(red: 1, green: 149 / 255, blue: 0)).fixedSize().background(.black),
+                size: CGSize(width: 176, height: 24), dark: dark, settle: 0)
+            let expected = try #require(Self.captionGlyphBounds(reference, beforeX: reference.pixelsWide).first)
+            for glyph in glyphs {
+                #expect(glyph.size == expected.size, "\(providers): rendered \(glyph.size), 10 pt reference \(expected.size)")
+            }
+        }
+    }
+
+    static func captionGlyphBounds(_ bitmap: NSBitmapImageRep, beforeX: Int) -> [CGRect] {
+        var result: [CGRect] = []
+        var bounds: CGRect?
+        for y in 0..<bitmap.pixelsHigh {
+            var xs: [Int] = []
+            for x in 0..<min(beforeX, bitmap.pixelsWide) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.redComponent > 0.8, color.greenComponent > 0.45, color.greenComponent < 0.75,
+                   color.blueComponent < 0.15, color.alphaComponent > 0.8 { xs.append(x) }
+            }
+            if let first = xs.first, let last = xs.last {
+                let line = CGRect(x: first, y: y, width: last - first + 1, height: 1)
+                bounds = bounds.map { $0.union(line) } ?? line
+            } else if let finished = bounds {
+                result.append(finished)
+                bounds = nil
+            }
+        }
+        if let bounds { result.append(bounds) }
+        return result
     }
 
     private static func makeMeter(provider: String, state: String) throws -> (NotchIslandMeter, Date) {
@@ -175,7 +261,7 @@ struct NotchMeterCaptionFitTests {
                     #expect(caption.help.contains(try #require(caption.text)))
                     let shared = try #require(sharedForms[caption.kind])
                     #expect(shown == caption.forms[shared])
-                    #expect(Self.textWidth(shown, size: 10) > available + 0.5 || font == 10)
+                    #expect(font == 10)
                     #expect(text.fittingSize.width <= available + 0.5,
                         "\(meter.provider), row \(width): '\(shown)' needs \(text.fittingSize.width), slot has \(available)")
                 } else {

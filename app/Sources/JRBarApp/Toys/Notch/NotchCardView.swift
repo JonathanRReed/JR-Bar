@@ -1227,15 +1227,23 @@ struct NotchCardView: View {
                 .font(.system(size: 11.5, weight: .medium)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.titleColor.opacity(0.88))
                 .lineLimit(1)
+                .layoutPriority(1)
             Text(meter.window)
                 .font(.system(size: 9.5, weight: .semibold, design: .rounded)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                 .foregroundStyle(style.subColor)
+                .fixedSize()
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule(style: .continuous).fill(style.chipFaint))
             if let countdown = caption.text {
-                Text(countdown)
-                    .opacity(0)
+                ZStack(alignment: .leading) {
+                    Text(countdown)
+                    // The shortest wording still needs its full 10 pt width.
+                    // A long provider name must not shrink the caption.
+                    Text(caption.forms.last ?? countdown)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                    .hidden()
                     .accessibilityHidden(true)
                     .overlay(alignment: .leading) {
                         ViewThatFits(in: .horizontal) {
@@ -1246,23 +1254,13 @@ struct NotchCardView: View {
                                     .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: form])
                                     .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: 10])
                             }
-                            if let shortest = caption.forms.last {
-                                ForEach([CGFloat(9), 8, 7, 6, 5, 4, 3, 2, 1], id: \.self) { size in
-                                    Text(shortest)
-                                        .font(.system(size: size))
-                                        .monospacedDigit()
-                                        .fixedSize(horizontal: true, vertical: false)
-                                        .accessibilityLabel(caption.help)
-                                        .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: shortest])
-                                        .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: size])
-                                }
-                            }
                         }
                     }
                     .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
                     .foregroundStyle(caption.color(fallback: style.faintColor))
                     .lineLimit(1)
+                    .minimumScaleFactor(1)
                     .layoutPriority(-1)
                     .help(caption.help)
                     .background(GeometryReader { geometry in
@@ -1296,7 +1294,7 @@ struct NotchCardView: View {
                     .foregroundStyle(.orange)
                     .help("The provider's status feed reports an incident")
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 0)
             NotchLevelBar(fraction: (meter.percent ?? 0) / 100, tint: accent,
                           track: style.chipFill, height: 5,
                           dimmed: meter.percent == nil, glows: style == .island)
