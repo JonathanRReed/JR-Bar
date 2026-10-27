@@ -68,8 +68,10 @@ final class HALPropertyListeners {
         for (key, token) in registrations where !desired.contains(key) {
             Self.contexts.setEnabled(token, false)
             let status = api.remove(key, Self.audioCallback, Self.cameraCallback, Self.pointer(token))
-            if status != noErr, reportedRemovals.insert(Object(key)).inserted { report(key, status) }
+            // A device that left took its listener with it: that removal is
+            // done, not failed, so only other statuses are reported.
             let gone = key.system == .audio ? kAudioHardwareBadObjectError : OSStatus(kCMIOHardwareBadObjectError)
+            if status != noErr, status != gone, reportedRemovals.insert(Object(key)).inserted { report(key, status) }
             if status == noErr || status == gone {
                 Self.contexts.remove(token)
                 registrations.removeValue(forKey: key)

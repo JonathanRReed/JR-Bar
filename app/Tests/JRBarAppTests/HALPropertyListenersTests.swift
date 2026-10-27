@@ -98,6 +98,17 @@ struct HALPropertyListenersTests {
         #expect(fake.live.isEmpty)
     }
 
+    @Test func aDeviceThatLeftIsReleasedWithoutAReport() {
+        let fake = Fake()
+        var failures: [OSStatus] = []
+        let listeners = HALPropertyListeners(api: fake.api, report: { _, status in failures.append(status) }) { _ in }
+        listeners.reconcile([Key(system: .audio, object: 157, selector: 1)])
+        fake.failure = kAudioHardwareBadObjectError
+        listeners.reconcile([])
+        #expect(failures.isEmpty)
+        #expect(listeners.count == 0)
+    }
+
     @Test func reusedProcessObjectReplacesItsRegistration() {
         let fake = Fake()
         let listeners = HALPropertyListeners(api: fake.api) { _ in }
