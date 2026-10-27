@@ -1088,7 +1088,15 @@ final class MenuBarUtility: Toy {
             MenuBarProfiles.migrateToDeltas(&draft)
             if legacy {
                 draft.sections = [:]
-                draft.concealedApps = [:]
+                // Keep explicit app picks before retiring the cover-era map.
+                // The divider cannot move them, so retain them as placement
+                // suggestions as well as in the saved record.
+                let picks = supported.filter { $0.value != .shown }.keys
+                if draft.curation.positionModel < MenuBarCuration.currentPositionModel {
+                    draft.curation.dividerSuggestions = Array(
+                        Set(draft.curation.dividerSuggestions).union(picks)).sorted()
+                }
+                draft.concealedApps = supported
                 draft.layoutModel = MenuBarSettings.currentLayoutModel
             } else if moved {
                 draft.concealedApps = supported
@@ -1323,6 +1331,7 @@ final class MenuBarUtility: Toy {
         inputs.overlay = activeOverlay
         inputs.overlayNote = overlayNote
         inputs.accessibilityGranted = accessibilityGranted
+        inputs.inventoryComplete = inventoryState == .complete
         inputs.rivals = runningRivals.map(\.name)
         inputs.dividerHidden = dividerHiddenCount
         inputs.revealed = hider.revealed.contains(.hidden) || hider.revealed.contains(.alwaysHidden)

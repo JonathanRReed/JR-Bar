@@ -40,6 +40,14 @@ struct MenuBarHidingStatusTests {
         #expect(status.offersShowEverything)
     }
 
+    @Test("an incomplete listing cannot reuse a green verdict for its old counts")
+    func incompleteInventory() {
+        let status = assess { $0.inventoryComplete = false }
+        #expect(status.tone == .warning)
+        #expect(status.headline == "Enabled, hiding is unverified")
+        #expect(status.detail.contains("last complete reading"))
+    }
+
     @Test("missing evidence and pending recovery never produce a green hiding claim")
     func checking() {
         var inputs = MenuBarHidingStatus.Inputs()
@@ -104,19 +112,19 @@ struct MenuBarHidingStatusTests {
     @Test("a verified empty side keeps its positioning guide, while a stuck divider takes precedence")
     func emptySideRecovery() {
         let verified = assess { $0.dividerHidden = 0; $0.iconLeftmost = true }
-        #expect(verified.headline == "Nothing is hidden yet")
+        #expect(verified.headline == "No hidden items reported")
         #expect(verified.detail.contains("Hold ⌘ and drag the icon right"))
         let stuck = assess { $0.dividerHidden = 0; $0.recovery = .stuck(.offRow) }
         #expect(stuck.headline == "Divider needs checking")
         #expect(stuck.tone == .warning)
     }
 
-    @Test("with nothing left of the icon the page says how to put something there, not that it is broken")
+    @Test("zero reported hidden items keeps the placement guide and Show everything")
     func nothingHidden() {
         let status = assess { $0.dividerHidden = 0 }
         #expect(status.tone == .note)
-        #expect(status.headline == "Nothing is hidden yet")
-        #expect(!status.offersShowEverything)
+        #expect(status.headline == "No hidden items reported")
+        #expect(status.offersShowEverything)
     }
 
     @Test("off says every item shows and the picks are kept")
@@ -255,6 +263,7 @@ struct MenuBarHidingStatusTests {
             inputs.enabled = true
             inputs.engine = .divider
             inputs.accessibilityGranted = true
+            inputs.inventoryComplete = true
             inputs.recovery = .clear
             let status = MenuBarHidingStatus.assess(inputs)
             #expect(status.tone == (revealing ? .note : .ok))
