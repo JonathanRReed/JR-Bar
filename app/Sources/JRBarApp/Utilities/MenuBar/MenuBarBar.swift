@@ -168,7 +168,7 @@ enum MenuBarBarKeys {
         let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return items }
         return items.filter { item in
-            let haystack = item.ownerName + " " + (item.title ?? "") + " " + (item.searchName ?? "")
+            let haystack = item.displayName + " " + item.ownerName + " " + (item.title ?? "") + " " + (item.searchName ?? "")
             return words.allSatisfy { haystack.localizedStandardContains($0) }
         }
     }
@@ -398,8 +398,8 @@ struct MenuBarEarFeed: Equatable {
         var width: CGFloat { MenuBarBarLayout.tileWidth(glyphWidth: face?.width) }
         /// The tooltip's and VoiceOver's name for it.
         var name: String {
-            guard let title = item.title, !title.isEmpty else { return item.ownerName }
-            return "\(item.ownerName) · \(title)"
+            guard let title = item.title, !title.isEmpty else { return item.displayName }
+            return "\(item.displayName) · \(title)"
         }
     }
 
@@ -434,9 +434,9 @@ struct MenuBarEarFeed: Equatable {
         var words: String {
             switch kind {
             case .newcomer:
-                return "\(tile.item.ownerName) is new in the menu bar"
+                return "\(tile.item.displayName) is new in the menu bar"
             case .update:
-                return "\(tile.item.ownerName) changed while tucked away"
+                return "\(tile.item.displayName) changed while tucked away"
                     + (detail.map { $0.isEmpty ? "" : ": \($0)" } ?? "")
             }
         }
@@ -894,8 +894,8 @@ struct MenuBarBarView: View {
     }
 
     private func itemLabel(for item: MenuBarItem) -> String {
-        guard let title = item.title, !title.isEmpty else { return item.ownerName }
-        return "\(item.ownerName) · \(title)"
+        guard let title = item.title, !title.isEmpty else { return item.displayName }
+        return "\(item.displayName) · \(title)"
     }
 
     /// The tile face, best first: the live capture of an item standing
@@ -971,7 +971,7 @@ struct MenuBarBarView: View {
     }
 
     private func tooltip(for item: MenuBarItem) -> String {
-        var name = item.ownerName
+        var name = item.displayName
         if let title = item.title { name += " · \(title)" }
         return name + " — click to open, ⌘-click to keep it out, drag it onto the bar right of the icon to show it, right-click to move it"
     }
@@ -1404,7 +1404,7 @@ struct MenuBarAppFace: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
         } else {
-            Text(String(item.ownerName.prefix(1)).uppercased())
+            Text(String(item.displayName.prefix(1)).uppercased())
                 .font(.system(size: size * 0.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)

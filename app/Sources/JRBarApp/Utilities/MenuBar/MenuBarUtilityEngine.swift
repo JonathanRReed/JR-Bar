@@ -52,7 +52,7 @@ extension MenuBarUtility {
             lastPlan.alwaysHidden.contains { $0.id == item.id } ? .alwaysHidden
             : lastPlan.hidden.contains { $0.id == item.id } ? .hidden : .shown
         guard current != section else { return }
-        let text = MenuBarPositionCopy.guide(name: item.ownerName, to: section, parked: parked)
+        let text = MenuBarPositionCopy.guide(name: item.displayName, to: section, parked: parked)
         if let presentDropNote {
             presentDropNote(text)
         } else {
@@ -108,15 +108,12 @@ extension MenuBarUtility {
         engineVersion += 1
     }
 
-    /// An app's name for a bundle identifier: what the bar calls it now,
-    /// else the running app's, else the identifier's last part.
+    /// Running apps already have display names; saved picks resolve in
+    /// the background, including apps that are installed but not running.
     func appName(for bundleID: String) -> String {
-        if let name = listedItems.first(where: { $0.bundleID == bundleID })?.ownerName, !name.isEmpty {
-            return name
-        }
         if let name = RunningApps.shared.apps.first(where: { $0.bundleID == bundleID })?.name,
-           !name.isEmpty { return name }
-        return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
+           !name.isEmpty { return MenuBarAppNames.displayName(name) }
+        return MenuBarAppNames.shared.name(for: bundleID)
     }
 
     /// Whether the divider's icon is the leftmost thing the bar draws of

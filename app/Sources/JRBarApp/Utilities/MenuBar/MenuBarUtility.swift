@@ -850,7 +850,7 @@ final class MenuBarUtility: Toy {
         Self.hideAllTargets(listedItems).map { item in
             MenuBarProfileSubject(
                 key: item.id,
-                title: item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName, item: item)
+                title: item.title.map { "\(item.displayName) · \($0)" } ?? item.displayName, item: item)
         }
     }
 

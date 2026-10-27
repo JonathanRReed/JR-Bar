@@ -32,7 +32,7 @@ enum MenuBarCombinedMenu {
     /// deeper section marked.
     nonisolated static func title(for item: MenuBarItem,
                                   section: MenuBarItemSection) -> String {
-        var title = item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName
+        var title = item.title.map { "\(item.displayName) · \($0)" } ?? item.displayName
         if section == .alwaysHidden { title += " — always hidden" }
         return title
     }
@@ -85,7 +85,7 @@ enum MenuBarCombinedMenu {
             guard seen.insert(key).inserted else { continue }
             let title = item.bundleID == nil
                 ? MenuBarCombinedMenu.title(for: item, section: .hidden)
-                : item.ownerName
+                : item.displayName
             rows.append(HideRow(itemID: item.id, title: title))
         }
         return Array(rows.sorted {

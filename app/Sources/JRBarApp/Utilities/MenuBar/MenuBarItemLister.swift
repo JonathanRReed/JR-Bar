@@ -15,6 +15,8 @@ struct MenuBarItem: Equatable, Sendable {
     let id: String
     let ownerPID: pid_t
     let ownerName: String
+    /// Presentation never falls back to a process slug or bundle id.
+    var displayName: String { MenuBarAppNames.displayName(ownerName) }
     /// The item's frame in Quartz screen coordinates (top-left origin).
     /// Items macOS has parked in its own overflow report a position
     /// below the row — they still list, and `AXPress` still reaches them.

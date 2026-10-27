@@ -393,7 +393,7 @@ struct MenuBarUtilityControls: View {
                     Image(nsImage: item.owner?.icon ?? NSImage())
                         .resizable()
                         .frame(width: 14, height: 14)
-                    Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
+                    Text(item.title.map { "\(item.displayName) · \($0)" } ?? item.displayName)
                         .font(.callout)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -405,7 +405,7 @@ struct MenuBarUtilityControls: View {
                     set: { utility.setSearchName($0, for: item) }))
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Search name for " +
-                        (item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName))
+                        (item.title.map { "\(item.displayName) · \($0)" } ?? item.displayName))
                     .disabled(utility.searchNameKey(for: item) == nil)
             }
             if utility.searchNameKey(for: item) == nil {

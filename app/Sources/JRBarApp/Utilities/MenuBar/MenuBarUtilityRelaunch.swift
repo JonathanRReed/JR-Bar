@@ -12,7 +12,7 @@ extension MenuBarUtility {
         for item in items where !item.isNativeOverflowControl && !MenuBarItemLister.isProtected(item) {
             guard let id = item.bundleID, !id.hasPrefix("com.apple."), !isOwnFamily(id),
                   seen.insert(id).inserted else { continue }
-            out.append((id, item.ownerName))
+            out.append((id, item.displayName))
         }
         return out.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

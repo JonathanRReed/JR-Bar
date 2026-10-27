@@ -83,9 +83,9 @@ enum MenuBarPositionDiff {
     nonisolated static func changes(before: MenuBarHidePlan, after: MenuBarHidePlan) -> [MenuBarPositionChange] {
         func sections(_ plan: MenuBarHidePlan) -> [String: (MenuBarItemSection, String)] {
             var out: [String: (MenuBarItemSection, String)] = [:]
-            for item in plan.shown { out[item.id] = (.shown, item.ownerName) }
-            for item in plan.hidden { out[item.id] = (.hidden, item.ownerName) }
-            for item in plan.alwaysHidden { out[item.id] = (.alwaysHidden, item.ownerName) }
+            for item in plan.shown { out[item.id] = (.shown, item.displayName) }
+            for item in plan.hidden { out[item.id] = (.hidden, item.displayName) }
+            for item in plan.alwaysHidden { out[item.id] = (.alwaysHidden, item.displayName) }
             return out
         }
         let was = sections(before), now = sections(after)

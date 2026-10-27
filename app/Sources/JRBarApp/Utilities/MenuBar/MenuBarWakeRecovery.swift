@@ -204,7 +204,7 @@ struct MenuBarWakeRecovery: Equatable, Sendable {
                 && item.bounds.intersects(row)
                 && !overflowFrames.contains { $0.intersection(item.bounds).width >= 4 }
                 && item.bounds.intersection(icon).width >= overlapSlack
-        }.map(\.ownerName)
+        }.map(\.displayName)
     }
 
     /// Whether the icon is the width that was written: its own width now

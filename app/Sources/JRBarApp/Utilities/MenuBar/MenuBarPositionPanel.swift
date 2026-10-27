@@ -33,7 +33,7 @@ struct MenuBarPositionContent: Equatable {
                       !MenuBarUtility.isOwnFamily(item.bundleID) else { continue }
                 let key = item.bundleID ?? item.id
                 guard seen.insert(key).inserted else { continue }
-                out.append(Entry(id: key, item: item, name: item.ownerName))
+                out.append(Entry(id: key, item: item, name: item.displayName))
             }
             return out
         }

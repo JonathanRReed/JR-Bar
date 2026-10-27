@@ -91,12 +91,12 @@ struct MenuBarItemShortcutRows: View {
                 ForEach(candidates) { candidate in
                     Button {
                         draft = candidate.target
-                        draftName = candidate.item.searchName ?? candidate.item.title ?? candidate.item.ownerName
+                        draftName = candidate.item.searchName ?? candidate.item.title ?? candidate.item.displayName
                     } label: {
                         HStack {
-                            Text(candidate.item.searchName ?? candidate.item.title ?? candidate.item.ownerName)
+                            Text(candidate.item.searchName ?? candidate.item.title ?? candidate.item.displayName)
                             Spacer()
-                            Text(candidate.item.ownerName).foregroundStyle(.secondary)
+                            Text(candidate.item.displayName).foregroundStyle(.secondary)
                             if case .soleItem = candidate.target.selector {
                                 Text("Only item").font(.caption).foregroundStyle(.secondary)
                             }
@@ -107,7 +107,7 @@ struct MenuBarItemShortcutRows: View {
                 ForEach(Array(unavailableItems.enumerated()), id: \.offset) { _, item in
                     Button {} label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(item.searchName ?? item.title ?? item.ownerName)
+                            Text(item.searchName ?? item.title ?? item.displayName)
                             Text(MenuBarItemHotkeys.selectionProblem(for: item, in: menuBar.listedItems))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

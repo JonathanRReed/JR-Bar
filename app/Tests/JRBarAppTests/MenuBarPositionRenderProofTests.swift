@@ -77,6 +77,24 @@ struct MenuBarPositionRenderProofTests {
         }
     }
 
+    @Test(.enabled(if: Self.enabled))
+    func savedAppNames() async throws {
+        let names = MenuBarAppNames()
+        names.lookup = { identity in
+            identity == "test.sample-writer" ? "Sample Writer" : "Sample Flow (not installed)"
+        }
+        for identity in ["test.sample-writer", "test.sample-flow"] {
+            _ = await names.resolvedName(for: identity)
+        }
+        let content = MenuBarSuggestionsContent.make(
+            suggestions: ["test.sample-writer", "test.sample-flow"], plan: MenuBarHidePlan()
+        ) { names.name(for: $0) }
+        for dark in [false, true] {
+            try Self.write(MenuBarSuggestionsPanel(content: content), named: "saved-app-names",
+                           dark: dark, size: CGSize(width: 560, height: 0))
+        }
+    }
+
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the suggestions PNGs"))
     func suggestions() throws {
         var plan = MenuBarHidePlan()

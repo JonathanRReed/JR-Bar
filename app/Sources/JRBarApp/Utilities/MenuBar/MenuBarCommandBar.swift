@@ -257,7 +257,7 @@ enum MenuBarCommands {
     nonisolated static func appRow(key: String, section: MenuBarItemSection,
                                    items: [MenuBarItem], split: Bool = false) -> MenuBarCommand {
         let first = items[0]
-        let name = first.ownerName
+        let name = first.displayName
         let ids = items.map(\.id)
         let titles = items.compactMap { $0.title?.isEmpty == false ? $0.title : nil }
         var subtitle: String?
