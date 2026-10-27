@@ -139,31 +139,13 @@ struct AwayBanner: View {
     @Bindable var store: HistoryStore
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "moon.stars.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color.accentColor.opacity(0.14)))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(summary.text).font(.system(size: 13, weight: .semibold))
-                    .lineLimit(2)
-                Text("Since \(HistoryStore.clock(summary.since)) · newer than your last visit here")
-                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
+        StatusBanner(summary.text, detail: "Since \(HistoryStore.clock(summary.since))") {
             if let first = summary.rows.first(where: { $0.kind == "asked" && store.isLiveSession($0.session) })
                 ?? summary.rows.first(where: { store.isLiveSession($0.session) }) {
                 Button("Open latest") { store.open(first) }
-                    .controlSize(.small)
             }
         }
-        .windowWell(padding: 12, tint: .accentColor)
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, JRBarTokens.Space.md).padding(.top, JRBarTokens.Space.md)
     }
 }
 

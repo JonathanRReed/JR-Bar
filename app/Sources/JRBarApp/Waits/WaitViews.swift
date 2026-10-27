@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -247,15 +248,9 @@ struct PaletteWaitNote: View {
     var body: some View {
         WaitStageReader(since: since) { stage in
             if stage.showsOrb {
-                HStack(spacing: 5) {
-                    ThinkingOrb(activity: .searching, tint: .secondary, size: 14)
-                        .accessibilityHidden(true)
-                    Text("Searching…")
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                .transition(.opacity)
-                .accessibilityElement(children: .combine)
+                StatusBanner("Searching…") {
+                    ThinkingOrb(activity: .searching, tint: .secondary, size: 14).accessibilityHidden(true)
+                }.transition(.opacity)
             }
         }
     }

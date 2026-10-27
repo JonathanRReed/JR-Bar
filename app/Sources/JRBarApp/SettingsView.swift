@@ -656,10 +656,7 @@ struct SectionNote: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        StatusBanner(detail: text)
     }
 }
 

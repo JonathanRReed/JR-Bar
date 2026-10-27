@@ -109,7 +109,6 @@ def test_wording_and_notch_exceptions_are_narrow():
     ("Overview/OverviewView.swift", "OverviewSnoozedTag"),
     ("Overview/OverviewStrips.swift", "OverviewCountPill"),
     ("Overview/OverviewInspector.swift", "OverviewStatePill"),
-    ("DemoAskPanel.swift", "DemoAskBadge"),
     ("Utilities/Dock/DockChrome.swift", "DockBadgePill"),
 ])
 def test_status_badges_use_the_shared_renderer(file, name):
@@ -118,3 +117,27 @@ def test_status_badges_use_the_shared_renderer(file, name):
     declaration = source.split("struct " + name + ":", 1)[1].split("\n}\n", 1)[0]
     assert "StatusBadge(" in declaration
     assert "Capsule()" not in declaration
+
+
+@pytest.mark.parametrize("file,name", [
+    ("WindowChrome.swift", "WindowEmptyState"),
+    ("WindowChrome.swift", "WindowNoticeRow"),
+    ("WindowChrome.swift", "WindowStatusCapsule"),
+    ("SettingsAtoms.swift", "SettingsBanner"),
+    ("SettingsAtoms.swift", "CardNote"),
+    ("SettingsView.swift", "SectionNote"),
+    ("UsageCenterView.swift", "UsageCenterNoticeView"),
+    ("UsageCenterView.swift", "ResetSaveNotice"),
+    ("ControlCenterView.swift", "DeckNotice"),
+    ("ControlCenterView.swift", "ConflictBanner"),
+    ("HistoryView.swift", "AwayBanner"),
+    ("LinkedSyncControls.swift", "LinkedDotNote"),
+    ("SettingsPagesB.swift", "EventKitAccessNote"),
+    ("SettingsSealViews.swift", "SettingsSealNoticeCard"),
+    ("Waits/WaitViews.swift", "PaletteWaitNote"),
+    ("Overview/OverviewView.swift", "OverviewEmptyState"),
+])
+def test_notices_use_the_shared_renderer(file, name):
+    root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
+    declaration = (root / file).read_text().split("struct " + name, 1)[1].split("\n}\n", 1)[0]
+    assert "StatusBanner(" in declaration or "WindowEmptyState(" in declaration

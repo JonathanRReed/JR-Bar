@@ -34,7 +34,6 @@
     "font-floor: .system(size: 9": 3,
     "font: .system(size: 12.5": 1,
     "font: .system(size: 18": 1,
-    "font: .system(size: 20": 1,
     "font: .system(size: 30": 3,
     "font: .system(size: 8": 1,
     "font: .system(size: 8.5": 1,
@@ -43,12 +42,12 @@
     "radius: cornerRadius: 30": 2,
     "radius: cornerRadius: 5": 1,
     "radius: cornerRadius: 8": 3,
-    "semantic-font: .font(.callout": 8,
-    "semantic-font: .font(.caption": 14,
+    "semantic-font: .font(.callout": 6,
+    "semantic-font: .font(.caption": 12,
     "semantic-font: .font(.caption2": 1,
     "semantic-font: .font(.headline": 2,
-    "semantic-font: .font(.title3": 4,
-    "semantic-small: .system(.caption": 2
+    "semantic-font: .font(.title3": 3,
+    "semantic-small: .system(.caption": 1
   },
   "app/Sources/JRBarApp/DeckRailController.swift": {
     "animation: duration: 0.15": 1,
@@ -125,10 +124,9 @@
     "font: .system(size: 10": 9,
     "font: .system(size: 10.5": 1,
     "font: .system(size: 11": 13,
-    "font: .system(size: 11.5": 2,
+    "font: .system(size: 11.5": 1,
     "font: .system(size: 12": 2,
-    "font: .system(size: 13": 2,
-    "font: .system(size: 15": 1,
+    "font: .system(size: 13": 1,
     "font: .system(size: 8": 1,
     "font: .system(size: 9": 4,
     "radius: cornerRadius: 7": 1
@@ -146,7 +144,7 @@
     "semantic-font: .font(.caption": 2
   },
   "app/Sources/JRBarApp/LinkedSyncControls.swift": {
-    "semantic-font: .font(.subheadline": 2
+    "semantic-font: .font(.subheadline": 1
   },
   "app/Sources/JRBarApp/NotchHUD.swift": {
     "font-floor: .system(size: 8": 1,
@@ -343,7 +341,7 @@
     "font-floor: .system(size: 9": 1,
     "font: .system(size: 9": 1,
     "semantic-font: .font(.headline": 2,
-    "semantic-font: .font(.subheadline": 5,
+    "semantic-font: .font(.subheadline": 4,
     "semantic-font: .font(.title3": 1
   },
   "app/Sources/JRBarApp/SettingsPagesA.swift": {
@@ -356,7 +354,7 @@
     "font: .system(size: 11": 2,
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2,
-    "semantic-font: .font(.callout": 14,
+    "semantic-font: .font(.callout": 12,
     "semantic-font: .font(.subheadline": 1,
     "semantic-font: .font(.title3": 1
   },
@@ -370,8 +368,7 @@
   },
   "app/Sources/JRBarApp/SettingsView.swift": {
     "elapsed-unit: \\(Int($0.rounded())) min": 1,
-    "semantic-font: .font(.caption": 2,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.caption": 2
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
@@ -862,8 +859,7 @@
     "radius: cornerRadius: 5.2": 1
   },
   "app/Sources/JRBarApp/Toys/NotchControlsView.swift": {
-    "semantic-font: .font(.callout": 2,
-    "semantic-font: .font(.subheadline": 1
+    "semantic-font: .font(.callout": 2
   },
   "app/Sources/JRBarApp/Toys/Toy.swift": {
     "animation: duration: 0.3": 1,
@@ -874,7 +870,6 @@
     "semantic-font: .font(.subheadline": 1
   },
   "app/Sources/JRBarApp/UsageCenterView.swift": {
-    "semantic-font: .font(.callout": 1,
     "semantic-font: .font(.caption": 4,
     "semantic-font: .font(.headline": 1
   },
@@ -999,13 +994,10 @@
     "semantic-font: .font(.subheadline": 1
   },
   "app/Sources/JRBarApp/WindowChrome.swift": {
-    "font: .system(size: 11": 3,
-    "font: .system(size: 11.5": 2,
-    "font: .system(size: 12": 3,
+    "font: .system(size: 11": 2,
+    "font: .system(size: 12": 1,
     "font: .system(size: 12.5": 1,
-    "font: .system(size: 13": 1,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 24": 1
+    "font: .system(size: 13": 1
   },
   "app/Sources/JRBarCore/KeepAwakeReading.swift": {
     "elapsed-unit: \\(hours) h": 1,

@@ -182,15 +182,7 @@ struct CardNote: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Image(systemName: symbol)
-                .foregroundStyle(tint)
-            Text(text)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.subheadline)
-        .padding(.vertical, 3)
+        StatusBanner(detail: text, kind: tint == Tone.failure.color ? .failure : .information)
     }
 }
 

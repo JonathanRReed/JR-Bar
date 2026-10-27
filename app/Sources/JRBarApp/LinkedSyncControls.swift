@@ -240,11 +240,6 @@ struct DeviceReceiptRow: View {
 /// nothing.
 struct LinkedDotNote: View {
     var body: some View {
-        Label("Linked: follows the SidePulse. Display, Pin to, Asks only and Blend are the strip's while the Dot has a role; pick On its own to set them here.",
-              systemImage: "link")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .settingRowStyle()
+        StatusBanner(detail: "The Dot follows the SidePulse. Display, Pin to, Asks only and Mix follow the strip while the Dot has a role. Pick On its own to set them here.")
     }
 }

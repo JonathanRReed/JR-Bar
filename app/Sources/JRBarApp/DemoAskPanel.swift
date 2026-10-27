@@ -65,6 +65,13 @@ struct DemoAskTryRow: View {
 /// The "Demo" capsule where a real ask says "Permission".
 struct DemoAskBadge: View {
     var body: some View {
-        StatusBadge(DemoAsk.badge, tint: DemoAskLook.tint).accessibilityLabel("Demo")
+        Text(DemoAsk.badge)
+            .font(.system(size: 9.5, weight: .bold)) // jrbar-token-exception: shared notch demo badge preserves its geometry
+            .tracking(0.6)
+            .foregroundStyle(DemoAskLook.tint)
+            .padding(.horizontal, 5).padding(.vertical, 1.5)
+            .background(Capsule().fill(DemoAskLook.tint.opacity(0.16)))
+            .overlay(Capsule().strokeBorder(DemoAskLook.tint.opacity(0.4), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2])))
+            .accessibilityLabel("Demo")
     }
 }

@@ -379,8 +379,7 @@ struct ColorVisionNote: View {
                         }
                     }
                 } label: {
-                    Label(Self.summary(rows.count), systemImage: "eye.trianglebadge.exclamationmark")
-                        .font(.callout).foregroundStyle(.secondary)
+                    StatusBanner(detail: Self.summary(rows.count))
                 }
             }
         }
@@ -1215,13 +1214,8 @@ struct EventKitAccessNote: View {
 
     var body: some View {
         if Self.isRefused(status) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.neutral.color)
-                Text(entity == .event
-                     ? "macOS has Calendar access turned off for JR-Bar — the glow cannot see your events until it is allowed."
-                     : "macOS has Reminders access turned off for JR-Bar — the glow cannot see your reminders until it is allowed.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Spacer()
+            StatusBanner(entity == .event ? "Calendar access is off" : "Reminders access is off",
+                         detail: "Allow access in System Settings to show these events.") {
                 Button("Open Settings") {
                     let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {

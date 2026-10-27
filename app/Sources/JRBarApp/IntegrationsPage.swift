@@ -120,7 +120,7 @@ struct IntegrationsPage: View {
     }
 
     private func connection(_ name: String, status: String, page: SettingsStore.Page, feature: String? = nil) -> some View {
-        SettingsNavigationRow(name, subtitle: status) {
+        SettingsNavigationRow(name, subtitle: status == MonitorWords.label ? nil : status) {
             store.subpage = nil
             store.page = page
             if let feature { store.openFeature(feature) }

@@ -118,19 +118,12 @@ struct UsageCenterNoticeView: View {
     let dismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: JRBarTokens.Space.md) {
-            Image(systemName: notice.isFailure ? "exclamationmark.triangle" : "checkmark.circle")
-                .foregroundStyle(notice.isFailure ? Tone.failure.color : Color.secondary)
-            Text(notice.text)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Copy", action: copy)
-                .help("Copy this message")
-            Button("Dismiss", action: dismiss)
-                .help("Dismiss this message")
-        }
-        .font(JRBarTokens.TypeStyle.callout.font)
-        .windowCard(padding: JRBarTokens.Space.md)
+        StatusBanner(notice.text, kind: notice.isFailure ? .failure : .information) {
+            HStack {
+                Button("Copy", action: copy).help("Copy this message")
+                Button("Dismiss", action: dismiss).help("Dismiss this message")
+            }
+        }.textSelection(.enabled)
     }
 }
 
@@ -519,13 +512,8 @@ struct ResetSaveNotice: View {
     let retry: () -> Void
 
     var body: some View {
-        HStack {
-            Label("Reset feedback not saved", systemImage: "exclamationmark.triangle")
-            Spacer()
+        StatusBanner("Reset feedback not saved", kind: .failure) {
             Button("Retry", action: retry)
         }
-        .font(.callout)
-        .foregroundStyle(Tone.neutral.color)
-        .windowCard(padding: 14)
     }
 }

@@ -77,8 +77,8 @@ public struct StatusBanner<Action: View>: View {
     private var tint: Color {
         switch kind {
         case .information: neutralInk.secondary
-        case .attention: JRBarTokens.Ink.attention
-        case .failure: JRBarTokens.Ink.failure
+        case .attention: Tone.ask.color
+        case .failure: Tone.failure.color
         }
     }
 
@@ -87,12 +87,12 @@ public struct StatusBanner<Action: View>: View {
             Image(systemName: kind == .information ? "info.circle" : "exclamationmark.triangle.fill")
                 .foregroundStyle(tint).padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(message).jrbarType(.headline)
+                if !message.isEmpty { Text(message).jrbarType(.headline) }
                 if let detail { Text(detail).jrbarType(.caption).foregroundStyle(neutralInk.secondary) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            action.buttonStyle(.borderedProminent).controlSize(.small)
+            action.buttonStyle(.bordered).controlSize(.small)
         }
         .font(JRBarTokens.TypeStyle.body.font)
         .foregroundStyle(neutralInk.label)
@@ -105,6 +105,10 @@ public struct StatusBanner<Action: View>: View {
 public extension StatusBanner where Action == EmptyView {
     init(_ message: String, kind: Kind = .information, detail: String? = nil) {
         self.init(message, kind: kind, detail: detail) { EmptyView() }
+    }
+
+    init(detail: String, kind: Kind = .information) {
+        self.init("", kind: kind, detail: detail) { EmptyView() }
     }
 }
 

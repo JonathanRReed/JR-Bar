@@ -191,34 +191,8 @@ struct DeckNotice: View {
     var tint: Color = .blue
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 42, height: 42)
-                .background(Circle().fill(tint.opacity(0.14)))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.title3.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Text(text)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let footnote {
-                    Text(footnote)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: 608)
-        .windowWell(padding: 16, tint: tint)
-        .accessibilityElement(children: .combine)
+        StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information,
+                     detail: ([text] + [footnote].compactMap { $0 }).joined(separator: " "))
     }
 }
 
@@ -337,23 +311,9 @@ struct ConflictBanner: View {
     @Bindable var store: DeckStore
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.failure.color)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(DeckDevice.conflictText).font(.callout.weight(.semibold))
-                Text("The firmware has no ownership handshake. Close Work Louder Input and other hardware controllers, then reconnect the pad and inspect again.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let detail = store.device?.conflict {
-                Text(detail).font(.system(.caption, design: .monospaced)).foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Tone.failure.color.opacity(0.10))
-        .overlay(alignment: .bottom) { Divider() }
+        StatusBanner(DeckDevice.conflictText, kind: .failure,
+                     detail: "Close other hardware controllers, then reconnect the pad and inspect again."
+                        + (store.device?.conflict.map { " " + $0 } ?? ""))
     }
 }
 
