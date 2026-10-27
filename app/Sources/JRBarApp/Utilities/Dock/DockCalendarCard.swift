@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 struct DockCalendarCard: View {
@@ -30,7 +31,7 @@ struct DockCalendarCard: View {
                         let previousToday = index > 0 && Self.isToday(rows[index - 1], now: now, calendar: calendar)
                         if index == 0 || today != previousToday {
                             Text(today ? "Today" : "Upcoming")
-                                .font(.system(size: 11, weight: .semibold))
+                                .jrbarType(.caption).fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
                         }
                         eventRow(event)
@@ -42,7 +43,7 @@ struct DockCalendarCard: View {
                     .buttonStyle(DockCapsuleButtonStyle(prominent: false))
             }
         }
-        .font(.system(size: 12))
+        .jrbarType(.callout)
         .frame(width: 320, alignment: .leading)
     }
 
@@ -80,12 +81,12 @@ struct DockCalendarCard: View {
     private func eventRow(_ event: ShelfCalendarModel.Event) -> some View {
         HStack(spacing: 9) {
             let tint = event.calendarColor
-            RoundedRectangle(cornerRadius: 2)
+            Capsule()
                 .fill(Color(red: tint.red, green: tint.green, blue: tint.blue))
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .jrbarType(.callout).fontWeight(.medium)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(Self.timeLine(event, now: now, calendar: calendar))

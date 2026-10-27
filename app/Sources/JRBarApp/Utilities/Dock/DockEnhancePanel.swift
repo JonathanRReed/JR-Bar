@@ -470,7 +470,7 @@ struct DockPreviewView: View {
                 }
             }
             if content.mediaPending, content.windows.isEmpty, !content.hasNativeCard {
-                Text("Loading playback…").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("Loading playback…").jrbarType(.callout).foregroundStyle(.secondary)
             }
             if let media = content.media {
                 rule
