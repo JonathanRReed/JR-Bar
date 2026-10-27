@@ -9,6 +9,8 @@ public struct AgentGroupRow<Members: View>: View {
     public let subtitle: String?
     public let elapsed: String?
     public let state: StateDot.State
+    /// The dot's spoken word when the state alone is ambiguous ("Idle").
+    public let stateLabel: String?
     public let memberMarks: [String]
     public let workerCount: Int
     public let askingCount: Int
@@ -23,7 +25,8 @@ public struct AgentGroupRow<Members: View>: View {
     private let members: Members
 
     public init(provider: String, name: String, project: String? = nil, subtitle: String? = nil,
-                elapsed: String? = nil, state: StateDot.State = .working, memberMarks: [String] = [],
+                elapsed: String? = nil, state: StateDot.State = .working, stateLabel: String? = nil,
+                memberMarks: [String] = [],
                 workerCount: Int, askingCount: Int = 0, unlinked: Bool = false, expanded: Binding<Bool>,
                 @ViewBuilder members: () -> Members) {
         self.provider = provider
@@ -32,6 +35,7 @@ public struct AgentGroupRow<Members: View>: View {
         self.subtitle = subtitle
         self.elapsed = elapsed
         self.state = state
+        self.stateLabel = stateLabel
         self.memberMarks = memberMarks
         self.workerCount = max(0, workerCount)
         self.askingCount = max(0, askingCount)
@@ -71,7 +75,7 @@ public struct AgentGroupRow<Members: View>: View {
 
     private var taskSubtitle: String? {
         if unlinked { return "No parent found · no share of the strip" }
-        let attention = askingCount > 0 ? "\(askingCount) needs you" : nil
+        let attention = askingCount > 0 ? (askingCount == 1 ? "1 needs you" : "\(askingCount) need you") : nil
         let parts = [subtitle, attention].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -119,9 +123,27 @@ public struct AgentGroupRow<Members: View>: View {
                     }
                 }
             }
+            if let word = OutcomeWord(state) { word }
             if let elapsed { Text(elapsed).monospacedDigit().font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(neutralInk.secondary) }
-            StateDot(state)
+            stateLabel.map { StateDot(state, label: $0) } ?? StateDot(state)
         }
+    }
+}
+
+/// "Done" or "Failed" beside a row's time, in the same words and tones as
+/// a plain agent row; nothing for the other states.
+struct OutcomeWord: View {
+    let failed: Bool
+
+    init?(_ state: StateDot.State) {
+        guard state == .done || state == .failed else { return nil }
+        failed = state == .failed
+    }
+
+    var body: some View {
+        Text(failed ? "Failed" : "Done")
+            .font(JRBarTokens.TypeStyle.caption.font)
+            .foregroundStyle(failed ? JRBarTokens.Ink.failure : JRBarTokens.Ink.done)
     }
 }
 
@@ -133,15 +155,17 @@ public struct AgentMemberRow: View {
     public let role: String?
     public let elapsed: String?
     public let state: StateDot.State
+    public let stateLabel: String?
     public let isLast: Bool
 
     public init(provider: String, name: String, role: String? = nil, elapsed: String? = nil,
-                state: StateDot.State = .working, isLast: Bool = false) {
+                state: StateDot.State = .working, stateLabel: String? = nil, isLast: Bool = false) {
         self.provider = provider
         self.name = name
         self.role = role
         self.elapsed = elapsed
         self.state = state
+        self.stateLabel = stateLabel
         self.isLast = isLast
     }
 
@@ -149,11 +173,12 @@ public struct AgentMemberRow: View {
         HStack(spacing: 8) {
             ProviderLogoTile(provider: provider, size: 16)
             Text(name).lineLimit(1)
-            if let role { Text(role).foregroundStyle(neutralInk.secondary).lineLimit(1) }
+            if let role { Text(role).foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail) }
             Spacer(minLength: 0)
             if state == .done { Text("Done").foregroundStyle(JRBarTokens.Ink.done) }
+            if state == .failed { Text("Failed").foregroundStyle(JRBarTokens.Ink.failure) }
             if let elapsed { Text(elapsed).foregroundStyle(neutralInk.secondary).monospacedDigit() }
-            StateDot(state)
+            stateLabel.map { StateDot(state, label: $0) } ?? StateDot(state)
         }
         .font(JRBarTokens.TypeStyle.callout.font)
         .foregroundStyle(neutralInk.label)
