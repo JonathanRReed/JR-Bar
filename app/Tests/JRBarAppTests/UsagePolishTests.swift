@@ -105,7 +105,7 @@ struct UsagePolishTests {
         #expect(UsageGaugeReading.age(provider: Self.provider, now: Self.now + 20, snapshotReceivedAt: Self.now) == "Read 1m ago")
         #expect(HistoryStore.duration(59) == "59s")
         #expect(HistoryStore.duration(95) == "1m")
-        #expect(HistoryStore.duration(3600) == "1h 00m")
+        #expect(HistoryStore.duration(3600) == "1h")
         #expect(HistoryStore.duration(.infinity) == nil)
     }
 
