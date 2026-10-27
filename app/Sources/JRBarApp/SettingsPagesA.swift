@@ -282,8 +282,8 @@ struct AgentRow: View {
     var statusColor: Color {
         guard store.isLive else { return Color(nsColor: .quaternaryLabelColor) }
         switch status {
-        case "ok": return .green
-        case "stale": return .orange
+        case "ok": return Tone.done.color
+        case "stale": return Tone.neutral.color
         case "missing": return Color(nsColor: .tertiaryLabelColor)
         default: return Color(nsColor: .quaternaryLabelColor)
         }
@@ -341,7 +341,7 @@ struct AgentRow: View {
             // The reply's own words, where the click happened.
             Text(note.text)
                 .font(.caption)
-                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .transition(.opacity)
@@ -350,7 +350,7 @@ struct AgentRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(reason)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Repair") { store.installHooks(provider) }
@@ -534,7 +534,7 @@ struct ScreenBarSettingsCard: View {
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
                                 pill: store.isLive ? DevicesPage.screenBarStatus(device: bar, live: true) : nil,
-                                pillTint: store.isLive && bar?.enabled == true ? .green : .secondary)
+                                pillTint: store.isLive && bar?.enabled == true ? Tone.done.color : .secondary)
         }
     }
 }
@@ -568,7 +568,7 @@ struct DeviceCard: View {
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
                                 tint: SettingsStore.Page.devices.tint,
                                 pill: connection.rawValue,
-                                pillTint: connection.isConnected ? .green : .secondary,
+                                pillTint: connection.isConnected ? Tone.done.color : .secondary,
                                 trailing: device.kind == "dot" ? "2 LEDs" : device.kind == "pro" ? "8 LEDs" : nil)
         }
     }
@@ -724,8 +724,8 @@ struct CreatorMicroCard: View {
 
     private var statusColor: Color {
         guard connection.isConnected, let device else { return .secondary }
-        if device.hasConflict { return .red }
-        return device.approved ? .green : .orange
+        if device.hasConflict { return Tone.failure.color }
+        return device.approved ? Tone.done.color : Tone.neutral.color
     }
 
     var connection: DeviceConnectionState { store.creatorMicroConnection }
@@ -802,12 +802,12 @@ struct CreatorMicroCard: View {
             if store.isLive || store.deckNote != nil {
                 SettingsRow("Status") {
                     VStack(alignment: .trailing, spacing: 3) {
-                        if store.isLive { StatusPill(statusText, tint: statusColor) }
+                        if store.isLive { StatusBadge(statusText, tint: statusColor) }
                         // The toggle's own answer, where the click happened.
                         if let note = store.deckNote {
                             Text(note.text)
                                 .font(.caption)
-                                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                                .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.trailing)
                                 .transition(.opacity)
@@ -852,7 +852,7 @@ struct CreatorMicroCard: View {
         if let deck {
             DisclosureRow("Details") {
                 SettingsRow("Keymap") {
-                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? Tone.neutral.color : .secondary)
                 }
                 SettingsRow("Compact rail") {
                     Text(deck.rail.edge.label).foregroundStyle(.secondary)
@@ -868,7 +868,7 @@ struct CreatorMicroCard: View {
                 }
                 if let receipt = deck.device?.receipt {
                     SettingsRow("Last receipt") {
-                        Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
+                        Text(receipt.text).foregroundStyle(receipt.isProblem ? Tone.neutral.color : .secondary)
                             .multilineTextAlignment(.trailing)
                     }
                 }

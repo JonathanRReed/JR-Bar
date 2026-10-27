@@ -32,7 +32,7 @@ extension AquariumView {
                             HStack(spacing: 4) {
                                 Image(systemName: "flame.fill")
                                     .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.orange.gradient)
+                                    .foregroundStyle(Tone.neutral.color.gradient)
                                     .symbolEffect(.bounce, options: .nonRepeating, value: reduceMotion ? 0 : game.streakDays)
                                 Text("\(game.streakDays)d")
                             }
@@ -350,13 +350,13 @@ extension AquariumView {
                     Spacer(minLength: 4)
                     if game.streakDays > 1 {
                         Label("\(game.streakDays)d", systemImage: "flame.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Tone.neutral.color)
                     }
                 }
                 if let goal = game.dailyGoal {
                     HStack(spacing: 6) {
                         Image(systemName: goal.claimed ? "checkmark.circle.fill" : "target")
-                            .foregroundStyle(goal.claimed ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(goal.claimed ? AnyShapeStyle(Tone.done.color) : AnyShapeStyle(.secondary))
                         Text(goal.kind.displayName)
                         Spacer(minLength: 4)
                         Text(goal.claimed ? "Done" : "\(min(goal.progress, goal.target)) of \(goal.target)")

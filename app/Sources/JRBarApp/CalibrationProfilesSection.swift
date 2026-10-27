@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -55,7 +56,7 @@ struct CalibrationProfilesSection: View {
             SettingLabel(title: slot, subtitle: subtitle(slot, isSaved: isSaved, applied: applied))
             Spacer(minLength: SettingsMetrics.s)
             if applied {
-                StatusPill("In use", tint: .green)
+                StatusBadge("In use", tint: Tone.done.color)
             } else if isSaved {
                 Button("Apply") { apply(slot) }
                     .controlSize(.small)

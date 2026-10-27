@@ -120,7 +120,7 @@ struct UsageCenterNoticeView: View {
     var body: some View {
         HStack(alignment: .top, spacing: JRBarTokens.Space.md) {
             Image(systemName: notice.isFailure ? "exclamationmark.triangle" : "checkmark.circle")
-                .foregroundStyle(notice.isFailure ? Color.orange : Color.secondary)
+                .foregroundStyle(notice.isFailure ? Tone.failure.color : Color.secondary)
             Text(notice.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -438,8 +438,8 @@ struct SignInNoteLine: View {
 
     static func tint(_ tone: UsageCenterStore.SignInNote.Tone) -> Color {
         switch tone {
-        case .done: return .green
-        case .todo: return .orange
+        case .done: return Tone.done.color
+        case .todo: return Tone.neutral.color
         case .info: return .secondary
         }
     }
@@ -525,7 +525,7 @@ struct ResetSaveNotice: View {
             Button("Retry", action: retry)
         }
         .font(.callout)
-        .foregroundStyle(.orange)
+        .foregroundStyle(Tone.neutral.color)
         .windowCard(padding: 14)
     }
 }

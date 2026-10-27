@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -24,7 +25,7 @@ struct UsageHooksSection: View {
             if let problem = model.configProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if rules.isEmpty {
                 Text("No rules yet. Add one with jrbar usage-hooks add --event quota_low /path/to/script.")
@@ -69,12 +70,12 @@ struct UsageHookRuleView: View {
             if let problem {
                 Label("Will not run: \(problem)", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if let last = model.lastResults[rule.id] {
                 Label(last.line(now: Date(), ruleEvent: rule.event), systemImage: last.ok ? "checkmark.circle" : "xmark.octagon")
                     .font(.caption)
-                    .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+                    .foregroundStyle(last.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Tone.failure.color))
                     .monospacedDigit()
             }
         }

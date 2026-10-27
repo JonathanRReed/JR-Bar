@@ -469,7 +469,7 @@ struct LEDSStudioView: View {
                 .padding(JRBarTokens.Space.sm)
                 .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous).fill(JRBarTokens.Ink.group))
                 .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous)
-                    .strokeBorder(model.analysis.firstError == nil ? Color.primary.opacity(0.10) : Color.red.opacity(0.55), lineWidth: 1))
+                    .strokeBorder(model.analysis.firstError == nil ? Color.primary.opacity(0.10) : Tone.failure.color.opacity(0.55), lineWidth: 1))
                 .frame(minHeight: 220)
                 .accessibilityLabel("LEDS program")
 
@@ -511,7 +511,7 @@ struct LEDSStudioView: View {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                 Label("The firmware accepts this on the 8-LED strip and the 2-LED Dot.", systemImage: "checkmark.circle.fill")
                     .font(.callout)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Tone.done.color)
                 if !analysis.dot.ignoredLines.isEmpty {
                     Text("On the Dot, line\(analysis.dot.ignoredLines.count == 1 ? "" : "s") \(analysis.dot.ignoredLines.map(String.init).joined(separator: ", ")) name only LEDs it does not have; it skips them.")
                         .foregroundStyle(.secondary).jrbarType(.caption)
@@ -527,7 +527,7 @@ struct LEDSStudioView: View {
                   : "\(device) rejects the program: \(error.kind.rawValue)",
                   systemImage: "xmark.octagon.fill")
                 .font(.callout.weight(.medium))
-                .foregroundStyle(.red)
+                .foregroundStyle(Tone.failure.color)
             Text(error.kind.explanation + " A rejected program makes the device blink red six times.")
                 .jrbarType(.caption)
                 .foregroundStyle(.secondary)
@@ -657,7 +657,7 @@ struct BudgetBar: View {
     let limit: Int
 
     private var fraction: Double { Double(used) / Double(max(1, limit)) }
-    private var tint: Color { fraction > 1 ? .red : fraction > 0.75 ? .orange : .accentColor }
+    private var tint: Color { fraction > 1 ? Tone.failure.color : fraction > 0.75 ? Tone.neutral.color : .accentColor }
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
@@ -666,7 +666,7 @@ struct BudgetBar: View {
                 Spacer()
                 Text("\(used) / \(limit)")
                     .jrbarType(.caption).monospacedDigit()
-                    .foregroundStyle(fraction > 1 ? Color.red : Color.secondary)
+                    .foregroundStyle(fraction > 1 ? Tone.failure.color : Color.secondary)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {

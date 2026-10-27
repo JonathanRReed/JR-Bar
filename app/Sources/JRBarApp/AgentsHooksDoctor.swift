@@ -1,3 +1,4 @@
+import JRBarUI
 import Foundation
 import JRBarCore
 import Observation
@@ -254,11 +255,11 @@ struct HooksDoctorStatusRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(doctor.statusLine(live: live))
                     .font(.caption)
-                    .foregroundStyle(doctor.failed && live ? Color.orange : Color.secondary)
+                    .foregroundStyle(doctor.failed && live ? Tone.failure.color : Color.secondary)
                 if let line = doctor.receiverLine(live: live) {
                     Text(line)
                         .font(.caption)
-                        .foregroundStyle(doctor.receiverAnswers == false ? Color.orange : Color.secondary)
+                        .foregroundStyle(doctor.receiverAnswers == false ? Tone.failure.color : Color.secondary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -394,7 +395,7 @@ struct ProviderUpdateLine: View {
             if let result = ProviderUpdateWords.resultLine(status, now: Date()) {
                 Text(result)
                     .font(.caption)
-                    .foregroundStyle(status?.phase == .failed ? Color.red : Color.secondary)
+                    .foregroundStyle(status?.phase == .failed ? Tone.failure.color : Color.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }

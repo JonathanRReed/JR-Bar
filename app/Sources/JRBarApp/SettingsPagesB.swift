@@ -740,7 +740,7 @@ struct AutoDimReadoutRow: View {
         SettingsRow("Right now", subtitle: AutoDimReadoutRow.smoothingNote(result)) {
             HStack(spacing: 6) {
                 Image(systemName: unavailable ? "exclamationmark.triangle.fill" : symbol)
-                    .foregroundStyle(unavailable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(unavailable ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
                     .font(.callout)
                 Text(line)
                     .monospacedDigit()
@@ -927,7 +927,7 @@ struct NotificationsPage: View {
                           path: "completion_notification_enabled", default: true)
             if store.notificationPermissionDenied {
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.neutral.color)
                     Text("macOS has notifications turned off for JR-Bar — banners cannot appear until it is allowed.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Spacer()
@@ -1216,7 +1216,7 @@ struct EventKitAccessNote: View {
     var body: some View {
         if Self.isRefused(status) {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.neutral.color)
                 Text(entity == .event
                      ? "macOS has Calendar access turned off for JR-Bar — the glow cannot see your events until it is allowed."
                      : "macOS has Reminders access turned off for JR-Bar — the glow cannot see your reminders until it is allowed.")
@@ -1467,13 +1467,13 @@ struct StreamDeckCard: View {
 
     private var statusColor: Color {
         guard enabled, store.isLive else { return .secondary }
-        return running == true ? .green : .orange
+        return running == true ? Tone.done.color : Tone.neutral.color
     }
 
     var body: some View {
         SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.", anchor: "Stream Deck") {
             if store.isLive {
-                SettingRow("Endpoint") { StatusPill(statusText, tint: statusColor) }
+                SettingRow("Endpoint") { StatusBadge(statusText, tint: statusColor) }
             }
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
                             subtitle: "Serve status, the status URL and its token.") {
@@ -1647,7 +1647,7 @@ struct LogTail: View {
                             // a fixed column that wraps broke it across two
                             // lines as "UPDATE / R".
                             Text((entry.level ?? "info").uppercased())
-                                .foregroundStyle(entry.level == "error" ? Color.red : (entry.level == "warn" || entry.level == "warning" ? .orange : .secondary))
+                                .foregroundStyle(entry.level == "error" ? Tone.failure.color : (entry.level == "warn" || entry.level == "warning" ? Tone.neutral.color : .secondary))
                                 .lineLimit(1)
                                 .fixedSize()
                                 .frame(minWidth: 44, alignment: .leading)
@@ -1690,9 +1690,9 @@ struct DoctorSheet: View {
                 }
                 Spacer()
                 if report["ok"]?.boolValue == true {
-                    StatusPill("All good", tint: .green)
+                    StatusBadge("All good", tint: Tone.done.color)
                 } else if failing > 0 {
-                    StatusPill(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: .red)
+                    StatusBadge(failing == 1 ? "1 check failed" : "\(failing) checks failed", tint: Tone.failure.color)
                 }
             }
             if !checks.isEmpty {
@@ -1701,7 +1701,7 @@ struct DoctorSheet: View {
                         if index > 0 { Divider() }
                         HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.s) {
                             Image(systemName: check["ok"]?.boolValue == true ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                .foregroundStyle(check["ok"]?.boolValue == true ? Color.green : .red)
+                                .foregroundStyle(check["ok"]?.boolValue == true ? Tone.done.color : Tone.failure.color)
                                 .frame(width: 16)
                             Text(check["name"]?.stringValue ?? "check")
                             Spacer()

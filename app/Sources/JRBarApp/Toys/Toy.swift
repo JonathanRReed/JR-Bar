@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -37,9 +38,9 @@ enum ToyStatus: Equatable {
     var tint: Color {
         switch self {
         case .off: return Color(nsColor: .tertiaryLabelColor)
-        case .on: return .green
-        case .paused, .external, .limited: return Color(nsColor: .systemOrange)
-        case .needsPermission: return .red
+        case .on: return Tone.done.color
+        case .paused, .external, .limited: return Tone.neutral.color
+        case .needsPermission: return Tone.failure.color
         case .unavailable, .note: return Color(nsColor: .secondaryLabelColor)
         }
     }
@@ -226,7 +227,7 @@ struct ToyCard: View {
                                 .font(.body.weight(.semibold))
                                 .layoutPriority(1)
                             if status.showsChip {
-                                StatusPill(status.text, tint: status.tint)
+                                StatusBadge(status.text, tint: status.tint)
                             }
                         }
                         Text(toy.blurb)

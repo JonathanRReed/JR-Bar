@@ -63,37 +63,6 @@ struct SettingsIconTile: View {
 /// A short state in a capsule: a dot and a few words in its tint —
 /// "Parked", "Needs Accessibility", "Live". It holds still (no clock
 /// runs for it) and truncates rather than pushing a control out.
-struct StatusPill: View {
-    let text: String
-    let tint: Color
-
-    init(_ text: String, tint: Color) {
-        self.text = text
-        self.tint = tint
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-            Text(text)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(tint.mix(with: .primary, by: 0.3))
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2.5)
-        .background(tint.opacity(0.13), in: Capsule())
-        .overlay(Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// The head of every page: its glyph grown to a header tile, the page's
-/// name and one sentence on what lives there — System Settings' pane
-/// header, first thing on the form.
 struct SettingsPageHeader: View {
     let page: SettingsStore.Page
 
@@ -139,7 +108,7 @@ struct SettingsBanner: View {
     var detail: String? = nil
 
     var body: some View {
-        StatusBanner(title, kind: tint == .red ? .failure : .information, detail: detail)
+        StatusBanner(title, kind: tint == Tone.failure.color ? .failure : .information, detail: detail)
     }
 }
 
@@ -162,7 +131,7 @@ struct SettingsGroupHeader: View {
             Text(title)
                 .font(.headline)
             if let pill {
-                StatusPill(pill, tint: pillTint)
+                StatusBadge(pill, tint: pillTint)
             }
             Spacer(minLength: SettingsMetrics.s)
             if let trailing {

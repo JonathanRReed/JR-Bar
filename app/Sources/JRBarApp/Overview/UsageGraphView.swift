@@ -1,3 +1,4 @@
+import JRBarUI
 import Charts
 import JRBarCore
 import SwiftUI
@@ -494,7 +495,7 @@ struct UsageGraphView: View {
                     if graph.partialProviderIds.contains(row.id) {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 8))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Tone.neutral.color)
                             .help("Partial local history in this range")
                     }
                 }
@@ -575,7 +576,7 @@ struct UsageGraphView: View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 22))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Tone.neutral.color)
             Text("Couldn't load the chart")
                 .font(.system(size: 13, weight: .medium))
             Text(error)

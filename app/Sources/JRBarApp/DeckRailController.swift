@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import QuartzCore
@@ -594,7 +595,7 @@ struct RailLabelView: View {
                 }
                 if let preview = ask?.previewLine {
                     AskPreviewLine(text: preview, size: 10.5,
-                                   tint: ask?.isDestructive == true ? Color.red.opacity(0.85) : .secondary)
+                                   tint: ask?.isDestructive == true ? Tone.failure.color.opacity(0.85) : .secondary)
                         .frame(width: 220, alignment: .leading)
                 }
                 if isInteractive, let ask, let desk {
@@ -670,7 +671,7 @@ struct RailAskVerbs: View {
             if let note = desk.note(for: ask.session) {
                 Text(note.text)
                     .font(.caption)
-                    .foregroundStyle(note.refused ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(note.refused ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else {

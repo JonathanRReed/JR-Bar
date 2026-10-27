@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -23,7 +24,7 @@ struct SettingsSealNoticeCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s + 2) {
-            SettingsBanner(symbol: symbol, tint: .orange, title: notice.title, detail: notice.detail)
+            SettingsBanner(symbol: symbol, tint: Tone.neutral.color, title: notice.title, detail: notice.detail)
             HStack(spacing: SettingsMetrics.s) {
                 Spacer(minLength: 28)
                 switch notice {
@@ -60,7 +61,7 @@ struct SettingsSealBanner: View {
                 onRetry: { Task { await seal.tryKeychainAgain() } }
             )
         } else if let line = seal.resultLine {
-            SettingsBanner(symbol: "checkmark.circle.fill", tint: .green, title: line)
+            SettingsBanner(symbol: "checkmark.circle.fill", tint: Tone.done.color, title: line)
                 .task(id: line) {
                     try? await Task.sleep(for: .seconds(8))
                     guard !Task.isCancelled else { return }

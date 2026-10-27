@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import IOKit.pwr_mgt
 import JRBarCore
@@ -260,7 +261,7 @@ struct KeepAwakeUtilityControls: View {
         }
         if failed {
             CardNote("Could not read macOS's power assertions. Refresh to try again.",
-                     symbol: "exclamationmark.triangle", tint: .orange)
+                     symbol: "exclamationmark.triangle", tint: Tone.neutral.color)
         } else if holders == nil && !hasReadHolders && shown.isEmpty {
             CardNote("Checking which other apps hold this Mac awake.")
         } else if shown.isEmpty {

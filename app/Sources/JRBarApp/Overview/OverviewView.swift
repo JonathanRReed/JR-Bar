@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -248,12 +249,12 @@ struct OverviewView: View {
             OverviewSummaryStrip(store: store)
             OverviewConnectionsStrip(store: store)
             if let error = store.error, !store.roster.isEmpty {
-                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error)
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: Tone.failure.color, text: error)
                     .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if let status = store.actionStatus {
                 WindowNoticeRow(symbol: store.actionIsError ? "xmark.octagon.fill" : "checkmark.circle.fill",
-                                tint: store.actionIsError ? .red : .green, text: status) {
+                                tint: store.actionIsError ? Tone.failure.color : Tone.done.color, text: status) {
                     Button { store.actionStatus = nil } label: {
                         Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
                     }
@@ -298,26 +299,26 @@ struct OverviewView: View {
             if !store.isLive, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                    text: "The roster comes from the monitor. Rows appear as soon as the socket is live.",
-                                   tint: .orange)
+                                   tint: Tone.neutral.color)
             } else if !store.isLive {
                 // The window is the record of what happened — a dead
                 // socket must not erase it. Show the last roster, dimmed
                 // and disclaimed, with live actions gated by `canOpen`/
                 // `askAction` which already refuse remote/dead work.
-                WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: .orange,
+                WindowNoticeRow(symbol: "bolt.horizontal.circle.fill", tint: Tone.neutral.color,
                                 text: "Monitor not connected — showing the last roster it reported.")
                     .padding(.horizontal, 10).padding(.vertical, 6)
                 rosterTable.opacity(0.55)
             } else if let error = store.error, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "exclamationmark.triangle", title: "Couldn't load the roster",
-                                   text: error, tint: .orange)
+                                   text: error, tint: Tone.failure.color)
             } else if store.nobodyWaiting {
                 // The default view with nothing to answer is good news,
                 // not a filter that failed.
                 let working = store.workingOverall
                 OverviewEmptyState(symbol: "checkmark", title: "Nobody's waiting on you",
                                    text: "When an agent asks for you, it lands here.",
-                                   tint: .green,
+                                   tint: Tone.done.color,
                                    actionTitle: working > 0 ? "Show \(working) working" : nil,
                                    action: { store.showWorking() })
             } else if store.rows.isEmpty {
@@ -565,7 +566,7 @@ struct OverviewView: View {
             if word != "live" {
                 Image(systemName: "clock.badge.exclamationmark").font(.system(size: 9))
             }
-            Text(word).foregroundStyle(word == "live" ? Color.secondary : Color.orange)
+            Text(word).foregroundStyle(word == "live" ? Color.secondary : Tone.neutral.color)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Freshness: \(word)")
@@ -614,9 +615,7 @@ struct OverviewSnoozedTag: View {
 
     var body: some View {
         if OverviewStore.isSnoozed(entry, now: store.now) {
-            Text("snoozed").font(.system(size: 10))
-                .foregroundStyle(.tertiary).lineLimit(1)
-                .help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
+            StatusBadge("Snoozed").help(OverviewStore.snoozeWakeText(entry) ?? "Snoozed")
         }
     }
 }
@@ -648,16 +647,16 @@ struct OverviewAttentionCell: View {
         let now = store.now
         HStack(spacing: 5) {
             if entry.pinned || entry.session.ask != nil {
-                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(.orange)
+                Image(systemName: "exclamationmark.bubble.fill").foregroundStyle(entry.session.ask != nil ? Tone.ask.color : Tone.neutral.color)
                     .help(entry.session.ask?.summary ?? "Waiting on you")
             }
             if entry.axes?.outcome == "failed" {
-                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(Tone.failure.color)
                     .help("Run failed — outcome reported by the monitor")
             }
             if let waiting = OverviewStore.waitingText(entry, now: now) {
                 Text(waiting).font(.system(size: 9))
-                    .foregroundStyle(.orange).lineLimit(1)
+                    .foregroundStyle(Tone.neutral.color).lineLimit(1)
             }
         }
         .accessibilityElement(children: .combine)
@@ -701,7 +700,7 @@ struct CompareRunsSheet: View {
             if comparison.warnings.contains("not_a_controlled_benchmark") {
                 Label("Uncontrolled runs — not a fair model benchmark.",
                       systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .font(.system(size: 11)).foregroundStyle(Tone.neutral.color)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 GridRow {
@@ -769,7 +768,7 @@ struct CompareRunsSheet: View {
                 filesSection(RunFileDiff(a: a, b: b))
             }
             ForEach(gaps, id: \.self) { gap in
-                Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
+                Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(Tone.neutral.color)
             }
             if usage(comparison.a)?.estimatedCostUSD != nil || usage(comparison.b)?.estimatedCostUSD != nil {
                 Text("Costs are API-equivalent estimates from list prices — not invoices, and not a verdict on which model is better.")
@@ -1064,7 +1063,7 @@ struct ReplyPromptForm: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
                 .font(.system(size: 11))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Tone.neutral.color)
                 .textSelection(.enabled)
                 .accessibilityElement(children: .combine)
             }

@@ -74,7 +74,7 @@ struct SetupView: View {
                     Text(failure)
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Tone.failure.color)
                 }
                     .font(.caption)
                     .foregroundStyle(.primary)
@@ -220,15 +220,15 @@ struct SetupScreenBarPrimer: View {
                 Text("Colour names the provider — every agent keeps its own.")
             }
             fact {
-                ActivityMark(activity: .waiting, accent: .orange, reduced: reduced)
+                ActivityMark(activity: .waiting, accent: Tone.ask.color, reduced: reduced)
             } text: {
                 Text("A hard amber beat — one swell, then quiet — means it's waiting on you.")
             }
             fact {
                 HStack(spacing: 8) {
-                    ActivityMark(activity: .failed, accent: .red, reduced: reduced)
+                    ActivityMark(activity: .failed, accent: Tone.failure.color, reduced: reduced)
                     ActivityMark(activity: .working, accent: ProviderStyle.style(for: "codex").accent, reduced: reduced)
-                    ActivityMark(activity: .done, accent: .green, reduced: reduced)
+                    ActivityMark(activity: .done, accent: Tone.done.color, reduced: reduced)
                 }
             } text: {
                 Text("Red means it broke — everything else is working or done.")
@@ -325,8 +325,8 @@ struct SetupAgentRow: View {
     private var statusColor: Color {
         guard store.monitorLive else { return Color(nsColor: .tertiaryLabelColor) }
         switch agent.hookStatus {
-        case "ok": return .green
-        case "stale": return .orange
+        case "ok": return Tone.done.color
+        case "stale": return Tone.neutral.color
         case "missing": return Color(nsColor: .tertiaryLabelColor)
         default: return Color(nsColor: .quaternaryLabelColor)
         }
@@ -366,7 +366,7 @@ struct SetupAgentRow: View {
                 if let note = store.hookNotes[agent.id] {
                     Text(note.text)
                         .font(.caption)
-                        .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                        .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                         .lineLimit(1)
                         .transition(.opacity)
                 }
@@ -409,7 +409,7 @@ struct SetupUsageOfferView: View {
                 if offer.isOn {
                     Label("On", systemImage: "checkmark.circle.fill")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Tone.done.color)
                     Button("Turn off") { store.turnOffUsage(for: offer.id) }
                         .buttonStyle(.link)
                         .font(.caption)
@@ -435,7 +435,7 @@ struct SetupUsageOfferView: View {
             if let note = store.usageNotes[offer.id] {
                 Text(note.text)
                     .font(.caption)
-                    .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                    .foregroundStyle(note.isError ? Tone.failure.color : Color.secondary)
                     .lineLimit(2)
             }
         }
@@ -493,8 +493,8 @@ struct SetupPermissionRow: View {
 
     private var dotColor: Color {
         switch status {
-        case .granted: return .green
-        case .needed, .denied: return .orange
+        case .granted: return Tone.done.color
+        case .needed, .denied: return Tone.neutral.color
         case .unavailable, .unknown: return Color(nsColor: .tertiaryLabelColor)
         }
     }
@@ -576,10 +576,10 @@ struct SetupDoneStep: View {
                     HStack(alignment: .center, spacing: 12) {
                         Image(systemName: row.symbol)
                             .font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
-                            .foregroundStyle(row.ok ? Color.green : Color.orange)
+                            .foregroundStyle(row.ok ? Tone.done.color : Tone.neutral.color)
                             .frame(width: 30, height: 30)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill((row.ok ? Color.green : Color.orange).opacity(0.14)))
+                                .fill((row.ok ? Tone.done.color : Tone.neutral.color).opacity(0.14)))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.text).font(.system(size: JRBarTokens.TypeStyle.body.size, weight: .medium))
                             Text(row.detail)
@@ -590,7 +590,7 @@ struct SetupDoneStep: View {
                         Spacer(minLength: 8)
                         Image(systemName: row.ok ? "checkmark.circle.fill" : "circle.dashed")
                             .font(JRBarTokens.TypeStyle.title3.font)
-                            .foregroundStyle(row.ok ? Color.green : Color.secondary)
+                            .foregroundStyle(row.ok ? Tone.done.color : Color.secondary)
                             .accessibilityLabel(row.ok ? "Done" : "Still to do")
                     }
                     .padding(.horizontal, 12)

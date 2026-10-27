@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -570,7 +571,7 @@ struct DockPreviewView: View {
                 .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
                 .overlay(alignment: .topTrailing) {
                     if let badge = content.badge {
-                        DockBadgePill(text: badge, size: 9.5)
+                        DockBadgePill(text: badge)
                             .offset(x: 7, y: -6)
                     }
                 }
@@ -1664,7 +1665,7 @@ private struct DockAskRow: View {
                     .lineLimit(1)
                 if let preview = ask?.previewLine {
                     AskPreviewLine(text: preview, size: 10,
-                                   tint: destructive ? Color.red.opacity(0.9) : .secondary)
+                                   tint: destructive ? Tone.failure.color.opacity(0.9) : .secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -1686,7 +1687,7 @@ private struct DockAskRow: View {
         .overlay {
             if destructive {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.red.opacity(0.55), lineWidth: 1)
+                    .strokeBorder(Tone.failure.color.opacity(0.55), lineWidth: 1)
             }
         }
         .help("\(mark.providerName) · \(mark.label)\n\(mark.cwd ?? "")")
@@ -1990,7 +1991,7 @@ private struct DockCalendarRow: View {
                 if let freeUntil {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(Color.green)
+                            .fill(Tone.done.color)
                             .frame(width: 6, height: 6)
                         Text("Free until \(freeUntil.formatted(date: .omitted, time: .shortened))")
                     }
@@ -2009,7 +2010,7 @@ private struct DockCalendarRow: View {
         let now = event.start <= Date()
         return HStack(spacing: 9) {
             Capsule()
-                .fill(now ? Color.green : Color.accentColor)
+                .fill(now ? Tone.done.color : Color.accentColor)
                 .frame(width: 3, height: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title)
@@ -2026,7 +2027,7 @@ private struct DockCalendarRow: View {
                     Label("Join", systemImage: "video.fill")
                         .imageScale(.small)
                 }
-                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: .green))
+                .buttonStyle(DockCapsuleButtonStyle(prominent: now, tint: Tone.done.color))
                 .help("Join the meeting link")
             }
         }

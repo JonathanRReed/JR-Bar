@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -192,7 +193,7 @@ struct SettingsImportSheet: View {
             }
             if let schema = bundle.schema, schema > knownSchema {
                 CardNote("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.",
-                         symbol: "exclamationmark.triangle.fill", tint: .orange)
+                         symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color)
             }
             if !bundle.categories.isEmpty {
                 CardNote("Webhooks, lyrics lookups, remote machines, update checks and anything that asks for a permission stay off until you turn them on here. The import lists what it left off.",

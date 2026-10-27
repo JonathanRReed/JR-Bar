@@ -212,7 +212,7 @@ struct ProviderUsageSwitchesGroup: View {
             if let failure = model.failure {
                 Text(failure)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Tone.failure.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let failure = model.loadFailure {

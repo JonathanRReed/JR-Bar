@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 
@@ -370,7 +371,7 @@ enum AgentPaletteRows {
             return [PaletteItem(
                 id: "agents.offline", title: "Monitor Not Connected", subtitle: state.connection,
                 keywords: ["daemon", "core", "restart", "sessions"],
-                icon: .symbol("bolt.horizontal.circle.fill", .red), kind: "JR-Bar", section: .sessions,
+                icon: .symbol("bolt.horizontal.circle.fill", Tone.failure.color), kind: "JR-Bar", section: .sessions,
                 actions: actions)]
         }
         var items: [PaletteItem] = []
@@ -379,7 +380,7 @@ enum AgentPaletteRows {
                 id: "agents.clearFinished", title: "Clear Finished Sessions",
                 subtitle: "\(state.completed) done, ended or stale",
                 keywords: ["acknowledge", "tidy", "completed"],
-                icon: .symbol("checkmark.circle.fill", .green), kind: "Command", section: .sessions,
+                icon: .symbol("checkmark.circle.fill", Tone.done.color), kind: "Command", section: .sessions,
                 actions: [PaletteAction(id: "clear", title: "Clear Finished", symbol: "checkmark.circle") {
                     verbs.clearFinished()
                     return nil
@@ -563,7 +564,7 @@ enum LightsPaletteRows {
                 id: "lights.brightness", title: "LED Brightness",
                 subtitle: "Now \(percent(brightness))",
                 keywords: ["dim", "bright", "lights", "led"],
-                icon: .symbol("sun.max.fill", .orange), kind: "Lights", section: .lights,
+                icon: .symbol("sun.max.fill", Tone.neutral.color), kind: "Lights", section: .lights,
                 actions: brightnessSteps.map { step in
                     PaletteAction(id: "b\(Int(step * 100))", title: percent(step),
                                   symbol: step >= 0.75 ? "sun.max" : "sun.min") {
@@ -598,7 +599,7 @@ enum LightsPaletteRows {
         return [PaletteItem(
             id: "lights.brightness", title: "Set LED Brightness to \(percent(asked))",
             subtitle: "Now \(percent(now))",
-            icon: .symbol(asked >= 0.75 ? "sun.max.fill" : "sun.min.fill", .orange),
+            icon: .symbol(asked >= 0.75 ? "sun.max.fill" : "sun.min.fill", Tone.neutral.color),
             kind: "Lights", section: .lights,
             actions: [PaletteAction(id: "set", title: "Set Brightness", symbol: "sun.max") {
                 verbs.setBrightness(asked)
@@ -677,10 +678,10 @@ enum WhyLightPaletteRows {
 
     static func tint(for kind: LightWhy) -> PaletteTint {
         switch kind {
-        case .waiting, .escalation: return .orange
-        case .failed: return .red
+        case .waiting, .escalation: return Tone.ask.color
+        case .failed: return Tone.failure.color
         case .working: return .blue
-        case .completed: return .green
+        case .completed: return Tone.done.color
         case .capacity, .battery: return .yellow
         case .quiet, .sleepDim, .idleDim: return .indigo
         case .calendar, .reminder: return .teal
@@ -787,11 +788,11 @@ enum ControlCenterPaletteRows {
         case .darkMode: return .indigo
         case .desktopIcons: return .teal
         case .hiddenFiles: return .gray
-        case .mute: return .red
+        case .mute: return Tone.failure.color
         case .screenSaver: return .purple
         case .lock: return .gray
         case .dockAutoHide: return .blue
-        case .micMute: return .orange
+        case .micMute: return Tone.neutral.color
         case .eject: return .gray
         case .sleep: return .indigo
         }
@@ -952,10 +953,10 @@ enum WindowPaletteRows {
                    "square.grid.2x2.fill", .indigo, keywords: ["roster", "sessions"], chord: .command("o"),
                    run: verbs.overview),
             window("usage", "Usage Center", "Quotas, pace and history for every provider",
-                   "chart.bar.fill", .green, keywords: ["quota", "limits", "cost"], chord: .command("u"),
+                   "chart.bar.fill", Tone.done.color, keywords: ["quota", "limits", "cost"], chord: .command("u"),
                    run: verbs.usageCenter),
             window("history", "History", "What your agents did, newest first",
-                   "clock.arrow.circlepath", .orange, keywords: ["log", "events"], chord: .command("y"),
+                   "clock.arrow.circlepath", Tone.neutral.color, keywords: ["log", "events"], chord: .command("y"),
                    run: verbs.history),
             window("effects", "Effect Studio", "Light effects, scenes and assignments",
                    "wand.and.stars", .pink, keywords: ["leds", "animations", "lights"], run: verbs.effects),
@@ -1019,11 +1020,11 @@ enum WindowPaletteRows {
         switch page {
         case .general, .advanced: return .gray
         case .agents: return .blue
-        case .usage: return .green
-        case .devices: return .orange
+        case .usage: return Tone.done.color
+        case .devices: return Tone.neutral.color
         case .utilities: return .indigo
         case .lighting, .toys: return .pink
-        case .notifications: return .red
+        case .notifications: return Tone.failure.color
         case .remote: return .teal
         case .shortcuts: return .yellow
         case .sounds: return .mint

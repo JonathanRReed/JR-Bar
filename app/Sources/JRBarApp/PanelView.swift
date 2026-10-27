@@ -203,20 +203,7 @@ struct CountBadge: View {
     var symbol: String? = nil
 
     var body: some View {
-        HStack(spacing: 2.5) {
-            if let symbol {
-                Image(systemName: symbol)
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .imageScale(.small)
-            }
-            Text(text)
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .monospacedDigit()
-        }
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .padding(.horizontal, 5)
-        .background(Capsule().fill(.primary.opacity(0.08)).padding(.vertical, -1.5))
+        StatusBadge(text, symbol: symbol).monospacedDigit()
     }
 }
 
@@ -275,10 +262,10 @@ struct ConnectionDot: View {
 
     private var color: Color {
         switch state {
-        case .live: return .green
-        case .connecting: return .orange
+        case .live: return Tone.done.color
+        case .connecting: return Tone.neutral.color
         case .fileFeeds: return Color.secondary.opacity(0.5)
-        case .crashed: return .red
+        case .crashed: return Tone.failure.color
         }
     }
 
@@ -358,7 +345,7 @@ struct SessionRowView: View {
     /// The tint of a quiet row's "quiet 12m": amber-leaning, a notch softer
     /// than an ask's, so a stuck run reads differently from a healthy one
     /// without claiming it needs you.
-    static let quietTint = Color.orange.opacity(0.85)
+    static let quietTint = Tone.neutral.color.opacity(0.85)
 
     /// The word's HStack spacing and the mark's slot, which an orb and
     /// every mark share (`SessionRowMark.slot`).
@@ -839,12 +826,7 @@ struct AskRow: View {
             if isDemo {
                 DemoAskBadge()
             } else {
-                Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
-                    .font(JRBarTokens.TypeStyle.caption.font)
-                    .foregroundStyle(Color.orange)
-                    .lineLimit(1)
-                    .padding(.horizontal, 5).padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color.orange.opacity(0.14)))
+                StatusBadge(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask", tone: .ask)
             }
             staleCapsule
             if row.ask?.isDestructive == true {
@@ -877,7 +859,7 @@ struct AskRow: View {
             if let preview = row.ask?.previewLine, let ask = row.ask {
                 HStack(spacing: 2) {
                     AskPreviewLine(text: preview, size: 10.5,
-                                   tint: ask.isDestructive ? Color.red.opacity(0.9) : Color.primary.opacity(0.75),
+                                   tint: ask.isDestructive ? Tone.failure.color.opacity(0.9) : Color.primary.opacity(0.75),
                                    well: true)
                     AskDetailToggle(ask: ask)
                 }
@@ -1013,12 +995,7 @@ struct AskRow: View {
     @ViewBuilder
     private var staleCapsule: some View {
         if row.ask?.isStale == true {
-            Text("may be stale")
-                .font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 5).padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.primary.opacity(0.08)))
+            StatusBadge("May be stale", tone: .stale)
                 .help(staleHelp)
         }
     }
@@ -1190,8 +1167,8 @@ struct ContextHairline: View {
 
     private var fill: Color {
         switch Self.level(fraction) {
-        case .critical: return .red
-        case .warning: return .orange
+        case .critical: return Tone.failure.color
+        case .warning: return Tone.neutral.color
         case .calm: return accent.opacity(0.55)
         }
     }
@@ -1224,7 +1201,7 @@ struct PanelDevicesRow: View {
     private var linkGlyph: (name: String, style: AnyShapeStyle)? {
         switch dotLink?.state {
         case "linked": return ("link", AnyShapeStyle(.tertiary))
-        case "failed": return ("exclamationmark.triangle", AnyShapeStyle(Color.orange))
+        case "failed": return ("exclamationmark.triangle", AnyShapeStyle(Tone.failure.color))
         default: return nil
         }
     }
@@ -1354,22 +1331,11 @@ struct DeviceChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(present ? Color.green : Color.secondary.opacity(0.35))
-                .frame(width: 5, height: 5)
-            Text(name).font(JRBarTokens.TypeStyle.caption.font)
-                .foregroundStyle(present ? .primary : .secondary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3.5)
-        .background(Capsule().fill(.primary.opacity(0.06)))
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-        .opacity(dimmed ? 0.55 : 1)
-        .contentShape(Capsule())
-        .accessibilityLabel(accessibilityText)
-        .accessibilityAddTraits(.isButton)
+        StatusBadge(name, tone: present ? .done : .neutral)
+            .opacity(dimmed ? 0.55 : 1)
+            .contentShape(Rectangle())
+            .accessibilityLabel(accessibilityText)
+            .accessibilityAddTraits(.isButton)
     }
 }
 

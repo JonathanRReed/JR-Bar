@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -433,7 +434,7 @@ struct DockUtilityControls: View {
 
     private func permissionNote(_ text: String, open: @escaping () -> Void) -> some View {
         HStack(spacing: SettingsMetrics.s) {
-            CardNote(text, symbol: "exclamationmark.triangle.fill", tint: .orange)
+            CardNote(text, symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color)
             Spacer(minLength: SettingsMetrics.s)
             Button("Open Settings", action: open)
                 .controlSize(.small)

@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import Carbon
 import JRBarCore
@@ -143,7 +144,7 @@ struct ShortcutRecorderField: View {
             } else if let problem {
                 Text(problem)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 240, alignment: .trailing)
             }
@@ -289,7 +290,7 @@ struct ShortcutRow: View {
                 if let line = statusLine {
                     Text(line)
                         .font(.subheadline)
-                        .foregroundStyle(isProblem ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(isProblem ? AnyShapeStyle(Tone.neutral.color) : AnyShapeStyle(.secondary))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

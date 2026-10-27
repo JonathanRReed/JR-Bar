@@ -206,12 +206,8 @@ struct UsageForecastSummary: View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
             HStack(spacing: JRBarTokens.Space.sm) {
                 Text(inspection.window.longName).font(JRBarTokens.TypeStyle.headline.font)
-                Text(inspection.verdictText)
+                StatusBadge(inspection.verdictText, tint: inspection.verdictColor)
                     .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".verdict": inspection.displayForecast])
-                    .font(JRBarTokens.TypeStyle.section.font)
-                    .foregroundStyle(inspection.verdictColor)
-                    .padding(.horizontal, JRBarTokens.Space.sm).padding(.vertical, JRBarTokens.Space.xs)
-                    .background(inspection.verdictColor.opacity(0.12), in: Capsule())
             }
             Text(inspection.explanation).font(JRBarTokens.TypeStyle.callout.font)
                 .preference(key: UsageForecastEvidence.self, value: [inspection.window.id + ".headline": inspection.displayForecast])

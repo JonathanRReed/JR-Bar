@@ -1,3 +1,4 @@
+import JRBarUI
 import SwiftUI
 
 // The pieces every titled window draws the same way: its cards, its
@@ -209,7 +210,7 @@ struct WindowStatusCapsule: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(isError ? Color.orange : Color.green)
+                .foregroundStyle(isError ? Tone.failure.color : Tone.done.color)
             Text(text)
                 .foregroundStyle(.primary)
                 .lineLimit(2)

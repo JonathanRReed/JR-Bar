@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -81,11 +82,11 @@ struct FirmwareSheetContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(InsetPanel())
             if let failure = firmware.startFailure {
-                SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color,
                                title: "The update did not start", detail: failure)
             }
             if !isLive {
-                SettingsBanner(symbol: "bolt.slash.fill", tint: .orange, title: "The monitor is not running",
+                SettingsBanner(symbol: "bolt.slash.fill", tint: Tone.neutral.color, title: "The monitor is not running",
                                detail: "Start it again, then open this sheet again.")
             }
             HStack {
@@ -149,7 +150,7 @@ struct FirmwareSheetContent: View {
             .padding(SettingsMetrics.m)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(InsetPanel())
-            SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange, title: progress.reminder,
+            SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: Tone.neutral.color, title: progress.reminder,
                            detail: "Keep the Mac awake and plugged in. The LEDs stay still for about a minute, and the device restarts once.")
         }
     }
@@ -218,9 +219,9 @@ struct FirmwareSheetContent: View {
 
     private func tint(_ result: FirmwareResult) -> Color {
         switch result.kind {
-        case .succeeded: return .green
-        case .failed: return .red
-        case .unconfirmed: return .orange
+        case .succeeded: return Tone.done.color
+        case .failed: return Tone.failure.color
+        case .unconfirmed: return Tone.neutral.color
         }
     }
 

@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -420,16 +421,7 @@ struct PaletteTagView: View {
     let tag: PaletteTag
 
     var body: some View {
-        Text(tag.text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(tag.tone == .neutral ? AnyShapeStyle(.secondary) : AnyShapeStyle(tag.tone.color))
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tag.tone == .neutral
-                                       ? Color.primary.opacity(0.07)
-                                       : tag.tone.color.opacity(0.16)))
+        StatusBadge(tag.text, tint: tag.tone.color)
     }
 }
 
@@ -520,11 +512,11 @@ struct PaletteActionPanel: View {
         HStack(spacing: 10) {
             Image(systemName: action.symbol)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.secondary))
                 .frame(width: 18)
             Text(action.title)
                 .font(.system(size: 13))
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.primary))
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let chord = item.shortcut(for: action) {
@@ -610,9 +602,9 @@ extension PaletteTint {
         switch self {
         case .gray: return Color(nsColor: .systemGray)
         case .blue: return Color(nsColor: .systemBlue)
-        case .orange: return Color(nsColor: .systemOrange)
-        case .red: return Color(nsColor: .systemRed)
-        case .green: return Color(nsColor: .systemGreen)
+        case Tone.neutral.color: return Color(nsColor: .systemOrange)
+        case Tone.failure.color: return Color(nsColor: .systemRed)
+        case Tone.done.color: return Color(nsColor: .systemGreen)
         case .purple: return Color(nsColor: .systemPurple)
         case .pink: return Color(nsColor: .systemPink)
         case .teal: return Color(nsColor: .systemTeal)
@@ -630,9 +622,9 @@ extension PaletteTag.Tone {
         switch self {
         case .neutral: return .secondary
         case .accent: return .accentColor
-        case .attention: return .orange
-        case .alert: return .red
-        case .positive: return .green
+        case .attention: return Tone.neutral.color
+        case .alert: return Tone.failure.color
+        case .positive: return Tone.done.color
         }
     }
 }

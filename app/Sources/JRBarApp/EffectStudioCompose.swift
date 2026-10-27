@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarLEDS
 import SwiftUI
@@ -178,7 +179,7 @@ struct ComposeSheet: View {
 
             ForEach(composed.dropped, id: \.self) { note in
                 Label(note, systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(.callout).foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(composed.adjusted, id: \.self) { note in

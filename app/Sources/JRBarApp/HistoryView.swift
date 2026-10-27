@@ -1,3 +1,4 @@
+import JRBarUI
 import Charts
 import JRBarCore
 import SwiftUI
@@ -44,7 +45,7 @@ struct HistoryView: View {
             if let error = store.error, !store.rows.isEmpty {
                 // A failed refresh keeps the stale rows and says so in one
                 // line, rather than only in the empty state nobody sees.
-                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: .orange, text: error) {
+                WindowNoticeRow(symbol: "exclamationmark.triangle.fill", tint: Tone.failure.color, text: error) {
                     Button("Retry") { store.reload() }
                         .buttonStyle(.link)
                 }
@@ -54,7 +55,7 @@ struct HistoryView: View {
             if let notice = store.notice {
                 // Resume's or Open's outcome, in the monitor's words.
                 WindowNoticeRow(symbol: notice.isError ? "exclamationmark.triangle.fill" : "arrow.uturn.forward.circle.fill",
-                                tint: notice.isError ? .orange : .accentColor, text: notice.text)
+                                tint: notice.isError ? Tone.failure.color : .accentColor, text: notice.text)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
                     .transition(.opacity)
@@ -372,7 +373,7 @@ struct HistoryRhythm: View {
     /// colour so it sits on the line rather than in it.
     private static var failureDot: some View {
         Circle()
-            .fill(Color.red)
+            .fill(Tone.failure.color)
             .frame(width: 5, height: 5)
             .padding(1.25)
             .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
@@ -512,10 +513,10 @@ enum HistoryKindStyle {
 
     static func color(_ kind: String) -> Color {
         switch kind {
-        case "completed": return .green
-        case "asked", "ask_expired": return .orange
+        case "completed": return Tone.done.color
+        case "asked", "ask_expired": return Tone.ask.color
         case "answered": return .blue
-        case "failed": return .red
+        case "failed": return Tone.failure.color
         case "quota_crossed": return .purple
         case "started": return .secondary
         default: return .secondary
@@ -723,7 +724,7 @@ struct EventLogView: View {
                     text: store.isLive
                         ? "The journal holds the events the monitor published since it started."
                         : "The event journal lives in the monitor. It appears when the socket is live.",
-                    tint: store.isLive ? .secondary : .orange)
+                    tint: store.isLive ? .secondary : Tone.neutral.color)
             } else if store.events.isEmpty {
                 WindowEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
                                  text: "No event in the journal fits this search and these categories.",
@@ -764,10 +765,10 @@ struct EventLogView: View {
             if store.replay.liveAttention > 0 {
                 Label("\(store.replay.liveAttention) need you now — live", systemImage: "exclamationmark.bubble")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if let error = store.replay.error {
-                Text(error).font(.system(size: 10)).foregroundStyle(.red).lineLimit(1)
+                Text(error).font(.system(size: 10)).foregroundStyle(Tone.failure.color).lineLimit(1)
             }
         }
         .padding(.horizontal, 16)
@@ -859,10 +860,10 @@ enum EventLogStyle {
 
     static func color(_ category: EventLogCategory) -> Color {
         switch category {
-        case .asks: return .orange
-        case .runs: return .green
-        case .failures: return .red
-        case .escalation: return .orange
+        case .asks: return Tone.ask.color
+        case .runs: return Tone.done.color
+        case .failures: return Tone.failure.color
+        case .escalation: return Tone.ask.color
         case .quota: return .purple
         case .devices: return .blue
         case .other: return .secondary
@@ -880,13 +881,7 @@ struct KindBadge: View {
     let kind: String
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: HistoryKindStyle.symbol(kind)).font(.system(size: 7.5, weight: .bold))
-            Text(HistoryKindStyle.word(kind)).font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundStyle(HistoryKindStyle.color(kind))
-        .padding(.horizontal, 5).padding(.vertical, 1.5)
-        .background(Capsule().fill(HistoryKindStyle.color(kind).opacity(0.13)))
+        StatusBadge(HistoryKindStyle.word(kind), tint: HistoryKindStyle.color(kind), symbol: HistoryKindStyle.symbol(kind))
     }
 }
 
@@ -897,7 +892,7 @@ struct HistoryEmptyState: View {
         if !store.isLive {
             WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: "Monitor not connected",
                              text: store.error ?? "History lives in the monitor. The rows come back as soon as the socket is live.",
-                             tint: .orange)
+                             tint: Tone.neutral.color)
         } else if store.loading {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Loading history…",
                              text: "Reading what finished, failed and asked for you.")

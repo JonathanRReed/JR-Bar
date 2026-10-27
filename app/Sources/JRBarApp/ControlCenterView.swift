@@ -73,12 +73,12 @@ struct ControlCenterView: View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: store.inputCheck ? "hand.raised.fill" : "hand.tap")
-                    .foregroundStyle(store.inputCheck ? Color.orange : Color.secondary)
+                    .foregroundStyle(store.inputCheck ? Tone.neutral.color : Color.secondary)
                 Text(store.observedInputText)
                     .contentTransition(.numericText())
                 if store.inputCheck {
                     Text("·").foregroundStyle(.tertiary)
-                    Text("Input check: device actions are paused").foregroundStyle(.orange)
+                    Text("Input check: device actions are paused").foregroundStyle(Tone.neutral.color)
                 }
             }
             .font(.callout)
@@ -99,13 +99,13 @@ struct ControlCenterView: View {
                 Label("Check input", systemImage: store.inputCheck ? "hand.tap.fill" : "hand.tap")
             }
             .toggleStyle(.button)
-            .tint(store.inputCheck ? .orange : nil)
+            .tint(store.inputCheck ? Tone.neutral.color : nil)
             .help("While on, physical key, dial and enabled analog sector events are displayed here but never execute actions. Turn it off explicitly to resume; closing this window does not resume them.")
             Button("Apply keymap…") { store.openApplySheet() }
             .disabled(!store.canWriteDevice || store.keymap.needsRecovery)
             .help("Write KV_OAI_AG00…AG12 to one layer of the pad; the first original keymap is backed up and never overwritten")
             Button(store.keymap.needsRecovery ? "Restore original (required)…" : "Restore original…") { store.openRestoreSheet() }
-            .tint(store.keymap.needsRecovery ? .orange : nil)
+            .tint(store.keymap.needsRecovery ? Tone.failure.color : nil)
             .disabled(!store.canWriteDevice || store.keymap.state == .stock)
             .help("Put the first private backup of the keymap back on the pad and verify it")
             Button("Clear absent…") { store.openClearAbsentSheet() }
@@ -169,7 +169,7 @@ struct DeckOfflinePad: View {
             DeckNotice(symbol: "bolt.horizontal.circle",
                        title: "Waiting for the monitor",
                        text: "The Creator Micro 2 is driven by JR-Bar's monitor. Its keys light up here again as soon as the monitor is back.",
-                       tint: .orange)
+                       tint: Tone.neutral.color)
             PadIllustration(store: store)
                 .opacity(0.45)
                 .saturation(0)
@@ -231,9 +231,9 @@ struct DeckDeviceChip: View {
 
     private var statusColor: Color {
         guard let device, device.connected else { return .secondary }
-        if device.hasConflict { return .red }
-        if !device.approved { return .orange }
-        return .green
+        if device.hasConflict { return Tone.failure.color }
+        if !device.approved { return Tone.neutral.color }
+        return Tone.done.color
     }
 
     private var statusWord: String {
@@ -301,7 +301,7 @@ struct DeckDeviceChip: View {
             if let receipt = store.receipt {
                 HStack(spacing: 6) {
                     Image(systemName: receipt.isProblem ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(receipt.isProblem ? Color.orange : Color.green)
+                        .foregroundStyle(receipt.isProblem ? Tone.failure.color : Tone.done.color)
                     Text(receipt.text)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -324,19 +324,10 @@ struct KeymapBadge: View {
     let keymap: DeckKeymap
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: keymap.needsRecovery ? "exclamationmark.triangle.fill" : (keymap.isApplied ? "checkmark.seal.fill" : "keyboard"))
-            Text(keymap.label)
-        }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(keymap.needsRecovery ? Color.orange : .secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.06), in: Capsule())
-        .help(keymap.isApplied
-              ? "One layer of the pad carries KV_OAI_AG00…AG12; the first original keymap is backed up and never overwritten"
-              : (keymap.needsRecovery ? "A transfer was interrupted. Backup retained. Choose Restore, not Apply again."
-                 : "The pad still types its stock keys"))
+        StatusBadge(keymap.label, tone: keymap.needsRecovery ? .failure : .neutral,
+                    symbol: keymap.needsRecovery ? "exclamationmark.triangle.fill" : (keymap.isApplied ? "checkmark.seal.fill" : "keyboard"))
+            .help(keymap.isApplied ? "The agent keymap is applied; the original keymap is backed up."
+                  : keymap.needsRecovery ? "A transfer was interrupted. Choose Restore to recover the backup." : "The pad still types its stock keys.")
     }
 }
 
@@ -347,7 +338,7 @@ struct ConflictBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Tone.failure.color)
             VStack(alignment: .leading, spacing: 1) {
                 Text(DeckDevice.conflictText).font(.callout.weight(.semibold))
                 Text("The firmware has no ownership handshake. Close Work Louder Input and other hardware controllers, then reconnect the pad and inspect again.")
@@ -361,7 +352,7 @@ struct ConflictBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color.red.opacity(0.10))
+        .background(Tone.failure.color.opacity(0.10))
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -601,10 +592,10 @@ struct DeckAskAgeRing: View {
     var body: some View {
         TimelineView(ScreenBarAskAgeSchedule(age: age)) { context in
             ZStack {
-                Circle().stroke(Color.orange.opacity(0.22), lineWidth: 2)
+                Circle().stroke(Tone.neutral.color.opacity(0.22), lineWidth: 2)
                 Circle()
                     .trim(from: 0, to: age.fraction(at: context.date))
-                    .stroke(Color.orange, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(Tone.neutral.color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
@@ -1046,7 +1037,7 @@ struct ApplyKeymapSheet: View {
                 } else if let error = store.planError {
                     HStack(spacing: 10) {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Tone.neutral.color)
                         Button("Retry") { store.loadPlan() }
                             .controlSize(.small)
                     }
@@ -1101,7 +1092,7 @@ struct RestoreKeymapSheet: View {
             HStack(spacing: 12) {
                 Image(systemName: "arrow.uturn.backward.circle.fill")
                     .font(.system(size: 30))
-                    .foregroundStyle(store.keymap.needsRecovery ? Color.orange : Color.secondary)
+                    .foregroundStyle(store.keymap.needsRecovery ? Tone.failure.color : Color.secondary)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Restore the Creator Micro 2 keymap?").font(.title3.weight(.semibold))
                     Text("Close Input and other device controllers first. JR-Bar restores the first private backup only from a recognized applied keymap or a verifiable interrupted JR-Bar transfer. Later unrelated edits are not overwritten.")
@@ -1113,7 +1104,7 @@ struct RestoreKeymapSheet: View {
             if store.keymap.needsRecovery {
                 Label(DeckReceiptMessages.message(for: "recovery_required"), systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
             }
             if store.keymap.generation != nil {
                 Text("The pad reconnected since this transfer — start over; nothing resumes on its own.")

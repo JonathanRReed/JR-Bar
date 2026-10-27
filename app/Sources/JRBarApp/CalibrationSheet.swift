@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -107,7 +108,7 @@ struct CalibrationSheet: View {
                 if whiteMatched {
                     Label("Matched", systemImage: "checkmark.circle.fill")
                         .font(.callout)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Tone.done.color)
                 } else {
                     VStack(alignment: .leading, spacing: SettingsMetrics.s) {
                         Text("Does the light look white?")
@@ -128,9 +129,9 @@ struct CalibrationSheet: View {
 
             DisclosureGroup(isExpanded: $fineTuneExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
-                    gainRow("Red", value: $model.red, tint: .red)
+                    gainRow("Red", value: $model.red, tint: Tone.failure.color)
                         .settingControl("\(device?.prefix ?? "devices.0").red_gain")
-                    gainRow("Green", value: $model.green, tint: .green)
+                    gainRow("Green", value: $model.green, tint: Tone.done.color)
                         .settingControl("\(device?.prefix ?? "devices.0").green_gain")
                     gainRow("Blue", value: $model.blue, tint: .blue)
                         .settingControl("\(device?.prefix ?? "devices.0").blue_gain")
@@ -170,7 +171,7 @@ struct CalibrationSheet: View {
             if let error = submission.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

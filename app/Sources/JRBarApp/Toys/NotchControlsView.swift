@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -532,7 +533,7 @@ struct NotchExternalProviderNote: View {
         HStack(spacing: SettingsMetrics.s) {
             CardNote(Self.text(installed: installed, running: running, name: name),
                      symbol: installed ? (running ? "checkmark.circle.fill" : "pause.circle") : "arrow.down.circle",
-                     tint: installed && running ? .green : .secondary)
+                     tint: installed && running ? Tone.done.color : .secondary)
             Spacer(minLength: SettingsMetrics.s)
             if installed {
                 Button("Open \(name)", action: open)

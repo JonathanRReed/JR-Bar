@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -136,9 +137,9 @@ struct FirmwareRows: View {
 
     private func noteTint(_ card: FirmwareCardState) -> Color {
         switch card.display {
-        case .failed: return .red
-        case .unconfirmed, .cannotUpdate, .unavailable, .offline: return .orange
-        case .succeeded: return .green
+        case .failed: return Tone.failure.color
+        case .unconfirmed, .cannotUpdate, .unavailable, .offline: return Tone.neutral.color
+        case .succeeded: return Tone.done.color
         default: return .secondary
         }
     }

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -227,7 +228,7 @@ struct DeviceReceiptRow: View {
         if let line = DeviceReceiptWords.line(store.core.lights?.deviceReceipts[deviceID], deviceName: deviceName) {
             Label(line, systemImage: "exclamationmark.triangle.fill")
                 .font(.subheadline)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Tone.neutral.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .settingRowStyle()
         }

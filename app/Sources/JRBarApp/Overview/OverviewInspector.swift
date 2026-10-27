@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -46,7 +47,7 @@ enum OverviewEvidence: String {
         switch self {
         case .reported: return .accentColor
         case .derived: return .secondary
-        case .unavailable: return .orange
+        case .unavailable: return Tone.neutral.color
         }
     }
 }
@@ -88,10 +89,10 @@ extension OverviewLink.Tone {
     /// the panel's device chips already speak.
     var color: Color {
         switch self {
-        case .good: return .green
+        case .good: return Tone.done.color
         case .busy: return .blue
-        case .warn: return .orange
-        case .down: return .red
+        case .warn: return Tone.neutral.color
+        case .down: return Tone.failure.color
         case .idle: return .secondary.opacity(0.35)
         }
     }
@@ -346,7 +347,7 @@ struct OverviewSessionInspector: View {
                     if ask.isDestructive { AskRiskMark(size: 10) }
                     Text(preview)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary.opacity(0.8)))
+                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.primary.opacity(0.8)))
                         .textSelection(.enabled)
                         .lineLimit(3)
                 }
@@ -356,7 +357,7 @@ struct OverviewSessionInspector: View {
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
             } else if ask.isDestructive {
                 Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10.5)).foregroundStyle(.red)
+                    .font(.system(size: 10.5)).foregroundStyle(Tone.failure.color)
             }
             if ask.hasDetail {
                 // Opened only by the person; reading it answers nothing.
@@ -397,7 +398,7 @@ struct OverviewSessionInspector: View {
                     Button("Approve") {
                         Task { await store.answerAsk(entry: entry, approve: true) }
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(Tone.done.color)
                 }
                 if plan.alwaysAllow {
                     // Its own button: the agent remembers the rule.
@@ -411,7 +412,7 @@ struct OverviewSessionInspector: View {
                     Button("Deny") {
                         Task { await store.answerAsk(entry: entry, approve: false) }
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                    .buttonStyle(.bordered).controlSize(.small).tint(Tone.failure.color)
                 }
                 if plan.reply {
                     Button("Reply…") { reply(entry) }
@@ -464,7 +465,7 @@ struct OverviewSessionInspector: View {
                         .disabled(!picks.isComplete(choices))
                 }
                 Button("Deny") { Task { await store.declineQuestion(entry: entry) } }
-                    .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                    .buttonStyle(.bordered).controlSize(.small).tint(Tone.failure.color)
             }
         }
         .disabled(busy)
@@ -644,20 +645,9 @@ struct OverviewStatePill: View {
     private var shown: Bool { answered && activity == .waiting }
     var word: String { shown ? Self.answeredWord : activity.word }
     private var tint: Color { shown ? .secondary : activity.tint }
-    private var calm: Bool { shown || activity == .idle || activity == .ended }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Circle().fill(tint).frame(width: 6, height: 6)
-            Text(word)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(activity.wordIsLoud && !shown ? tint : Color.primary.opacity(0.8))
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(tint.opacity(calm ? 0.10 : 0.14)))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("State: \(word)")
+        StatusBadge(word, tint: tint).accessibilityLabel("State: \(word)")
     }
 }
 

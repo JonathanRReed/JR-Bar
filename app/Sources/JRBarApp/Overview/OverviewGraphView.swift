@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -31,13 +32,13 @@ struct OverviewGraphView: View {
             GraphHeader(store: store, nodes: nodes, layout: layout)
             if !store.isLive, !store.roster.isEmpty {
                 HStack(spacing: 6) {
-                    Image(systemName: "bolt.horizontal.circle").foregroundStyle(.orange)
+                    Image(systemName: "bolt.horizontal.circle").foregroundStyle(Tone.neutral.color)
                     Text("Monitor not connected — showing the last roster it reported.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                     Spacer()
                 }
                 .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(.orange.opacity(0.07))
+                .background(Tone.neutral.color.opacity(0.07))
             }
             Divider()
             if nodes.isEmpty {
@@ -658,11 +659,11 @@ private struct GraphHoverCard: View {
             if let ask = session.ask {
                 Text(ask.summary ?? ask.preview ?? "Waiting on you")
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Tone.neutral.color)
                     .lineLimit(3)
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.orange.opacity(0.1)))
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Tone.neutral.color.opacity(0.1)))
                     // The words on the card's line, the box hanging just
                     // outside it.
                     .padding(.leading, Self.mark + Self.gutter - 8)
@@ -824,9 +825,9 @@ private struct GraphStatusToast: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: isError ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                .foregroundStyle(isError ? .red : .green)
+                .foregroundStyle(isError ? Tone.failure.color : Tone.done.color)
             Text(text)
-                .foregroundStyle(isError ? .red : .primary)
+                .foregroundStyle(isError ? Tone.failure.color : .primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Button(action: dismiss) {

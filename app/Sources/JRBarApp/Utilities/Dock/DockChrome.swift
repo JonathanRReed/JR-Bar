@@ -154,18 +154,9 @@ struct DockMinimizedMark: View {
 /// a lift so it reads over the icon it rides.
 struct DockBadgePill: View {
     let text: String
-    var size: CGFloat = 9.5
 
     var body: some View {
-        Text(text)
-            .font(.system(size: size, weight: .bold))
-            .monospacedDigit()
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .padding(.horizontal, size * 0.42)
-            .frame(minWidth: size * 1.7, minHeight: size * 1.7)
-            .background(Capsule().fill(Color(red: 1.0, green: 0.23, blue: 0.19)))
-            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+        StatusBadge(text).monospacedDigit()
     }
 }
 

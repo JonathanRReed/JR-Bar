@@ -93,3 +93,25 @@ def test_wording_and_notch_exceptions_are_narrow():
     assert not offenders('func currencySymbol() {}', "app/Sources/JRBarCore/Wording.swift")
     assert offenders('func currencySymbol() {}', "app/Sources/JRBarApp/Other.swift")
     assert not offenders('let paint = model.red + model.green')
+
+
+@pytest.mark.parametrize("file,name", [
+    ("PanelView.swift", "CountBadge"),
+    ("PanelView.swift", "DeviceChip"),
+    ("ControlCenterView.swift", "KeymapBadge"),
+    ("EffectStudioView.swift", "Badge"),
+    ("EffectStudioView.swift", "FactChip"),
+    ("HistoryView.swift", "KindBadge"),
+    ("Palette/PaletteView.swift", "PaletteTagView"),
+    ("Overview/OverviewView.swift", "OverviewSnoozedTag"),
+    ("Overview/OverviewStrips.swift", "OverviewCountPill"),
+    ("Overview/OverviewInspector.swift", "OverviewStatePill"),
+    ("DemoAskPanel.swift", "DemoAskBadge"),
+    ("Utilities/Dock/DockChrome.swift", "DockBadgePill"),
+])
+def test_status_badges_use_the_shared_renderer(file, name):
+    root = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
+    source = (root / file).read_text()
+    declaration = source.split("struct " + name + ":", 1)[1].split("\n}\n", 1)[0]
+    assert "StatusBadge(" in declaration
+    assert "Capsule()" not in declaration
