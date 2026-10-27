@@ -3045,14 +3045,16 @@ Added 2026-09-10 after a Pro account's Codex row carried a permanent red
 ### `usage.providers[].account`
 
 ```json
-"account": {"plan": "pro", "label": "d3a51c1c-…", "fidelity": "official"}
+"account": {"plan": "pro", "label": "sample@example.test", "id": "source-account-id", "fidelity": "official"}
 ```
 
 `plan` is the provider's own word for the subscription, never inferred from
 which windows arrived. Which windows an account *has* follows from its plan,
 so the plan is carried as a fact and applicability is derived from it rather
 than guessed backwards. The block appears as soon as either half is known;
-`plan` is `null` when no first-party source stated one.
+`plan` is `null` when no first-party source stated one. `label` is the human
+account label when available. The optional `id` carries the source account
+identifier for help only; views never shorten it into the account line.
 
 | provider | where `plan` comes from |
 | --- | --- |

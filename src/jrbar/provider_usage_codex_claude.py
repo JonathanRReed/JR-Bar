@@ -123,6 +123,7 @@ def _default_provider_local_scan(
             except Exception:
                 tokens = None
             if tokens is not None:
+                document["account_id"] = getattr(tokens, "account_id", None)
                 document["account_label"] = getattr(tokens, "account_label", None) or getattr(tokens, "account_id", None)
     return document
 
@@ -189,6 +190,7 @@ def _cached_provider_local_scan(
             from .credentials import read_codex_tokens
             tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
             if tokens is not None:
+                indexed["account_id"] = getattr(tokens, "account_id", None)
                 indexed["account_label"] = getattr(tokens, "account_label", None) or getattr(tokens, "account_id", None)
         except Exception:
             pass
@@ -442,7 +444,8 @@ def collect_codex(
         if isinstance(credits, int) and not isinstance(credits, bool):
             # A count only: JR-Bar never redeems a reset credit.
             snapshot = replace(snapshot, reset_credits=credits)
-        snapshot = replace(snapshot, token_history_state=local_facts.get("history_state"))
+        snapshot = replace(snapshot, token_history_state=local_facts.get("history_state"),
+                           account_id=local_facts.get("account_id"))
         return _codex_reading_freshness(
             snapshot, observed_evidence_at, observed_at=observed_at
         )

@@ -451,3 +451,25 @@ def test_a_usage_permission_refusal_uses_transient_backoff(tmp_path: Path, monke
     assert len(asked) == 1
     service.refresh_now(providers=("claude",), force=True)
     assert len(asked) == 2
+
+
+def test_codex_keeps_the_account_id_separate_from_its_human_label(tmp_path):
+    from types import SimpleNamespace
+
+    from jrbar.core_projection import usage_document
+    from jrbar.provider_usage_store import _snapshot, _snapshot_document
+
+    snapshot = collect_codex(preference('codex'), home=tmp_path, observed_at=100, read_auth=False,
+                             local_scanner=lambda *_: {
+                                 'windows': [{'used_percent': 42, 'window_minutes': 10080, 'resets_at': 200}],
+                                 'account_label': 'sample@example.test', 'account_id': 'synthetic-account-id',
+                                 'plan_type': 'pro',
+                             })
+    restored = _snapshot(_snapshot_document(snapshot))
+    assert restored.account_label == 'sample@example.test'
+    assert restored.account_id == 'synthetic-account-id'
+    document = usage_document(SimpleNamespace(snapshots=(restored,), refreshed_at=100))
+    account = document['providers'][0]['account']
+    assert account['label'] == 'sample@example.test'
+    assert account['id'] == 'synthetic-account-id'
+    assert account['plan'] == 'pro'

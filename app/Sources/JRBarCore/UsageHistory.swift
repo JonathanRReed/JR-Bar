@@ -298,11 +298,13 @@ public struct UsageHistoryModel: Codable, Hashable, Sendable, Identifiable {
 /// The account behind a provider's usage: plan name, a label (an email or
 /// an org), and how the daemon knows (`official`, `derived`, `manual`).
 public struct UsageAccount: Codable, Hashable, Sendable {
+    public var id: String?
     public var plan: String?
     public var label: String?
     public var fidelity: String?
 
-    public init(plan: String? = nil, label: String? = nil, fidelity: String? = nil) {
+    public init(plan: String? = nil, label: String? = nil, fidelity: String? = nil, id: String? = nil) {
+        self.id = id
         self.plan = plan
         self.label = label
         self.fidelity = fidelity

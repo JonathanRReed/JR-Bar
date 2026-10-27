@@ -287,6 +287,7 @@ class ProviderUsageSnapshot:
     #: only when an older reading is carried forward, and never invented.
     read_at: float | None = None
     token_history_state: str | None = None
+    account_id: str | None = None
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)

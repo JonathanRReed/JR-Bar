@@ -1459,6 +1459,7 @@ def usage_document(
                 "account": (
                     {
                         "plan": account_plan,
+                        **({"id": snapshot.account_id} if getattr(snapshot, "account_id", None) else {}),
                         "label": account_label if isinstance(account_label, str) and account_label else None,
                         "fidelity": "stale" if state == "stale" else "official",
                     }

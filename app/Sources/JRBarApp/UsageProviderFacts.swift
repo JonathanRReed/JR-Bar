@@ -14,6 +14,7 @@ struct UsageProviderFacts {
         [UsageCenterStore.accountLine(provider, history: history), UsageSourceNotes.sourceCaption(provider) ?? ""]
             .filter { !$0.isEmpty }.joined(separator: " · ")
     }
+    var accountHelp: String? { provider.account?.id ?? provider.account?.label }
     var readingAge: String? { UsageCardCopy.readingAgeText(provider, now: now) }
     var constraint: String? {
         guard let selected = provider.headlineWindow, let conventional = provider.conventionalWindow,
@@ -53,7 +54,7 @@ struct UsageProviderFactsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
-            if !facts.account.isEmpty { Text(facts.account).textSelection(.enabled) }
+            if !facts.account.isEmpty { Text(facts.account).textSelection(.enabled).help(facts.accountHelp ?? "") }
             if let text = facts.noQuota { Text(text) }
             if let text = facts.constraint { Text(text) }
             if let text = facts.readingAge { Text(text) }
