@@ -82,7 +82,7 @@ struct NotchIslandTests {
         #expect(summary.workingProviders == ["claude"])
         // Live rows only, in the panel's precedence: waiting first.
         #expect(summary.rows.map(\.activity) == [.waiting, .failed, .working, .working])
-        #expect(summary.rows.first?.label == "Codex session in Unknown project")
+        #expect(summary.rows.first?.label == "Codex session")
         #expect(summary.statusLine == "2 working · 1 waiting · 1 failed")
         #expect(NotchIsland.summarize([]).statusLine == "Nothing on the clock")
     }

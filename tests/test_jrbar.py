@@ -8852,7 +8852,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             restored = snapshot.stale_statuses[0]
             self.assertEqual(restored.work_key, expected_work_key)
             self.assertEqual(restored.agent_id, "claude:session:owned")
-            self.assertEqual(restored.display_name, "Claude session in Unknown project")
+            self.assertEqual(restored.display_name, "Claude session")
             self.assertEqual(restored.mode, AgentMode.WORKING)
             self.assertEqual(snapshot.operator_events, ())
             self.assertIsNotNone(snapshot.operator_state)

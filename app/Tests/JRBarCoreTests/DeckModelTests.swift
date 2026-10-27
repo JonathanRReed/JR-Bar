@@ -75,7 +75,7 @@ struct DeckModelTests {
         // provider is already the tile, and a UUID is never printed whole.
         let doubled = DeckSlot(index: 0, identity: "id", session: "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
                                label: "Claude fca1eb06-f6d1-413e-aa5f-dd19d8e05973", provider: "claude")
-        #expect(doubled.title == "Claude session in Unknown project")
+        #expect(doubled.title == "Claude session")
         #expect(keys[12].isEmpty && !keys[12].navigable)
         #expect(!keys.contains { $0.session == "ghost" }, "index 13 is not one of the thirteen keys")
         #expect(deck.boundSessions.contains("ghost"), "but the raw list still carries it")

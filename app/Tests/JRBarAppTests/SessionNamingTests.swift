@@ -55,8 +55,19 @@ struct SessionNamingTests {
 
     static func assertHuman(_ text: String, source: SourceLocation = #_sourceLocation) {
         #expect(!text.isEmpty, sourceLocation: source)
-        #expect(text.range(of: #"\b[0-9a-fA-F]{8,}\b|^t3-|^session$|/worktrees/|arbitrary-worktree"#,
+        #expect(text.range(of: #"\b[0-9a-fA-F]{8,}\b|^t3-|^session$|unknown project|/worktrees/|arbitrary-worktree"#,
                            options: [.regularExpression, .caseInsensitive]) == nil, sourceLocation: source)
+    }
+
+    @Test func missingProjectsNeverAppearInCurrentOrSavedLabels() {
+        for label in [nil, "Session", "Codex session in Unknown project", "Codex session · 09:30"] {
+            let name = SessionLabel.display(label: label, shortId: nil, id: "codex:session:synthetic", provider: "codex")
+            Self.assertHuman(name)
+            #expect(name == (label == "Codex session · 09:30" ? "Codex session · 09:30" : "Codex session"))
+            let row = CoreHistoryRow(at: Self.stamp, kind: "completed", provider: "codex",
+                                     session: "codex:session:synthetic", label: label)
+            #expect(row.displayTitle == name)
+        }
     }
 
     @Test func everyOutputUsesTheSharedTitle() async throws {
@@ -124,6 +135,21 @@ struct SessionNamingTests {
     }
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
+    func renderMissingProjectHistory() throws {
+        let history = HistoryStore(core: CoreModel(socketPath: "/nonexistent-history-proof.sock"), schedulingEnabled: false)
+        history.now = Date(timeIntervalSince1970: Self.stamp)
+        history.loadedAt = history.now
+        history.rows = ["Codex session in Unknown project", "Codex session · 09:30:00", "Codex session · 09:30:20"]
+            .enumerated().map { index, label in
+                CoreHistoryRow(at: Self.stamp - Double(index * 20), kind: "completed", provider: "codex",
+                               session: "codex:session:synthetic-\(index)", label: label, duration: 30)
+            }
+        try WindowsRenderProofTests.write("missing-project-history", size: CGSize(width: 820, height: 760)) {
+            HistoryView(store: history)
+        }
+    }
+
+    @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func renderNamesWithoutOpeningWindows() async throws {
         let (core, usage, provider) = Self.fixture()
         await usage.loadBurners(for: provider)?.value
@@ -134,6 +160,8 @@ struct SessionNamingTests {
             CoreHistoryRow(at: Self.stamp - Double(index * 65), kind: "completed", provider: session.provider,
                            session: session.id, label: session.displayLabel, duration: 90)
         }
+        history.rows.insert(CoreHistoryRow(at: Self.stamp, kind: "completed", provider: "codex",
+                                           session: "codex:session:synthetic", label: "Codex session in Unknown project"), at: 0)
         try WindowsRenderProofTests.write("names-history", size: CGSize(width: 820, height: 760)) { HistoryView(store: history) }
         try WindowsRenderProofTests.write("names-burners", size: CGSize(width: 760, height: 520)) {
             VStack(alignment: .leading, spacing: 24) {

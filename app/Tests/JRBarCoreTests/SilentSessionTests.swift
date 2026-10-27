@@ -52,7 +52,7 @@ struct SilentSessionTests {
         let first = watcher.observe([quiet], now: Self.now)
         #expect(first.count == 1)
         #expect(first.first?.session == "claude:run")
-        #expect(SilentSessionWatcher.title(first[0]) == "Claude session in Unknown project has been quiet for 11m 40s")
+        #expect(SilentSessionWatcher.title(first[0]) == "Claude session has been quiet for 11m 40s")
         // Same stretch (the same last signal), a minute later: nothing more.
         #expect(watcher.observe([quiet], now: Self.now.addingTimeInterval(60)).isEmpty)
         // It speaks (a fresh last signal), then goes quiet again: a new stretch.

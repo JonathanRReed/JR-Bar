@@ -377,6 +377,8 @@ def human_session_title(value: str | None, provider: str = "") -> str | None:
     if text.lower() in {"session", "worker", "agent", "t3-", provider.lower(),
                         PROVIDER_LABELS.get(provider, "").lower()}:
         return None
+    if text.lower() == f"{PROVIDER_LABELS.get(provider, provider.title())} session in Unknown project".lower():
+        return None
     if text.startswith(("/", "~/")):
         return None
     return text
@@ -394,6 +396,8 @@ def session_label(
 
     provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
     project = project or project_name((extras.cwd if extras else None) or cwd)
+    if project and project.strip().lower() == "unknown project":
+        project = None
     owns_title = not is_worker or session_id == agent_id.rsplit(":", 1)[-1]
     own = human_session_title(title, provider)
     if own is None and owns_title and extras is not None:
@@ -407,16 +411,20 @@ def session_label(
             if identity:
                 contexts.update({f"{provider_label} {identity}", f"{provider_label} session {identity}",
                                  f"{provider_label} agent {identity}"})
-        if candidate not in contexts and candidate and not candidate.startswith(provider_label + " session in "):
+        fallback = provider_label + " session"
+        generated = candidate == fallback or (candidate or "").startswith((fallback + " in ", fallback + " · "))
+        if candidate not in contexts and candidate and not generated:
             own = candidate
     if own:
         return own
     if is_worker and human_session_title(parent_label, provider):
         return f"{parent_label} worker {max(1, worker_ordinal)}"
-    label = f"{provider_label} session in {project or 'Unknown project'}"
+    label = f"{provider_label} session"
+    if project:
+        label += f" in {project}"
     if started_at is not None:
         try:
-            label += datetime.fromtimestamp(started_at).strftime(" at %H:%M")
+            label += datetime.fromtimestamp(started_at).strftime(" · %H:%M:%S")
         except (ValueError, OSError, OverflowError):
             pass
     return label
@@ -454,8 +462,9 @@ def session_names(statuses, *, extras_by_id=None, group_resolution=None, now=Non
         provider = str(getattr(status, "provider", "unknown"))
         extras = extras_by_id.get(key)
         began = getattr(status, "started_at", None) or (extras.started_at if extras else None)
-        fallback_prefix = PROVIDER_LABELS.get(provider, provider.title()) + " session in "
-        if counts[names[key]] > 1 and began is not None and names[key].startswith(fallback_prefix):
+        fallback_prefix = PROVIDER_LABELS.get(provider, provider.title()) + " session"
+        generated = names[key] == fallback_prefix or names[key].startswith((fallback_prefix + " in ", fallback_prefix + " · "))
+        if counts[names[key]] > 1 and began is not None and generated:
             names[key] = session_label(
                 provider=provider, session_id=getattr(status, "session_id", None), agent_id=key,
                 display_name=None, cwd=getattr(status, "cwd", None), extras=extras,

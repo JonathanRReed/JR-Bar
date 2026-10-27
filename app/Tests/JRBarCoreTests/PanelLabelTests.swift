@@ -70,18 +70,18 @@ struct SessionLabelTests {
 
     @Test("a leading provider name is dropped so callers can add their own")
     func providerPrefix() {
-        #expect(SessionLabel.display(label: "Codex 01a08b62", shortId: "01a08b62", id: "codex:session:01a08b62-8dbd-7410-babc-ab603738f9d8", provider: "codex") == "Codex session in Unknown project")
+        #expect(SessionLabel.display(label: "Codex 01a08b62", shortId: "01a08b62", id: "codex:session:01a08b62-8dbd-7410-babc-ab603738f9d8", provider: "codex") == "Codex session")
         #expect(SessionLabel.display(label: "OpenCode jrbar-in", shortId: "jrbar-in", id: "opencode:session:jrbar-install-probe", provider: "opencode") == "jrbar-in")
-        #expect(SessionLabel.display(label: "Claude", shortId: "fca1eb06", id: "claude:session:x", provider: "claude") == "Claude session in Unknown project")
+        #expect(SessionLabel.display(label: "Claude", shortId: "fca1eb06", id: "claude:session:x", provider: "claude") == "Claude session")
     }
 
     @Test("missing and opaque labels become Session")
     func uuids() {
         let uuid = "fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
-        #expect(SessionLabel.display(label: "Claude \(uuid)", shortId: "fca1eb06", id: "claude:session:\(uuid)", provider: "claude") == "Claude session in Unknown project")
-        #expect(SessionLabel.display(label: uuid, shortId: nil, id: "claude:session:\(uuid)", provider: "claude") == "Claude session in Unknown project")
-        #expect(SessionLabel.display(label: nil, shortId: nil, id: "claude:session:\(uuid)", provider: "claude") == "Claude session in Unknown project")
-        #expect(SessionLabel.display(label: "", shortId: nil, id: "codex:agent:a764be9bccedce76b", provider: "codex") == "Codex session in Unknown project")
+        #expect(SessionLabel.display(label: "Claude \(uuid)", shortId: "fca1eb06", id: "claude:session:\(uuid)", provider: "claude") == "Claude session")
+        #expect(SessionLabel.display(label: uuid, shortId: nil, id: "claude:session:\(uuid)", provider: "claude") == "Claude session")
+        #expect(SessionLabel.display(label: nil, shortId: nil, id: "claude:session:\(uuid)", provider: "claude") == "Claude session")
+        #expect(SessionLabel.display(label: "", shortId: nil, id: "codex:agent:a764be9bccedce76b", provider: "codex") == "Codex session")
         #expect(SessionLabel.display(label: "run \(uuid) again", shortId: nil, id: "x", provider: "codex") == "run again")
         #expect(SessionLabel.looksLikeUUID(uuid))
         #expect(SessionLabel.looksLikeUUID("a764be9bccedce76b"))
@@ -94,7 +94,7 @@ struct SessionLabelTests {
         let json = #"{"id":"claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973","provider":"claude","label":"Claude fca1eb06-f6d1-413e-aa5f-dd19d8e05973","short_id":"fca1eb06","kind":"main"}"#
         let session = try JSONDecoder().decode(CoreSession.self, from: Data(json.utf8))
         #expect(session.shortId == "fca1eb06")
-        #expect(session.displayLabel == "Claude session in Unknown project")
+        #expect(session.displayLabel == "Claude session")
         #expect(!session.displayLabel.contains("fca1eb06"))
     }
 }

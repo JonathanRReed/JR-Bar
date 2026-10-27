@@ -13,7 +13,7 @@ from jrbar.models import AgentMode, AgentStatus, ParentLink
 from jrbar.project_names import project_name, repository_project
 
 NOW = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
-BAD = re.compile(r"\b[0-9a-fA-F]{8,}\b|^t3-|^session$|/worktrees/", re.I)
+BAD = re.compile(r"\b[0-9a-fA-F]{8,}\b|^t3-|^session$|unknown project|/worktrees/", re.I)
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude", "factory", "devin", "t3code"])
@@ -78,7 +78,21 @@ def test_untitled_sessions_use_their_recorded_start_when_names_collide():
     second = replace(first, agent_id='codex:session:second', started_at=NOW.timestamp())
     names = session_names([first, second])
     assert names[first.agent_id] != names[second.agent_id]
-    assert all(name.startswith('Codex session in Sample at ') and not BAD.search(name) for name in names.values())
+    assert all(name.startswith('Codex session in Sample · ') and not BAD.search(name) for name in names.values())
+
+
+@pytest.mark.parametrize("project", [None, "", "Unknown project"])
+def test_missing_project_omits_the_project_clause_and_collisions_use_start(project):
+    from jrbar.core_projection import session_names
+    assert session_label(provider="codex", session_id="first", agent_id="codex:session:first",
+                         display_name="Codex session in Unknown project", cwd=None,
+                         project=project, extras=None) == "Codex session"
+    first = AgentStatus("codex", "codex:session:first", "Session", AgentMode.WORKING, NOW,
+                        "SessionStart", started_at=NOW.timestamp() - 600, project=project)
+    second = replace(first, agent_id="codex:session:second", started_at=first.started_at + 20)
+    names = session_names([first, second])
+    assert len(set(names.values())) == 2
+    assert all(name.startswith("Codex session · ") and not BAD.search(name) for name in names.values())
 
 
 @pytest.mark.parametrize('provider', ['codex', 'claude', 'factory', 'devin', 't3code'])
@@ -103,6 +117,11 @@ def test_deck_and_speech_use_the_shared_fallback(provider):
 def test_readable_native_ids_are_not_mistaken_for_provider_titles():
     assert session_label(provider='codex', session_id='work:offline', agent_id='codex:session:work:offline',
                          display_name='Codex work:offline', cwd='/synthetic/Sample', extras=None) == 'Codex session in Sample'
+
+
+def test_a_task_title_can_start_with_the_provider_and_session_word():
+    assert session_label(provider="codex", session_id="sample", agent_id="codex:session:sample",
+                         display_name="Codex session teardown", cwd=None, extras=None) == "Codex session teardown"
 
 
 def test_a_submodule_without_a_commondir_keeps_its_repository_name(tmp_path):

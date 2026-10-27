@@ -43,13 +43,17 @@ public enum SessionLabel {
             let generated = candidate.lowercased().hasPrefix(providerName(provider).lowercased() + " ")
             if title != AgentProject.name(of: cwd), title != id, !generated || title != nativeID { return title }
         }
-        return "\(providerName(provider)) session in \(project ?? AgentProject.name(of: cwd) ?? "Unknown project")"
+        let context = project ?? AgentProject.name(of: cwd)
+        let base = "\(providerName(provider)) session"
+        guard let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              context.lowercased() != "unknown project" else { return base }
+        return "\(base) in \(context)"
     }
 
     private static func title(_ value: String, provider: String) -> String? {
-        var text = humanTitle(value)
+        var text = humanTitle(value.replacingOccurrences(of: " in Unknown project", with: ""))
         let prefix = providerName(provider) + " "
-        if text.lowercased().hasPrefix(prefix.lowercased()), !text.lowercased().hasPrefix(prefix.lowercased() + "session in ") {
+        if text.lowercased().hasPrefix(prefix.lowercased()), !text.lowercased().hasPrefix(prefix.lowercased() + "session") {
             text = String(text.dropFirst(prefix.count))
         }
         if text.range(of: #"^[0-9a-fA-F]{4,}$"#, options: .regularExpression) != nil,

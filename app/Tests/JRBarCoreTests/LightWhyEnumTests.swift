@@ -153,16 +153,16 @@ struct LightWhyEnumTests {
     @Test("the old provider-plus-UUID label never shows a UUID or a doubled provider")
     func legacyLabel() throws {
         let explanation = try #require(Self.explain("working", [Self.legacy], motion: "continuous", fallback: "off"))
-        #expect(explanation.reason == "Claude session in Unknown project is working")
+        #expect(explanation.reason == "Claude session is working")
         #expect(explanation.motion == "Off")
-        #expect(explanation.headline == "Off: Claude session in Unknown project is working")
+        #expect(explanation.headline == "Off: Claude session is working")
     }
 
     @Test("a detail without a known session still names the label and provider")
     func detailOnly() throws {
         let detail = Self.detail(session: "codex:session:ghost", label: "Codex 01a08b62", provider: "codex", seconds: 12)
         let explanation = try #require(Self.explain("completed", [], detail: detail, motion: "finite", fallback: "#00FF66"))
-        #expect(explanation.reason == "Codex session in Unknown project finished now")
+        #expect(explanation.reason == "Codex session finished now")
         #expect(explanation.motion == "Green sweep")
         #expect(explanation.session == "codex:session:ghost")
     }
@@ -173,7 +173,7 @@ struct LightWhyEnumTests {
         asking.mode = "waiting"; asking.lifecycle = "active"
         asking.ask = CoreAsk(kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 45, summary: "Run: rm -rf build")
         let waiting = try #require(Self.explain("waiting", [asking, Self.main], detail: Self.detail(session: asking.id, label: "Codex 01a08b62", provider: "codex", seconds: 45)))
-        #expect(waiting.headline == "Amber pulse: Codex session in Unknown project is waiting on you (permission, 45s)")
+        #expect(waiting.headline == "Amber pulse: Codex session is waiting on you (permission, 45s)")
         #expect(waiting.session == asking.id)
 
         var failed = Self.main
@@ -182,7 +182,7 @@ struct LightWhyEnumTests {
         #expect(failure.headline == "Red flash: Claude jr-bar-67 failed 1m 40s ago")
 
         let escalation = try #require(Self.explain("escalation", [asking], escalation: CoreEscalation(stage: "menu_bar", since: Self.now.timeIntervalSince1970 - 120)))
-        #expect(escalation.headline == "Bright amber pulse: Codex session in Unknown project has waited 2m · escalation stage 2")
+        #expect(escalation.headline == "Bright amber pulse: Codex session has waited 2m · escalation stage 2")
     }
 
     @Test("the dimming whys read their factor from why_detail")
@@ -237,10 +237,10 @@ struct LightWhyEnumTests {
         let unknown = try #require(Self.explain("moon_phase", [Self.codexDone, Self.legacy]))
         #expect(unknown.kind == .unknown)
         #expect(unknown.why == "moon_phase")
-        #expect(unknown.headline == "Breathing orange: Claude session in Unknown project is working (moon phase)")
+        #expect(unknown.headline == "Breathing orange: Claude session is working (moon phase)")
         #expect(unknown.session == Self.mainID)
         let explicit = try #require(Self.explain("unknown", [Self.codexDone]))
-        #expect(explicit.headline == "Breathing orange: Codex session in Unknown project finished")
+        #expect(explicit.headline == "Breathing orange: Codex session finished")
         let nobody = try #require(Self.explain("unknown", []))
         #expect(nobody.reason == "No reason given")
         let asking = try #require(Self.explain("moon_phase", [Self.main], asks: [CoreAsk(session: Self.mainID, kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 5, summary: "?")]))

@@ -715,7 +715,7 @@ def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id__a
     sid = "fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
     common = dict(provider="claude", session_id=sid, agent_id=f"claude:session:{sid}")
     # The collector's content-free fallback carries nothing a person can read.
-    assert session_label(display_name=f"Claude {sid}", cwd=None, extras=None, **common) == "Claude session in Unknown project"
+    assert session_label(display_name=f"Claude {sid}", cwd=None, extras=None, **common) == "Claude session"
     assert session_label(display_name=f"Claude {sid}", cwd="/Users/j/Downloads/JR-Bar", extras=None, **common) == "Claude session in JR-Bar"
     assert (
         session_label(display_name=f"Claude {sid}", cwd=None, extras=SessionExtras(cwd="/tmp/notes/"), **common)
