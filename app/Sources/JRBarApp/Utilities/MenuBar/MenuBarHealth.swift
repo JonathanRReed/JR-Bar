@@ -14,15 +14,13 @@ enum MenuBarEngineHealth: Equatable, Sendable {
         running ? .divider : .parked
     }
 
-    /// The card's line. `fitEdge` joins it: the x the spacer packs
-    /// against on this screen.
-    func line(fitEdge: CGFloat? = nil) -> String {
+    /// The card describes hiding. Divider coordinates stay in diagnostics.
+    func line() -> String {
         switch self {
         case .parked:
-            return "Parked"
+            return "Off"
         case .divider:
-            let edge = fitEdge.map { " · edge at \(Int($0.rounded())) pt" } ?? ""
-            return "Divider · the icon is the divider, position is the setting\(edge)"
+            return "Items left of JR-Bar are hidden"
         }
     }
 }

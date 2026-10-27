@@ -217,10 +217,10 @@ final class MenuBarUtility: Toy {
         guard let probe = externalProbe else { return nil }
         _ = workspaceVersion
         let name = providerName
-        if !probe.installed { return "\(name) isn't installed — pick JR-Bar or install it" }
+        if !probe.installed { return "\(name) isn't installed. Choose JR-Bar or install it." }
         return probe.running
-            ? "\(name) is rendering the bar — ours is parked"
-            : "\(name) isn't running — ours stays parked"
+            ? "\(name) hides menu bar items."
+            : "\(name) isn't running. Open it or choose JR-Bar."
     }
 
     /// The picked counterpart's display name for the note.
@@ -511,7 +511,7 @@ final class MenuBarUtility: Toy {
     var status: ToyStatus {
         if !isOn { return .off }
         if let providerStatus { return providerStatus }
-        return running ? .on : .paused("Parked")
+        return running ? .on : .paused("Another app hides menu bar items")
     }
 
     var controls: AnyView {
@@ -1380,7 +1380,7 @@ final class MenuBarUtility: Toy {
 
     /// The card's "Right now" line.
     var engineLine: String {
-        engineHealth.line(fitEdge: hider.fitEdge)
+        engineHealth.line()
     }
 
     /// Other menu-bar managers running while ours renders — their

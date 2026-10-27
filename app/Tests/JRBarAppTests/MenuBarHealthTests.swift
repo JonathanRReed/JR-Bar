@@ -14,13 +14,11 @@ struct MenuBarHealthTests {
         #expect(MenuBarEngineHealth.assess(running: false) == .parked)
     }
 
-    @Test("the lines read plainly, the divider's with its edge")
+    @Test("the lines describe hiding without divider coordinates")
     func lines() {
-        #expect(MenuBarEngineHealth.parked.line() == "Parked")
+        #expect(MenuBarEngineHealth.parked.line() == "Off")
         #expect(MenuBarEngineHealth.divider.line()
-                == "Divider · the icon is the divider, position is the setting")
-        #expect(MenuBarEngineHealth.divider.line(fitEdge: 901.6)
-                == "Divider · the icon is the divider, position is the setting · edge at 902 pt")
+                == "Items left of JR-Bar are hidden")
     }
 
     @Test("rivals match by bundle id, or by name where the id is not pinned — each once")

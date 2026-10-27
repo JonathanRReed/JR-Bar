@@ -119,10 +119,10 @@ struct MenuBarPositionModelTests {
         #expect(status { $0.noRoom = true }.detail.contains("Quit or switch off a menu bar item"))
     }
 
-    @Test("the engine line names the divider and its edge")
+    @Test("the engine line describes which items JR-Bar hides")
     func engineLine() {
-        #expect(MenuBarEngineHealth.divider.line(fitEdge: 988)
-                == "Divider · the icon is the divider, position is the setting · edge at 988 pt")
+        #expect(MenuBarEngineHealth.divider.line()
+                == "Items left of JR-Bar are hidden")
     }
 
     // MARK: Migration

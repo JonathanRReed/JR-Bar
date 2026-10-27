@@ -9,16 +9,18 @@ struct SettingsProvidersPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
-            HStack {
-                Text("Providers").frame(maxWidth: .infinity, alignment: .leading)
-                column("Track")
-                column("Menu bar")
-                column("Panel")
-                Color.clear.frame(width: 20)
+            if !list.providers.isEmpty {
+                HStack {
+                    Text("Providers").frame(maxWidth: .infinity, alignment: .leading)
+                    column("Track")
+                    column("Menu bar")
+                    column("Panel")
+                    Color.clear.frame(width: 20)
+                }
+                .jrbarType(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, JRBarTokens.Space.md)
             }
-            .jrbarType(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, JRBarTokens.Space.md)
             SettingsGroup {
                 ForEach(list.providers, id: \.identity) { row in
                     providerRow(row)
