@@ -1474,14 +1474,12 @@ struct ConnectionWordRow: View {
         SettingsRow("Connection") { Text(connectionWord).foregroundStyle(.secondary) }
     }
 
+    /// The shared monitor words; a dropped connection adds its plain reason.
+    /// The raw reason stays in the log and Copy diagnostics.
     private var connectionWord: String {
-        switch store.core.connection {
-        case .connected where store.isLive: return "Connected"
-        case .connected: return "Connected, waiting for state"
-        case .connecting(let attempt): return attempt <= 1 ? "Connecting…" : "Reconnecting (try \(attempt))"
-        case .disconnected(let reason): return "Disconnected · \(reason)"
-        case .idle: return "Idle"
-        }
+        let status = MonitorWords.connection(store.core.connection, hasState: store.isLive)
+        guard case .disconnected(let reason) = store.core.connection else { return status }
+        return status + ". " + MonitorWords.reason(reason)
     }
 }
 

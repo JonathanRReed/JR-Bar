@@ -28,7 +28,7 @@ PATTERNS = {
     "missing-clock-minutes": re.compile(r'setLocalizedDateFormatFromTemplate\("EEEj"\)'),
     "currency-table": re.compile(r'\bfunc\s+currencySymbol\b|"(?:EUR|GBP)"\s*:'),
     "token-math": re.compile(r"/\s*1_000(?:_000)*(?![\d_])"),
-    "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)'),
+    "monitor-wording": re.compile(r'"(?:Monitor (?:offline|disconnected|not connected)|The monitor is not (?:connected|reachable|answering|running)|core is not connected)|[Dd]isconnected · |Monitor Not Connected|"Monitor: '),
     "ui-name": re.compile(r'"[^"\n]*(?:Effect Studio|Lights Studio|One at a Time|Status Only|Global Mix|Blend mode)[^"\n]*"|"Blend"'),
     "usage-direction": re.compile(r'% left|percent[^"\n]*\) left'),
     "quota-tone": re.compile(r'JRBarTokens\.Ink\.attention'),

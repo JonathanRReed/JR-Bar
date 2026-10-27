@@ -18,7 +18,7 @@ public enum AquariumActivityPresentation {
             let leaving = states.filter { $0 == .leaving }.count
             if leaving > 0 { parts.append("\(leaving) leaving") }
         } else {
-            parts = ["Disconnected", "0 confirmed working"]
+            parts = [MonitorWords.label]
             if !states.isEmpty {
                 parts.append("\(states.count) last-known session\(states.count == 1 ? "" : "s")")
             }

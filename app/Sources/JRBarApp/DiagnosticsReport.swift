@@ -40,7 +40,7 @@ enum DiagnosticsReport {
         lines.append("App: \(facts.appVersion)")
         lines.append("System: \(facts.system)")
         lines.append("Bundle: \(facts.bundlePath)")
-        lines.append("Monitor: \(facts.connection)")
+        lines.append("Monitor: \(facts.connection)") // jrbar-token-exception: Copy diagnostics keeps the raw connection
         if let version = facts.coreVersion { lines.append("Core version: \(version)") }
         let daemonCommit = facts.doctor?["commit"]?.stringValue
         if let daemonCommit { lines.append("Core commit: \(shortCommit(daemonCommit))") }

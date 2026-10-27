@@ -369,7 +369,7 @@ enum AgentPaletteRows {
                 return nil
             })
             return [PaletteItem(
-                id: "agents.offline", title: "Monitor Not Connected", subtitle: state.connection,
+                id: "agents.offline", title: MonitorWords.label, subtitle: state.connection,
                 keywords: ["daemon", "core", "restart", "sessions"],
                 icon: .symbol("bolt.horizontal.circle.fill", .semantic(.failure)), kind: "JR-Bar", section: .sessions,
                 actions: actions)]

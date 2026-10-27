@@ -2021,13 +2021,14 @@ final class SettingsStore {
         return (applied, refused, malformed, needsYourOK)
     }
 
-    /// The monitor's connection in words, as the Advanced page says it.
+    /// The monitor's connection for Copy diagnostics, raw reason included.
+    /// People read `MonitorWords` instead (the Advanced page's Connection row).
     var connectionDescription: String {
         switch core.connection {
         case .connected where core.state != nil: return "Connected"
         case .connected: return "Connected, waiting for state"
         case .connecting(let attempt): return attempt <= 1 ? "Connecting" : "Reconnecting (try \(attempt))"
-        case .disconnected(let reason): return "Disconnected · \(reason)"
+        case .disconnected(let reason): return "Disconnected (\(reason))"
         case .idle: return "Idle"
         }
     }
