@@ -888,3 +888,15 @@ The README describes Calendar events and a player on the app playing audio.
 These behaviors informed JR-Bar's Dock cards and their separate switches.
 JR-Bar reuses its shelf calendar reader and shared Alcove MediaRemote feed.
 No DockDoor implementation source or assets were read or copied.
+
+## JavaScriptCore value ownership, 2026-10-27
+
+Studied WebKit's
+[JSValue.mm](https://github.com/WebKit/WebKit/blob/321def29e1c8634b4a5ef5299981ab00850e50fe/Source/JavaScriptCore/API/JSValue.mm)
+and
+[JSContext.mm](https://github.com/WebKit/WebKit/blob/321def29e1c8634b4a5ef5299981ab00850e50fe/Source/JavaScriptCore/API/JSContext.mm)
+at commit `321def29e1c8634b4a5ef5299981ab00850e50fe`, under their BSD 2-Clause licence.
+`JSValue` protects its JavaScript value and retains its context before returning
+to the caller. JR-Bar calls these public native APIs through its existing
+Objective-C adapter so unprotected values never cross into Python. No WebKit
+implementation code was copied.

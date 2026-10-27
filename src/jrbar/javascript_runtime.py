@@ -1,41 +1,40 @@
-"""JavaScriptCore's C API for the packaged firmware, without framework wrappers."""
+"""Retained native JavaScriptCore values for the packaged firmware, without PyObjC."""
 from __future__ import annotations
 
 import ctypes
 import threading
 from functools import lru_cache
 
+from .native_apple_http import _call, _class
+from .native_process_info import _Object
+
 
 @lru_cache(maxsize=1)
 def _library():
-    lib = ctypes.CDLL("/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore")
-    pointer = ctypes.c_void_p
-    signatures = {
-        "JSGlobalContextCreate": (pointer, [pointer]),
-        "JSGlobalContextRelease": (None, [pointer]),
-        "JSStringCreateWithUTF8CString": (pointer, [ctypes.c_char_p]),
-        "JSStringCreateWithCharacters": (pointer, [ctypes.POINTER(ctypes.c_uint16), ctypes.c_size_t]),
-        "JSStringRelease": (None, [pointer]),
-        "JSEvaluateScript": (pointer, [pointer, pointer, pointer, pointer, ctypes.c_int, ctypes.POINTER(pointer)]),
-        "JSValueToStringCopy": (pointer, [pointer, pointer, ctypes.POINTER(pointer)]),
-        "JSStringGetMaximumUTF8CStringSize": (ctypes.c_size_t, [pointer]),
-        "JSStringGetUTF8CString": (ctypes.c_size_t, [pointer, pointer, ctypes.c_size_t]),
-        "JSValueProtect": (None, [pointer, pointer]),
-        "JSValueUnprotect": (None, [pointer, pointer]),
-        "JSContextGetGlobalObject": (pointer, [pointer]),
-        "JSObjectGetProperty": (pointer, [pointer, pointer, pointer, ctypes.POINTER(pointer)]),
-        "JSValueToObject": (pointer, [pointer, pointer, ctypes.POINTER(pointer)]),
-        "JSObjectIsFunction": (ctypes.c_bool, [pointer, pointer]),
-        "JSObjectCallAsFunction": (pointer, [pointer, pointer, pointer, ctypes.c_size_t, ctypes.POINTER(pointer), ctypes.POINTER(pointer)]),
-        "JSValueMakeNumber": (pointer, [pointer, ctypes.c_double]),
-        "JSValueMakeBoolean": (pointer, [pointer, ctypes.c_bool]),
-        "JSValueMakeNull": (pointer, [pointer]),
-        "JSValueMakeString": (pointer, [pointer, pointer]),
-    }
-    for name, (result, args) in signatures.items():
-        function = getattr(lib, name)
-        function.restype, function.argtypes = result, args
-    return lib
+    library = ctypes.CDLL("/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore")
+    library.JSObjectIsFunction.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    library.JSObjectIsFunction.restype = ctypes.c_bool
+    return library
+
+
+def _string(text):
+    encoded = text.encode("utf-16-le", "surrogatepass")
+    units = (ctypes.c_uint16 * (len(encoded) // 2)).from_buffer_copy(encoded)
+    return _call(_class("NSString"), "stringWithCharacters:length:",
+                 arguments=(ctypes.POINTER(ctypes.c_uint16), ctypes.c_ulong),
+                 values=(units, len(units)), object_result=True)
+
+
+def _argument(value):
+    if type(value) is str:
+        return _string(value)
+    if value is None:
+        return _call(_class("NSNull"), "null", object_result=True)
+    if type(value) is bool:
+        return _call(_class("NSNumber"), "numberWithBool:", arguments=(ctypes.c_bool,),
+                     values=(value,), object_result=True)
+    return _call(_class("NSNumber"), "numberWithDouble:", arguments=(ctypes.c_double,),
+                 values=(float(value),), object_result=True)
 
 
 class _Value:
@@ -49,109 +48,72 @@ class _Value:
 class _Function:
     def __init__(self, context, name):
         self.context = context
-        self.pointer = None
-        lib = context.library
         with context._lock:
-            key = lib.JSStringCreateWithUTF8CString(name.encode())
-            exception = ctypes.c_void_p()
-            try:
-                global_object = lib.JSContextGetGlobalObject(context.pointer)
-                value = lib.JSObjectGetProperty(context.pointer, global_object, key, ctypes.byref(exception))
-                function = lib.JSValueToObject(context.pointer, value, ctypes.byref(exception))
-                if exception.value or not function or not lib.JSObjectIsFunction(context.pointer, function):
-                    raise RuntimeError("JavaScriptCore firmware function unavailable")
-                lib.JSValueProtect(context.pointer, function)
-                self.pointer = function
-            finally:
-                lib.JSStringRelease(key)
-
-    def __del__(self):
-        if self.pointer:
-            self.context.library.JSValueUnprotect(self.context.pointer, self.pointer)
+            key = _string(name)
+            self._native = _call(context._native.pointer, "objectForKeyedSubscript:",
+                                 arguments=(ctypes.c_void_p,), values=(key.pointer,), object_result=True)
+            exception = context._read_exception()
+            if exception is not None or not self._native or not _call(self._native.pointer, "isObject", ctypes.c_bool):
+                raise RuntimeError("JavaScriptCore firmware function unavailable")
+            value = _call(self._native.pointer, "JSValueRef")
+            if not context.library.JSObjectIsFunction(context.pointer, value):
+                raise RuntimeError("JavaScriptCore firmware function unavailable")
 
     def callWithArguments_(self, arguments):
         context = self.context
-        lib = context.library
         with context._lock:
-            protected = []
-            try:
-                for argument in arguments:
-                    if type(argument) is str:
-                        encoded = argument.encode("utf-16-le", "surrogatepass")
-                        units = (ctypes.c_uint16 * (len(encoded) // 2)).from_buffer_copy(encoded)
-                        string = lib.JSStringCreateWithCharacters(units, len(units))
-                        try:
-                            value = lib.JSValueMakeString(context.pointer, string)
-                        finally:
-                            lib.JSStringRelease(string)
-                    elif type(argument) is bool:
-                        value = lib.JSValueMakeBoolean(context.pointer, argument)
-                    elif argument is None:
-                        value = lib.JSValueMakeNull(context.pointer)
-                    else:
-                        value = lib.JSValueMakeNumber(context.pointer, float(argument))
-                    lib.JSValueProtect(context.pointer, value)
-                    protected.append(value)
-                values = (ctypes.c_void_p * len(protected))(*protected)
-                exception = ctypes.c_void_p()
-                value = lib.JSObjectCallAsFunction(context.pointer, self.pointer, None,
-                    len(protected), values, ctypes.byref(exception))
-                result_pointer = exception.value or value
-                lib.JSValueProtect(context.pointer, result_pointer)
-                try:
-                    result = _Value(context._string(result_pointer))
-                finally:
-                    lib.JSValueUnprotect(context.pointer, result_pointer)
-                context._exception = result if exception.value else None
-                if exception.value:
-                    raise RuntimeError(result.toString())
-                return result
-            finally:
-                for value in protected:
-                    lib.JSValueUnprotect(context.pointer, value)
+            values = _call(_class("NSMutableArray"), "array", object_result=True)
+            for argument in arguments:
+                value = _argument(argument)
+                _call(values.pointer, "addObject:", None, (ctypes.c_void_p,), (value.pointer,))
+            result = _call(self._native.pointer, "callWithArguments:",
+                           arguments=(ctypes.c_void_p,), values=(values.pointer,), object_result=True)
+            exception = context._read_exception()
+            if exception is not None:
+                raise RuntimeError(exception.toString())
+            return _Value(context._string(result))
 
 
 class JavaScriptContext:
     def __init__(self):
         self.library = _library()
-        self.pointer = self.library.JSGlobalContextCreate(None)
-        if not self.pointer:
-            raise RuntimeError("JavaScriptCore context unavailable")
+        self._native = _Object(_call(_class("JSContext"), "new"))
+        self.pointer = _call(self._native.pointer, "JSGlobalContextRef")
         self._lock = threading.Lock()
         self._exception = None
 
-    def __del__(self):
-        if getattr(self, "pointer", None):
-            self.library.JSGlobalContextRelease(self.pointer)
-
     def _string(self, value):
-        string = self.library.JSValueToStringCopy(self.pointer, value, None)
-        if not string:
+        # JSValue protects its JSValueRef before returning to Python. Keeping
+        # that native object retained closes the C-return-to-JSValueProtect gap.
+        if value is None:
             raise RuntimeError("JavaScriptCore value is not readable")
-        try:
-            capacity = self.library.JSStringGetMaximumUTF8CStringSize(string)
-            buffer = ctypes.create_string_buffer(capacity)
-            size = self.library.JSStringGetUTF8CString(string, buffer, capacity)
-            return buffer.raw[:max(0, size - 1)].decode("utf-8")
-        finally:
-            self.library.JSStringRelease(string)
+        string = _call(value.pointer, "toString", object_result=True)
+        if string is None:
+            raise RuntimeError("JavaScriptCore value is not readable")
+        length = _call(string.pointer, "length", ctypes.c_ulong)
+        units = (ctypes.c_uint16 * length)()
+        _call(string.pointer, "getCharacters:", None,
+              (ctypes.POINTER(ctypes.c_uint16),), (units,))
+        return bytes(units).decode("utf-16-le", "surrogatepass")
 
     def evaluateScript_(self, source):
         with self._lock:
-            script = self.library.JSStringCreateWithUTF8CString(source.encode("utf-8"))
-            exception = ctypes.c_void_p()
-            try:
-                value = self.library.JSEvaluateScript(self.pointer, script, None, None, 1, ctypes.byref(exception))
-                pointer = exception.value or value
-                self.library.JSValueProtect(self.pointer, pointer)
-                try:
-                    result = _Value(self._string(pointer))
-                finally:
-                    self.library.JSValueUnprotect(self.pointer, pointer)
-                self._exception = result if exception.value else None
-                return result
-            finally:
-                self.library.JSStringRelease(script)
+            script = _string(source)
+            result = _call(self._native.pointer, "evaluateScript:",
+                           arguments=(ctypes.c_void_p,), values=(script.pointer,), object_result=True)
+            exception = self._read_exception()
+            return exception if exception is not None else _Value(self._string(result))
+
+    def _read_exception(self):
+        exception = _call(self._native.pointer, "exception", object_result=True)
+        try:
+            self._exception = _Value(self._string(exception)) if exception else None
+            return self._exception
+        finally:
+            if exception:
+                # A native exception value retains its context. Keep only its
+                # copied text so the context does not retain itself through it.
+                _call(self._native.pointer, "setException:", None, (ctypes.c_void_p,), (None,))
 
     def exception(self):
         return self._exception
