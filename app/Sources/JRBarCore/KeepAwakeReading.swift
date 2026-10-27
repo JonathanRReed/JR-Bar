@@ -342,11 +342,9 @@ public struct KeepAwakeReading: Equatable, Sendable {
 
     /// "14:32" or "2:32 PM", as the Mac tells time.
     func clock(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate("jmm")
-        return formatter.string(from: date)
+        UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone, format: .template("jmm")) {
+            $0.string(from: date)
+        }
     }
 
     // MARK: Words

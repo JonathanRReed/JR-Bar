@@ -81,11 +81,23 @@ public enum UsageTime {
     public static func clock(_ epoch: Double, locale: Locale = .autoupdatingCurrent,
                              timeZone: TimeZone = .current) -> String {
         guard epoch.isFinite else { return "" }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate("jm")
-        return formatter.string(from: Date(timeIntervalSince1970: epoch))
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template("jm")) {
+            $0.string(from: Date(timeIntervalSince1970: epoch))
+        }
+    }
+
+    public static func dayPeriods(locale: Locale = .current, timeZone: TimeZone = .current) -> [String] {
+        UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone, format: .template("jm")) {
+            [$0.amSymbol, $0.pmSymbol].filter { !$0.isEmpty }
+        }
+    }
+
+    public static func shortClock(_ date: Date, calendar: Calendar) -> String {
+        UsageDateFormatters.shared.withFormatter(locale: .current, timeZone: calendar.timeZone,
+                                                calendar: calendar, format: .shortTime) {
+            $0.string(from: date)
+        }
     }
 
     public static func clock(minutes: Int, now: Date = Date(), calendar: Calendar = .current,
@@ -109,11 +121,11 @@ public enum UsageTime {
         if calendar.isDate(date, inSameDayAs: Date(timeIntervalSince1970: now)) {
             return clock(epoch, locale: locale, timeZone: timeZone)
         }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate(remaining < 7 * 86400 ? "EEEjm" : "MMM d jm")
-        return formatter.string(from: date)
+        let template = remaining < 7 * 86400 ? "EEEjm" : "MMM d jm"
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template(template)) {
+            $0.string(from: date)
+        }
     }
 
     public static func runsOut(at epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
@@ -138,11 +150,11 @@ public enum UsageTime {
            calendar.isDate(date, inSameDayAs: tomorrow) { return "tomorrow \(time)" }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: today),
                                            to: calendar.startOfDay(for: date)).day ?? 0
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.setLocalizedDateFormatFromTemplate(days < 7 ? "EEEjm" : "MMM d jm")
-        return formatter.string(from: date)
+        let template = days < 7 ? "EEEjm" : "MMM d jm"
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template(template)) {
+            $0.string(from: date)
+        }
     }
 
     /// All notch forms retain the day. Only the day period and leading words shrink.
@@ -157,17 +169,17 @@ public enum UsageTime {
             let duration = String(when.dropFirst("in ".count))
             return [full, "Out \(when)", "\(duration) left", "\(duration) left"]
         }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        let periods = [formatter.amSymbol, formatter.pmSymbol].filter { !$0.isEmpty }
+        let periods = dayPeriods(locale: locale, timeZone: timeZone)
         let short = periods.reduce(when) { $0.replacingOccurrences(of: $1, with: "") }
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // Tomorrow is a full sentence word; the shortest form uses its weekday.
         var minimal = short
         if short.hasPrefix("tomorrow ") {
-            formatter.timeZone = timeZone
-            formatter.setLocalizedDateFormatFromTemplate("EEE")
-            minimal = formatter.string(from: Date(timeIntervalSince1970: epoch)) + " " + short.dropFirst("tomorrow ".count)
+            let weekday = UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                                   format: .template("EEE")) {
+                $0.string(from: Date(timeIntervalSince1970: epoch))
+            }
+            minimal = weekday + " " + short.dropFirst("tomorrow ".count)
         }
         return [full, "Runs out \(short)", "Out \(short)", "Out \(minimal)"]
     }
