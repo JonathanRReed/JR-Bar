@@ -459,6 +459,12 @@ def select_authoritative_snapshot(
         if candidate.state is ProviderSourceState.STALE:
             return candidate
 
+    for candidate in candidates:
+        # "This account has no quota" is an answer, not a failed read: old
+        # lanes are not a stale reading of something that exists.
+        if candidate.state is ProviderSourceState.UNSUPPORTED:
+            return candidate
+
     if last_known_good is not None:
         if last_known_good.provider_id not in provider_ids:
             raise ValueError("last-known-good provider does not match candidates")
