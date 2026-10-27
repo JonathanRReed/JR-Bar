@@ -902,9 +902,21 @@ in SwiftUI shapes; `BuddyCharacter` is the roster — `dot`, `cat`,
 `ghost`, `robot`, `owl`, `slime`, `axolotl`, `crab`, `mushroom`, `ufo`
 — and every member shares the one
 skeleton (pose, blink, effects) and differs only in the body. The card's
-Character picker is a menu that lists them by name, over a strip of tiles
-(tap one to pick it; the tile under the pointer paces, the rest stand in
-their patrol pose). Under Mini the picker is off and the strip is hidden.
+Character picker is a strip of tiles (tap one to pick it; the tile under
+the pointer paces, the rest stand in their patrol pose). Under Mini the
+strip is hidden and the label says why. The Size and Time between walks
+sliders both snap in their bindings and show no tick marks.
+
+Its eyes follow the pointer. Within about 160 points (wider as the floating
+buddy grows) the pupils ease toward it over a fifth of a second, capped
+inside the eye, in the moods that look around: pacing, gathering and the
+hop. An ask keeps its eyes on the "!", a slump stays downcast and sleep
+stays shut. `BuddyGaze` listens to the shared `PointerWatcher` only while
+the buddy is on screen, awake and moving and not in Mini, so a still
+pointer or a hidden buddy costs nothing; the ease is drawn by the buddy's
+own frame clock from three stored values, with no timer. Reduce Motion
+keeps the eyes centred. Without Accessibility the watcher hears nothing and
+the eyes keep the mood's own look.
 
 The bodies: Dot is the original soft blob, gradient-lit with eyes and
 mouth punched through to the capsule. Cat adds ears that prick for asks
