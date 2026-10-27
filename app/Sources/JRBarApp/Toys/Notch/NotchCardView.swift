@@ -1229,15 +1229,40 @@ struct NotchCardView: View {
                 .background(Capsule(style: .continuous).fill(style.chipFaint))
             if let countdown = caption.text {
                 Text(countdown)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                    .overlay(alignment: .leading) {
+                        ViewThatFits(in: .horizontal) {
+                            ForEach(caption.forms, id: \.self) { form in
+                                Text(form)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .accessibilityLabel(caption.help)
+                                    .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: form])
+                                    .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: 10])
+                            }
+                            if let shortest = caption.forms.last {
+                                ForEach([CGFloat(9), 8, 7, 6, 5, 4, 3, 2, 1], id: \.self) { size in
+                                    Text(shortest)
+                                        .font(.system(size: size))
+                                        .monospacedDigit()
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .accessibilityLabel(caption.help)
+                                        .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: shortest])
+                                        .preference(key: NotchMeterCaptionFontEvidence.self, value: [meter.id: size])
+                                }
+                            }
+                        }
+                    }
                     .font(.system(size: 10)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
                     .monospacedDigit()
                     .foregroundStyle(caption.color(fallback: style.faintColor))
                     .lineLimit(1)
-                    .truncationMode(.tail)
                     .layoutPriority(-1)
                     .help(caption.help)
-                    .accessibilityLabel(caption.help.isEmpty ? countdown : caption.help)
-                    .preference(key: NotchMeterCaptionEvidence.self, value: [meter.id: countdown])
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: NotchMeterCaptionWidthEvidence.self,
+                            value: [meter.id: geometry.size.width])
+                    })
             }
             if meter.incident {
                 Image(systemName: "exclamationmark.triangle.fill")
