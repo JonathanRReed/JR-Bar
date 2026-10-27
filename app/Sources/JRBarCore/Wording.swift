@@ -25,6 +25,14 @@ public enum UsageNumber {
 }
 
 public enum UsageTime {
+    public static func settingMinutes(_ value: Double) -> String {
+        "\(Int(saturating: value.rounded())) min" // jrbar-token-exception: a setting value keeps the SI space
+    }
+
+    public static func spokenMinutes(_ value: Int) -> String {
+        value == 1 ? "1 minute" : "\(value) minutes"
+    }
+
     public static func duration(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "unknown" }
         let whole = Int(saturating: max(0, seconds))
@@ -111,7 +119,7 @@ public enum UsageTime {
         guard seconds.isFinite, seconds >= 0 else { return "a while" }
         if seconds < 60 { return "under a minute" }
         let minutes = Int(saturating: seconds / 60)
-        if minutes < 60 { return minutes == 1 ? "1 minute" : "\(minutes) minutes" }
+        if minutes < 60 { return spokenMinutes(minutes) }
         let hours = Int(saturating: seconds / 3600)
         if hours < 48 { return hours == 1 ? "1 hour" : "\(hours) hours" }
         return "\(Int(saturating: seconds / 86400)) days"

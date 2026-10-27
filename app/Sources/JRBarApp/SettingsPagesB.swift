@@ -895,7 +895,7 @@ struct NotificationsAdvanced: View {
             SettingSlider(store, "Or with less left than",
                           subtitle: "Time left, not charge: a fast drain at 20 % can be nearer empty than a slow one at 8 %. Twice as early while agents run under a keep-awake hold; never on macOS's first guess, never plugged in.",
                           path: "battery_monitoring.low_battery_threshold_minutes", in: 0...120, step: 5, default: 0) { minutes in
-                minutes < 1 ? "Off" : "\(Int(minutes)) min"
+                minutes < 1 ? "Off" : UsageTime.settingMinutes(minutes)
             }
             .disabled(!(store.values.bool("battery_monitoring.low_battery_alert_enabled") ?? true))
             SettingToggle(store, "Charging fill when idle", subtitle: "While plugged in and nothing is running, the strip fills to the charge level instead of the idle whisper. Agents always break through.",

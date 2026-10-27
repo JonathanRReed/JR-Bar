@@ -512,11 +512,11 @@ struct PaletteActionPanel: View {
         HStack(spacing: 10) {
             Image(systemName: action.symbol)
                 .jrbarType(.body).fontWeight(.medium)
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.secondary))
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.secondary))
                 .frame(width: 18)
             Text(action.title)
                 .jrbarType(.body)
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.primary))
+                .foregroundStyle(action.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.primary))
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let chord = item.shortcut(for: action) {
@@ -602,9 +602,9 @@ extension PaletteTint {
         switch self {
         case .gray: return Color(nsColor: .systemGray)
         case .blue: return Color(nsColor: .systemBlue)
-        case Tone.neutral.color: return Color(nsColor: .systemOrange)
-        case Tone.failure.color: return Color(nsColor: .systemRed)
-        case Tone.done.color: return Color(nsColor: .systemGreen)
+        case .orange: return JRBarUI.Tone.neutral.color // jrbar-token-exception: palette identifier, not a raw colour
+        case .red: return JRBarUI.Tone.failure.color // jrbar-token-exception: palette identifier, not a raw colour
+        case .green: return JRBarUI.Tone.done.color // jrbar-token-exception: palette identifier, not a raw colour
         case .purple: return Color(nsColor: .systemPurple)
         case .pink: return Color(nsColor: .systemPink)
         case .teal: return Color(nsColor: .systemTeal)
@@ -613,6 +613,7 @@ extension PaletteTint {
         case .mint: return Color(nsColor: .systemMint)
         case .brown: return Color(nsColor: .systemBrown)
         case .provider(let id): return ProviderStyle.style(for: id).accent
+        case .semantic(let tone): return tone.color
         }
     }
 }
@@ -622,9 +623,10 @@ extension PaletteTag.Tone {
         switch self {
         case .neutral: return .secondary
         case .accent: return .accentColor
-        case .attention: return Tone.neutral.color
-        case .alert: return Tone.failure.color
-        case .positive: return Tone.done.color
+        case .attention: return JRBarUI.Tone.ask.color
+        case .warning: return JRBarUI.Tone.warning.color
+        case .alert: return JRBarUI.Tone.failure.color
+        case .positive: return JRBarUI.Tone.done.color
         }
     }
 }

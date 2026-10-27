@@ -155,7 +155,7 @@ public enum LightExplainer {
         case .idleDim:
             let after = context.settings?.double("idle_dim_after_minutes").map { Int($0) } ?? 10
             let fraction = context.detail?.brightnessFactor ?? context.settings?.double("idle_dim_fraction") ?? 0.3
-            return ("Dimmed", "Idle for \(after) min, dimmed to \(percent(fraction))", nil)
+            return ("Dimmed", "Idle for \(UsageTime.duration(Double(after) * 60)), dimmed to \(percent(fraction))", nil)
         case .battery:
             let dimmed = context.detail?.brightnessFactor.map { ", dimmed to \(percent($0))" } ?? ""
             return ("Dimmed", "On battery\(dimmed)", nil)
@@ -374,7 +374,7 @@ public enum LightExplainer {
             if settings.bool("idle_dim_enabled") == true {
                 let after = Int(settings.double("idle_dim_after_minutes") ?? 10)
                 let fraction = Int(((settings.double("idle_dim_fraction") ?? 0.3) * 100).rounded())
-                result.append(.init(label: "Idle dim", value: "to \(fraction)% after \(after) min"))
+                result.append(.init(label: "Idle dim", value: "to \(fraction)% after \(UsageTime.settingMinutes(Double(after)))"))
             } else {
                 result.append(.init(label: "Idle dim", value: "off"))
             }

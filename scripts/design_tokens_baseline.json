@@ -40,23 +40,11 @@
   "app/Sources/JRBarApp/EffectStudioProgram.swift": {
     "font: .system(size: 13": 2
   },
-  "app/Sources/JRBarApp/EventCoordinator.swift": {
-    "elapsed-unit: \\(notice.label) quiet for \\(Int(notice.seconds / 60)) min": 1
-  },
-  "app/Sources/JRBarApp/HistoryStore.swift": {
-    "elapsed-unit: \\(left / 60) min": 1
-  },
   "app/Sources/JRBarApp/HistoryView.swift": {
     "radius: cornerRadius: 7": 1
   },
-  "app/Sources/JRBarApp/Intents/DeepWork.swift": {
-    "elapsed-unit: \\(minutes) min": 2
-  },
   "app/Sources/JRBarApp/KeepAwakeFooter.swift": {
     "font: .system(size: 11": 1
-  },
-  "app/Sources/JRBarApp/KeepAwakeMenu.swift": {
-    "elapsed-unit: \\(hours) h": 2
   },
   "app/Sources/JRBarApp/NotchHUD.swift": {
     "font: .system(size: 12": 2,
@@ -132,10 +120,6 @@
     "radius: cornerRadius: 7": 1,
     "radius: cornerRadius: 9": 1
   },
-  "app/Sources/JRBarApp/PanelStore.swift": {
-    "elapsed-unit: \\(minutes / 60) h \\(minutes % 60) min": 1,
-    "elapsed-unit: \\(minutes) min": 1
-  },
   "app/Sources/JRBarApp/ScreenBarPeek.swift": {
     "font: .system(size: 11": 3,
     "font: .system(size: 12": 1,
@@ -156,13 +140,9 @@
   },
   "app/Sources/JRBarApp/SettingsPagesB.swift": {
     "animation: duration: 0.2": 1,
-    "elapsed-unit: \\(Int(minutes)) min": 1,
     "font: .system(size: 11": 2,
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2
-  },
-  "app/Sources/JRBarApp/SettingsView.swift": {
-    "elapsed-unit: \\(Int($0.rounded())) min": 1
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
@@ -178,7 +158,6 @@
     "font: .system(size: 46": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumControls.swift": {
-    "elapsed-unit: \\(minutes) min": 1,
     "radius: cornerRadius: 9": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumCreatureArt.swift": {
@@ -292,9 +271,6 @@
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumSound.swift": {
     "token-math: / 1_000_000": 1
-  },
-  "app/Sources/JRBarApp/Toys/Aquarium/AquariumToy.swift": {
-    "elapsed-unit: \\(saverMinutes) min": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumView.swift": {
     "colour: Color(red: 0.015": 1,
@@ -596,7 +572,6 @@
     "radius: cornerRadius: 5.6": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyToy.swift": {
-    "elapsed-unit: \\(Int(NotchBuddySettings.clampedWalkEvery(minutes).rounded())) min": 1,
     "radius: cornerRadius: 11": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyView.swift": {
@@ -726,16 +701,6 @@
     "elapsed-unit: \\(minutes) min": 2,
     "elapsed-unit: \\(total) min": 1,
     "elapsed-unit: \\(who): about \\($0) min": 1
-  },
-  "app/Sources/JRBarCore/LightExplanation.swift": {
-    "elapsed-unit: \\(after) min": 1,
-    "elapsed-unit: \\(fraction)% after \\(after) min": 1
-  },
-  "app/Sources/JRBarCore/MenuBarActionsModel.swift": {
-    "elapsed-unit: \\(max(1, seconds / 60)) min": 1,
-    "elapsed-unit: \\(seconds / 3600) h": 1,
-    "fixed-clock: String(format: \"at %02d:%02d": 1,
-    "fixed-clock: String(format: \"between %02d:%02d": 1
   },
   "app/Sources/JRBarCore/NotchIsland.swift": {
     "elapsed-unit: \\(hours) h": 1,

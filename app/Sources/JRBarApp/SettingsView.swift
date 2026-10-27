@@ -659,7 +659,7 @@ struct SectionNote: View {
 extension SettingsStore {
     static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }
     static let seconds: (Double) -> String = { $0 == $0.rounded() ? "\(Int($0)) s" : String(format: "%.1f s", $0) }
-    static let minutes: (Double) -> String = { "\(Int($0.rounded())) min" }
+    static let minutes: (Double) -> String = UsageTime.settingMinutes
     static let points: (Double) -> String = { String(format: "%g pt", $0) }
 }
 

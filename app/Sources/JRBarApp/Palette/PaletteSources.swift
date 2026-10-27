@@ -371,7 +371,7 @@ enum AgentPaletteRows {
             return [PaletteItem(
                 id: "agents.offline", title: "Monitor Not Connected", subtitle: state.connection,
                 keywords: ["daemon", "core", "restart", "sessions"],
-                icon: .symbol("bolt.horizontal.circle.fill", Tone.failure.color), kind: "JR-Bar", section: .sessions,
+                icon: .symbol("bolt.horizontal.circle.fill", .semantic(.failure)), kind: "JR-Bar", section: .sessions,
                 actions: actions)]
         }
         var items: [PaletteItem] = []
@@ -380,7 +380,7 @@ enum AgentPaletteRows {
                 id: "agents.clearFinished", title: "Clear Finished Sessions",
                 subtitle: "\(state.completed) done, ended or stale",
                 keywords: ["acknowledge", "tidy", "completed"],
-                icon: .symbol("checkmark.circle.fill", Tone.done.color), kind: "Command", section: .sessions,
+                icon: .symbol("checkmark.circle.fill", .semantic(.done)), kind: "Command", section: .sessions,
                 actions: [PaletteAction(id: "clear", title: "Clear Finished", symbol: "checkmark.circle") {
                     verbs.clearFinished()
                     return nil
@@ -564,7 +564,7 @@ enum LightsPaletteRows {
                 id: "lights.brightness", title: "LED Brightness",
                 subtitle: "Now \(percent(brightness))",
                 keywords: ["dim", "bright", "lights", "led"],
-                icon: .symbol("sun.max.fill", Tone.neutral.color), kind: "Lights", section: .lights,
+                icon: .symbol("sun.max.fill", .semantic(.neutral)), kind: "Lights", section: .lights,
                 actions: brightnessSteps.map { step in
                     PaletteAction(id: "b\(Int(step * 100))", title: percent(step),
                                   symbol: step >= 0.75 ? "sun.max" : "sun.min") {
@@ -599,7 +599,7 @@ enum LightsPaletteRows {
         return [PaletteItem(
             id: "lights.brightness", title: "Set LED Brightness to \(percent(asked))",
             subtitle: "Now \(percent(now))",
-            icon: .symbol(asked >= 0.75 ? "sun.max.fill" : "sun.min.fill", Tone.neutral.color),
+            icon: .symbol(asked >= 0.75 ? "sun.max.fill" : "sun.min.fill", .semantic(.neutral)),
             kind: "Lights", section: .lights,
             actions: [PaletteAction(id: "set", title: "Set Brightness", symbol: "sun.max") {
                 verbs.setBrightness(asked)
@@ -678,10 +678,10 @@ enum WhyLightPaletteRows {
 
     static func tint(for kind: LightWhy) -> PaletteTint {
         switch kind {
-        case .waiting, .escalation: return Tone.ask.color
-        case .failed: return Tone.failure.color
+        case .waiting, .escalation: return .semantic(.ask)
+        case .failed: return .semantic(.failure)
         case .working: return .blue
-        case .completed: return Tone.done.color
+        case .completed: return .semantic(.done)
         case .capacity, .battery: return .yellow
         case .quiet, .sleepDim, .idleDim: return .indigo
         case .calendar, .reminder: return .teal
@@ -788,11 +788,11 @@ enum ControlCenterPaletteRows {
         case .darkMode: return .indigo
         case .desktopIcons: return .teal
         case .hiddenFiles: return .gray
-        case .mute: return Tone.failure.color
+        case .mute: return .semantic(.failure)
         case .screenSaver: return .purple
         case .lock: return .gray
         case .dockAutoHide: return .blue
-        case .micMute: return Tone.neutral.color
+        case .micMute: return .semantic(.neutral)
         case .eject: return .gray
         case .sleep: return .indigo
         }
@@ -821,7 +821,7 @@ enum UsagePaletteRows {
             var tags: [PaletteTag] = []
             if let pct = window.usedPct {
                 tags.append(PaletteTag(text: UsageWindowLabel.percent(pct),
-                                       tone: pct >= 90 ? .alert : pct >= 75 ? .attention : .neutral))
+                                       tone: pct >= 99.95 ? .alert : pct >= 75 ? .warning : .neutral))
             }
             if provider.incident?.isEmpty == false {
                 tags.append(PaletteTag(text: "Incident", tone: .attention))
@@ -953,10 +953,10 @@ enum WindowPaletteRows {
                    "square.grid.2x2.fill", .indigo, keywords: ["roster", "sessions"], chord: .command("o"),
                    run: verbs.overview),
             window("usage", "Usage Center", "Quotas, pace and history for every provider",
-                   "chart.bar.fill", Tone.done.color, keywords: ["quota", "limits", "cost"], chord: .command("u"),
+                   "chart.bar.fill", .semantic(.done), keywords: ["quota", "limits", "cost"], chord: .command("u"),
                    run: verbs.usageCenter),
             window("history", "History", "What your agents did, newest first",
-                   "clock.arrow.circlepath", Tone.neutral.color, keywords: ["log", "events"], chord: .command("y"),
+                   "clock.arrow.circlepath", .semantic(.neutral), keywords: ["log", "events"], chord: .command("y"),
                    run: verbs.history),
             window("effects", "Studio", "Light effects, scenes and assignments",
                    "wand.and.stars", .pink, keywords: ["leds", "animations", "lights"], run: verbs.effects),
@@ -1020,11 +1020,11 @@ enum WindowPaletteRows {
         switch page {
         case .general, .advanced: return .gray
         case .agents: return .blue
-        case .usage: return Tone.done.color
-        case .devices: return Tone.neutral.color
+        case .usage: return .semantic(.done)
+        case .devices: return .semantic(.neutral)
         case .utilities: return .indigo
         case .lighting, .toys: return .pink
-        case .notifications: return Tone.failure.color
+        case .notifications: return .semantic(.failure)
         case .remote: return .teal
         case .shortcuts: return .yellow
         case .sounds: return .mint

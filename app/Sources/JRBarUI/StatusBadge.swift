@@ -2,7 +2,7 @@ import JRBarCore
 import SwiftUI
 
 /// Orange is reserved for an ask or a quota warning.
-public enum Tone: CaseIterable, Sendable {
+public enum Tone: CaseIterable, Hashable, Sendable {
     case ask, warning, failure, stale, reset, done, live, working, neutral
 
     public var color: Color {

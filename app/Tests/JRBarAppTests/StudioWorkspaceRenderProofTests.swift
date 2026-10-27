@@ -49,7 +49,7 @@ struct StudioWorkspaceRenderProofTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
-    func integratedLightHomesAsKeyWindows() async throws {
+    func integratedLightHomesOffscreen() async throws {
         try U5Proof.pinDefaultAccent()
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u4-proof")
         let programs = Programs.synthetic()
@@ -81,7 +81,7 @@ struct StudioWorkspaceRenderProofTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
-    func pagesAsKeyWindows() async throws {
+    func pagesOffscreen() async throws {
         try U5Proof.pinDefaultAccent()
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u4-proof")
         let programs = Programs.synthetic()
@@ -107,7 +107,7 @@ struct StudioWorkspaceRenderProofTests {
                                                          CoreDevice(id: "proof-dot", kind: "dot", leds: 2, connected: true)])))
             let coldStart = CACurrentMediaTime()
             try await render(EffectStudioView(store: store), name: "studio-cold-first-open", dark: false, directory: directory)
-            try JSONSerialization.data(withJSONObject: ["first_key_capture_ms": (CACurrentMediaTime() - coldStart) * 1000])
+            try JSONSerialization.data(withJSONObject: ["first_offscreen_capture_ms": (CACurrentMediaTime() - coldStart) * 1000])
                 .write(to: directory.appendingPathComponent("cold-first-open.json"))
             let load = try #require(store.reload())
             try await fixture.pending(2)

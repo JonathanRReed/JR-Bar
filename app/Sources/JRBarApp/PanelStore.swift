@@ -1092,9 +1092,9 @@ final class PanelStore {
 
     /// "4 min" once an ask has waited a minute; nil before.
     nonisolated static func askWaitWords(opened: Double, now: Double) -> String? {
-        let minutes = Int(max(0, now - opened) / 60)
-        guard minutes >= 1 else { return nil }
-        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+        let seconds = now - opened
+        guard seconds >= 60 else { return nil }
+        return UsageTime.duration(seconds)
     }
 
     // MARK: The awake hold

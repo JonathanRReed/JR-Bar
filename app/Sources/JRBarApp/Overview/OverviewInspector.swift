@@ -47,7 +47,7 @@ enum OverviewEvidence: String {
         switch self {
         case .reported: return .accentColor
         case .derived: return .secondary
-        case .unavailable: return Tone.neutral.color
+        case .unavailable: return JRBarUI.Tone.neutral.color
         }
     }
 }
@@ -89,10 +89,10 @@ extension OverviewLink.Tone {
     /// the panel's device chips already speak.
     var color: Color {
         switch self {
-        case .good: return Tone.done.color
+        case .good: return JRBarUI.Tone.done.color
         case .busy: return .blue
-        case .warn: return Tone.neutral.color
-        case .down: return Tone.failure.color
+        case .warn: return JRBarUI.Tone.failure.color
+        case .down: return JRBarUI.Tone.neutral.color
         case .idle: return .secondary.opacity(0.35)
         }
     }
@@ -347,7 +347,7 @@ struct OverviewSessionInspector: View {
                     if ask.isDestructive { AskRiskMark(size: 10) }
                     Text(preview)
                         .jrbarType(.caption).fontDesign(.monospaced)
-                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(Tone.failure.color) : AnyShapeStyle(.primary.opacity(0.8)))
+                        .foregroundStyle(ask.isDestructive ? AnyShapeStyle(JRBarUI.Tone.failure.color) : AnyShapeStyle(.primary.opacity(0.8)))
                         .textSelection(.enabled)
                         .lineLimit(3)
                 }
@@ -357,7 +357,7 @@ struct OverviewSessionInspector: View {
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
             } else if ask.isDestructive {
                 Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
-                    .jrbarType(.caption).foregroundStyle(Tone.failure.color)
+                    .jrbarType(.caption).foregroundStyle(JRBarUI.Tone.failure.color)
             }
             if ask.hasDetail {
                 // Opened only by the person; reading it answers nothing.
@@ -398,7 +398,7 @@ struct OverviewSessionInspector: View {
                     Button("Approve") {
                         Task { await store.answerAsk(entry: entry, approve: true) }
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(Tone.done.color)
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(JRBarUI.Tone.done.color)
                 }
                 if plan.alwaysAllow {
                     // Its own button: the agent remembers the rule.
@@ -412,7 +412,7 @@ struct OverviewSessionInspector: View {
                     Button("Deny") {
                         Task { await store.answerAsk(entry: entry, approve: false) }
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(Tone.failure.color)
+                    .buttonStyle(.bordered).controlSize(.small).tint(JRBarUI.Tone.failure.color)
                 }
                 if plan.reply {
                     Button("Reply…") { reply(entry) }
@@ -465,7 +465,7 @@ struct OverviewSessionInspector: View {
                         .disabled(!picks.isComplete(choices))
                 }
                 Button("Deny") { Task { await store.declineQuestion(entry: entry) } }
-                    .buttonStyle(.bordered).controlSize(.small).tint(Tone.failure.color)
+                    .buttonStyle(.bordered).controlSize(.small).tint(JRBarUI.Tone.failure.color)
             }
         }
         .disabled(busy)

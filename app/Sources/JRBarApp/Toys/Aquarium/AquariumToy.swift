@@ -344,7 +344,7 @@ final class AquariumToy: Toy {
         if let wallpaper, connected.contains(wallpaper) {
             return .note("Live wallpaper on \(wallpaper)")
         }
-        if saverMinutes > 0 { return .note("Screensaver after \(saverMinutes) min") }
+        if saverMinutes > 0 { return .note("Screensaver after \(UsageTime.settingMinutes(Double(saverMinutes)))") }
         return .note("Watching quietly")
     }
 

@@ -37,7 +37,7 @@ enum DeepWork {
             }
         }
         let minutes = max(1, Int((Double(elapsedSeconds) / 60).rounded()))
-        let head = early ? "Deep work ended after \(minutes) min" : "Deep work over (\(minutes) min)"
+        let head = early ? "Deep work ended after \(UsageTime.spokenMinutes(minutes))" : "Deep work over (\(UsageTime.spokenMinutes(minutes)))"
         var parts: [String] = []
         if finished > 0 { parts.append("\(finished) session\(finished == 1 ? "" : "s") finished") }
         if failed > 0 { parts.append("\(failed) failed") }

@@ -280,7 +280,7 @@ final class HistoryStore {
     var undoRemaining: String? {
         guard let last = core.lastClear, core.canUndoClear else { return nil }
         let left = Int(EventPolicy.undoWindow - now.timeIntervalSince(last.at))
-        return left >= 60 ? "\(left / 60) min" : "\(max(0, left)) s"
+        return UsageTime.duration(Double(left))
     }
     var completedCount: Int { core.sessions.filter { SessionActivity.reduce($0).isClearable || $0.stale }.count }
     var isLive: Bool { core.isLive }

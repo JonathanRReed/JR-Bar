@@ -380,7 +380,7 @@ final class NotchBuddyToy: Toy {
 
     /// The walk dial's readout: "12 min".
     static func walkWords(_ minutes: Double) -> String {
-        "\(Int(NotchBuddySettings.clampedWalkEvery(minutes).rounded())) min"
+        UsageTime.settingMinutes(NotchBuddySettings.clampedWalkEvery(minutes))
     }
 
     // MARK: Roaming

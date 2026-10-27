@@ -21,6 +21,11 @@ struct ConsistencyRenderProofTests {
         ], devices: WindowsRenderProofTests.devices, usage: usage)))
         let panel = WindowsRenderProofTests.panelStore(core.state!)
         let center = UsageCenterStore(core: core)
+        var ask = DecidedAskFixture.openAsk()
+        ask.openedAt = now - 75
+        ask.decision?.holdUntil = now + 300
+        let asking = WindowsRenderProofTests.panelStore(DecidedAskFixture.state(holding: ask))
+        let unsupported = CoreProviderUsage(id: "grok", windows: [], quotaSource: false)
         let suite = ScratchDefaults.suiteName("consistency-studio")
         defer { ScratchDefaults.remove(suite) }
         let studio = EffectStudioStore(core: core, defaults: ScratchDefaults.open(suite), settings: fixture.settings)
@@ -42,6 +47,9 @@ struct ConsistencyRenderProofTests {
                     size: CGSize(width: width, height: 1), name: "\(name)-\(look)", dark: dark, settle: 0)
             }
             try render(PanelView(store: panel, panelWidth: 372), "panel", 404)
+            try render(PanelView(store: asking, panelWidth: 372), "panel-ask", 404)
+            try render(UsageGaugeRow(provider: unsupported, now: now, style: .compact, windowNames: ["5h", "7d"]),
+                       "no-quota-source", 320)
             try render(UsageOverviewTable(store: center, showCost: true, select: { _ in }), "usage-overview", 1000)
             try render(UsageProviderDetail(provider: usage.providers[0], store: center, showCost: true), "usage-detail", 780)
             for page in [SettingsStore.Page.devices, .integrations, .utilities, .agents, .remote] {

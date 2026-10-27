@@ -215,7 +215,7 @@ struct SettingsRenderProofTests {
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
     static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false,
-                                  requiresKey: Bool = true) throws -> NSBitmapImageRep {
+                                  requiresKey: Bool = false) throws -> NSBitmapImageRep {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)

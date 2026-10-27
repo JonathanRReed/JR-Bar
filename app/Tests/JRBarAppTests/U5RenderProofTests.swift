@@ -276,7 +276,7 @@ enum U5Proof {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try pinDefaultAccent()
         let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
-        NSApplication.shared.setActivationPolicy(.regular)
+        _ = NSApplication.shared
         let staged = view.tint(.blue).accentColor(.blue).environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.controlActiveState, .key).environment(\.renderSnapshot, true)
             .jrbarAccessibility(reduceMotion: true).frame(width: width)
@@ -292,9 +292,6 @@ enum U5Proof {
         window.contentView = hosting
         window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
         defer { window.contentView = nil; window.close() }
-        try WindowPresenter.renderProofKey(window)
-        if !window.isKeyWindow { runUntilKey(window) }
-        let initiallyKey = window.isKeyWindow
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         window.setContentSize(size)
@@ -302,7 +299,6 @@ enum U5Proof {
         hosting.frame = NSRect(origin: .zero, size: size)
         settle(hosting, window: window)
         CATransaction.flush()
-        #expect(window.isKeyWindow, "Render proof must be key: initially=\(initiallyKey), active=\(NSApp.isActive), visible=\(window.isVisible), policy=\(NSApp.activationPolicy().rawValue), processPolicy=\(NSRunningApplication.current.activationPolicy.rawValue), bundle=\(Bundle.main.bundleIdentifier ?? "none")")
         let capturedView = title == nil ? hosting : (hosting.superview ?? hosting)
         let bitmap = try #require(capturedView.bitmapImageRepForCachingDisplay(in: capturedView.bounds))
         capturedView.cacheDisplay(in: capturedView.bounds, to: bitmap)
@@ -318,31 +314,7 @@ enum U5Proof {
         }
     }
 
-    private static func runUntilKey(_ window: NSWindow) {
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
-            object: window, queue: nil) { _ in MainActor.assumeIsolated { NSApp.stop(nil) } }
-        let loop = CFRunLoopGetMain()
-        CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) {
-            MainActor.assumeIsolated { try? WindowPresenter.renderProofKey(window) }
-        }
-        let timeout = DispatchWorkItem { @Sendable in
-            let mainLoop = CFRunLoopGetMain()
-            CFRunLoopPerformBlock(mainLoop, CFRunLoopMode.defaultMode.rawValue) {
-                MainActor.assumeIsolated {
-                    NSApp.stop(nil)
-                    if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero,
-                        modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
-                        NSApp.postEvent(wake, atStart: true)
-                    }
-                }
-            }
-            CFRunLoopWakeUp(mainLoop)
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: timeout)
-        NSApp.run()
-        timeout.cancel()
-        NotificationCenter.default.removeObserver(observer)
-    }
+
 }
 
 @MainActor

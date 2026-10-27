@@ -1,5 +1,6 @@
 import Foundation
 import JRBarCore
+import JRBarUI
 
 /// The ⌘⇧K palette's grammar, Raycast's: every row is one *thing* (an
 /// app in the menu bar, a session, a quiet preset, a scene) with an
@@ -47,6 +48,7 @@ enum PaletteTint: Hashable, Sendable {
     case gray, blue, orange, red, green, purple, pink, teal, indigo, yellow, mint, brown
     /// A provider's own accent, through `ProviderStyle`.
     case provider(String)
+    case semantic(JRBarUI.Tone)
 }
 
 /// A row's leading mark.
@@ -68,6 +70,7 @@ struct PaletteTag: Hashable, Sendable {
         case accent
         /// Amber — waiting on you.
         case attention
+        case warning
         /// Red — failed.
         case alert
         /// Green — on, done.

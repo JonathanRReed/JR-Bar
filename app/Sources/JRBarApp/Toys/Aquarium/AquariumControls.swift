@@ -242,7 +242,7 @@ struct AquariumControlsView: View {
         LabeledContent {
             Picker("", selection: bind(\.idleFillMinutes)) {
                 ForEach(AquariumSettings.idleFillChoices, id: \.self) { minutes in
-                    Text(minutes == 0 ? "Off" : "After \(minutes) min").tag(minutes)
+                    Text(minutes == 0 ? "Off" : "After \(UsageTime.settingMinutes(Double(minutes)))").tag(minutes)
                 }
             }
             .labelsHidden()

@@ -131,8 +131,8 @@ struct ScreenBarWingSlot: Equatable {
     var textColor: Color {
         switch tone {
         case .neutral: return .white.opacity(0.92)
-        case .attention: return Tone.ask.color
-        case .alert: return Tone.failure.color
+        case .attention: return JRBarUI.Tone.ask.color
+        case .alert: return JRBarUI.Tone.failure.color
         }
     }
 }
@@ -893,11 +893,11 @@ struct ScreenBarWingsView: View {
                             spacing: CGFloat = ScreenBarSensorDots.spacing) -> some View {
         HStack(spacing: spacing) {
             if sensors.cameraInUse {
-                Circle().fill(Tone.done.color)
+                Circle().fill(JRBarUI.Tone.done.color)
                     .frame(width: diameter, height: diameter)
             }
             if sensors.microphoneInUse {
-                Circle().fill(Tone.ask.color)
+                Circle().fill(JRBarUI.Tone.ask.color)
                     .frame(width: diameter, height: diameter)
             }
         }
