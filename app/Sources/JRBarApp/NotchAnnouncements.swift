@@ -616,20 +616,11 @@ final class DisplayWatcher {
 /// island starts to move.
 @MainActor
 enum NotchSounds {
-    /// The one player every tick goes to — prepared at launch, so the
-    /// first click does not pay for loading the file. Tests swap in a
-    /// recorder.
+    /// The one player every tick goes to. Tests swap in a recorder.
     static var player: any NotchTickPlayer = TinkPlayer()
 
     /// Where the player is touched, and only there.
     nonisolated static let queue = DispatchQueue(label: "jrbar.notch-sounds", qos: .userInitiated)
-
-    /// Loads and primes the player off the main thread — `NotchHUD`
-    /// calls it once the app is up.
-    static func prepare() {
-        let player = self.player
-        queue.async { player.prepare() }
-    }
 
     /// A click. A run of presses restarts it rather than dropping one
     /// while the last still rings.
@@ -645,16 +636,28 @@ protocol NotchTickPlayer: Sendable {
     func play()
 }
 
+protocol TickAudioPlayer: AnyObject {
+    var volume: Float { get set }
+    var currentTime: TimeInterval { get set }
+    @discardableResult func prepareToPlay() -> Bool
+    @discardableResult func play() -> Bool
+}
+
+extension AVAudioPlayer: TickAudioPlayer {}
+
 /// Tink from the system's sounds, through its own `AVAudioPlayer`: the
 /// shared named `NSSound` keeps its volume for everyone else. Only ever
 /// touched on `NotchSounds.queue`.
 final class TinkPlayer: NotchTickPlayer, @unchecked Sendable {
     private let volume: Float
-    private var player: AVAudioPlayer?
+    private var player: (any TickAudioPlayer)?
     private var loaded = false
+    private let load: @Sendable () -> (any TickAudioPlayer)?
 
-    init(volume: Float = 0.12) {
+    init(volume: Float = 0.12,
+         load: @escaping @Sendable () -> (any TickAudioPlayer)? = TinkPlayer.loadPlayer) {
         self.volume = volume
+        self.load = load
     }
 
     /// Where Tink lives, in `NSSound(named:)`'s own order: the app
@@ -675,29 +678,27 @@ final class TinkPlayer: NotchTickPlayer, @unchecked Sendable {
         return paths
     }()
 
-    private struct Prepared: @unchecked Sendable { let player: AVAudioPlayer }
-    private static let sounds = BackgroundLookupCache<Int, Prepared>(load: { _ in
-        let policy = ExternalFilePolicy(home: NSHomeDirectory())
-        guard let url = candidates.map({ URL(fileURLWithPath: $0) }).first(where: { policy.available($0) }),
-              let data = try? Data(contentsOf: url), let player = try? AVAudioPlayer(data: data) else { return nil }
-        player.prepareToPlay()
-        return Prepared(player: player)
-    })
-
     func prepare() {
         guard !loaded else { return }
         loaded = true
-        Task { @MainActor in
-            guard let prepared = await Self.sounds.resolve(0) else { return }
-            prepared.player.volume = volume
-            player = prepared.player
-        }
+        guard let player = load() else { return }
+        player.volume = volume
+        player.prepareToPlay()
+        self.player = player
+    }
+
+    private static func loadPlayer() -> (any TickAudioPlayer)? {
+        let policy = ExternalFilePolicy(home: NSHomeDirectory())
+        guard let url = Self.candidates.map({ URL(fileURLWithPath: $0) }).first(where: { policy.available($0) }),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? AVAudioPlayer(data: data)
     }
 
     func play() {
         prepare()
         guard let player else { return }
-        if player.isPlaying { player.stop() }
+        // Rewind the prepared player. stop() would dispose its audio
+        // queue and rebuild the hardware connection on the next tick.
         player.currentTime = 0
         player.play()
     }

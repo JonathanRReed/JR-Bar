@@ -10,6 +10,29 @@ import JRBarCore
 @Suite("Notch sounds", .serialized)
 @MainActor
 struct NotchSoundsTests {
+    private final class Playback: TickAudioPlayer, @unchecked Sendable {
+        var volume: Float = 1
+        var currentTime: TimeInterval = 1
+        var preparations = 0
+        var positions: [TimeInterval] = []
+        func prepareToPlay() -> Bool { preparations += 1; return true }
+        func play() -> Bool { positions.append(currentTime); return true }
+    }
+
+    @Test("the first tick plays and repeated ticks reuse one prepared player")
+    func reusePreparedPlayer() {
+        let playback = Playback()
+        let player = TinkPlayer(load: { playback })
+        NotchSounds.queue.sync {
+            player.play()
+            playback.currentTime = 0.5
+            player.play()
+            #expect(playback.preparations == 1)
+            #expect(playback.positions == [0, 0])
+            #expect(playback.volume == 0.12)
+        }
+    }
+
     private final class Recorder: NotchTickPlayer, @unchecked Sendable {
         private let lock = NSLock()
         private var calls: [(name: String, onMain: Bool)] = []
@@ -38,13 +61,23 @@ struct NotchSoundsTests {
     @Test("a tick reaches the player on the sound queue, never on the main thread")
     func tickOffMain() {
         withRecorder { recorder in
-            NotchSounds.prepare()
             for _ in 0..<3 { NotchSounds.tick() }
             NotchSounds.queue.sync {}
             let log = recorder.log
-            #expect(log.contains { $0.name == "prepare" })
             #expect(log.filter { $0.name == "play" }.count >= 3)
             #expect(log.allSatisfy { !$0.onMain }, "the audio server's wait never lands on main")
+        }
+    }
+
+    @Test("disabled HUD sound makes no player calls")
+    func disabledSound() {
+        withRecorder { recorder in
+            let hud = NotchHUD(anchorRect: { nil })
+            hud.islandPresent = { _ in true }
+            hud.soundEffectsAllowed = { false }
+            hud.announce(NotchAnnouncements.displayNotice(connected: false))
+            NotchSounds.queue.sync {}
+            #expect(recorder.log.isEmpty)
         }
     }
 

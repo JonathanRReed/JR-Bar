@@ -115,9 +115,7 @@ final class NotchHUD {
     func startSystemWatchers() {
         syncMediaTap()
         announcements.sync()
-        // The tick's player loads now, off the main thread, so the first
-        // announcement's click costs the island nothing.
-        NotchSounds.prepare()
+        // Audio is opened only when an allowed tick actually plays.
     }
 
     /// The tap exists only while the notch can draw capsules —
