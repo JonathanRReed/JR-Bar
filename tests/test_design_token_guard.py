@@ -62,3 +62,34 @@ def test_prune_only_removes_allowances(tmp_path: Path):
 def test_repository_matches_baseline():
     root = Path(__file__).resolve().parents[1]
     assert not differences(scan(root), json.loads((root / BASELINE).read_text()))
+
+
+@pytest.mark.parametrize("source,kind", [
+    ('Text("State").font(.caption)', "semantic-font"),
+    ('Text("State").font(.caption2.weight(.medium))', "semantic-font"),
+    ('Text("State").font(.system(.caption, design: .monospaced))', "semantic-small"),
+    ('Text("State").font(.system(size: 10.5))', "font-floor"),
+    ('Text("State").foregroundStyle(.orange)', "status-colour"),
+    ('Text("State").foregroundStyle(Color.red)', "status-colour"),
+    ('Text("State").foregroundStyle(.green)', "status-colour"),
+    ('Text("\\(value) % left")', "spaced-percent"),
+    ('String(format: "%.1f %%/h", rate)', "spaced-percent"),
+    ('Text("\\(minutes) min")', "elapsed-unit"),
+    ('String(format: "%d min", minutes)', "elapsed-unit"),
+    ('String(format: "%02d:%02d", hour, minute)', "fixed-clock"),
+    ('formatter.setLocalizedDateFormatFromTemplate("EEEj")', "missing-clock-minutes"),
+    ('func currencySymbol(_ currency: String) -> String {}', "currency-table"),
+    ('switch currency { case "EUR": "€"; default: "$" }', "currency-table"),
+    ('let count = tokens / 1_000', "token-math"),
+])
+def test_rejects_ui_drift(source, kind):
+    assert any(hit.startswith(kind + ":") for hit in offenders(source))
+
+
+def test_wording_and_notch_exceptions_are_narrow():
+    source = 'Text("State").font(.caption).foregroundStyle(.orange)'
+    assert not offenders(source, "app/Sources/JRBarApp/Toys/Notch/NotchCardView.swift")
+    assert offenders(source, "app/Sources/JRBarApp/SettingsView.swift")
+    assert not offenders('func currencySymbol() {}', "app/Sources/JRBarCore/Wording.swift")
+    assert offenders('func currencySymbol() {}', "app/Sources/JRBarApp/Other.swift")
+    assert not offenders('let paint = model.red + model.green')
