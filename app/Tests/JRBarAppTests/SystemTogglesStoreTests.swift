@@ -319,6 +319,37 @@ import Testing
         #expect(!state.awake.held, "a daemon that takes it holds the one hold")
     }
 
+    @Test func darkModeDoesNotSendACommandWhenSystemEventsIsAbsent() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
+        state.automationPermission = { .unavailable }
+        var commands = 0
+        state.runCommand = { _ in commands += 1; return (nil, nil) }
+        let store = SystemTogglesStore(state: state)
+        store.apply(.darkMode)
+        #expect(await waitForObservedState { store.lastError != nil })
+        #expect(commands == 0)
+        #expect(store.lastError == "System Events isn't running.")
+    }
+
+    @Test func automationSkipsTargetsThatAreNotRunning() {
+        for ask in [false, true] {
+            var calls = 0
+            let answer = AutomationPermission.systemEvents(ask: ask, isRunning: { _ in false }, determine: { _, _ in
+                calls += 1
+                return noErr
+            })
+            #expect(answer == .unavailable && calls == 0)
+        }
+        var calls = 0
+        let answer = AutomationPermission.systemEvents(ask: false, isRunning: { _ in true }, determine: { _, _ in
+            calls += 1
+            return noErr
+        })
+        #expect(answer == .granted && calls == 1)
+    }
+
     @Test func automationAnswersMapToWhatTheChipSays() {
         #expect(AutomationPermission.classify(noErr) == .granted)
         #expect(AutomationPermission.classify(OSStatus(-1744)) == .needsConsent)

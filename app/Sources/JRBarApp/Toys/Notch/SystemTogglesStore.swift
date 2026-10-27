@@ -62,6 +62,9 @@ final class SystemTogglesStore {
         @ObservationIgnored var readToggle: @MainActor (SystemToggle) async -> Bool = { toggle in
             await Task.detached { SystemTogglesStore.probe(toggle) }.value
         }
+        @ObservationIgnored var automationPermission: @MainActor () async -> AutomationPermission = {
+            await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
+        }
         @ObservationIgnored var settleShell: @MainActor () async -> Void = {
             try? await Task.sleep(nanoseconds: 600_000_000)
         }
@@ -874,11 +877,12 @@ final class SystemTogglesStore {
         if toggle == .darkMode {
             state.applying.insert(toggle)
             Task {
-                let permission = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
-                if permission == .denied {
+                let permission = await state.automationPermission()
+                if permission == .denied || permission == .unavailable {
                     state.pendingShellTargets.removeValue(forKey: toggle)
                     state.applying.remove(toggle)
-                    state.lastError = AutomationPermission.deniedSentence
+                    state.lastError = permission == .denied
+                        ? AutomationPermission.deniedSentence : "System Events isn't running."
                     return
                 }
                 fire(toggle, on: state.pendingShellTargets.removeValue(forKey: toggle) ?? on)
@@ -1322,9 +1326,21 @@ enum AutomationPermission: Equatable, Sendable {
     /// `ask: true` blocks until the person answers the prompt — call it
     /// off the main thread.
     nonisolated static func systemEvents(ask: Bool) -> AutomationPermission {
-        let target = NSAppleEventDescriptor(bundleIdentifier: systemEventsBundleID)
-        guard let desc = target.aeDesc else { return .unavailable }
-        return classify(AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, ask))
+        systemEvents(ask: ask, isRunning: {
+            !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
+        }, determine: { bundleID, ask in
+            let target = NSAppleEventDescriptor(bundleIdentifier: bundleID)
+            guard let desc = target.aeDesc else { return OSStatus(procNotFound) }
+            return AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, ask)
+        })
+    }
+
+    nonisolated static func systemEvents(
+        ask: Bool, isRunning: (String) -> Bool,
+        determine: (String, Bool) -> OSStatus
+    ) -> AutomationPermission {
+        guard isRunning(systemEventsBundleID) else { return .unavailable }
+        return classify(determine(systemEventsBundleID, ask))
     }
 
     nonisolated static func classify(_ status: OSStatus) -> AutomationPermission {
