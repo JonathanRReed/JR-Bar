@@ -53,7 +53,7 @@ struct MenuBarWakeRecovery: Equatable, Sendable {
 
     /// Where the episode stands, for "What JR-Bar sees".
     enum Verdict: Equatable, Sendable {
-        /// No event since launch.
+        /// No check has started yet.
         case idle
         /// An event was heard; waiting out the quiet and for a fresh read.
         case settling
@@ -116,6 +116,7 @@ struct MenuBarWakeRecovery: Equatable, Sendable {
             self.light = true
             armed = true
             firstEventAt = now
+            quietUntil = now
             reseats = 0
             strikes = 0
             firstTrouble = nil
@@ -208,12 +209,12 @@ struct MenuBarWakeRecovery: Equatable, Sendable {
 
     /// Whether the icon is the width that was written: its own width now
     /// (a strip of session dots grows and shrinks) plus the spacer that was
-    /// written with it, never less than the floor. nil written is nothing
-    /// to compare.
+    /// written with it. A wide icon can spend the entire spacer, so a
+    /// known write has no additional affordance floor.
     nonisolated static func widthStands(frame: CGRect, written: CGFloat?, writtenGlyph: CGFloat,
-                                        glyph: CGFloat, floor affordance: CGFloat) -> Bool {
+                                        glyph: CGFloat) -> Bool {
         guard let written else { return true }
-        let expected = glyph + max(affordance, written - writtenGlyph)
+        let expected = glyph + max(0, written - writtenGlyph)
         return abs(frame.width - expected) <= widthSlack
     }
 
@@ -228,7 +229,7 @@ struct MenuBarWakeRecovery: Equatable, Sendable {
         case .recovered:
             return "After the bar re-formed: the icon was re-seated once and stands clear."
         case .unverified:
-            return "After the bar re-formed: not re-checked, no fresh reading came."
+            return "JR-Bar could not get a complete reading of the divider."
         case .stuck(let trouble):
             switch trouble {
             case .offRow:

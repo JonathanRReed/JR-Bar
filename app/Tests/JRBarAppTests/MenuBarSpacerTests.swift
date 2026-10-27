@@ -429,9 +429,16 @@ struct MenuBarSpacerTests {
     @Test("a reinstalled control forgets the old length so the new item gets sized again")
     func reinstallForgets() {
         let (hider, writes) = makeHider(controls: { self.controls })
+        var clock = Date(timeIntervalSince1970: 1_000)
+        hider.now = { clock }
+        defer { hider.stop() }
         settle(hider)
         let before = writes().count
         hider.controlsReinstalled()
+        #expect(hider.wake.verdict == .settling)
+        hider.reconcile()
+        #expect(writes().count == before, "leave the new bar alone while it settles")
+        clock += MenuBarWakeRecovery.quiet + 0.1
         settle(hider)
         #expect(writes().count == before + 1, "the length is handed to the fresh item")
     }
@@ -513,9 +520,12 @@ struct MenuBarSpacerTests {
         store.save(930, key: "1512x982")
         @Captured var key = "1512x982"
         let (hider, _) = makeHider(controls: { self.controls }, store: store)
+        var clock = Date(timeIntervalSince1970: 1_000)
+        hider.now = { clock }
         hider.edgeKey = { key }
         hider.start()
-        hider.reconcile()
+        clock += MenuBarWakeRecovery.quiet + 0.1
+        settle(hider)
         #expect(hider.fitEdge == 930, "the learned edge outranks the guess")
         #expect(hider.assignedLengths[.hidden] == 94)
         key = "2560x1440"

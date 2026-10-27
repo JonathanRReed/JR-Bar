@@ -274,6 +274,7 @@ extension MenuBarUtility {
     func dividerDragReleased() {
         guard pointerGate.pressing else { return }
         pointerGate.release(now: engineClock())
+        hider.noteBarReformed("a menu bar item was placed")
         dividerDropPending = true
         engineVersion += 1
         // Held for the settle beat, then run once.

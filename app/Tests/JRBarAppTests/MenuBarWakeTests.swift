@@ -128,6 +128,102 @@ struct MenuBarWakeTests {
 
     // MARK: The state machine
 
+    @MainActor
+    @Test("starting and attaching the divider arm a check without waiting for a system event")
+    func launchAndAttachmentCheck() {
+        let rig = makeRig()
+        defer { rig.hider.stop() }
+        rig.hider.start()
+        #expect(rig.hider.wake.verdict == .settling)
+        rig.fresh(after: MenuBarWakeRecovery.quiet + 0.1)
+        #expect(rig.hider.wake.verdict == .settling, "no divider width has been written yet")
+        rig.fresh(after: 2)
+        rig.fresh(after: 2)
+        #expect(rig.hider.wake.verdict == .clear)
+        rig.hider.controlsReinstalled()
+        #expect(rig.hider.wake.verdict == .settling)
+    }
+
+    @MainActor
+    @Test("an equal-width style change checks fresh geometry and updates the diagnostic")
+    func styleChangeChecks() {
+        let rig = makeRig()
+        defer { rig.hider.stop() }
+        let controller = StatusItemController(desktop: DesktopServices())
+        controller.iconStyle = .glyph
+        rig.utility.host = controller
+        // The controller is inert in tests; supply the measured boundary.
+        rig.hider.controlFrames = {
+            MenuBarControlFrames(hidden: rig.host.boundaryFrame, hiddenGlyph: rig.host.boundaryGlyphLength)
+        }
+        rig.hider.setControlLength = { _, length in
+            rig.host.setBoundarySpacer(max(0, length - rig.host.boundaryGlyphLength))
+        }
+        controller.iconStyle = .glyphRing
+        #expect(rig.hider.wake.verdict == .idle, "a parked utility must not start a check")
+        controller.iconStyle = .glyph
+        rig.hider.start()
+        rig.fresh(after: 3)
+        rig.fresh(after: 2)
+        rig.fresh(after: 2)
+        #expect(rig.hider.wake.verdict == .clear)
+        let version = rig.utility.engineVersion
+        let glyphWidth = controller.boundaryGlyphLength
+        controller.iconStyle = .glyphRing
+        #expect(controller.boundaryGlyphLength == glyphWidth)
+        #expect(rig.hider.wake.verdict == .settling)
+        rig.seconds += MenuBarWakeRecovery.quiet + 0.1
+        rig.pass()
+        #expect(rig.hider.wake.verdict == .settling, "a cached scan from before the style change is not evidence")
+        rig.fresh(after: 0.1)
+        #expect(rig.hider.wake.verdict == .clear)
+        #expect(rig.utility.hidingStatusInputs.recovery == .clear)
+        #expect(rig.utility.engineVersion > version)
+    }
+
+    @MainActor
+    @Test("missing geometry and incomplete inventory expire without certifying hiding", arguments: [false, true])
+    func checkDeadline(incomplete: Bool) {
+        let rig = makeRig()
+        defer { rig.hider.stop() }
+        rig.hider.listingIsComplete = { !incomplete }
+        rig.hider.controlFrames = { MenuBarControlFrames() }
+        rig.hider.noteBarReformed("fixture")
+        let version = rig.utility.engineVersion
+        rig.fresh(after: MenuBarWakeRecovery.giveUp + 1)
+        #expect(rig.hider.wake.verdict == .unverified)
+        #expect(!rig.hider.wake.isOpen)
+        #expect(rig.utility.engineVersion > version)
+    }
+
+    @MainActor
+    @Test("an event requests fresh listings and ends without a timer or polling", .timeLimit(.minutes(1)),
+          arguments: [false, true])
+    func scheduledCheck(incomplete: Bool) async {
+        let rig = makeRig()
+        defer { rig.hider.stop(); rig.hider.onWakeVerdictChange = nil }
+        settle(rig)
+        let events = AsyncStream<MenuBarWakeRecovery.Verdict>.makeStream()
+        rig.hider.onWakeVerdictChange = { events.continuation.yield(rig.hider.wake.verdict) }
+        rig.hider.wakeSleep = { seconds in rig.seconds += seconds }
+        rig.hider.listingIsComplete = { !incomplete }
+        var refreshes = 0
+        rig.hider.refreshListingAfterReflow = {
+            refreshes += 1
+            rig.generation += 1
+            return !incomplete
+        }
+        rig.hider.noteBarReformed("fixture")
+        for await verdict in events.stream {
+            if verdict == .clear || verdict == .unverified {
+                #expect(verdict == (incomplete ? .unverified : .clear))
+                break
+            }
+        }
+        #expect(refreshes == (incomplete ? 4 : 1))
+        #expect(!rig.hider.wake.isOpen)
+    }
+
     private func healthy() -> MenuBarWakeRecovery.Health { .init() }
     private func overlapped(_ names: [String] = ["Typeless"]) -> MenuBarWakeRecovery.Health {
         .init(overlapping: names)
@@ -146,6 +242,10 @@ struct MenuBarWakeTests {
 
     @Test("events inside the quiet extend it, but never past the longest from the first")
     func quietIsBounded() {
+        let earlierClock = Box()
+        earlierClock.event(-100)
+        #expect(earlierClock.recovery.isQuiet(now: -99))
+        #expect(!earlierClock.recovery.isQuiet(now: -97))
         let box = Box()
         box.event(100)
         #expect(box.recovery.isQuiet(now: 102))
@@ -292,16 +392,17 @@ struct MenuBarWakeTests {
             items: [parked[0], offRowOverflow], ourPID: 1) == ["ParkedA"])
     }
 
-    @Test("the width that stands is the icon now plus the spacer written, or the floor when that is shorter")
+    @Test("the width that stands is the icon now plus the spacer written")
     func widthRule() {
         let frame = { (w: CGFloat) in CGRect(x: 900, y: 4, width: w, height: 24) }
         func stands(_ w: CGFloat, written: CGFloat?, writtenGlyph: CGFloat = 39, glyph: CGFloat = 39) -> Bool {
             MenuBarWakeRecovery.widthStands(frame: frame(w), written: written, writtenGlyph: writtenGlyph,
-                                            glyph: glyph, floor: 30)
+                                            glyph: glyph)
         }
         #expect(stands(221, written: 221))
         #expect(!stands(69, written: 221), "a folded item that should be 221 wide")
-        #expect(stands(69, written: 39), "a revealed run wears the floor")
+        #expect(stands(39, written: 39), "a folded spacer has no extra floor")
+        #expect(!stands(69, written: 39))
         #expect(stands(69, written: nil))
         // The session dots widen the icon by 10 pt: the spacer written with it is the same.
         #expect(stands(231, written: 221, glyph: 49))

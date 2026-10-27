@@ -253,6 +253,11 @@ final class MenuBarUtility: Toy {
                 self.installBoundary()
                 self.hider.reconcile()
             }
+            host?.onBoundaryStyleChange = { [weak self] in
+                guard let self, self.hider.isRunning, self.settings().enabled,
+                      self.settings().provider == .jrbar else { return }
+                self.hider.noteBarReformed("the icon style changed")
+            }
             host?.hiddenItemsMenu = { [weak self] in self?.hiddenItemsMenu() }
             if running { hider.controlsReinstalled(); installBoundary() }
         }
@@ -266,6 +271,7 @@ final class MenuBarUtility: Toy {
             !MenuBarItemLister.axTrusted() || MenuBarItemLister.axInventoryComplete
         }
         hider.onInventoryUpdate = { [weak self] in self?.refreshInventoryState() }
+        hider.onWakeVerdictChange = { [weak self] in self?.engineVersion += 1 }
         actions.itemHotkeys.activate = { [weak self] target, lease in
             guard let self else { return .utilityOff }
             return await self.openShortcutTarget(target, lease: lease)

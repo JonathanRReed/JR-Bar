@@ -553,12 +553,17 @@ protocol MenuBarBoundaryHost: AnyObject {
     var barAppearance: NSAppearance? { get }
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
     var onBoundaryWidthChange: (@MainActor () -> Void)? { get set }
+    var onBoundaryStyleChange: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }
     var hiddenRevealed: Bool { get set }
 }
 
 extension MenuBarBoundaryHost {
+    var onBoundaryStyleChange: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
     var onBoundaryWidthChange: (@MainActor () -> Void)? {
         get { nil }
         set {}

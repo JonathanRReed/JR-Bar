@@ -78,6 +78,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// item, and the "Hidden Items" submenu it builds for the menu.
     var onBoundaryClick: (@MainActor () -> Void)?
     var onBoundaryWidthChange: (@MainActor () -> Void)?
+    var onBoundaryStyleChange: (@MainActor () -> Void)?
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
     /// The hidden run's state for the tooltip and the chevron: how many
     /// items are tucked away and whether they are out right now.
@@ -117,6 +118,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             syncBreathing()
             applyPulseAnimation()
             redraw()
+            onBoundaryStyleChange?()
         }
     }
     var ringFraction: Double? { didSet { if ringFraction != oldValue { redraw() } } }
