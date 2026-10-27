@@ -103,7 +103,7 @@ def test_usage_cli_store_reader_does_not_call_a_lapsed_window_constrained(
         ("weekly", 40.0),
     ]
     assert claude["windows"][0]["last_used_pct"] == 95.0
-    assert usage_cli._left(claude["windows"][0]) == "no reading"
+    assert usage_cli._used(claude["windows"][0]) == "no reading"
 
 
 def test_usage_cli_main_judges_the_saved_file_by_its_own_clock(
