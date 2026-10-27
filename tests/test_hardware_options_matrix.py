@@ -199,7 +199,7 @@ def rig(headless_daemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig
 # --- the matrix ------------------------------------------------------------------
 
 PRO, DOT = "devices.0", "devices.1"
-LINKED_REASON = "Linked: follows the SidePulse"
+LINKED_REASON = "The Dot follows the SidePulse"
 
 
 def _changes(rig: Rig, path: str, value: object, *, field: str, before: object = None) -> None:

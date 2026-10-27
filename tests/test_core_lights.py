@@ -483,7 +483,7 @@ def test_a_blend_mode_previews_against_a_mixed_fleet() -> None:
     daemon = SimpleNamespace(settings=settings)
     reply = core_runtime._cmd_preview_fleet(daemon, {})
     assert reply["scenario"] == "fleet"
-    assert reply["label"] == "Three Agents: Two Working, One Done"
+    assert reply["label"] == "Three agents: two working, one done"
     assert reply["blend_mode"] == settings.colors.blend_mode
     assert reply["agents"] == [
         {"provider": "claude", "mode": "working"},
