@@ -1098,7 +1098,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             if not enabled:
                 print(
                     "jrbar serve: warning: answering is off; status is still served. "
-                    "Check consent in Settings › Devices › Stream Deck",
+                    "Check consent in Settings > Devices > Stream Deck",
                     file=sys.stderr,
                 )
     try:

@@ -41,7 +41,7 @@ PATTERNS = {
     # check_doc_links.RETIRED_PAGES.
     "retired-page": re.compile(
         r"Agents &\s+Usage|Devices &\s+Lighting|Effect Studio|Show a Demo Ask"
-        r"|Settings\s+[›>]\s+General\s+[›>]\s+(?:Power|Advanced)|Setup \(Settings\s+[›>]\s+General\)"
+        r"|Settings\s+[\u203a>]\s+General\s+[\u203a>]\s+(?:Power|Advanced)|Setup \(Settings\s+[\u203a>]\s+General\)"
     ),
     "error-words": re.compile(r'toast: error\.localizedDescription|String\(describing: error\)|\.message \?\? [\w$?.]*\.code\b|: \\\(error\)"'),
 }

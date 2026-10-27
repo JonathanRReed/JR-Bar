@@ -39,7 +39,7 @@ _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 #: daemon's (``tests/test_retired_page_names.py``).
 RETIRED_PAGES = re.compile(
     r"Agents &\s+Usage|Devices &\s+Lighting|Effect Studio|Show a Demo Ask"
-    r"|Settings\s+[›>]\s+General\s+[›>]\s+(?:Power|Advanced)|Setup \(Settings\s+[›>]\s+General\)"
+    r"|Settings\s+[\u203a>]\s+General\s+[\u203a>]\s+(?:Power|Advanced)|Setup \(Settings\s+[\u203a>]\s+General\)"
 )
 #: The pages people read: the user guide and the README.
 _USER_DOCS = ("README.md", "docs/user")

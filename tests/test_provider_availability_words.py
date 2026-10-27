@@ -74,7 +74,7 @@ def test_sign_in_and_consent_are_neutral_with_their_fix():
     consent = availability_document(kiro(ProviderSourceState.NEEDS_CONSENT, "usage_consent_required",
                                          "Allow Kiro usage"), now=10, installed=True)
     assert consent["availability"] == "available"
-    assert consent["status_text"] == "Turn on Kiro usage in Settings › Providers."
+    assert consent["status_text"] == "Turn on Kiro usage in Settings > Providers."
     assert consent["action"] is None
 
 
@@ -94,7 +94,7 @@ def test_refresh_only_providers_never_promise_an_action_they_cannot_take(provide
     if row["status_text"]:
         assert "_" not in row["status_text"]
     if provider == "kilo":
-        assert row["status_text"] == "Run kilo auth login in Terminal or add a Kilo API key in Settings › Providers, then Retry."
+        assert row["status_text"] == "Run kilo auth login in Terminal or add a Kilo API key in Settings > Providers, then Retry."
 
 
 def test_a_failing_source_with_a_sign_in_reason_and_a_last_reading_is_not_red():

@@ -2994,7 +2994,7 @@ def _require_usage_on(self, provider, instance):
             label = provider_display_name(str(provider))
             raise CommandError(
                 "usage_off",
-                f"{label} usage is off. Turn it on in Settings › Providers first; "
+                f"{label} usage is off. Turn it on in Settings > Providers first; "
                 "nothing is read or sent until you do.",
             )
 

@@ -12,21 +12,21 @@ GONE_READING_SECONDS = 7 * 24 * 60 * 60
 _CAUSES = {
     "account_identity_unavailable": "{label} did not say which account this is. Retry in a moment.",
     "authentication_required": "{label} needs you to sign in again.",
-    "browser_session_expired": "The {label} browser session expired. Reconnect it in Settings › Providers.",
+    "browser_session_expired": "The {label} browser session expired. Reconnect it in Settings > Providers.",
     "claude_keychain_access_lost": "Keychain access lost after Claude renewed its sign-in. Allow it again.",
     "cleartext_refused": "{label}'s usage address is not secure, so JR-Bar did not ask it.",
     "cli_default_account_only": "{label} usage reads only the default CLI account.",
     "cli_session_changed": "The {label} CLI sign-in changed.",
     "cli_session_unavailable": "No {label} CLI sign-in was found.",
     "cliproxy_account_signed_out": "This CLIProxy account is signed out. Sign it in again in CLIProxy.",
-    "cliproxy_key_missing": "Add the CLIProxy management key in Settings › Providers.",
-    "cliproxy_key_rejected": "CLIProxy rejected the management key. Check it in Settings › Providers.",
+    "cliproxy_key_missing": "Add the CLIProxy management key in Settings > Providers.",
+    "cliproxy_key_rejected": "CLIProxy rejected the management key. Check it in Settings > Providers.",
     "cliproxy_management_off": "CLIProxy's management API is off. Turn it on in CLIProxy.",
     "cliproxy_provider_refused": "CLIProxy refused to read this provider's usage.",
     "cliproxy_read_failed": "CLIProxy's usage could not be read. Retry in a moment.",
     "cliproxy_slow": "CLIProxy is answering slowly. Retry in a moment.",
     "cliproxy_unreachable": "CLIProxy is not answering. Check that it is running.",
-    "cliproxy_url_not_loopback": "CLIProxy must run on this Mac. Check its address in Settings › Providers.",
+    "cliproxy_url_not_loopback": "CLIProxy must run on this Mac. Check its address in Settings > Providers.",
     "code_assist_project_required": "{label} needs a Code Assist project before it reports usage.",
     "code_assist_tier_ineligible": "This {label} plan does not report usage.",
     "collector_failed": "{label}'s usage could not be read. Retry in a moment.",
@@ -34,13 +34,13 @@ _CAUSES = {
     "credential_changed": "The {label} sign-in changed.",
     "credential_redirect_refused": "{label}'s usage address redirected elsewhere, so JR-Bar stopped.",
     "http_error": "{label}'s usage service returned an error. Retry in a moment.",
-    "invalid_configuration": "{label}'s usage source is set up wrong. Check it in Settings › Providers.",
+    "invalid_configuration": "{label}'s usage source is set up wrong. Check it in Settings > Providers.",
     "invalid_json": "{label}'s usage service sent a reply JR-Bar could not read.",
     "invalid_local_usage": "{label}'s local usage file could not be read.",
     "invalid_provider_response": "{label}'s usage service sent a reply JR-Bar could not read.",
     "invalid_response": "{label}'s usage service sent a reply JR-Bar could not read.",
-    "invalid_url": "{label}'s usage address is not valid. Check it in Settings › Providers.",
-    "invalid_web_session": "The {label} browser session is not valid. Reconnect it in Settings › Providers.",
+    "invalid_url": "{label}'s usage address is not valid. Check it in Settings > Providers.",
+    "invalid_web_session": "The {label} browser session is not valid. Reconnect it in Settings > Providers.",
     "local_reading_stale": "{label}'s local reading is old. It updates when {label} runs.",
     "local_usage_not_found": "No local {label} usage was found yet. It appears after {label} runs.",
     "network_error": "{label}'s usage service could not be reached. Check the network.",
@@ -50,7 +50,7 @@ _CAUSES = {
     "opencode_data_not_found": "No OpenCode data was found on this Mac.",
     "opencode_go_not_subscribed": "This account has no OpenCode Go subscription, so there is no quota to show.",
     "opencode_no_quota_source": "OpenCode has no quota source for this account.",
-    "organization_required": "{label} needs an organization chosen in Settings › Providers.",
+    "organization_required": "{label} needs an organization chosen in Settings > Providers.",
     "provider_identity_mismatch": "That reading belonged to another account, so JR-Bar set it aside.",
     "quota_license_required": "This {label} plan does not report a quota.",
     "quota_service_not_running": "{label}'s quota service is not running.",
@@ -67,12 +67,12 @@ _CAUSES = {
     "token_refresh_failed": "{label}'s sign-in could not be renewed. Sign in to {label} again.",
     "unsupported_cli_auth_scope": "{label}'s CLI sign-in cannot read usage. Sign in again with usage access.",
     "usage_access_denied": "{label} did not allow this account to read usage.",
-    "usage_connection_required": "Connect {label} usage in Settings › Providers.",
-    "usage_consent_required": "Turn on {label} usage in Settings › Providers.",
+    "usage_connection_required": "Connect {label} usage in Settings > Providers.",
+    "usage_consent_required": "Turn on {label} usage in Settings > Providers.",
     "usage_permission_missing": "{label}'s sign-in lacks usage access. Reconnect {label}.",
-    "web_session_account_changed": "The {label} browser session is for another account. Reconnect it in Settings › Providers.",
-    "web_session_changed": "The {label} browser session changed. Reconnect it in Settings › Providers.",
-    "web_session_unavailable": "Connect a {label} browser session in Settings › Providers.",
+    "web_session_account_changed": "The {label} browser session is for another account. Reconnect it in Settings > Providers.",
+    "web_session_changed": "The {label} browser session changed. Reconnect it in Settings > Providers.",
+    "web_session_unavailable": "Connect a {label} browser session in Settings > Providers.",
 }
 ATTENTION = "Usage source needs attention."
 
@@ -106,7 +106,7 @@ def _refresh_only_fix(provider_id: str, state: str, reason: str | None, label: s
         return None, None
     command = _CLI_SIGN_IN.get(provider_id)
     if command and (state == "needs_sign_in" or reason in _NEEDS_PERSON_REASONS):
-        extra = " or add a Kilo API key in Settings › Providers" if provider_id == "kilo" else ""
+        extra = " or add a Kilo API key in Settings > Providers" if provider_id == "kilo" else ""
         return f"Run {command} in Terminal{extra}, then Retry.", "Retry"
     return None, "Retry"
 

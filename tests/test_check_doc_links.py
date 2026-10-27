@@ -97,9 +97,9 @@ def test_retired_page_names_are_caught_outside_code(tmp_path: Path) -> None:
     (tmp_path / "docs" / "user").mkdir(parents=True)
     (tmp_path / "docs" / "user" / "guide.md").write_text(
         "Open **Settings > Agents &\nUsage**. `Devices & Lighting` is code.\n"
-        "```\nSettings > General > Power\n```\nSettings › General › Advanced\n")
+        "```\nSettings > General > Power\n```\nSettings \u203a General \u203a Advanced\n")
     (tmp_path / "README.md").write_text("Effect Studio\n")
     (tmp_path / "docs" / "ARCHIVE.md").write_text("Agents & Usage\n")
     found = {(source.name, name) for source, name in script.retired_page_names(tmp_path)}
-    assert found == {("guide.md", "Agents & Usage"), ("guide.md", "Settings › General › Advanced"),
+    assert found == {("guide.md", "Agents & Usage"), ("guide.md", "Settings \u203a General \u203a Advanced"),
                      ("README.md", "Effect Studio")}
