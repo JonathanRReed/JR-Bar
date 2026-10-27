@@ -38,8 +38,6 @@ enum WhatsNewCatalog {
     /// The header's one line.
     static let headline = "Your providers, playing together."
 
-    static let measurementTODO = "TODO: Fill CPU and memory numbers after the 24-hour run."
-
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
@@ -54,7 +52,7 @@ enum WhatsNewCatalog {
             detail: "Usage follows Claude Code when it renews its sign-in.",
             tryIt: .settings(page: "usage"), opens: "Opens Providers"),
         WhatsNewEntry(id: "lighter", symbol: "leaf", title: "Lighter on your Mac",
-            detail: "Background work now keeps incremental token totals and updates only the facts that changed.",
+            detail: "The app holds about 120 MB and the daemon about 170 MB, down from up to 750 MB and 500 MB, with less CPU.",
             tryIt: .window(.usage), opens: "Opens Usage Center"),
         WhatsNewEntry(id: "studio", symbol: "slider.horizontal.3", title: "Studio owns the light",
             detail: "Provider animations, mixes, colours and cues live together in Studio.",

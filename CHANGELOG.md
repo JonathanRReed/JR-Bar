@@ -6,7 +6,7 @@ All notable changes to JR-Bar are documented here.
 
 JR-Bar 0.10.0 makes the lights do what you chose, keeps Claude usage current, groups related agents, and does the same work with far less CPU and memory. The panel, Settings and Studio were rebuilt around one design system.
 
-<!-- Measured CPU and memory numbers are added after the 24-hour run. -->
+Measured on the owner's Mac over a day with three to five agents working, compared with 0.9.17.2 on the same Mac: the app holds about 120 MB instead of 450 to 750 MB and growing, the daemon about 170 MB instead of about 500 MB, and the daemon averages about 3% of one core instead of 7%. The app's median is about 3%, down from 7 to 8%.
 
 - An animation you choose for a provider always plays for that provider. The turn-length ember only appears for providers left on Automatic, and cues such as celebrations now tint the running animation for a moment instead of replacing it.
 - Lights no longer freeze on one colour: a renewed effect is not skipped as a duplicate, and re-sending a breathing program keeps both halves of the breath.

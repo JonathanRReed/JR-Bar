@@ -103,7 +103,6 @@ import Testing
 
     @Test func whatsNewWaitsForAsksAndLeadsWithMix() {
         #expect(WhatsNewCatalog.entries.map(\.id) == ["mix", "agent-groups", "claude-sign-in", "lighter", "studio"])
-        #expect(WhatsNewCatalog.measurementTODO.hasPrefix("TODO:"))
         #expect(!WhatsNewGate.isRight(.init(coreLive: true, locked: false, fullScreenInFront: false, asksWaiting: true)))
     }
 }
