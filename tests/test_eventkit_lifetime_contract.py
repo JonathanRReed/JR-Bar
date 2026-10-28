@@ -25,3 +25,12 @@ def test_permission_actions_use_the_shared_reader() -> None:
     assert "requestReminders(reader: ShelfCalendarReader = .shared)" in source
     assert "await reader.requestAccess()" in source
     assert "await reader.requestAccess(to: .reminder)" in source
+
+
+def test_reminder_projection_takes_no_store_lock() -> None:
+    """EventKit's queue projects the reminders. Waiting there on the store's lock,
+    which another thread may hold inside an EventKit call, could hang both."""
+    source = (APP / "ShelfEventStore.swift").read_text()
+    projection = source.split("ShelfReminderReader.callback(project:", 1)[1].split("completion: completion)", 1)[0]
+    assert "withLock" not in projection
+    assert "lock." not in projection

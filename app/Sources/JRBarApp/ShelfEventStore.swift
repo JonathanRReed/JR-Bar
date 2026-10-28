@@ -20,7 +20,7 @@ struct ShelfReminderDraft {
 }
 
 /// The app's only native store. Its lazy instance survives cards, permission prompts,
-/// and outstanding fetches. Synchronous access and callback projection share a lock.
+/// and outstanding fetches. A lock serializes synchronous access.
 final class SystemShelfEventStore: ShelfEventStore, @unchecked Sendable {
     static let shared = SystemShelfEventStore()
     private let lock = NSLock()
@@ -91,11 +91,11 @@ final class SystemShelfEventStore: ShelfEventStore, @unchecked Sendable {
             let predicate = store.predicateForIncompleteReminders(
                 withDueDateStarting: nil, ending: horizon, calendars: nil)
             // Never cancel. The coordinator keeps this store alive until the reply finishes.
-            let callback = ShelfReminderReader.callback(project: { [self] (reminder: EKReminder) in
-                lock.withLock {
-                    ShelfReminderReader.entry(id: reminder.calendarItemIdentifier, title: reminder.title,
-                                              due: reminder.dueDateComponents?.date)
-                }
+            // Project without the lock: EventKit's own queue delivers the reminders, and
+            // waiting there on a lock another thread holds inside EventKit could hang both.
+            let callback = ShelfReminderReader.callback(project: { (reminder: EKReminder) in
+                ShelfReminderReader.entry(id: reminder.calendarItemIdentifier, title: reminder.title,
+                                          due: reminder.dueDateComponents?.date)
             }, completion: completion)
             _ = store.fetchReminders(matching: predicate, completion: callback)
         }
