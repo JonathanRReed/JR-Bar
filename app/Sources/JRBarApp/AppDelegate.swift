@@ -781,7 +781,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 self.screenBar?.crossfadeNextProgram()
             }
             self.lastFileProgram = (text, source, anchor, sourceLedCount)
-            self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }
         }
         monitor?.onChange = { [weak self] state, detail in

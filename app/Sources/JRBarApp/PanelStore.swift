@@ -322,8 +322,7 @@ final class PanelStore {
 
     // Fallback (file feeds) and app-owned state.
     var fallbackState: AgentAggregateState = .idle
-    var fallbackDetail: String = "No agent monitor state"
-    var feedDescription: String = "resolving"
+    var fallbackDetail: String = AgentMonitorFeed.noStateDetail
     var screenBarShown = true {
         didSet { syncMediaReader() }
     }
