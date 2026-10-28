@@ -37,19 +37,16 @@ final class ShelfRemindersModel {
     @ObservationIgnored var authorization: () -> EKAuthorizationStatus = {
         EKEventStore.authorizationStatus(for: .reminder)
     }
-    typealias Fetch = (@escaping @MainActor @Sendable ([Entry]?) -> Void) -> (() -> Void)
-    /// Tests supply held replies without opening an EventKit store.
-    @ObservationIgnored var fetchEntries: Fetch?
     /// Tests observe scheduling without running a timer.
     @ObservationIgnored var scheduleRefreshOverride: (() -> Void)?
-    private var store: EKEventStore?
+    @ObservationIgnored private let reader: ShelfReminderReader
+    private let owner = UUID()
     private var refreshTimer: Timer?
-    private var cancelFetch: (() -> Void)?
-    private var fetchInFlight = false
     private var enabled = false
-    /// A new read or stop makes earlier replies stale, including replies
-    /// delivered during cancellation.
+    /// A new read or stop makes earlier replies stale.
     private var epoch = 0
+
+    init(reader: ShelfReminderReader = .shared) { self.reader = reader }
 
     /// How many rows the card shows before the "+N more" tail.
     nonisolated static let rowLimit = 3
@@ -75,13 +72,9 @@ final class ShelfRemindersModel {
         enabled = false
         writeNotice = nil
         epoch += 1
-        fetchInFlight = false
-        let cancel = cancelFetch
-        cancelFetch = nil
-        cancel?()
+        reader.forget(owner)
         refreshTimer?.invalidate()
         refreshTimer = nil
-        store = nil
     }
 
     /// Pin-side entry: the switch off hides the row; on, the glance
@@ -133,16 +126,8 @@ final class ShelfRemindersModel {
         refreshTimer = nil
         epoch += 1
         let epoch = self.epoch
-        let cancel = cancelFetch
-        cancelFetch = nil
-        fetchInFlight = false
-        cancel?()
-        fetchInFlight = true
-        let fetch = fetchEntries ?? startFetch
-        let nextCancel = fetch { [weak self] entries in
-            guard let self, self.epoch == epoch, self.fetchInFlight else { return }
-            self.fetchInFlight = false
-            self.cancelFetch = nil
+        reader.request(for: owner) { [weak self] entries in
+            guard let self, self.enabled, self.epoch == epoch else { return }
             guard self.authorization() == .fullAccess else {
                 self.refreshNow()
                 return
@@ -157,36 +142,6 @@ final class ShelfRemindersModel {
             }
             self.state = Self.state(after: items, previous: self.state)
             self.scheduleRefresh()
-        }
-        if self.epoch != epoch {
-            nextCancel()
-        } else if fetchInFlight {
-            cancelFetch = nextCancel
-        }
-    }
-
-    private func startFetch(_ completion: @escaping @MainActor @Sendable ([Entry]?) -> Void) -> (() -> Void) {
-        let store = self.store ?? EKEventStore()
-        self.store = store
-        let horizon = Calendar.current.date(
-            byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: Date()))
-        let predicate = store.predicateForIncompleteReminders(
-            withDueDateStarting: nil, ending: horizon, calendars: nil)
-        let request = store.fetchReminders(matching: predicate, completion: Self.reminderCallback(completion))
-        return { store.cancelFetchRequest(request) }
-    }
-
-    /// Read EventKit objects on its callback queue; only value rows cross to the main actor.
-    nonisolated static func reminderCallback(
-        _ completion: @escaping @MainActor @Sendable ([Entry]?) -> Void
-    ) -> @Sendable ([EKReminder]?) -> Void {
-        { reminders in
-            let entries = reminders?.map { Entry(id: $0.calendarItemIdentifier,
-                                                title: $0.title?.isEmpty == false ? $0.title! : "Reminder",
-                                                due: $0.dueDateComponents?.date) }
-            Task { @MainActor in
-                completion(entries)
-            }
         }
     }
 
@@ -212,12 +167,9 @@ final class ShelfRemindersModel {
     /// The identifier re-resolves — a reminder deleted mid-row never
     /// earns a save.
     func complete(_ entry: Entry) {
-        guard enabled, let store else { return }
-        guard let reminder = store.calendarItem(withIdentifier: entry.id) as? EKReminder
-        else { return }
-        reminder.isCompleted = true
+        guard enabled, authorization() == .fullAccess else { return }
         do {
-            try store.save(reminder, commit: true)
+            guard try reader.store.completeReminder(id: entry.id) else { return }
         } catch {
             recordWrite(.failure(error), action: "mark that reminder done")
             return
@@ -309,22 +261,13 @@ final class ShelfRemindersModel {
     /// nothing to add, no access, or the save failed.
     @discardableResult
     func add(_ text: String) -> Bool {
-        guard let store, let parsed = Self.quickAdd(text) else { return false }
-        guard let list = store.defaultCalendarForNewReminders() else {
-            writeNotice = "Couldn't add the reminder: Reminders has no default list."
-            return false
-        }
-        let reminder = EKReminder(eventStore: store)
-        reminder.title = parsed.title
-        reminder.calendar = list
-        if let due = parsed.due {
-            reminder.dueDateComponents = due
-            if due.hour != nil, let when = Calendar.current.date(from: due) {
-                reminder.addAlarm(EKAlarm(absoluteDate: when))
-            }
-        }
+        guard enabled, authorization() == .fullAccess, let parsed = Self.quickAdd(text) else { return false }
         do {
-            try store.save(reminder, commit: true)
+            let draft = ShelfReminderDraft(title: parsed.title, due: parsed.due)
+            guard try reader.store.addReminder(draft) else {
+                writeNotice = "Couldn't add the reminder: Reminders has no default list."
+                return false
+            }
         } catch {
             recordWrite(.failure(error), action: "add the reminder")
             return false
@@ -401,22 +344,15 @@ final class ShelfRemindersModel {
     @discardableResult
     func remind(about label: String, session id: String, provider: String, cwd: String?,
                 later: Later, now: Date = Date()) -> Bool {
-        guard let store else { return false }
-        guard let list = store.defaultCalendarForNewReminders() else {
-            writeNotice = "Couldn't set the reminder: Reminders has no default list."
-            return false
-        }
+        guard enabled, authorization() == .fullAccess else { return false }
         let made = Self.sessionReminder(label: label, provider: provider, cwd: cwd)
         let due = Self.due(later, now: now)
-        let reminder = EKReminder(eventStore: store)
-        reminder.title = made.title
-        reminder.notes = made.notes
-        reminder.url = Self.sessionLink(id)
-        reminder.calendar = list
-        reminder.dueDateComponents = due
-        if let when = Calendar.current.date(from: due) { reminder.addAlarm(EKAlarm(absoluteDate: when)) }
         do {
-            try store.save(reminder, commit: true)
+            let draft = ShelfReminderDraft(title: made.title, due: due, notes: made.notes, url: Self.sessionLink(id))
+            guard try reader.store.addReminder(draft) else {
+                writeNotice = "Couldn't set the reminder: Reminders has no default list."
+                return false
+            }
         } catch {
             recordWrite(.failure(error), action: "set the reminder")
             return false
@@ -429,7 +365,7 @@ final class ShelfRemindersModel {
     /// Whether the glance can write now — access granted and read.
     var canWrite: Bool {
         switch state {
-        case .idle, .items: return store != nil
+        case .idle, .items: return enabled && authorization() == .fullAccess
         case .hidden, .needsPermission: return false
         }
     }

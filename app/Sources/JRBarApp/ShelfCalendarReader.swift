@@ -1,8 +1,8 @@
 import AppKit
 @preconcurrency import EventKit
 
-/// One read store for the notch, Dock, and calendar toys. Call `events` off main.
-/// Only value types leave the lock; no fetch or timer runs between callers.
+/// Cached calendar reads for the notch and Dock, using the app-wide EventKit store.
+/// Call `events` off main. Only value types leave the store.
 final class ShelfCalendarReader: @unchecked Sendable {
     static let shared = ShelfCalendarReader()
     /// Consumers enqueue a read after this notification; they do not read inside its callback.
@@ -16,7 +16,7 @@ final class ShelfCalendarReader: @unchecked Sendable {
     private let storeLock = NSLock()
     private let cacheLock = NSLock()
     private var generation = 0
-    private var store: EKEventStore?
+    let store: any ShelfEventStore
     private var cached: (at: Date, events: [Event])?
     private let fetchOverride: (@Sendable (Date) -> [Event])?
     private let authorization: @Sendable () -> EKAuthorizationStatus
@@ -24,7 +24,9 @@ final class ShelfCalendarReader: @unchecked Sendable {
 
     init(fetch: (@Sendable (Date) -> [Event])? = nil,
          authorization: (@Sendable () -> EKAuthorizationStatus)? = nil,
-         notifications: NotificationCenter? = nil) {
+         notifications: NotificationCenter? = nil,
+         store: any ShelfEventStore = SystemShelfEventStore.shared) {
+        self.store = store
         self.notifications = notifications ?? (fetch == nil ? .default : NotificationCenter())
         fetchOverride = fetch
         self.authorization = authorization ?? {
@@ -67,11 +69,7 @@ final class ShelfCalendarReader: @unchecked Sendable {
             if let fetchOverride {
                 events = fetchOverride(now)
             } else {
-                let store = readStore()
-                let start = min(Calendar.current.startOfDay(for: now), now.addingTimeInterval(-12 * 3600))
-                let predicate = store.predicateForEvents(
-                    withStart: start, end: now.addingTimeInterval(Self.lookahead), calendars: nil)
-                events = store.events(matching: predicate).map(ShelfCalendarModel.project)
+                events = store.events(from: now)
             }
             guard authorization() == .fullAccess else {
                 invalidate()
@@ -84,30 +82,19 @@ final class ShelfCalendarReader: @unchecked Sendable {
         }
     }
 
-    /// Borrow the store for a read of one's own — seasonal touches read
-    /// the holiday and Birthdays calendars through it — so the app keeps
-    /// one EventKit store behind one Calendar grant. Call off main; the
-    /// store lock serializes every reader.
-    func read<T>(_ body: (EKEventStore) -> T) -> T {
-        storeLock.withLock { body(readStore()) }
+    func eventAuthorization() -> EKAuthorizationStatus { authorization() }
+
+    func seasonal(now: Date, birthdays: Bool) -> SeasonalReading {
+        guard authorization() == .fullAccess else { return SeasonalReading() }
+        return store.seasonal(now: now, birthdays: birthdays)
     }
 
     /// Only an explicit permission action calls this, using the same store as reads.
-    func requestAccess() async -> Bool {
+    func requestAccess(to entity: EKEntityType = .event) async -> Bool {
         await withCheckedContinuation { continuation in
-            storeLock.withLock {
-                readStore().requestFullAccessToEvents { granted, _ in
-                    continuation.resume(returning: granted)
-                }
+            store.requestAccess(to: entity) { granted in
+                continuation.resume(returning: granted)
             }
         }
-    }
-
-    /// Call only under `storeLock`.
-    private func readStore() -> EKEventStore {
-        if let store = self.store { return store }
-        let store = EKEventStore()
-        self.store = store
-        return store
     }
 }

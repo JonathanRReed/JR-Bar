@@ -677,10 +677,10 @@ extension SetupModel {
 
     /// `requestFullAccessToEvents`, the call `ShelfCalendarModel` makes
     /// from its calendar button; a denied row deep-links instead.
-    static func requestCalendar() async {
+    static func requestCalendar(reader: ShelfCalendarReader = .shared) async {
         switch calendarStatus() {
         case .needed:
-            _ = await ShelfCalendarReader.shared.requestAccess()
+            _ = await reader.requestAccess()
         case .denied, .unavailable:
             DesktopServices.automatic.open(calendarSettingsURL)
         default:
@@ -690,17 +690,10 @@ extension SetupModel {
 
     /// `requestFullAccessToReminders` — the call `ShelfReminders` makes
     /// from its own enable path; a denied row deep-links instead.
-    static func requestReminders() async {
+    static func requestReminders(reader: ShelfCalendarReader = .shared) async {
         switch reminderStatus() {
         case .needed:
-            let store = EKEventStore()
-            // The store is captured by the completion, so it outlives
-            // the prompt no matter when the answer lands.
-            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                store.requestFullAccessToReminders { granted, _ in
-                    continuation.resume(returning: granted)
-                }
-            }
+            _ = await reader.requestAccess(to: .reminder)
         case .denied, .unavailable:
             DesktopServices.automatic.open(remindersSettingsURL)
         default:
