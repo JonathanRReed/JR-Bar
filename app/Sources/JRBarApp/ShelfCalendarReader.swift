@@ -84,6 +84,14 @@ final class ShelfCalendarReader: @unchecked Sendable {
         }
     }
 
+    /// Borrow the store for a read of one's own — seasonal touches read
+    /// the holiday and Birthdays calendars through it — so the app keeps
+    /// one EventKit store behind one Calendar grant. Call off main; the
+    /// store lock serializes every reader.
+    func read<T>(_ body: (EKEventStore) -> T) -> T {
+        storeLock.withLock { body(readStore()) }
+    }
+
     /// Only an explicit permission action calls this, using the same store as reads.
     func requestAccess() async -> Bool {
         await withCheckedContinuation { continuation in

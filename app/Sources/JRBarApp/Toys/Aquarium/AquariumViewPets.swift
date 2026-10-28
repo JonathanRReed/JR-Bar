@@ -242,49 +242,73 @@ extension AquariumView {
         }
     }
 
-    /// How long a tetra takes to come round, seconds.
-    static let tetraTurn = 0.5
-
-    /// The tetra school's seven places: one shared wander target, each
-    /// fish orbiting the pack on its own phase. When the pack reverses,
-    /// each tetra turns round on its own beat — up to 0.4 s either side
-    /// of the others, by its place in the orbit — squashing through zero
-    /// rather than the whole school mirroring in one frame.
-    func tetraPoses(size: CGSize, t: Double) -> [PetPose] {
+    /// The tetra school's seven places: moving, a flock after one
+    /// shared wander target (`SchoolFlock`); under Reduce Motion, each
+    /// fish's still spot round that target.
+    func tetraPoses(size: CGSize, t: Double, obstacles: [SchoolFlock.Obstacle] = []) -> [PetPose] {
         // The pack's shared target sweeps the midwater slowly.
         let cx = size.width * (0.5 + 0.28 * sin(t * 0.09))
         let cy = size.height * (0.42 + 0.10 * sin(t * 0.13 + 1.7))
-        return (0..<7).map { i in
-            let h = scatter(AquariumModel.stableHash("tetra"), i)
-            let orbit = 12 + Double(h & 0xFF) / 0xFF * 26
-            let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
-            let speed = 1.2 + Double((h >> 16) & 0xFF) / 0xFF * 1.4
-            let wobble = reduceMotion ? 0.0 : t * speed
-            let fx = cx + cos(wobble + phase) * orbit
-            let fy = cy + sin(wobble * 1.3 + phase) * orbit * 0.45
-            // This tetra's own clock for the pack's reversals.
-            let stagger = sin(phase) * 0.4
-            let tau = (t - stagger) * 0.09 - .pi / 2
-            let k = (tau / .pi).rounded()
-            let since = (tau - k * .pi) / 0.09
-            let dir0: Double = abs(k.truncatingRemainder(dividingBy: 2)) < 0.5 ? 1 : -1
-            let p = clamp01((since + Self.tetraTurn / 2) / Self.tetraTurn)
-            var c = dir0 * cos(.pi * p)
-            if reduceMotion { c = c >= 0 ? 1 : -1 }
-            return PetPose(x: fx, y: fy, c: c)
+        // Reduce Motion holds the pack in its still spots.
+        guard !reduceMotion else { return (0..<7).map { stillTetraPose($0, cx: cx, cy: cy, t: t) } }
+        // Moving, they flock (`SchoolFlock`) after the target: they bunch,
+        // split round a fish in their way and re-form. A newcomer starts
+        // at its still spot.
+        let key = TankSwimMemory.tetraSchoolKey
+        let school = motion.swim.school(key)
+        for i in 0..<7 {
+            school.flock.join(Self.tetraIDs[i], at: t, spawn: {
+                let spot = stillTetraPose(i, cx: cx, cy: cy, t: t)
+                return (spot.x, spot.y)
+            }, facing: cos(t * 0.09) >= 0 ? 1 : -1)
         }
+        if school.flock.isDue(at: t) {
+            let bounds = SchoolFlock.Bounds(minX: 16, minY: 30, maxX: Double(size.width) - 16,
+                                            maxY: Double(size.height) * 0.78)
+            school.flock.advance(to: t, goal: (cx, cy), bounds: bounds, obstacles: obstacles,
+                                 tuning: .tetra, pace: swimTempo)
+        }
+        return school.flock.members.map { PetPose(x: $0.x, y: $0.y, c: $0.facing) }
     }
 
-    /// The tetra school: seven little neons sharing one wander
-    /// target, each orbiting the pack on its own phase — cohesion as
-    /// a swarm, not a queue.
-    func drawTetraSchool(canvas: inout GraphicsContext, size: CGSize, t: Double) {
-        for pose in tetraPoses(size: size, t: t) {
+    /// The seven tetras' ids in their school, in a stable order.
+    static let tetraIDs = (0..<7).map { "tetra-\($0)" }
+
+    /// One tetra's spot in the still pack: an orbit of the target on its
+    /// own phase, facing the way the pack sweeps. Reduce Motion draws
+    /// these; moving, a newcomer to the flock starts here.
+    private func stillTetraPose(_ i: Int, cx: Double, cy: Double, t: Double) -> PetPose {
+        let h = scatter(AquariumModel.stableHash("tetra"), i)
+        let orbit = 12 + Double(h & 0xFF) / 0xFF * 26
+        let phase = Double((h >> 8) & 0xFF) / 0xFF * .pi * 2
+        let fx = cx + cos(phase) * orbit
+        let fy = cy + sin(phase) * orbit * 0.45
+        // The pack faces the way its target sweeps.
+        let c: Double = cos(t * 0.09) >= 0 ? 1 : -1
+        return PetPose(x: fx, y: fy, c: c)
+    }
+
+    /// The tetra school: seven little neons flocking after one wander
+    /// target — cohesion as a swarm, not a queue — and parting round the
+    /// fish they meet (`layouts`).
+    func drawTetraSchool(canvas: inout GraphicsContext, size: CGSize, t: Double,
+                         layouts: [String: Layout] = [:]) {
+        let obstacles = Self.schoolObstacles(layouts)
+        for pose in tetraPoses(size: size, t: t, obstacles: obstacles) {
             var c = canvas
             c.translateBy(x: pose.x, y: pose.y)
             c.scaleBy(x: pose.c, y: 1)
             c.opacity = 0.92
             PetArt.neonTetra(&c, length: 15)
+        }
+    }
+
+    /// The fish a school swims round: each grown fish's body, at most
+    /// eight of them, in a stable order.
+    static func schoolObstacles(_ layouts: [String: Layout]) -> [SchoolFlock.Obstacle] {
+        layouts.keys.sorted().prefix(8).compactMap { id in
+            guard let l = layouts[id], l.opacity > 0.2 else { return nil }
+            return SchoolFlock.Obstacle(x: l.x, y: l.y, radius: fishBaseLength * l.scale * 0.4)
         }
     }
 

@@ -298,6 +298,14 @@ final class NotchToy: Toy {
             MainActor.assumeIsolated { self?.onCapsuleEvicted(notice) }
         }
         cardModel.onOpenRow = { [weak self] session in self?.openFromCard(session) }
+        cardModel.seasonalOccasion = { [weak store] in store?.seasonal.occasion }
+        cardModel.seasonalIsland = { [weak self] in
+            guard let self else {
+                return SeasonalIslandMetrics(notchWidth: 185, notchDepth: 32, restingRadius: 8, topPad: 36)
+            }
+            return SeasonalIslandMetrics(notchWidth: self.notchSlotWidth, notchDepth: self.notchDepth,
+                                         restingRadius: self.notchCornerRadius, topPad: self.cardTopPad)
+        }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.popoverHold.onChange = { [weak self] held in self?.cardPopoverHoldChanged(held) }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }

@@ -44,6 +44,10 @@ struct AquariumControlsView: View {
 
             lookRow
             motionRow
+            Toggle(isOn: bind(\.restOnBattery)) {
+                SettingLabel(title: "Rest on battery",
+                             subtitle: "On battery, the plants, light, bubbles and the wallpaper or screensaver hold still. The fish keep swimming. Plugging in starts them again.")
+            }
             labelsRow
             dayNightRow
             Toggle(isOn: bind(\.sound)) {

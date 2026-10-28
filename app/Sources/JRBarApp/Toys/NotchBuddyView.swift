@@ -45,6 +45,16 @@ struct NotchBuddyView: View {
     /// False while the panel is fully covered (a fullscreen Space, a
     /// window over the floating pet): nothing on screen, nothing to draw.
     @ViewState private var visible = true
+    /// The eyes on the pointer (`BuddyGaze`), listening only while
+    /// `followsPointer` holds.
+    @ViewState private var gaze = BuddyGaze()
+
+    /// On screen, awake, moving and not Mini: the only time the eyes
+    /// follow the pointer, so the pointer watch is let go otherwise.
+    private var followsPointer: Bool {
+        BuddyGaze.wanted(visible: visible, awake: toy.sessionDigest().isAwake,
+                         still: motionStill, mini: toy.showsDot)
+    }
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
     private static let hopDuration: TimeInterval = 1.1
@@ -106,6 +116,12 @@ struct NotchBuddyView: View {
         .padding(.vertical, 6 * scale)
         .fixedSize()
         .background(WindowVisibilityReader { visible = $0 })
+        .background(BuddyGazeAnchor(gaze: gaze))
+        .onChange(of: followsPointer, initial: true) { _, follows in
+            gaze.scale = scale
+            gaze.setActive(follows)
+        }
+        .onDisappear { gaze.setActive(false) }
         .contentShape(Rectangle())
         // The tap's own point rides along: while an ask is open, only a
         // tap on the "!" badge overhead opens the session asking — a pat
@@ -146,7 +162,9 @@ struct NotchBuddyView: View {
             stage: toy.stage,
             wearing: toy.wearing,
             turn: toy.turnFrame(at: now, still: motionStill),
-            handoff: motionStill ? nil : toy.handoff(at: now)
+            handoff: motionStill ? nil : toy.handoff(at: now),
+            gaze: motionStill ? .rest : gaze.look(at: now.timeIntervalSince1970),
+            season: toy.store?.seasonal.occasion?.holiday
         )
     }
 
@@ -426,6 +444,14 @@ struct BuddyFigure: View {
     /// A mood change still easing in: the old mood's pose fades into the
     /// new one's (`BuddyHandoff`). nil is the new mood whole.
     var handoff: BuddyHandoff? = nil
+    /// Where the pointer is, as a look (`BuddyGaze`): the pupils ease
+    /// toward it while it is near. An ask keeps its eyes on the "!",
+    /// a slump stays downcast and sleep stays shut, so only the moods
+    /// that look around follow it.
+    var gaze: BuddyGaze.Look = .rest
+    /// A holiday in season (`SeasonalStore`): its outfit (`SeasonOutfit`)
+    /// takes the place of the wardrobe piece for the day.
+    var season: SeasonalHoliday? = nil
 
     /// The stage's proportions, applied to the body only — the shadow,
     /// the "!" and the effects keep their places.
@@ -517,7 +543,20 @@ struct BuddyFigure: View {
         var pose = still ? stillPose : movingPose
         applyCare(&pose)
         if let trick, !still { applyTrick(trick, &pose) }
+        if !still, gaze.weight > 0 { applyGaze(&pose) }
         return pose
+    }
+
+    /// The pupils toward the pointer, by how near it is and by the share
+    /// of the moods that look around. Pupils only: nothing else moves.
+    private func applyGaze(_ pose: inout Pose) {
+        let shares = moods
+        let looking = shares.share(of: .pacing) + shares.share(of: .gathering)
+            + shares.share(of: .celebrating)
+        let w = gaze.weight * min(1, looking)
+        guard w > 0 else { return }
+        pose.look.width += (gaze.x - pose.look.width) * w
+        pose.look.height += (gaze.y - pose.look.height) * w
     }
 
     private var movingPose: Pose {
@@ -927,10 +966,9 @@ struct BuddyFigure: View {
                 // Falling asleep the nightcap fades in as the outfit
                 // fades out, over the handoff; outside one it is either.
                 let asleep = moods.share(of: .asleep)
-                if asleep < 1, wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
                 characterBody
                 if asleep > 0 { cap.opacity(asleep) }
-                if asleep < 1, !wearsBehind, let wearing { outfit(wearing).opacity(1 - asleep) }
+                if asleep < 1, !wearsUnderEyes || crabBalancesPiece, hasOutfit { dressed.opacity(1 - asleep) }
                 if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: stageScale.width, y: stageScale.height, anchor: UnitPoint(x: 0.5, y: 0.9))
@@ -1016,7 +1054,7 @@ struct BuddyFigure: View {
                         phase: phase, still: still)
         case .crab:
             CrabBody(moods: moods, tint: tint, pose: pose, lid: lid,
-                     phase: phase, still: still)
+                     phase: phase, still: still, wear: crabWear)
         case .mushroom:
             MushroomBody(moods: moods, tint: tint, pose: pose, lid: lid,
                          phase: phase, still: still)
@@ -1074,10 +1112,62 @@ struct BuddyFigure: View {
         .offset(y: -6.7)
     }
 
-    /// The crab's eyes stand on stalks above its crown, so what it wears
-    /// sits behind them: the stalks and eyes stay in front of the hat
-    /// rather than vanishing under it.
-    private var wearsBehind: Bool { character == .crab }
+    /// The crab's eyes stand on stalks above its shell. What it wears
+    /// sits on the shell in front of the stalks, and the eyes stay on
+    /// top of it: drawn behind the stalks, a hat squeezed between them
+    /// and read as a smudge. `CrabBody` takes the piece in that layer.
+    private var wearsUnderEyes: Bool { character == .crab }
+
+    /// The crab's piece, handed to `CrabBody` to draw under its eyes.
+    private var crabWear: AnyView? {
+        let asleep = moods.share(of: .asleep)
+        guard asleep < 1, hasOutfit, !crabBalancesPiece else { return nil }
+        return AnyView(dressed.opacity(1 - asleep))
+    }
+
+    /// Whether it wears anything: a holiday's piece or a wardrobe one.
+    private var hasOutfit: Bool { season != nil || wearing != nil }
+
+    /// The crab balances a headband's piece (ears, boppers, a sprout) on
+    /// top of its eye stalks, in front, rather than on its shell under
+    /// the eyes, where the stalks would hide it.
+    private var crabBalancesPiece: Bool {
+        guard character == .crab, let season else { return false }
+        return SeasonOutfit.isHeadband(season)
+    }
+
+    /// What it wears today: the holiday's piece while one is in season,
+    /// otherwise the wardrobe's.
+    @ViewBuilder private var dressed: some View {
+        if let season {
+            seasonal(season)
+        } else if let wearing {
+            outfit(wearing)
+        }
+    }
+
+    /// A holiday's piece at the seat: on the crown like the beanie, or
+    /// pinned at the side like the bow.
+    @ViewBuilder private func seasonal(_ holiday: SeasonalHoliday) -> some View {
+        let seat = self.seat
+        switch SeasonOutfit.placement(holiday) {
+        case .crown where crabBalancesPiece:
+            // On top of the eyes, which stand at -5.3 on 1.6 pt stalk tips.
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(0.66, anchor: .bottom)
+                .offset(x: 0, y: -6.2 - SeasonOutfit.box.height / 2)
+        case .crown:
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(seat.scale, anchor: .bottom)
+                .offset(x: seat.x, y: seat.y - SeasonOutfit.box.height / 2 + 0.6)
+        case .side:
+            // Where the flower goes: the robot's antenna holds the left.
+            let side: Double = character == .robot ? 1 : -1
+            SeasonalOutfitPiece(holiday: holiday)
+                .scaleEffect(seat.scale * 0.85)
+                .offset(x: seat.x + side * 3.9 * seat.scale, y: seat.y - 0.8)
+        }
+    }
 
     /// Where a worn piece sits on each body: the crown's centre, the line
     /// a hat's cuff rests on, and how wide the head is to the hat. The
@@ -1091,7 +1181,8 @@ struct BuddyFigure: View {
         case .owl: return (0, -3.2, 1)
         case .slime: return (0, -3.6, 0.82)
         case .axolotl: return (0, -2.6, 1)
-        case .crab: return (0, -1.6, 0.78)
+        // On the shell's front, a size down; `CrabBody` lifts it 0.6.
+        case .crab: return (0, 0.2, 0.7)
         case .mushroom: return (0, -3.6, 1.04)
         case .ufo: return (0, -3.2, 0.8)
         }

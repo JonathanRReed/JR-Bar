@@ -37,6 +37,11 @@ struct AquariumView: View {
         var settings: AquariumSettings?
         /// Fixed animation phase for focused render proofs.
         var visualTime: TimeInterval?
+        /// The power facts for the shot; nil is normal power, so a proof
+        /// never depends on the Mac it renders on.
+        var power: PowerPolicy?
+        /// A seasonal set for the shot (`SeasonalStore`); nil is none.
+        var season: SeasonalOccasion?
     }
 
     let toy: AquariumToy?
@@ -137,8 +142,22 @@ struct AquariumView: View {
     @ViewState private var ambientVisible = true
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    var isStill: Bool { tankSettings.motion == .still }
+    /// Motion › Still — or, for the wallpaper and the screensaver, the
+    /// Mac resting on battery: scenery holds its still frame then.
+    var isStill: Bool { tankSettings.motion == .still || (ambient && batteryRest) }
     var reduceMotion: Bool { systemReduceMotion || isStill }
+
+    /// The power facts this tank draws under: the Mac's own, or a
+    /// fixture's (normal unless it says otherwise).
+    var powerPolicy: PowerPolicy {
+        if let fixture { return fixture.power ?? .normal }
+        return PowerConditions.shared.policy
+    }
+
+    /// On battery the ornaments rest (`AquariumSettings.restOnBattery`):
+    /// the plants, the light, bubbles, plankton and glows hold still.
+    /// The fish, pets and visitors keep going.
+    var batteryRest: Bool { powerPolicy.rests(keepGoing: !tankSettings.restOnBattery) }
 
     func visualTime(at now: Date) -> TimeInterval {
         if let pinned = fixture?.visualTime { return pinned }
@@ -182,9 +201,12 @@ struct AquariumView: View {
         // The Mac's power state, read here so a change redraws the tank:
         // Low Power Mode or a hot machine halves the passes' rates, and a
         // critical one stills the passes that only decorate.
-        let power = PowerConditions.shared.policy
+        let power = powerPolicy
         let rates = AquariumFrameRates(power: power, reduceMotion: reduceMotion, stillTick: stillTick)
-        let decorationPaused = isStill || AquariumFrameRates.decorationPaused(power: power, occluded: paused)
+        // On battery the decorative passes rest too (`batteryRest`).
+        let resting = batteryRest
+        let decorationPaused = isStill || resting
+            || AquariumFrameRates.decorationPaused(power: power, occluded: paused)
         let livePaused = AquariumFrameRates.livePaused(power: power, occluded: paused)
         ZStack {
             // The far tank: water, the back wall, the far bank and the
@@ -240,6 +262,7 @@ struct AquariumView: View {
                     // or streams stays on the live pass.
                     drawShopDecorStill(canvas: &canvas, size: size, t: t)
                     drawOwnedFrontStill(canvas: &canvas, size: size, t: t)
+                    drawSeasonProps(canvas: &canvas, size: size, t: t)
                 }
             }
             .drawingGroup(opaque: false, colorMode: .nonLinear)
@@ -268,6 +291,11 @@ struct AquariumView: View {
             TimelineView(.animation(minimumInterval: rates.live,
                                     paused: livePaused)) { context in
                 let t = visualTime(at: context.date)
+                // The ornaments' clock: the frame's own, or held where
+                // it was while the Mac rests on battery.
+                let ot = motion.ornamentClock.time(at: t, still: resting)
+                // The season's particles hold still under Reduce Motion too.
+                let st = motion.seasonClock.time(at: t, still: resting || reduceMotion)
                 // The card's measured frame rate.
                 let _ = toy?.meter.tick()
                 // Memoized on the fish array: the timeline ticks 30×/s
@@ -284,17 +312,18 @@ struct AquariumView: View {
                     // The empty-tank caption's capsule: decor keeps
                     // clear of it, and it draws last, over the sand.
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
-                    drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                    drawLiveDecor(canvas: &canvas, size: size, t: ot, density: density,
                                   front: false, keepClear: caption?.rect)
                     // The castle's pennant streams over its baked
                     // keep, so it goes behind the fish as the keep
                     // does.
-                    drawShopPennant(canvas: &canvas, size: size, t: t)
-                    drawJellyfish(canvas: &canvas, size: size, t: t,
+                    drawShopPennant(canvas: &canvas, size: size, t: ot)
+                    drawJellyfish(canvas: &canvas, size: size, t: ot,
                                   resident: empty || owns(.jellyfish))
-                    drawPlankton(canvas: &canvas, size: size, t: t,
+                    drawPlankton(canvas: &canvas, size: size, t: ot,
                                  density: plankton, front: false)
-                    drawBubbles(canvas: &canvas, size: size, t: t, density: bubbles)
+                    drawBubbles(canvas: &canvas, size: size, t: ot, density: bubbles)
+                    drawSeasonParticles(canvas: &canvas, size: size, t: st)
                     // The passers-by and the sand/mid-water pets
                     // live behind the fish lane.
                     drawVisitor(canvas: &canvas, size: size, t: t, now: context.date)
@@ -367,12 +396,13 @@ struct AquariumView: View {
                     // the lane; the still pieces baked in behind it.
                     // The buried treasure waits on the sand for its
                     // taps.
-                    drawShopDecor(canvas: &canvas, size: size, t: t)
-                    drawOwnedFrontDecor(canvas: &canvas, size: size, t: t)
+                    drawShopDecor(canvas: &canvas, size: size, t: ot)
+                    drawOwnedFrontDecor(canvas: &canvas, size: size, t: ot)
                     drawTreasure(canvas: &canvas, size: size, t: t,
                                  now: context.date)
                     if owns(.tetraSchool) {
-                        drawTetraSchool(canvas: &canvas, size: size, t: t)
+                        drawTetraSchool(canvas: &canvas, size: size, t: t,
+                                        layouts: layouts.filter { order.mains[$0.key] != nil })
                     }
                     if owns(.cleanerShrimp) {
                         drawCleanerShrimp(canvas: &canvas, size: size, t: t,
@@ -399,16 +429,16 @@ struct AquariumView: View {
                     if owns(.hermitCrab) {
                         drawHermitCrab(canvas: &canvas, size: size, t: t)
                     }
-                    drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                    drawLiveDecor(canvas: &canvas, size: size, t: ot, density: density,
                                   front: true, keepClear: caption?.rect)
-                    drawPlants(canvas: &canvas, size: size, t: t, density: density,
+                    drawPlants(canvas: &canvas, size: size, t: ot, density: density,
                                front: true, keepClear: caption?.rect)
-                    drawPlankton(canvas: &canvas, size: size, t: t,
+                    drawPlankton(canvas: &canvas, size: size, t: ot,
                                  density: plankton, front: true)
                     // The surface draws over everything: a surfacing
                     // fish reads as under the waterline, not pasted
                     // on top.
-                    drawSurface(canvas: &canvas, size: size, t: t)
+                    drawSurface(canvas: &canvas, size: size, t: ot)
                     drawGlass(canvas: &canvas, size: size)
                     // A hovered or tapped fish gets a name tag over
                     // the glass — this is how a fry says its
@@ -632,6 +662,11 @@ struct AquariumView: View {
     /// SwiftUI state would just buy invalidations.
     final class TankMotion {
         let visualClock = AquariumMotionClock()
+        /// The ornaments' clock, held while the Mac rests on battery.
+        let ornamentClock = AquariumMotionClock()
+        /// The seasonal particles' clock: held on battery and under
+        /// Reduce Motion.
+        let seasonClock = AquariumMotionClock()
         private var rosterIDs: Set<String>?
 
         func retainFish(_ live: Set<String>) {

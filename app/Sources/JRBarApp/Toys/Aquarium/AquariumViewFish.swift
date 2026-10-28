@@ -185,7 +185,7 @@ extension AquariumView {
                         parent: (fish: Fish, layout: Layout)? = nil) -> Layout {
         let poseNow = AquariumMotionClock.poseDate(for: fish, at: now, still: isStill)
         if fish.isFry, let parent {
-            return settle(fryLayout(of: fish, at: t, now: poseNow, parent: parent), of: fish, t: t)
+            return settle(fryLayout(of: fish, in: size, at: t, now: poseNow, parent: parent), of: fish, t: t)
         }
         let h = fish.seed
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
@@ -470,11 +470,19 @@ extension AquariumView {
     /// from its id's hash — riding a touch higher, because fry sit up
     /// in the water. The orbit follows the parent's layout, so an
     /// ask-rise, a sink or a drift off the edge carries the school.
-    private func fryLayout(of fish: Fish, at t: Double, now: Date,
+    private func fryLayout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
                            parent: (fish: Fish, layout: Layout)) -> Layout {
         let h = fish.seed
         let phase = Double(h & 0xFF) / 0xFF * .pi * 2
         let orbitR = 30 + Double((h >> 8) & 0xFF) / 0xFF * 26
+        // Moving, the school flocks (`SchoolFlock`): each fry keeps off
+        // its siblings, swims with them and stays on its parent's flank.
+        // A newcomer joins at its still orbit spot. Reduce Motion keeps
+        // the orbit below.
+        if !reduceMotion {
+            return flockFryLayout(of: fish, in: size, at: t, now: now, parent: parent, spawnAngle: phase,
+                                  orbitR: orbitR)
+        }
         let omega = (0.45 + Double((h >> 16) & 0xFF) / 0xFF * 0.45)
             * ((h >> 24) & 1 == 0 ? 1.0 : -1.0)
         // An idling school mills about at less than half speed. The
@@ -529,6 +537,79 @@ extension AquariumView {
             l.pitch = pl.pitch
         }
         return l
+    }
+
+    /// A fry in its school: the flock's place and heading, stepped once
+    /// a frame for the whole school by whichever of its fry is laid out
+    /// first. A newcomer joins at its old orbit spot; a fry that sinks
+    /// or leaves stops flocking where it is and plays its own exit.
+    private func flockFryLayout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
+                                parent: (fish: Fish, layout: Layout),
+                                spawnAngle: Double, orbitR: Double) -> Layout {
+        let pl = parent.layout
+        let flocking = fish.state == .swimming || fish.state == .idling || fish.state == .surfacing
+        let school = motion.swim.school(parent.fish.id)
+        let spawn = (x: pl.x + cos(spawnAngle) * orbitR, y: pl.y + sin(spawnAngle) * orbitR * 0.5 - 12)
+        school.flock.join(fish.id, at: t, spawn: { spawn }, facing: pl.yawCos, active: flocking)
+        // Its flank: a little behind the parent and a touch above.
+        // Only the frame that steps the school builds what the step reads.
+        if school.flock.isDue(at: t) {
+            let goal = (x: pl.x - pl.yawCos * 24, y: pl.y - 14)
+            let parentLength = Self.fishBaseLength * pl.scale
+            let body = SchoolFlock.Obstacle(x: pl.x, y: pl.y, radius: parentLength * 0.36)
+            school.flock.advance(to: t, goal: goal, bounds: Self.schoolBounds(in: size, around: pl),
+                                 obstacles: [body], tuning: .fry,
+                                 pace: swimTempo * (parent.fish.state == .idling ? 0.45 : 1))
+        }
+        let member = school.flock.member(fish.id)
+            ?? SchoolFlock.Member(id: fish.id, x: spawn.x, y: spawn.y, seen: t)
+
+        var l = Layout()
+        l.scale = pl.scale * 1.08
+        l.riseFrom = pl.riseFrom
+        l.opacity = pl.opacity
+        l.wag = pl.wag * 1.4
+        l.yawCos = member.facing
+        l.turn = 1 - abs(member.facing)
+        let speed = max(1, SchoolFlock.Tuning.fry.maxSpeed)
+        let climb = min(1, max(-1, member.vy / speed))
+        switch fish.state {
+        case .swimming, .idling, .surfacing:
+            l.x = member.x
+            l.y = member.y
+            l.pitch = pl.pitch * 0.3 + climb * 0.35
+        case .sinking:
+            let age = now.timeIntervalSince(fish.stateSince)
+            let drop = smooth(clamp01(age / 1.6))
+            l.x = member.x
+            l.y = member.y + drop * 44
+            l.pitch = 0.5 * drop
+            l.opacity = pl.opacity * (1 - 0.72 * drop)
+            l.wag = pl.wag * (1 - drop)
+        case .leaving:
+            // It follows its parent off, closing in and coming round to
+            // the parent's heading as it goes.
+            let progress = fish.leaveProgress(at: now)
+            let close = smooth(clamp01(progress * 1.6)) * 0.55
+            l.x = member.x + (pl.x - member.x) * close
+            l.y = member.y + (pl.y - 12 - member.y) * close
+            let follow = smooth(clamp01(progress * 4))
+            l.yawCos = member.facing + (pl.yawCos - member.facing) * follow
+            l.turn = 1 - abs(l.yawCos)
+            l.pitch = pl.pitch
+        }
+        return l
+    }
+
+    /// Where a school may swim: inside the glass and above the sand.
+    /// Without a size yet (a test's bare layout), a generous box round
+    /// the parent.
+    static func schoolBounds(in size: CGSize, around pl: Layout) -> SchoolFlock.Bounds {
+        guard size.width > 0, size.height > 0 else {
+            return SchoolFlock.Bounds(minX: pl.x - 400, minY: pl.y - 300, maxX: pl.x + 400, maxY: pl.y + 300)
+        }
+        return SchoolFlock.Bounds(minX: 14, minY: 26, maxX: Double(size.width) - 14,
+                                  maxY: Double(size.height) * 0.8)
     }
 
     // MARK: Fish shape
@@ -776,18 +857,19 @@ extension AquariumView {
                      with: .color(.white), lineWidth: 0.9)
         }
 
-        // Waiting at the glass: a soft glow ring pulses off its nose,
-        // like a tap on the pane asking for you.
+        // Waiting at the glass: a soft amber ring pulses off its nose,
+        // like a tap on the pane asking for you. Amber is the app's one
+        // colour for "this needs you", the same as the buddy and notch.
         if l.tapRing >= 0, !fish.isFry {
             let rr = (10 + l.tapRing * 54) * (length / Self.fishBaseLength)
-            var g = canvas
-            g.blendMode = .plusLighter
             let nose = l.along(0.30, length: length)
-            g.stroke(Path(ellipseIn: CGRect(x: l.x + nose.x - rr,
-                                            y: l.y + nose.y - 5 - rr * 0.8,
-                                            width: rr * 2, height: rr * 1.6)),
-                     with: .color(.white.opacity(l.opacity * (1 - l.tapRing) * 0.35)),
-                     lineWidth: 1.6)
+            let ring = Path(ellipseIn: CGRect(x: l.x + nose.x - rr,
+                                              y: l.y + nose.y - 5 - rr * 0.8,
+                                              width: rr * 2, height: rr * 1.6))
+            let fade = l.opacity * (1 - l.tapRing)
+            var g = canvas
+            g.stroke(ring, with: .color(Tone.ask.color.opacity(fade * 0.3)), lineWidth: 4.5)
+            g.stroke(ring, with: .color(Tone.ask.color.opacity(min(1, fade * 1.15))), lineWidth: 1.4)
         }
 
         // W13's evidence overlays — one marker, only what the plan
@@ -904,11 +986,14 @@ extension AquariumView {
             // Resolved glyphs are cached across frames — the label
             // doesn't change between reduces, only its anchor does.
             let (resolved, textSize) = textCache.chip(for: fish.label, canvas: canvas)
+            // An asking fish's chip leads with an amber dot.
+            let asking = fish.state == .surfacing
+            let dotRoom: Double = asking ? 9 : 0
             let chipX = min(max(l.x, textSize.width / 2 + 14), size.width - textSize.width / 2 - 14)
             let chipY = min(l.y + height / 2 + 14, size.height - 14)
-            let chip = CGRect(x: chipX - textSize.width / 2 - 6.5,
+            let chip = CGRect(x: chipX - textSize.width / 2 - 6.5 - dotRoom,
                               y: chipY - textSize.height / 2 - 2.5,
-                              width: textSize.width + 13, height: textSize.height + 5)
+                              width: textSize.width + 13 + dotRoom, height: textSize.height + 5)
             // The tether: a hairline from the body's underside down to
             // the chip — invisible when the chip is clamped sideways.
             if abs(chipX - l.x) < 20 {
@@ -924,6 +1009,10 @@ extension AquariumView {
                 Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),
                 startPoint: CGPoint(x: 0, y: chip.minY), endPoint: CGPoint(x: 0, y: chip.maxY)),
                 lineWidth: 0.6)
+            if asking {
+                let dot = CGRect(x: chip.minX + 5.5, y: chipY - 2.75, width: 5.5, height: 5.5)
+                lc.fill(Path(ellipseIn: dot), with: .color(Tone.ask.color))
+            }
             lc.draw(resolved, at: CGPoint(x: chipX, y: chipY), anchor: .center)
         }
     }

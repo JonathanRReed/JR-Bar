@@ -182,6 +182,17 @@ Motion keeps its own slow heartbeat. The rule is one small policy,
 `PowerPolicy` in `JRBarUI`, fed by the system's Low Power Mode and thermal
 notifications, with no timer of its own.
 
+On battery the tank's ornaments rest. The policy also carries whether the
+Mac runs on its battery, from the system's power-source change
+notification (`IOPSNotificationCreateRunLoopSource`), and only the
+ornaments that choose to rest read it: the tank's plants, light, bubbles,
+plankton and glows hold their place, and the live wallpaper and the
+screensaver show their still frame. The fish, pets and visitors keep
+swimming, so the game still reads. The chip says "Resting on battery", and
+the card's **Rest on battery** switch (on by default) keeps them going
+instead. Plugging in starts them again. The battery does not change the
+budget, so the notch, the buddy and the bars run as they do on mains.
+
 ## Fold (native)
 
 Closing the lid folds the desktop. Two looks, picked on the card:
@@ -596,8 +607,14 @@ session is seen again. A resident whose session returns is simply that
 session's fish once more, same swim.
 
 Sub-agent sessions join as fry — about half size, the school's
-species — orbiting loosely around their parent's fish, up to eight a
-school (extra workers merge visually rather than crowding the tank).
+species — schooling on their parent's flank, up to eight a school
+(extra workers merge visually rather than crowding the tank). A school
+is a small flock (`SchoolFlock`, Reynolds' boids): each fry keeps off
+its siblings, swims the way they swim and drifts to their middle, so
+the school bunches as the parent turns and spreads again after. It
+steps on a fixed 1/30 s clock, counts at most six neighbours a fish and
+pays for at most four steps a frame; Reduce Motion holds each fry in a
+still spot round its parent.
 A worker whose parent isn't listed drifts to the largest
 same-provider fish, or free-swims when there isn't one. Fry carry no
 labels or status bubbles; a failed worker just fades & sinks a
@@ -627,7 +644,8 @@ of the side tower. Bought pets swim their own errands on the mover pass:
 the turtle glides midwater and climbs to sip the surface, the octopus
 keeps house in the amphora (or a rock's lee) and crawls out every few
 minutes, the cleaner shrimp hops aboard an idle fish every half a
-minute or so, the tetra school orbits as one shared target, the pink
+minute or so, the tetra school flocks after one wandering target and
+parts round a fish in its way, the pink
 axolotl ambles the sand with waving gill frills, and the manta
 crosses the back every few minutes as a wide dim shadow. Alternate
 substrates recolour the whole bed — white sand brightens and
@@ -724,8 +742,8 @@ both eyes, the bow tie knots at the middle of the chin and the laptop
 sits the frame out. The seahorse, which stands upright, flicks round
 through a narrow side view instead.
 
-Everything else that used to mirror in one frame turns too: fry squash
-through zero at each end of their orbit, a completing fish facing left
+Everything else that used to mirror in one frame turns too: fry and
+tetras squash through zero whenever their school turns, a completing fish facing left
 turns round before it corkscrews out, the fish that come for a finished
 run's pellets are picked once, when the run finishes, from where every
 fish really is, and each swims over through its own turn and eats its
@@ -884,9 +902,21 @@ in SwiftUI shapes; `BuddyCharacter` is the roster — `dot`, `cat`,
 `ghost`, `robot`, `owl`, `slime`, `axolotl`, `crab`, `mushroom`, `ufo`
 — and every member shares the one
 skeleton (pose, blink, effects) and differs only in the body. The card's
-Character picker is a menu that lists them by name, over a strip of tiles
-(tap one to pick it; the tile under the pointer paces, the rest stand in
-their patrol pose). Under Mini the picker is off and the strip is hidden.
+Character picker is a strip of tiles (tap one to pick it; the tile under
+the pointer paces, the rest stand in their patrol pose). Under Mini the
+strip is hidden and the label says why. The Size and Time between walks
+sliders both snap in their bindings and show no tick marks.
+
+Its eyes follow the pointer. Within about 160 points (wider as the floating
+buddy grows) the pupils ease toward it over a fifth of a second, capped
+inside the eye, in the moods that look around: pacing, gathering and the
+hop. An ask keeps its eyes on the "!", a slump stays downcast and sleep
+stays shut. `BuddyGaze` listens to the shared `PointerWatcher` only while
+the buddy is on screen, awake and moving and not in Mini, so a still
+pointer or a hidden buddy costs nothing; the ease is drawn by the buddy's
+own frame clock from three stored values, with no timer. Reduce Motion
+keeps the eyes centred. Without Accessibility the watcher hears nothing and
+the eyes keep the mood's own look.
 
 The bodies: Dot is the original soft blob, gradient-lit with eyes and
 mouth punched through to the capsule. Cat adds ears that prick for asks
@@ -1343,6 +1373,63 @@ a parked island holds no listener and runs no clock.
 
 Blurb: "Who's working, up in the notch. Alcove or Boring Notch can
 draw it instead."
+
+## Seasonal touches
+
+On a holiday the toys dress for it. **Seasonal touches** sits under the
+toys on Settings › Utilities & Toys. It is off by default; turned on, every
+holiday has its own switch, all on to start, so Hanukkah or Easter can be
+turned off alone.
+
+- **The sets.** Seventeen: New Year, Lunar New Year, Groundhog Day,
+  Valentine's Day, St. Patrick's Day, Ramadan & Eid, Easter, Earth Day,
+  Pride (all of June), Independence Day, Halloween, Día de los Muertos,
+  Thanksgiving, Hanukkah (a candle more each night), Christmas, Kwanzaa (a
+  candle a day) and Birthdays. Memorial Day, Veterans Day, Good Friday, Ash
+  Wednesday, Yom Kippur, Ashura, MLK Day, Juneteenth, Election Day, Tax
+  Day and daylight saving stay plain on purpose. When two fall on one day,
+  a birthday wins, then a single day, then the shorter span.
+- **Where they show.** Closed, a garland hangs from the Screen Bar's lit
+  strip, in a click-through window of its own that follows the band's
+  panel by its window notifications. The window is exactly the strip's
+  width, read off the band's own view, and the string runs from the
+  centre of one rounded end cap to the other (`SeasonalGarlandSpan`, with
+  the cap radius the band layer itself uses), every piece hung inside
+  that span; the open card's strip finds the band under the card the way
+  the band seats itself there (`ScreenBarGeometry.coupledBand`), so both
+  stay aligned at any notch width or display. Open, the strip under the
+  Now · Shelf · Agent Overview row carries the garland, with the set's
+  centrepiece at the bottom right and a word when there is one ("Night 3",
+  "Alex's birthday"). Both are overlays: the notch's sizes, shapes and
+  motion don't change, and the release-parity tests are untouched. The
+  tank plants one or two props on the sand and drifts a few slow
+  particles (snow, leaves, petals, hearts, confetti, bats, stars, coins).
+  The buddy wears the set's piece in place of its wardrobe for the day,
+  seated like the beanie; on the crab a hat sits on the shell and a band
+  with ears or boppers balances on its eye stalks. Settings shows the
+  set's mark beside the Utilities & Toys header.
+- **Dates.** From the person's calendars when they list the day: the
+  holiday calendars (any calendar named for holidays) and Birthdays, read
+  through the app's one EventKit store (`ShelfCalendarReader`), the same
+  one the notch's glance, its meeting heads-up and the Dock's calendar
+  preview read, under the same Calendar grant. Seasonal touches never asks for it. Any holiday the calendars
+  don't list, and all of them while access is off, follow JR-Bar's own
+  rules: the Easter computus, Foundation's Hebrew, Umm al-Qura and
+  Chinese calendars for Hanukkah, Ramadan and Eid, and Lunar New Year,
+  and fixed dates otherwise (Thanksgiving, Independence Day and Groundhog
+  Day follow the region). Settings says which.
+- **Birthdays.** Everyone, the person included, is picked from the
+  Birthdays calendar's list in Settings: the person's own birthday shows
+  there when it's on their contact card, and they tag it like anyone
+  else's. Only tagged people count, and names stay on this Mac. JR-Bar
+  doesn't read Contacts and never asks for it; the list comes from the
+  same Calendar read.
+- **Cost.** Off, nothing listens and nothing is read. On, one read, then
+  again only on `NSCalendarDayChanged` or `EKEventStoreChanged`; switching
+  a holiday or a person recomputes from what was read. Drawings are still
+  except the tank's particles, which ride its live pass on a clock that
+  holds under Reduce Motion and while resting on battery, and stop with
+  the pass when the window is covered.
 
 ## Copy
 

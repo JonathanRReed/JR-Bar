@@ -395,6 +395,11 @@ enum SettingsSearch {
         .init(.devices, "Calibration profiles", "Calibration profiles", subtitle: "Saved brightness and colour calibrations, one per slot, that a Focus can apply.",
               keywords: ["calibration", "day", "night", "travel", "focus", "profile"]),
         .init(.advanced, "Reset to defaults", "Reset to defaults", subtitle: "Puts one page's settings back."),
+        // Seasonal touches, below the toys on the Utilities & Toys page.
+        .init(.toys, "Seasonal touches", "Seasonal touches",
+              subtitle: "On a holiday the notch, the tank and the buddy dress for it.",
+              keywords: ["holiday", "holidays", "halloween", "christmas", "hanukkah", "kwanzaa", "birthday",
+                         "decorations", "pride", "lunar new year", "ramadan", "eid", "seasonal"]),
         .init(.utilities, "Menu Bar", "Search name",
               subtitle: "A local search name for a menu bar item.",
               keywords: ["alias", "rename", "item bar", "find icon"], card: "menuBar"),

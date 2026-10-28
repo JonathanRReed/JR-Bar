@@ -336,6 +336,14 @@ final class NotchCardModel {
     var onClose: (() -> Void)?
     /// The roster affordance — the Overview window.
     var onOpenOverview: (() -> Void)?
+    /// Today's seasonal set (`SeasonalStore`), read in the card's body so
+    /// the strip under the page bar follows it.
+    @ObservationIgnored var seasonalOccasion: @MainActor () -> SeasonalOccasion? = { nil }
+    /// The island's measures, so the seasonal strip finds the Screen Bar
+    /// under the card (`SeasonalCardStrip.span`).
+    @ObservationIgnored var seasonalIsland: @MainActor () -> SeasonalIslandMetrics = {
+        SeasonalIslandMetrics(notchWidth: 185, notchDepth: 32, restingRadius: 8, topPad: 36)
+    }
 
     /// Headless state tests still exercise pin transitions, but must not
     /// start media, power, camera, calendar, or reminder readers.
@@ -657,6 +665,19 @@ struct NotchCardView: View {
         .padding(.bottom, style == .island
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
+        // The blank strip under the page bar, just above the Screen Bar,
+        // wears the day's set: an overlay, so the card keeps its size.
+        .overlay {
+            if style == .island, let occasion = model.seasonalOccasion() {
+                GeometryReader { card in
+                    SeasonalCardStrip(occasion: occasion, metrics: model.seasonalIsland(),
+                                      cardHeight: card.size.height)
+                        .frame(width: card.size.width, height: Self.islandBottomContentInset)
+                        .position(x: card.size.width / 2,
+                                  y: card.size.height - Self.islandBottomContentInset / 2)
+                }
+            }
+        }
         .environment(\.cardPopoverHold, model.popoverHold)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
