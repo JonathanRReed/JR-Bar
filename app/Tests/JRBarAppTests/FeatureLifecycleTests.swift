@@ -223,20 +223,20 @@ struct FeatureLifecycleTests {
             calendar.refreshNow()
             #expect(reads == 1)
         case "shelf-reminders":
-            let reminders = ShelfRemindersModel()
+            let store = SyntheticShelfEventStore()
+            let reminders = ShelfRemindersModel(reader: ShelfReminderReader(store: store))
             var reads = 0
-            var fetches = 0
-            var cancellations = 0
             reminders.authorization = { reads += 1; return .fullAccess }
-            reminders.fetchEntries = { _ in fetches += 1; return { cancellations += 1 } }
             reminders.sync(enabled: false)
             reminders.refreshNow()
-            #expect(reads == 0 && fetches == 0)
+            #expect(reads == 0 && store.fetches == 0)
             reminders.sync(enabled: true)
-            #expect(reads == 1 && fetches == 1)
+            #expect(reads == 1 && store.fetches == 1)
             reminders.stop()
             reminders.refreshNow()
-            #expect(reads == 1 && fetches == 1 && cancellations == 1)
+            #expect(reads == 1 && store.fetches == 1 && store.inFlight == 1)
+            store.answer(1, with: [])
+            #expect(store.inFlight == 0 && store.fetches == 1)
         case "shelf-timers":
             let folder = TestTemporaryDirectory.currentURL.appendingPathComponent(UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: folder) }

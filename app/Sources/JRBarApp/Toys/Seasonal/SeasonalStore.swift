@@ -29,53 +29,23 @@ struct SeasonalSource: Sendable {
     static let inert = SeasonalSource(calendarAccess: { .notAsked }, read: { _, _ in SeasonalReading() })
 
     /// The Mac's own calendars.
-    static let system = SeasonalSource(
-        calendarAccess: {
-            switch EKEventStore.authorizationStatus(for: .event) {
-            case .fullAccess: return .granted
-            case .notDetermined: return .notAsked
-            default: return .refused
-            }
-        },
-        read: { now, birthdays in SeasonalSource.readSystem(now: now, birthdays: birthdays) })
+    static let system = using(reader: .shared)
+
+    static func using(reader: ShelfCalendarReader) -> SeasonalSource {
+        SeasonalSource(
+            calendarAccess: {
+                switch reader.eventAuthorization() {
+                case .fullAccess: return .granted
+                case .notDetermined: return .notAsked
+                default: return .refused
+                }
+            },
+            read: { now, birthdays in reader.seasonal(now: now, birthdays: birthdays) })
+    }
 
     /// How far back the holiday read looks: far enough to find the start
     /// of a Ramadan or a Hanukkah already under way.
     static let lookBack: TimeInterval = 35 * 86_400
-
-    private static func readSystem(now: Date, birthdays: Bool) -> SeasonalReading {
-        var reading = SeasonalReading()
-        if EKEventStore.authorizationStatus(for: .event) == .fullAccess {
-            let today = Calendar.current.startOfDay(for: now)
-            reading.entries = ShelfCalendarReader.shared.read { store in
-                let calendars = store.calendars(for: .event)
-                let holidays = calendars.filter {
-                    $0.type != .birthday && $0.title.localizedCaseInsensitiveContains("holiday")
-                }
-                let birthdayCalendars = calendars.filter { $0.type == .birthday }
-                reading.holidayCalendars = holidays.count
-                var entries: [SeasonalCalendarEntry] = []
-                if !holidays.isEmpty {
-                    let predicate = store.predicateForEvents(withStart: today.addingTimeInterval(-lookBack),
-                                                             end: today.addingTimeInterval(2 * 86_400),
-                                                             calendars: holidays)
-                    entries += store.events(matching: predicate).map {
-                        SeasonalCalendarEntry(title: $0.title ?? "", start: $0.startDate, end: $0.endDate)
-                    }
-                }
-                if birthdays, !birthdayCalendars.isEmpty {
-                    let predicate = store.predicateForEvents(withStart: today, end: today.addingTimeInterval(366 * 86_400),
-                                                             calendars: birthdayCalendars)
-                    entries += store.events(matching: predicate).map {
-                        SeasonalCalendarEntry(title: $0.title ?? "", start: $0.startDate, end: $0.endDate,
-                                              isBirthday: true, contactID: $0.birthdayContactIdentifier)
-                    }
-                }
-                return entries
-            }
-        }
-        return reading
-    }
 }
 
 /// Seasonal touches' live state: today's occasion, read once a day.
