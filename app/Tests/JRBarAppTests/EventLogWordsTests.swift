@@ -7,9 +7,10 @@ import Testing
 struct EventLogWordsTests {
     @Test func runLengthsReadLikeThePanel() {
         #expect(HistoryStore.duration(45) == "45s")
-        #expect(HistoryStore.duration(95) == "2m")
+        #expect(HistoryStore.duration(95) == "1m")
         #expect(HistoryStore.duration(25 * 60) == "25m")
-        #expect(HistoryStore.duration(3600) == "1h 00m")
+        #expect(HistoryStore.duration(3600) == "1h")
+        #expect(HistoryStore.duration(3900) == "1h 05m")
         #expect(HistoryStore.duration(nil) == nil)
         #expect(HistoryStore.duration(-1) == nil)
     }
