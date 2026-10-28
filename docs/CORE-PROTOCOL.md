@@ -881,7 +881,13 @@ Vocabulary:
   key that has no Go subscription (`reason` `opencode_no_quota_source` /
   `opencode_go_not_subscribed`), it reports `unsupported` with its token
   totals and no windows. A "show meters" control hides instead of drawing
-  dead, and the Usage Center says why in words.
+  dead, and the Usage Center says why in words. Since 2026-10-27 a reading
+  whose `reason` says the account or plan has no quota
+  (`opencode_go_not_subscribed`, `opencode_no_quota_source`,
+  `no_separable_quota`, `quota_license_required`,
+  `code_assist_tier_ineligible`, `cli_default_account_only`) has
+  `quota_source: false` whatever its `state`, and an `unsupported` answer is
+  never replaced by an older reading kept as `stale`.
 - `usage.providers[].reset_credits` (additive, 2026-09-24) is how many unused
   limit-reset credits the provider reports for this account, or null when no
   source stated a count: Codex's own `account/rateLimits/read`
@@ -922,7 +928,10 @@ Vocabulary:
   "Usage source needs attention."). A reading that needs a person rather
   than a repair (`needs_consent`, `needs_sign_in`, or a sign-in or consent
   reason on a stale reading) stays `available`, so it is drawn neutral with
-  its own fix, not as a failure with Retry (2026-10-27). Factory, Kilo, Kimi
+  its own fix, not as a failure with Retry (2026-10-27). A reading with no
+  quota source (the reasons under `quota_source`) is also `available`, with
+  its sentence and no `action`: the app says "No quota source", and Retry
+  would only ask the same question again. Factory, Kilo, Kimi
   and Kiro rows only refresh when clicked, so their `action` is `Retry` or
   absent, and a CLI sign-in names its command in `status_text` ("Run
   kiro-cli login in Terminal, then Retry."). `last_good_age_seconds`

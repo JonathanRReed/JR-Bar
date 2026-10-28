@@ -438,7 +438,6 @@ struct WaitEffectsTests {
             }
         }
         #expect(sizes == [SessionRowMark.slot])
-        #expect(SessionRowView.markRoom == 5 + SessionRowMark.slot)
     }
 
     @Test("only a working row with an activity draws an orb")
@@ -450,27 +449,6 @@ struct WaitEffectsTests {
                 #expect(SessionRowMark.kind(activity: activity, agentActivity: doing) == .mark(activity))
             }
         }
-    }
-
-    @Test("rows doing different things share one trailing width")
-    func rowTrailingWidthIgnoresActivity() {
-        let now = Self.start
-        let tools = ["Read", "Edit", "Bash", "Task"]
-        let rows = tools.enumerated().map { index, tool in
-            SessionRow(session: CoreSession(id: "claude:\(index)", provider: "claude", mode: "working",
-                                            since: now.timeIntervalSince1970 - 60, event: "PreToolUse", tool: tool),
-                       pinnedAsk: nil)
-        }
-        let quietRows = tools.enumerated().map { index, _ in
-            SessionRow(session: CoreSession(id: "claude:\(index)", provider: "claude", mode: "working",
-                                            since: now.timeIntervalSince1970 - 60), pinnedAsk: nil)
-        }
-        #expect(Set(rows.compactMap(\.agentActivity)).count == 4)
-        let column = SessionRowView.trailingWidth(rows: rows, now: now)
-        #expect(column == SessionRowView.trailingWidth(rows: quietRows, now: now))
-        #expect(column == SessionRowView.trailingWidth(rows: [rows[0]], now: now))
-        let workingWord = SessionRowView.wordWidths[.working] ?? 0
-        #expect(column >= workingWord + SessionRowView.markRoom, "the word and the orb fit")
     }
 
     // MARK: The clocks the placements read

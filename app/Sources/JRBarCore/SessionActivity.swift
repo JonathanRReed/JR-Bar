@@ -173,6 +173,9 @@ extension CoreAggregate {
 public enum AgentMonitorFeed {
     public static let completedWindow: TimeInterval = 90
 
+    /// The header's words while there is no saved agent state to read.
+    public static let noStateDetail = "No saved agent activity yet"
+
     /// A `latest.json` older than this is a fossil, not a snapshot. The
     /// monitor rewrites the file (atomically, debounced to about a second)
     /// on every state change and never heartbeats it, so its age is "how
@@ -182,7 +185,7 @@ public enum AgentMonitorFeed {
 
     public static func reduce(_ data: Data?, now: Date = Date(), fileModifiedAt: Date? = nil) -> (state: AgentAggregateState, detail: String) {
         guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (.idle, "No agent monitor state")
+            return (.idle, noStateDetail)
         }
         // When the file was last written: the v2 document's own clock
         // stamp first (robust to the file being copied), then the caller's

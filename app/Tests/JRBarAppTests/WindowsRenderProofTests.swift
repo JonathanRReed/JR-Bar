@@ -333,9 +333,18 @@ struct WindowsRenderProofTests {
         return (core, process)
     }
 
-    /// Waits for `condition`, up to ten seconds.
-    static func settle(_ condition: () -> Bool) async throws {
-        while !condition(), !Task.isCancelled { await drainMainQueue() }
+    /// Waits for `condition`, up to ten seconds; past that the proof fails
+    /// instead of hanging the whole run.
+    static func settle(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !condition(), !Task.isCancelled {
+            guard clock.now < deadline else {
+                Issue.record("The condition did not hold within ten seconds", sourceLocation: sourceLocation)
+                throw CancellationError()
+            }
+            await drainMainQueue()
+        }
     }
 
     // MARK: History
@@ -349,7 +358,8 @@ struct WindowsRenderProofTests {
         try await Self.settle { !store.rows.isEmpty }
         try Self.write("history", size: CGSize(width: 720, height: 560)) { HistoryView(store: store) }
         store.mode = .events
-        try await Self.settle { !store.replay.events.isEmpty }
+        try await Self.settle { !store.replay.events.isEmpty || store.replay.error != nil }
+        try #require(store.replay.error == nil, "\(store.replay.error ?? "")")
         try Self.write("history-events", size: CGSize(width: 720, height: 560)) { HistoryView(store: store) }
         store.windowDidClose()
         let empty = HistoryStore(core: CoreModel(socketPath: "/nonexistent.sock"))
@@ -387,13 +397,19 @@ struct WindowsRenderProofTests {
 
     // MARK: Usage Center
 
+    /// Every provider whose history the store loads has one. A signed-out
+    /// or hub account loads none, so waiting on it would never end.
+    static func historiesLoaded(_ store: UsageCenterStore) -> Bool {
+        !store.providers.isEmpty && store.historyProviders.allSatisfy { store.history(for: $0) != nil }
+    }
+
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func usageCenter() async throws {
         let (core, process) = try await Self.mock(startAt: 6)
         defer { process.terminate(); core.stop() }
         let store = UsageCenterStore(core: core)
         store.windowDidOpen()
-        try await Self.settle { !store.providers.isEmpty && store.providers.allSatisfy { store.history(for: $0) != nil } }
+        try await Self.settle { Self.historiesLoaded(store) }
         try Self.write("usage-center", size: CGSize(width: 780, height: 1500)) { UsageCenterView(store: store) }
         store.metric = .cost
         try Self.write("usage-center-cost", size: CGSize(width: 780, height: 900)) { UsageCenterView(store: store) }
@@ -414,7 +430,7 @@ struct WindowsRenderProofTests {
             defer { process.terminate(); core.stop() }
             let store = UsageCenterStore(core: core)
             store.windowDidOpen()
-            try await Self.settle { !store.providers.isEmpty && store.providers.allSatisfy { store.history(for: $0) != nil } }
+            try await Self.settle { Self.historiesLoaded(store) }
             try Self.write("usage-center-\(scenario.name)", size: CGSize(width: 780, height: scenario.height)) {
                 UsageCenterView(store: store)
             }

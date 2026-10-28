@@ -46,8 +46,9 @@ struct PlainWordsRenderProofTests {
         }
     }
 
-    static func row(_ id: String, state: String, status: String, action: String?, availability: String) -> CoreProviderUsage {
-        var row = CoreProviderUsage(id: id, windows: [], state: state, action: action, quotaSource: true)
+    static func row(_ id: String, state: String, status: String, action: String?, availability: String,
+                    quotaSource: Bool = true) -> CoreProviderUsage {
+        var row = CoreProviderUsage(id: id, windows: [], state: state, action: action, quotaSource: quotaSource)
         row.availability = availability
         row.statusText = status
         return row
@@ -60,9 +61,10 @@ struct PlainWordsRenderProofTests {
                      action: "Retry", availability: "available"),
             Self.row("kilo", state: "needs_consent", status: "Turn on Kilo usage in Settings > Providers.",
                      action: nil, availability: "available"),
-            Self.row("opencode", state: "unavailable",
+            // No Go subscription is an answer, not a failure: neutral, no button.
+            Self.row("opencode", state: "unsupported",
                      status: "This account has no OpenCode Go subscription, so there is no quota to show.",
-                     action: "Retry", availability: "failing"),
+                     action: nil, availability: "available", quotaSource: false),
         ]
         try WindowsRenderProofTests.write("plain-usage-rows", size: CGSize(width: 372, height: 300), plate: .glass) {
             VStack(alignment: .leading, spacing: 0) {

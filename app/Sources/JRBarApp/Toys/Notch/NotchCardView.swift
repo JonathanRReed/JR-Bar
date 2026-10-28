@@ -1774,6 +1774,13 @@ private struct ShelfTogglesRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// The Awake chip's steam, read on the chip's own countdown clock; the
+    /// glyph changes, the chip's size and place do not.
+    private func steam(_ toggle: SystemToggle, on: Bool) -> KeepAwakeSteam {
+        guard toggle == .keepAwake, on else { return .none }
+        return toggles.state.awakeReading.steam(now: toggles.state.awakeClock)
+    }
+
     /// Control Center's own grammar: a round button lit in the surface's
     /// ink while the switch is on, the name under it.
     private func chip(_ toggle: SystemToggle) -> some View {
@@ -1789,9 +1796,9 @@ private struct ShelfTogglesRow: View {
             // at its column's edges, so two long neighbours never read
             // as one phrase — the longest gives up a few percent instead.
             VStack(spacing: 5) {
-                Image(systemName: toggle.symbol)
+                AwakeMark(symbol: toggle.symbol, steam: steam(toggle, on: on),
+                          ink: on ? style.inverseInk : AnyShapeStyle(style.subColor))
                     .font(.system(size: 12.5, weight: .semibold)) // jrbar-token-exception: preserve the 0.9.17.2 notch layout
-                    .foregroundStyle(on ? style.inverseInk : AnyShapeStyle(style.subColor))
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(on ? style.ink : AnyShapeStyle(style.chipFill)))
                     .overlay(Circle().strokeBorder(style.hairline, lineWidth: 0.5))

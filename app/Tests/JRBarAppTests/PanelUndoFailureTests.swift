@@ -18,7 +18,7 @@ struct PanelUndoFailureTests {
         store.undoClear()
         await store.undoTask?.value
         #expect(store.undoOffer == nil)
-        #expect(store.toast == "Undo failed: Synthetic terminal refusal")
+        #expect(store.toast == "Undo failed: Synthetic terminal refusal.")
     }
 
     @Test("a refused or disconnected Undo keeps the eligible offer for retry", arguments: [false, true])

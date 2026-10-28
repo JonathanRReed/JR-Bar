@@ -35,7 +35,9 @@ struct PanelComposition {
         let banner: CGFloat = store.coreCrashed || !store.isLive || store.providerList.failure != nil ? 70 : 0
         let rows = store.editingProviders ? store.panelEditProviders.count : store.panelUsage.count
         let header: CGFloat = store.editingProviders || !store.panelWindowNames.isEmpty ? 20 : 0
-        let minimumUsage = store.editingProviders ? Self.rowHeight : store.panelUsage.first.map(Self.usageHeight) ?? Self.rowHeight
+        let live = store.isLive
+        let usageHeights = store.panelUsage.map { Self.usageHeight($0, connected: live) }
+        let minimumUsage = store.editingProviders ? Self.rowHeight : usageHeights.first ?? Self.rowHeight
         let moreRoom: CGFloat = rows > 1 ? Self.sectionHeight : 0
         let sectionLabels = Self.sectionHeight * 2 + (asks.isEmpty ? 0 : Self.sectionHeight)
         let editHint: CGFloat = store.editingProviders ? 56 : 0
@@ -66,13 +68,19 @@ struct PanelComposition {
             wholeAsks += height
         }
         askHeight = asks.isEmpty ? 0 : max(minimumAsks, wholeAsks)
+        // The agents viewport also ends after a whole row, so the last
+        // worker in view is never cut through its text.
+        if naturalAgents > agentHeight {
+            let rows = Self.agentRowHeights(store: store, earlier: earlier)
+            agentHeight = max(Self.rowHeight, Self.wholeRows(rows, within: agentHeight + earlier) - earlier)
+        }
         agentsHeight = agentHeight
         asksHeight = askHeight
         let fixed = chrome + agentHeight + askHeight
         let room = cap - fixed - header - moreRoom
         let candidates = store.editingProviders
             ? Array(repeating: Self.rowHeight, count: rows)
-            : store.panelUsage.map(Self.usageHeight)
+            : usageHeights
         var used: CGFloat = 0
         var capacity = 0
         for height in candidates.prefix(4) {
@@ -84,15 +92,50 @@ struct PanelComposition {
         usageLimit = capacity
         let heights = store.editingProviders
             ? CGFloat(min(rows, capacity)) * Self.rowHeight
-            : store.panelUsage.prefix(capacity).reduce(CGFloat.zero) { $0 + Self.usageHeight($1) }
+            : usageHeights.prefix(capacity).reduce(CGFloat.zero, +)
         let overflow = rows > capacity ? Self.sectionHeight : 0
         totalHeight = fixed + header + max(Self.rowHeight, heights) + overflow
     }
 
-    static func usageHeight(_ usage: CoreProviderUsage) -> CGFloat {
+    /// The agents list's rows top to bottom as the scroll view stacks
+    /// them: each agent and its open members, the Earlier disclosure, then
+    /// the earlier agents while they are shown.
+    static func agentRowHeights(store: PanelStore, earlier: CGFloat) -> [CGFloat] {
+        func heights(_ agents: [PanelAgent]) -> [CGFloat] {
+            agents.flatMap { agent -> [CGFloat] in
+                let open = store.expandedAgentGroups.contains(agent.id)
+                let members = open ? Array(repeating: memberHeight, count: agent.displayMembers.count) : []
+                return [rowHeight] + members
+            }
+        }
+        var rows = heights(store.currentPanelAgents)
+        if earlier > 0 { rows.append(earlier) }
+        if store.earlierExpanded { rows += heights(store.earlierPanelAgents) }
+        return rows
+    }
+
+    /// The tallest run of whole rows from the top that fits `height`.
+    static func wholeRows(_ rows: [CGFloat], within height: CGFloat) -> CGFloat {
+        var used: CGFloat = 0
+        for row in rows {
+            if used + row > height + 0.5 { break }
+            used += row
+        }
+        return used
+    }
+
+    /// A row's height. With the monitor down every reading is stale and its
+    /// row adds a "Stale · Read 41m ago" line, so `connected: false` gives
+    /// it the stale row's room.
+    static func usageHeight(_ usage: CoreProviderUsage, connected: Bool = true) -> CGFloat {
         if usage.availability == "not_found" { return UsageGaugeRow.compactRowHeight }
         let action = usage.action?.isEmpty == false
-        return action || usage.availability == "failing" ? 88 : (usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability) ? 64 : UsageGaugeRow.compactRowHeight)
+        // A neutral row with a button (a sign-in) has its status, the age
+        // line the monitor's absence adds, and the button on three lines.
+        if action, !connected, usage.availability != "failing" { return 96 }
+        if action || usage.availability == "failing" { return 88 }
+        let stale = !connected || usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability)
+        return stale ? 64 : UsageGaugeRow.compactRowHeight
     }
 }
 
@@ -105,7 +148,8 @@ struct PanelAgentsSection: View {
     private var emptyLabel: String {
         if !store.isLive { return "Agents appear when the monitor connects" }
         if !store.trimmedFindQuery.isEmpty { return "No matching agents" }
-        return store.visibleAskRows.isEmpty ? "Start an agent" : "No other agents running"
+        if !store.visibleAskRows.isEmpty { return "No other agents running" }
+        return store.hooksConnected ? "Start an agent" : "Connect a provider to see its agents"
     }
 
     var body: some View {
@@ -115,9 +159,16 @@ struct PanelAgentsSection: View {
                 SnapshotScrollView {
                     VStack(spacing: 0) {
                         if store.currentPanelAgents.isEmpty && (!store.earlierExpanded || store.earlierPanelAgents.isEmpty) {
-                            Text(emptyLabel)
-                                .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
-                                .frame(maxWidth: .infinity, minHeight: PanelComposition.rowHeight)
+                            HStack(spacing: JRBarTokens.Space.sm) {
+                                Text(emptyLabel)
+                                    .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(JRBarTokens.Ink.secondary)
+                                if store.isLive && !store.hooksConnected && store.trimmedFindQuery.isEmpty {
+                                    Button("Open Providers…") { store.openSettings(page: .agents) }
+                                        .buttonStyle(.plain).font(JRBarTokens.TypeStyle.body.font)
+                                        .foregroundStyle(JRBarTokens.Ink.accent)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: PanelComposition.rowHeight)
                         }
                         ForEach(store.currentPanelAgents) { agent in PanelAgentView(agent: agent, store: store).id(agent.id) }
                         if hasEarlier { earlierDisclosure.id(PanelStore.earlierSelectionID) }
@@ -179,15 +230,16 @@ struct PanelAgentView: View {
                 .contextMenu { SessionContextMenu(row: agent.row, store: store, anchor: contextFrame) }
             } else if !agent.members.isEmpty || agent.workerCount > 0 {
                 AgentGroupRow(provider: agent.row.style.id, name: agent.row.label,
-                              project: agent.row.cwdTail,
+                              project: agent.row.distinctFolder, subtitle: groupSubtitle,
                               elapsed: agent.row.elapsedText(now: store.now), state: agent.row.panelState,
+                              stateLabel: agent.row.dotLabel,
                               memberMarks: Array(Set(agent.members.map { $0.style.id })).sorted(),
-                              workerCount: agent.workerCount, askingCount: agent.askingCount, unlinked: agent.unlinked, expanded: expanded) {
+                              workerCount: agent.listedWorkers, askingCount: agent.askingCount, unlinked: agent.unlinked, expanded: expanded) {
                     ForEach(Array(agent.displayMembers.enumerated()), id: \.element.id) { index, member in
                         Button { store.open(member) } label: {
-                            AgentMemberRow(provider: member.style.id, name: member.label, role: member.id == agent.id ? "Lead" : "Worker",
+                            AgentMemberRow(provider: member.style.id, name: member.label, role: memberRole(member),
                                            elapsed: member.elapsedText(now: store.now), state: member.panelState,
-                                           isLast: index == agent.displayMembers.count - 1)
+                                           stateLabel: member.dotLabel, isLast: index == agent.displayMembers.count - 1)
                         }
                         .buttonStyle(.plain)
                         .background(store.selectedID == member.id ? JRBarTokens.Ink.accentSoft : .clear,
@@ -200,12 +252,24 @@ struct PanelAgentView: View {
                     HStack(spacing: JRBarTokens.Space.sm) {
                         ProviderLogoTile(provider: agent.row.style.id, accent: agent.row.style.accent, dim: agent.unlinked)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(agent.row.label).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
-                            if let folder = agent.unlinked ? "No parent found · no share of the strip" : agent.row.cwdTail {
-                                Text(folder).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)
+                            HStack(spacing: JRBarTokens.Space.xs) {
+                                Text(agent.row.label).font(JRBarTokens.TypeStyle.headline.font).lineLimit(1)
+                                if agent.row.activity == .done, store.unseenCompletionIDs.contains(agent.row.id) {
+                                    UnseenDot().help("Finished since you last looked")
+                                }
+                            }
+                            if agent.unlinked {
+                                captionText("No parent found · no share of the strip", warning: false)
+                            } else if let caption = rowCaption {
+                                captionText(caption.text, warning: caption.warning)
                             }
                         }
-                        Spacer(minLength: 0)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .bottom) {
+                            if let fraction = agent.row.contextBarFraction {
+                                ContextHairline(fraction: fraction, accent: agent.row.style.accent).offset(y: 5)
+                            }
+                        }
                         if !agent.row.activity.isClearable && !agent.row.isRemote {
                             DoneBell(watched: store.isWatchedForDone(agent.row), revealed: hovering || store.selectedID == agent.id) {
                                 store.toggleDoneWatch(agent.row)
@@ -216,9 +280,11 @@ struct PanelAgentView: View {
                                 .foregroundStyle(agent.row.activity == .failed ? JRBarTokens.Ink.failure : JRBarTokens.Ink.done)
                         }
                         if let elapsed = agent.row.elapsedText(now: store.now) {
-                            Text(elapsed).font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(JRBarTokens.Ink.secondary).monospacedDigit()
+                            Text(elapsed).font(JRBarTokens.TypeStyle.callout.font).monospacedDigit()
+                                .foregroundStyle(agent.row.isQuiet(now: store.now) ? AnyShapeStyle(SessionRow.warningTint)
+                                                                                   : AnyShapeStyle(JRBarTokens.Ink.secondary))
                         }
-                        StateDot(agent.row.panelState)
+                        StateDot(agent.row.panelState, label: agent.row.dotLabel)
                     }
                     .padding(.horizontal, JRBarTokens.Space.md)
                     .frame(height: PanelComposition.rowHeight)
@@ -236,6 +302,34 @@ struct PanelAgentView: View {
         .onHover { hovering = $0 }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contextFrame = $0 }
     }
+
+    private var rowCaption: SessionRow.Caption? {
+        agent.row.caption(now: store.now, feedQuiet: store.quietFeedText(for: agent.row))
+    }
+
+    /// The group's second line: the lead's own caption (its folder is
+    /// already beside the title), then the workers' story when the count
+    /// alone is not it ("1 working", "1 failed").
+    private var groupSubtitle: String? {
+        let caption = agent.row.caption(now: store.now, feedQuiet: store.quietFeedText(for: agent.row))
+        let lead = caption?.text == agent.row.distinctFolder ? nil : caption?.text
+        let parts = [lead, agent.workerSummary].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// A worker's role, or what it is doing when there is something to say.
+    private func memberRole(_ member: SessionRow) -> String {
+        if member.id == agent.id { return "Lead" }
+        let caption = member.caption(now: store.now, feedQuiet: store.quietFeedText(for: member))
+        guard let caption, caption.text != member.distinctFolder else { return "Worker" }
+        return caption.text
+    }
+
+    private func captionText(_ text: String, warning: Bool) -> some View {
+        Text(text).font(JRBarTokens.TypeStyle.caption.font)
+            .foregroundStyle(warning ? AnyShapeStyle(SessionRow.warningTint) : AnyShapeStyle(JRBarTokens.Ink.secondary))
+            .lineLimit(1).truncationMode(.tail)
+    }
 }
 
 struct PanelProviderSection: View {
@@ -246,9 +340,21 @@ struct PanelProviderSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: JRBarTokens.Space.sm) {
                 SectionHeader("Usage")
+                if !store.editingProviders, let updated = store.usageUpdatedText {
+                    Text(updated).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.tertiary)
+                        .lineLimit(1).monospacedDigit()
+                }
                 Spacer()
+                if !store.editingProviders && store.isLive {
+                    Button { store.refreshAllUsage() } label: {
+                        Image(systemName: "arrow.clockwise").font(JRBarTokens.TypeStyle.caption.font)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(JRBarTokens.Ink.secondary)
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Refresh usage (⌘R)").accessibilityLabel("Refresh usage")
+                }
                 Button(store.editingProviders ? "Done" : "Edit") { store.editingProviders.toggle(); editPage = 0 }
                     .buttonStyle(.plain).font(JRBarTokens.TypeStyle.caption.font)
             }
@@ -265,7 +371,7 @@ struct PanelProviderSection: View {
                 }
                 ForEach(Array(store.panelUsage.prefix(composition.usageLimit)), id: \.identity) { usage in
                     gauge(usage)
-                        .frame(height: PanelComposition.usageHeight(usage))
+                        .frame(height: PanelComposition.usageHeight(usage, connected: store.isLive))
                 }
                 let more = store.panelUsage.count - composition.usageLimit
                 if more > 0 {
@@ -465,7 +571,8 @@ struct PanelTitleBar: View {
             Spacer(minLength: 0)
             if let hold = store.awakeHold {
                 Button { store.openKeepAwakeSettings() } label: {
-                    Image(systemName: hold.symbol).font(JRBarTokens.TypeStyle.caption.font)
+                    AwakeMark(symbol: hold.symbol, steam: store.awakeSteam, ink: JRBarTokens.Ink.label)
+                        .font(JRBarTokens.TypeStyle.caption.font)
                 }
                 .buttonStyle(.plain).help(hold.text).accessibilityLabel(hold.text)
                 .contextMenu { KeepAwakeMenuItems() }
@@ -508,4 +615,23 @@ func panelSectionTitle(_ title: String, trailing: String? = nil) -> some View {
             Text(trailing).font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.secondary).lineLimit(1)
         }
     }.padding(.horizontal, JRBarTokens.Space.md).frame(height: PanelComposition.sectionHeight)
+}
+
+/// The awake hold's glyph: the cup steams while it holds, and only the
+/// steam thins as a countdown runs out. Any other mark (the battery, the
+/// closed lid) is drawn as it is.
+struct AwakeMark<Ink: ShapeStyle>: View {
+    let symbol: String
+    let steam: KeepAwakeSteam
+    let ink: Ink
+
+    var body: some View {
+        if symbol == KeepAwakeSteam.none.symbol, steam != .none {
+            Image(systemName: steam.symbol)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(ink, ink.opacity(steam.opacity))
+        } else {
+            Image(systemName: symbol).foregroundStyle(ink)
+        }
+    }
 }

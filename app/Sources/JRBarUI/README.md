@@ -111,15 +111,16 @@ An unsupported quota source gets a full-width `No quota source` line.
   insets, including bare pickers and custom rows. Use `.settingsRowInsets()`
   on custom rows so they keep the same padding outside a group without
   doubling it inside one. Controls retain their own accessible labels.
-- `AgentGroupRow(provider:name:project:subtitle:elapsed:state:memberMarks:
-  workerCount:unlinked:expanded:members:)` takes proven members and an
-  expansion binding. Project is secondary; subtitle is the task; elapsed
-  and StateDot sit on the right. Mixed groups take provider IDs in
+- `AgentGroupRow(provider:name:project:subtitle:elapsed:state:stateLabel:
+  memberMarks:workerCount:unlinked:expanded:members:)` takes proven members
+  and an expansion binding. Project is secondary; subtitle is the task;
+  Done or Failed, elapsed and StateDot sit on the right. `stateLabel` is
+  the dot's spoken word when the state is ambiguous (idle, ended, stale). Mixed groups take provider IDs in
   `memberMarks`. The left chevron rotates over 140 ms. Unlinked workers
   have an info icon, dim tile and one 0.55 opacity on normal label colours.
   They cannot expand or acquire a strip share.
-- Use `AgentMemberRow(provider:name:role:elapsed:state:isLast:)` inside the
-  group builder. It draws a 28 pt row indented 34 pt, with a tree line.
+- Use `AgentMemberRow(provider:name:role:elapsed:state:stateLabel:isLast:)`
+  inside the group builder. It says Done or Failed like a plain row. It draws a 28 pt row indented 34 pt, with a tree line.
   Set `isLast` on the final member to end the line at that row.
 
 `ProviderListStore` lives in JRBarApp. AppDelegate creates one and passes

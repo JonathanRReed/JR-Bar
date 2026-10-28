@@ -1303,7 +1303,12 @@ def _snapshot_has_quota_source(snapshot: object) -> bool:
     subscription) it reports ``unsupported``. The app must then draw no
     meter at all rather than an empty one.
     """
+    from .provider_availability import NO_QUOTA_REASONS
+
     if not _provider_supports_quota(getattr(snapshot, "provider_id", None)):
+        return False
+    if getattr(snapshot, "reason_code", None) in NO_QUOTA_REASONS:
+        # Whatever state carried it, "this plan has no quota" is the answer.
         return False
     state = getattr(getattr(snapshot, "state", None), "value", getattr(snapshot, "state", None))
     return state != "unsupported"

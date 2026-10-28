@@ -27,6 +27,48 @@ struct PanelCompositionTests {
         }
     }
 
+    /// With the monitor down every row is stale and adds its "Read … ago"
+    /// line; the row's room must hold it at both widths, a sign-in row too.
+    @Test func disconnectedUsageRowsStayInsideTheirRoom() {
+        var signIn = Self.usage("kiro")
+        signIn.state = "needs_sign_in"
+        signIn.statusText = "Run kiro-cli login in Terminal, then Retry."
+        signIn.action = "Retry"
+        let readings = [Self.usage(), Self.usage("codex"), signIn,
+                        Self.usage("gemini", availability: "failing", action: "Sign in…")]
+        for reading in readings {
+            #expect(PanelComposition.usageHeight(reading, connected: false) >= 64)
+            for width: CGFloat in [320, 372] {
+                let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
+                                        now: Self.time + 2460, connected: false, style: .compact, windowNames: ["5h", "7d"],
+                                        snapshotReceivedAt: Self.time, suppressDisconnectedStatus: true,
+                                        onAction: reading.action == nil ? nil : {})
+                let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
+                #expect(host.fittingSize.height <= PanelComposition.usageHeight(reading, connected: false),
+                        "\(reading.id) at \(width) pt is \(host.fittingSize.height) pt tall")
+            }
+        }
+        let store = Self.store(usage: [Self.usage()])
+        store.core.handle(.disconnected(reason: "fixture"))
+        let composition = PanelComposition(store: store)
+        #expect(composition.totalHeight >= PanelComposition.usageHeight(Self.usage(), connected: false))
+    }
+
+    @Test func theDisconnectedBannerUsesTheSharedMonitorWords() {
+        let store = Self.store()
+        store.core.handle(.disconnected(reason: "core closed the socket"))
+        #expect(store.connectionTitle == MonitorWords.notConnected)
+        #expect(store.connectionDescription == "The monitor closed the connection.")
+        store.core.handle(.disconnected(reason: "connect: Connection refused"))
+        #expect(store.connectionDescription == "The monitor is not running.")
+        store.supervisorState = .backingOff(failures: 2, delay: 2.4)
+        #expect(store.connectionTitle == MonitorWords.reconnecting)
+        #expect(store.connectionDescription == "The monitor stopped. Restarting in 3 s.")
+        store.supervisorState = .crashed(failures: 10)
+        #expect(store.coreCrashDetail == "The monitor crashed 10 times. Restart it from the panel.")
+        #expect(ConnectionDot.spokenLabel(.fileFeeds) == MonitorWords.label)
+    }
+
     static func session(_ id: String, provider: String = "claude", mode: String = "working",
                         since: Double = time - 120, group: String? = nil, worker: Bool = false,
                         unlinked: Bool = false, workers: Int = 0, ask: CoreAsk? = nil) -> CoreSession {
@@ -286,6 +328,66 @@ struct PanelCompositionTests {
         let group = try #require(store.panelAgents.first)
         #expect(group.workerCount == 1)
         #expect(group.displayMembers.map(\.id) == [root.id, child.id])
+    }
+
+    @Test func aFinishedGroupCountsTheWorkersItLists() throws {
+        let root = Self.session("claude:root", group: "group", workers: 0)
+        let done = (0..<3).map { Self.session("codex:done-\($0)", provider: "codex", mode: "done", group: "group", worker: true) }
+        let store = Self.store([root] + done, groups: [Self.group([root.id] + done.map(\.id))])
+        let group = try #require(store.panelAgents.first)
+        #expect(group.listedWorkers == 3, "never \"0 workers\" above three listed ones")
+        #expect(group.workerSummary == nil)
+        let live = Self.session("codex:live", provider: "codex", group: "group", worker: true)
+        let failed = Self.session("codex:failed", provider: "codex", mode: "failed", group: "group", worker: true)
+        let mixedRoot = Self.session("claude:root", group: "group", workers: 1)
+        let mixed = Self.store([mixedRoot, live, failed] + done,
+                               groups: [Self.group([mixedRoot.id, live.id, failed.id] + done.map(\.id))])
+        let summary = try #require(mixed.panelAgents.first)
+        #expect(summary.listedWorkers == 5)
+        #expect(summary.workerSummary == "1 working · 1 failed")
+    }
+
+    @Test func theAgentsViewportEndsAfterAWholeRow() {
+        let root = Self.session("claude:root", group: "group", workers: 7)
+        let members = (0..<7).map { Self.session("codex:member-\($0)", provider: "codex", group: "group", worker: true) }
+        let others = (0..<2).map { Self.session("gemini:other-\($0)", provider: "gemini") }
+        let store = Self.store([root] + members + others, groups: [Self.group([root.id] + members.map(\.id))])
+        store.expandedAgentGroups.insert(root.id)
+        let composition = PanelComposition(store: store)
+        let rows = PanelComposition.agentRowHeights(store: store, earlier: 0)
+        var sums: Set<CGFloat> = [0]
+        var running: CGFloat = 0
+        for row in rows { running += row; sums.insert(running) }
+        #expect(sums.contains(composition.agentsHeight), "\(composition.agentsHeight) cuts a row")
+        #expect(composition.agentsHeight <= PanelComposition.rowHeight * 5)
+    }
+
+    @Test func anEmptyPanelWithNoHooksPointsAtProviders() {
+        let store = Self.store()
+        #expect(store.hooksConnected)
+        store.core.apply(.state(CoreState(generation: 2, health: .object(["hooks": .object(["claude": .string("missing"), "codex": .string("missing")])]))))
+        #expect(!store.hooksConnected)
+        store.core.apply(.state(CoreState(generation: 3, health: .object(["hooks": .object(["claude": .string("ok"), "codex": .string("missing")])]))))
+        #expect(store.hooksConnected)
+    }
+
+    @Test func theUsageHeaderSaysWhenItLastReadAndRefreshesEveryone() async throws {
+        let store = Self.store()
+        #expect(store.usageUpdatedText == nil)
+        store.core.apply(.state(CoreState(generation: 2, usage: CoreUsage(refreshedAt: Self.time - 150, providers: [Self.usage()]))))
+        #expect(store.usageUpdatedText == "Updated 2m ago")
+        store.core.apply(.state(CoreState(generation: 3, usage: CoreUsage(refreshedAt: Self.time - 10, providers: [Self.usage()]))))
+        #expect(store.usageUpdatedText == "Updated just now")
+        let requests = TestEvents<[String]>()
+        store.requestUsageRefresh = { providers in
+            requests.send(providers)
+            return CoreReply(id: "refresh", ok: true)
+        }
+        store.refreshAllUsage()
+        let requested = try await requests.next()
+        #expect(requested.isEmpty)
+        store.core.handle(.disconnected(reason: "fixture"))
+        #expect(store.usageUpdatedText == nil)
     }
 
     @Test func findTrimsTheSameQueryForAgentsAndAsks() {

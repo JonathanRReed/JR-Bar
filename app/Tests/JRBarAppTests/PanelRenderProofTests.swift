@@ -38,7 +38,7 @@ struct PanelRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func panelStatesAtBothWidthsAndAppearances() async throws {
         for state in ["groups", "expanded", "seven-members", "asks", "earlier", "idle", "source-idle",
-                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen", "find", "undo", "quiet-awake", "missing-root", "retry", "edit-accounts", "motion", "expanded-short-screen", "alerts"] {
+                      "failure", "missing-recent", "not-found", "elapsed", "empty", "edit", "overflow", "disconnected", "reduced-motion", "short-screen", "find", "undo", "quiet-awake", "missing-root", "retry", "edit-accounts", "motion", "expanded-short-screen", "alerts", "captions"] {
             let store = try await fixture(state)
             for width: CGFloat in [PanelView.width, 320] {
                 for dark in [false, true] {
@@ -83,6 +83,17 @@ struct PanelRenderProofTests {
             if name == "find" { store.find(" sample ") }
             if name == "undo" { store.undoOffer = (batch: "sample-batch", at: store.now, cleared: 2) }
             if name == "motion" { store.reduceMotion = false; store.animationsArmed = true; store.expandedAgentGroups.insert(root.id) }
+        case "captions":
+            // What a row says under its title: a tool running, then the
+            // warnings a stuck or muted row needs.
+            let busy = CoreSession(id: "claude:busy", provider: "claude", label: "Refactor the parser", cwd: "/tmp/sample/parser",
+                                   mode: "working", since: Fixture.time - 200, event: "PreToolUse", tool: "Bash")
+            var stale = Fixture.session("codex:stale", provider: "codex", mode: "idle", since: Fixture.time - 900)
+            stale.stale = true
+            var snoozed = Fixture.session("gemini:snoozed", provider: "gemini", since: Fixture.time - 400)
+            snoozed.snoozedUntil = Fixture.time + 3_600
+            let ended = Fixture.session("factory:ended", provider: "factory", mode: "ended", since: Fixture.time - 500)
+            store = Fixture.store([busy, stale, snoozed, ended], usage: [Fixture.usage()])
         case "seven-members":
             let six = (0..<6).map { index in
                 Fixture.session("worker:\(index)", provider: ["codex", "claude", "factory"][index % 3], group: "group", worker: true)
@@ -233,7 +244,11 @@ struct PanelRenderProofTests {
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         CATransaction.flush()
-        #expect(window.isKeyWindow, "Accent proof must be a key window")
+        // A headless run never gets a key window; only an interactive run
+        // can prove the key-window accent.
+        if ProcessInfo.processInfo.environment["JRBAR_INTERACTIVE_TESTS"] == "1" {
+            #expect(window.isKeyWindow, "Accent proof must be a key window")
+        }
         let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         let png = try #require(bitmap.representation(using: .png, properties: [:]))

@@ -35,6 +35,12 @@ public struct StateDot: View {
     @MainActor public static private(set) var activePulses = 0
 
     public init(_ state: State) { self.state = state }
+    /// The state's dot with its own spoken word, for states that share a
+    /// dot: an idle, an ended and a stale row are all grey.
+    public init(_ state: State, label: String) {
+        self.state = state
+        self.overrideLabel = label
+    }
     public init(tone: Tone, label: String) {
         self.state = .stale
         self.overrideTone = tone

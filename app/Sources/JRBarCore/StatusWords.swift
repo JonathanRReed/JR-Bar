@@ -109,6 +109,11 @@ public enum UsageStatus: String, CaseIterable, Sendable {
         if provider.incident?.isEmpty == false { return .incident }
         if provider.usageIsOff || ["disabled", "off"].contains(provider.state) { return .off }
         if provider.isSignedOut { return .needsSignIn }
+        // The daemon's answer that this account has no quota ("no Go
+        // subscription", "this plan reports none") is neutral, whatever
+        // state carried it.
+        if !provider.quotaSource, provider.availability == "available",
+           !["needs_consent", "needs_sign_in"].contains(provider.state ?? "") { return .noQuotaSource }
         switch provider.state {
         case "needs_consent": return .needsConsent
         case "needs_sign_in": return .needsSignIn

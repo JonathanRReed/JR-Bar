@@ -9,8 +9,15 @@ from pathlib import Path
 
 import pytest
 
+from jrbar.core_projection import _snapshot_has_quota_source
 from jrbar.provider_availability import _CAUSES, ATTENTION, availability_document, status_sentence
-from jrbar.provider_usage_platform import ProviderSourceState, UsageLane, failure_snapshot
+from jrbar.provider_usage_platform import (
+    ProviderSourceState,
+    UsageLane,
+    failure_snapshot,
+    provider_descriptor,
+    select_authoritative_snapshot,
+)
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/jrbar"
 #: Consent results and lifecycle words, not reading reasons.
@@ -122,3 +129,37 @@ def test_no_daemon_text_humanises_a_reason_code():
 def test_the_humanise_scan_catches_the_old_fallback():
     assert CODE_AS_WORDS.search('status_text=_CAUSES.get(reason, (reason or state).replace("_", " ").capitalize())')
     assert not CODE_AS_WORDS.search('status_text=status_sentence(reason or state, label)')
+
+
+@pytest.mark.parametrize(("provider", "state", "reason"), [
+    ("opencode", ProviderSourceState.UNSUPPORTED, "opencode_go_not_subscribed"),
+    ("opencode", ProviderSourceState.UNSUPPORTED, "opencode_no_quota_source"),
+    ("kiro", ProviderSourceState.UNSUPPORTED, "no_separable_quota"),
+    ("kiro", ProviderSourceState.UNSUPPORTED, "cli_default_account_only"),
+    ("gemini", ProviderSourceState.UNAVAILABLE, "code_assist_tier_ineligible"),
+    ("gemini", ProviderSourceState.SOURCE_NOT_FOUND, "quota_license_required"),
+])
+def test_no_quota_source_is_neutral_with_no_button(provider, state, reason):
+    snapshot = failure_snapshot(provider, observed_at=10, state=state, reason=reason, action="Retry")
+    row = availability_document(snapshot, now=10, installed=True)
+    assert row["availability"] == "available"
+    assert row["action"] is None
+    assert row["status_text"] == status_sentence(reason, provider_descriptor(provider).label)
+
+
+def test_a_last_good_reading_does_not_turn_no_quota_into_a_failure():
+    lane = UsageLane(provider_id="opencode", lane_id="rolling", label="5h", remaining_percent=40,
+                     reset_at=None, scope="account", model=None, feature=None, bindable=True, source_id="go")
+    answer = failure_snapshot("opencode", observed_at=10, state=ProviderSourceState.UNSUPPORTED,
+                              reason="opencode_go_not_subscribed", action=None)
+    previous = replace(answer, observed_at=5, state=ProviderSourceState.READY, reason_code=None, lanes=(lane,))
+    merged = select_authoritative_snapshot((answer,), last_known_good=previous)
+    assert merged.state is ProviderSourceState.UNSUPPORTED
+    assert merged.lanes == ()
+    assert not _snapshot_has_quota_source(merged)
+    # Should an older path still wrap the answer as stale, it stays neutral.
+    wrapped = replace(answer, state=ProviderSourceState.STALE, lanes=(lane,), action_label="Retry")
+    assert not _snapshot_has_quota_source(wrapped)
+    row = availability_document(wrapped, now=10, installed=True)
+    assert row["availability"] == "available"
+    assert row["action"] is None

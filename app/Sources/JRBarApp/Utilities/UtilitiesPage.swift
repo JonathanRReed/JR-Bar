@@ -19,6 +19,14 @@ struct UtilitiesPage: View {
 struct SettingsFeatureRow: View {
     let store: SettingsStore
     let toy: any Toy
+
+    /// A failed status ("Couldn't hold the Mac awake") reads red, as it
+    /// does on the card; every other status keeps the quiet amber.
+    static func chipTint(_ status: ToyStatus) -> Color {
+        if case .failed = status { return Tone.failure.color }
+        return Tone.neutral.color
+    }
+
     var body: some View {
         HStack(spacing: JRBarTokens.Space.md) {
             Button { store.openFeature(toy.id) } label: {
@@ -28,7 +36,7 @@ struct SettingsFeatureRow: View {
                             Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
                                 .lineLimit(1).layoutPriority(1)
                             if toy.status.showsChip && (store.isLive || toy.status.text != MonitorWords.label) {
-                                Text(toy.status.text).foregroundStyle(Tone.neutral.color).jrbarType(.caption)
+                                Text(toy.status.text).foregroundStyle(Self.chipTint(toy.status)).jrbarType(.caption)
                                     .lineLimit(1).help(toy.status.text)
                             }
                         }

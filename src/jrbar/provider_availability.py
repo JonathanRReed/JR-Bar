@@ -86,6 +86,14 @@ _NEEDS_PERSON_REASONS = {
     "browser_session_expired", "token_refresh_failed", "claude_keychain_access_lost",
 }
 
+#: Reasons that say this account has no quota to read: an answer, not a
+#: failure. The row reads "No quota source" with the sentence and no button;
+#: Retry would only ask the same question again.
+NO_QUOTA_REASONS = frozenset({
+    "opencode_go_not_subscribed", "opencode_no_quota_source", "no_separable_quota",
+    "quota_license_required", "code_assist_tier_ineligible", "cli_default_account_only",
+})
+
 #: Providers whose row action only asks for a refresh: the app cannot run a
 #: CLI login or grant consent from the panel, so the instruction goes in the
 #: status sentence and the button says Retry.
@@ -140,6 +148,9 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
         fields.update(availability="source_idle", status_text="Quota service is not running",
                       action=f"Open {label} to refresh" if app_backed else snapshot.action_label,
                       action_kind="open_app" if app_backed else None)
+    elif reason in NO_QUOTA_REASONS:
+        fields.update(status_text=status_sentence(reason, label), action=None)
+        return fields
     elif state not in {"ready", "disabled", "unsupported"} and reason != "usage_not_turned_on":
         person = state in _NEEDS_PERSON_STATES or reason in _NEEDS_PERSON_REASONS
         fields.update(availability="available" if person else "failing",

@@ -25,7 +25,7 @@ final class AgentStateMonitor {
 
     var onChange: (@MainActor (AgentAggregateState, String) -> Void)?
     private(set) var state: AgentAggregateState = .idle
-    private(set) var detail: String = "No agent monitor state"
+    private(set) var detail: String = AgentMonitorFeed.noStateDetail
     /// The watched directory and the document in it; tests point these
     /// at a scratch folder.
     let directory: String
