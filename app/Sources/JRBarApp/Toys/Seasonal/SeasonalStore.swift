@@ -1,4 +1,3 @@
-import Contacts
 @preconcurrency import EventKit
 import Foundation
 import JRBarCore
@@ -11,31 +10,25 @@ struct SeasonalReading: Equatable, Sendable {
     var entries: [SeasonalCalendarEntry]?
     /// How many holiday calendars the person keeps.
     var holidayCalendars: Int = 0
-    /// Month and day from the person's own contact card.
-    var ownBirthday: DateComponents?
 }
 
 /// Where seasonal touches read from. The app's reader borrows the one
-/// EventKit store (`ShelfCalendarReader`) under the existing Calendar grant and the
-/// Me card under a Contacts grant; neither ever asks. Tests hand in their
-/// own, so nothing here touches a real calendar or contact.
+/// EventKit store (`ShelfCalendarReader`) under the existing Calendar
+/// grant and never asks for anything. Tests hand in their own, so nothing
+/// here touches a real calendar.
 struct SeasonalSource: Sendable {
     enum Access: Equatable, Sendable { case granted, notAsked, refused }
 
     var calendarAccess: @Sendable () -> Access
-    var contactsAccess: @Sendable () -> Access
     /// Read the holiday calendars around `now`, and, when `birthdays`,
-    /// the Birthdays calendar for the year ahead and the Me card.
+    /// the Birthdays calendar for the year ahead.
     var read: @Sendable (_ now: Date, _ birthdays: Bool) -> SeasonalReading
-    /// Ask for Contacts — only from the person's own click.
-    var askContacts: @Sendable (@escaping @Sendable (Bool) -> Void) -> Void
 
     /// Nothing to read: every test store and any build without the native
     /// sources. The rules still date the holidays.
-    static let inert = SeasonalSource(calendarAccess: { .notAsked }, contactsAccess: { .notAsked },
-                                      read: { _, _ in SeasonalReading() }, askContacts: { $0(false) })
+    static let inert = SeasonalSource(calendarAccess: { .notAsked }, read: { _, _ in SeasonalReading() })
 
-    /// The Mac's own calendars and card.
+    /// The Mac's own calendars.
     static let system = SeasonalSource(
         calendarAccess: {
             switch EKEventStore.authorizationStatus(for: .event) {
@@ -44,17 +37,7 @@ struct SeasonalSource: Sendable {
             default: return .refused
             }
         },
-        contactsAccess: {
-            switch CNContactStore.authorizationStatus(for: .contacts) {
-            case .authorized: return .granted
-            case .notDetermined: return .notAsked
-            default: return .refused
-            }
-        },
-        read: { now, birthdays in SeasonalSource.readSystem(now: now, birthdays: birthdays) },
-        askContacts: { done in
-            CNContactStore().requestAccess(for: .contacts) { granted, _ in done(granted) }
-        })
+        read: { now, birthdays in SeasonalSource.readSystem(now: now, birthdays: birthdays) })
 
     /// How far back the holiday read looks: far enough to find the start
     /// of a Ramadan or a Hanukkah already under way.
@@ -91,12 +74,6 @@ struct SeasonalSource: Sendable {
                 return entries
             }
         }
-        if birthdays, CNContactStore.authorizationStatus(for: .contacts) == .authorized {
-            let keys = [CNContactBirthdayKey as CNKeyDescriptor]
-            if let me = try? CNContactStore().unifiedMeContactWithKeys(toFetch: keys), let birthday = me.birthday {
-                reading.ownBirthday = DateComponents(month: birthday.month, day: birthday.day)
-            }
-        }
         return reading
     }
 }
@@ -120,7 +97,6 @@ final class SeasonalStore {
     /// Calendar reads so far: the cost line and the tests count them.
     private(set) var reads = 0
     private(set) var calendarAccess: SeasonalSource.Access = .notAsked
-    private(set) var contactsAccess: SeasonalSource.Access = .notAsked
 
     @ObservationIgnored var settings: @MainActor () -> SeasonalSettings
     @ObservationIgnored var source: SeasonalSource
@@ -193,7 +169,6 @@ final class SeasonalStore {
     func refresh() {
         guard isRunning else { return }
         calendarAccess = source.calendarAccess()
-        contactsAccess = source.contactsAccess()
         guard !readInFlight else {
             readAgain = true
             return
@@ -236,18 +211,9 @@ final class SeasonalStore {
         let current = settings()
         let next = current.enabled
             ? SeasonalResolver.occasion(on: clock(), settings: current, entries: reading?.entries,
-                                        ownBirthday: reading?.ownBirthday, calendar: calendar, region: region)
+                                        calendar: calendar, region: region)
             : nil
         if next != occasion { occasion = next }
-    }
-
-    /// Ask for Contacts, from the person's click on the Birthdays row.
-    func askForContacts() {
-        source.askContacts { [weak self] _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
-        }
     }
 
     /// The Settings line saying where the dates come from.

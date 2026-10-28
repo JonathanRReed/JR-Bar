@@ -244,37 +244,19 @@ struct SeasonalSettingsSection: View {
 
     @ViewBuilder private var birthdays: some View {
         VStack(alignment: .leading, spacing: 6) {
-            switch toys.seasonal.contactsAccess {
-            case .granted:
-                Text("Your own birthday comes from your contact card.")
-                    .jrbarType(.caption).foregroundStyle(.secondary)
-            case .notAsked:
-                HStack(spacing: 8) {
-                    Text("Your own birthday comes from your contact card, once Contacts is allowed.")
-                        .jrbarType(.caption).foregroundStyle(.secondary)
-                    Button("Allow Contacts") { toys.seasonal.askForContacts() }
-                }
-            case .refused:
-                Text("Contacts is off for JR-Bar, so your own birthday isn't known. Turn it on in System Settings › Privacy & Security › Contacts.")
-                    .jrbarType(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             let people = toys.seasonal.people
-            if people.isEmpty {
-                Text("People in your Birthdays calendar show here to celebrate. Their names stay on this Mac.")
-                    .jrbarType(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Celebrate these people too. Their names stay on this Mac.")
-                    .jrbarType(.caption).foregroundStyle(.secondary)
-                ForEach(people.prefix(40)) { person in
-                    Toggle(person.name, isOn: Binding(
-                        get: { toys.state.seasonal.celebrates(person.id) },
-                        set: { on in
-                            toys.state.seasonal.celebrated.removeAll { $0.id == person.id }
-                            if on { toys.state.seasonal.celebrated.append(person) }
-                        }))
-                }
+            Text(people.isEmpty
+                 ? "People in your Birthdays calendar show here. Your birthday shows here if it's on your contact card; tag it to celebrate. Names stay on this Mac."
+                 : "Your birthday shows here if it's on your contact card; tag it to celebrate, and anyone else's too. Names stay on this Mac.")
+                .jrbarType(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(people.prefix(40)) { person in
+                Toggle(person.name, isOn: Binding(
+                    get: { toys.state.seasonal.celebrates(person.id) },
+                    set: { on in
+                        toys.state.seasonal.celebrated.removeAll { $0.id == person.id }
+                        if on { toys.state.seasonal.celebrated.append(person) }
+                    }))
             }
         }
         .padding(.leading, 32)

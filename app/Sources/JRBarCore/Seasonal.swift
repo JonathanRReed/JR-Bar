@@ -73,7 +73,7 @@ public enum SeasonalHoliday: String, CaseIterable, Codable, Sendable, Identifiab
         case .hanukkah: return "Eight nights, a candle more each night"
         case .christmas: return "24 and 25 December"
         case .kwanzaa: return "26 December to 1 January, a candle a day"
-        case .birthday: return "Your own, and the people you choose"
+        case .birthday: return "The people you tag in your Birthdays calendar"
         }
     }
 
@@ -104,7 +104,8 @@ public struct SeasonalOccasion: Equatable, Sendable {
     public var day: Int
     /// Ramadan or Eid, for `ramadanEid`.
     public var phase: Phase?
-    /// Whose birthday, for a tagged person; nil for the person's own.
+    /// Whose birthday: the tagged person's name from the Birthdays
+    /// calendar. nil only when the calendar gave no name.
     public var name: String?
     /// Whether the person's calendars named the day (rather than the
     /// built-in rule).
@@ -385,23 +386,22 @@ public enum SeasonalResolver {
 
     /// What `date` wears, or nil: the highest-precedence holiday that is
     /// switched on and falls today, by the calendars (`entries`, nil
-    /// while access is off) or the rules. A birthday counts only for the
-    /// person themself (`ownBirthday`, month and day from their card)
-    /// or someone they tagged.
+    /// while access is off) or the rules. A birthday counts only for
+    /// someone tagged in the Birthdays calendar's list, the person's own
+    /// included: theirs is there when it's on their contact card.
     public static func occasion(on date: Date, settings: SeasonalSettings,
                                 entries: [SeasonalCalendarEntry]?,
-                                ownBirthday: DateComponents? = nil,
                                 calendar: Calendar = .current,
                                 region: String? = Locale.current.region?.identifier) -> SeasonalOccasion? {
         guard settings.enabled else { return nil }
-        let candidates = all(on: date, settings: settings, entries: entries, ownBirthday: ownBirthday,
+        let candidates = all(on: date, settings: settings, entries: entries,
                              calendar: calendar, region: region)
         return candidates.first
     }
 
     /// Every occasion on `date` that is switched on, best first.
     public static func all(on date: Date, settings: SeasonalSettings,
-                           entries: [SeasonalCalendarEntry]?, ownBirthday: DateComponents? = nil,
+                           entries: [SeasonalCalendarEntry]?,
                            calendar: Calendar = .current,
                            region: String? = Locale.current.region?.identifier) -> [SeasonalOccasion] {
         var found = SeasonalRules.occasions(on: date, calendar: calendar, region: region)
@@ -428,10 +428,6 @@ public enum SeasonalResolver {
             }
             found.append(occasion)
         }
-        if let ownBirthday, ownBirthday.month == calendar.component(.month, from: date),
-           ownBirthday.day == calendar.component(.day, from: date) {
-            found.append(SeasonalOccasion(holiday: .birthday))
-        }
         for entry in entries ?? [] where entry.isBirthday {
             guard calendar.isDate(entry.start, inSameDayAs: date),
                   settings.celebrates(entry.person.id) else { continue }
@@ -444,8 +440,6 @@ public enum SeasonalResolver {
                 let pa = a.element.holiday.precedence
                 let pb = b.element.holiday.precedence
                 if pa != pb { return pa < pb }
-                // Your own birthday before a friend's; then the rules' order.
-                if (a.element.name == nil) != (b.element.name == nil) { return a.element.name == nil }
                 return a.offset < b.offset
             }
             .map(\.element)

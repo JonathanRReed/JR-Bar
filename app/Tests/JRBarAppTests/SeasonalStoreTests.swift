@@ -33,9 +33,8 @@ struct SeasonalStoreTests {
         let settings = Settings()
         let counter = Counter()
         let center = NotificationCenter()
-        let source = SeasonalSource(calendarAccess: { access }, contactsAccess: { .notAsked },
-                                    read: { _, birthdays in counter.hit(birthdays); return reading },
-                                    askContacts: { $0(false) })
+        let source = SeasonalSource(calendarAccess: { access },
+                                    read: { _, birthdays in counter.hit(birthdays); return reading })
         let store = SeasonalStore(settings: { settings.value }, source: source, center: center)
         store.clock = { Self.halloween }
         store.region = "US"
@@ -153,6 +152,27 @@ struct SeasonalStoreTests {
         #expect(store.seasonal.isRunning)
         store.state.seasonal.enabled = false
         #expect(!store.seasonal.isRunning)
+    }
+
+    @Test("seasonal touches never reach for Contacts: no import, no store, no usage string")
+    func noContacts() throws {
+        let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        var offenders: [String] = []
+        let walker = FileManager.default.enumerator(at: app.appending(path: "Sources"), includingPropertiesForKeys: nil)
+        while let file = walker?.nextObject() as? URL {
+            guard file.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: file, encoding: .utf8)
+            for needle in ["import Contacts", "CNContactStore", "unifiedMeContact"] where source.contains(needle) {
+                offenders.append("\(file.lastPathComponent): \(needle)")
+            }
+        }
+        #expect(offenders.isEmpty, "\(offenders)")
+        let script = try String(contentsOf: app.appending(path: "scripts/build-app.sh"), encoding: .utf8)
+        #expect(!script.contains("NSContactsUsageDescription"), "the bundle asks for no Contacts")
+        let entitlements = try String(contentsOf: app.deletingLastPathComponent()
+            .appending(path: "packaging/entitlements.plist"), encoding: .utf8)
+        #expect(!entitlements.contains("addressbook"))
     }
 
     @Test("the garland hangs under the strip, its width, and stands down while the island is open")

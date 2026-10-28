@@ -1418,9 +1418,12 @@ turned off alone.
   Chinese calendars for Hanukkah, Ramadan and Eid, and Lunar New Year,
   and fixed dates otherwise (Thanksgiving, Independence Day and Groundhog
   Day follow the region). Settings says which.
-- **Birthdays.** The person's own comes from their contact card, once they
-  click Allow Contacts. People in the Birthdays calendar are listed to tag,
-  and only tagged people count. Names stay on this Mac.
+- **Birthdays.** Everyone, the person included, is picked from the
+  Birthdays calendar's list in Settings: the person's own birthday shows
+  there when it's on their contact card, and they tag it like anyone
+  else's. Only tagged people count, and names stay on this Mac. JR-Bar
+  doesn't read Contacts and never asks for it; the list comes from the
+  same Calendar read.
 - **Cost.** Off, nothing listens and nothing is read. On, one read, then
   again only on `NSCalendarDayChanged` or `EKEventStoreChanged`; switching
   a holiday or a person recomputes from what was read. Drawings are still

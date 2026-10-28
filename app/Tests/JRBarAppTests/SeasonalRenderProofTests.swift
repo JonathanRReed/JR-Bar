@@ -218,8 +218,7 @@ struct SeasonalRenderProofTests {
 
     @Test(.enabled(if: enabled)) func settingsSection() throws {
         let core = CoreModel()
-        let source = SeasonalSource(calendarAccess: { .granted }, contactsAccess: { .notAsked },
-                                    read: { _, _ in SeasonalReading() }, askContacts: { $0(false) })
+        let source = SeasonalSource(calendarAccess: { .granted }, read: { _, _ in SeasonalReading() })
         let owner = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false,
                               nativeSourcesEnabled: false, aquariumSave: AquariumToy.scratchSave(),

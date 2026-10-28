@@ -154,17 +154,21 @@ struct SeasonalTests {
 
     @Test("a shared day goes to the birthday, then the single day, then the long spans")
     func precedence() {
-        // Halloween inside nothing else; Pride under Independence Day? No — June
-        // holds Pride alone, and a birthday in June outranks it.
-        var settings = Self.on
+        // The person's own birthday is tagged from the Birthdays calendar
+        // like anyone's; on a June day it outranks Pride.
         let june = Self.day(2027, 6, 9)
-        let own = DateComponents(month: 6, day: 9)
-        let mine = SeasonalResolver.occasion(on: june, settings: settings, entries: nil, ownBirthday: own,
+        let day = Self.day(2027, 6, 9, hour: 0)
+        let own = [SeasonalCalendarEntry(title: "Jordan Park’s Birthday", start: day,
+                                         end: day.addingTimeInterval(86_400), isBirthday: true,
+                                         contactID: "contact-self")]
+        var settings = Self.on
+        settings.celebrated = [SeasonalPerson(id: "contact-self", name: "Jordan Park")]
+        let mine = SeasonalResolver.occasion(on: june, settings: settings, entries: own,
                                              calendar: Self.calendar, region: "US")
-        #expect(mine?.holiday == .birthday && mine?.name == nil)
-        #expect(mine?.caption == "Happy birthday")
+        #expect(mine?.holiday == .birthday && mine?.name == "Jordan Park")
+        #expect(mine?.caption == "Jordan's birthday")
         settings.set(.birthday, on: false)
-        let pride = SeasonalResolver.occasion(on: june, settings: settings, entries: nil, ownBirthday: own,
+        let pride = SeasonalResolver.occasion(on: june, settings: settings, entries: own,
                                               calendar: Self.calendar, region: "US")
         #expect(pride?.holiday == .pride)
         // Christmas Day outranks a Kwanzaa or Hanukkah night it shares.
