@@ -79,6 +79,7 @@ import stat
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import ClassVar
 
@@ -1624,6 +1625,10 @@ class World:
         self.settings_generation = 17
         self.clients: list[Client] = []
         self.event_counter = 0
+        # The bounded journal `replay_events` answers from, as the daemon's
+        # event stream keeps one.
+        self.event_journal: deque[dict] = deque(maxlen=512)
+        self.event_dropped = 0
         self.start = time.time()
         now = self.start
         self.sessions: dict[str, dict] = {
@@ -2448,6 +2453,10 @@ class World:
         payload = {"t": "event", "v": PROTOCOL_VERSION, "id": f"ev-{self.event_counter}", "kind": kind,
                    "session": session, "label": label, "at": time.time(), "sound": None, "notify": True}
         payload.update(extra)
+        payload["cursor"] = payload["id"]
+        if len(self.event_journal) == self.event_journal.maxlen:
+            self.event_dropped += 1
+        self.event_journal.append(payload)
         return payload
 
     # -- broadcasting ---------------------------------------------------------
@@ -3004,6 +3013,17 @@ class World:
             self.push_state()
             self.push_log("info", f"dismissed the stale ask on {sid}")
             result = {"session": sid, "dismissed": True, "opened_at": ask["opened_at"]}
+        elif name == "replay_events":
+            # The whole retained journal, oldest first; no cursors across
+            # mock runs, so `after` is not honoured.
+            limit = max(1, int(args.get("limit") or 500))
+            with self.lock:
+                kept = list(self.event_journal)
+                dropped = self.event_dropped
+            page = kept[-limit:]
+            result = {"stream": "mock", "retained": len(kept), "dropped": dropped, "events": page,
+                      "cursor": page[-1]["cursor"] if page else None, "has_more": False,
+                      "resync_required": False}
         elif name == "list_history":
             limit = int(args.get("limit") or 500)
             since = args.get("since")

@@ -333,9 +333,18 @@ struct WindowsRenderProofTests {
         return (core, process)
     }
 
-    /// Waits for `condition`, up to ten seconds.
-    static func settle(_ condition: () -> Bool) async throws {
-        while !condition(), !Task.isCancelled { await drainMainQueue() }
+    /// Waits for `condition`, up to ten seconds; past that the proof fails
+    /// instead of hanging the whole run.
+    static func settle(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !condition(), !Task.isCancelled {
+            guard clock.now < deadline else {
+                Issue.record("The condition did not hold within ten seconds", sourceLocation: sourceLocation)
+                throw CancellationError()
+            }
+            await drainMainQueue()
+        }
     }
 
     // MARK: History
@@ -349,7 +358,8 @@ struct WindowsRenderProofTests {
         try await Self.settle { !store.rows.isEmpty }
         try Self.write("history", size: CGSize(width: 720, height: 560)) { HistoryView(store: store) }
         store.mode = .events
-        try await Self.settle { !store.replay.events.isEmpty }
+        try await Self.settle { !store.replay.events.isEmpty || store.replay.error != nil }
+        try #require(store.replay.error == nil, "\(store.replay.error ?? "")")
         try Self.write("history-events", size: CGSize(width: 720, height: 560)) { HistoryView(store: store) }
         store.windowDidClose()
         let empty = HistoryStore(core: CoreModel(socketPath: "/nonexistent.sock"))
