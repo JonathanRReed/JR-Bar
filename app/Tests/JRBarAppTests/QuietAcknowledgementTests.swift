@@ -15,7 +15,7 @@ struct QuietAcknowledgementTests {
             #expect(store.toast == nil, "No success is shown while the daemon is deciding")
             try await fixture.release(error: "refused")
             _ = await action.value
-            #expect(store.toast == "Quiet failed: Synthetic refused")
+            #expect(store.toast == "Quiet failed: Synthetic refused.")
         }
     }
 
@@ -138,7 +138,7 @@ struct QuietAcknowledgementTests {
             #expect(ticket.lines.isEmpty)
             try await fixture.release(error: "refused")
             _ = await action.value
-            #expect(ticket.lines == ["Quiet failed: Synthetic refused"])
+            #expect(ticket.lines == ["Quiet failed: Synthetic refused."])
         }
     }
 
@@ -161,7 +161,7 @@ struct QuietAcknowledgementTests {
                 let request = Task { await router.perform(command) }
                 try await fixture.pending(1)
                 try await fixture.release(error: "refused")
-                #expect(await request.value == .refused("Quiet failed: Synthetic refused"))
+                #expect(await request.value == .refused("Quiet failed: Synthetic refused."))
                 #expect(router.isInDeepWork && scheduled.count == 1)
             }
             let manual = store.quietFor(seconds: 600)
@@ -201,7 +201,7 @@ struct QuietAcknowledgementTests {
             try await fixture.pending(1)
             #expect(!router.isInDeepWork)
             try await fixture.release(error: "refused")
-            #expect(await action.value == "Quiet failed: Synthetic refused")
+            #expect(await action.value == "Quiet failed: Synthetic refused.")
             #expect(!router.isInDeepWork)
         }
     }
