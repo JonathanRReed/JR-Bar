@@ -10,6 +10,7 @@ over-cap line whole. These tests pin it to the old whole-file results.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tracemalloc
@@ -285,8 +286,6 @@ def test_a_big_transcript_streams_in_bounded_memory_and_closes_its_file(tmp_path
                 handle.write(json.dumps(_codex_token_row(minute + 1, "2026-09-20T12:00:00Z")).encode() + b"\n")
     info = os.stat(rollout)
     assert info.st_size > 15 * 1024 * 1024
-    open_before = len(os.listdir("/dev/fd"))
-
     tracemalloc.start()
     try:
         result = usage_stats._parse_codex_file(rollout, info, SECRET)
@@ -297,7 +296,20 @@ def test_a_big_transcript_streams_in_bounded_memory_and_closes_its_file(tmp_path
     assert result.read_ok and len(result.records) == 10
     assert result.parsed_size == info.st_size
     assert peak < 2 * 1024 * 1024, f"a 16 MB rollout peaked at {peak / 1e6:.1f} MB"
-    assert len(os.listdir("/dev/fd")) == open_before, "the transcript was left open"
+    assert str(rollout.resolve()) not in _open_file_paths(), "the transcript was left open"
+
+
+def _open_file_paths() -> set[str]:
+    """The files this process holds open. Counting descriptors instead would
+    race with other tests in the same worker opening and closing their own."""
+    paths: set[str] = set()
+    for name in os.listdir("/dev/fd"):
+        try:
+            raw = fcntl.fcntl(int(name), fcntl.F_GETPATH, bytes(1024))
+        except OSError:
+            continue  # closed meanwhile, or a pipe or socket with no path
+        paths.add(os.path.realpath(raw.split(b"\0", 1)[0].decode()))
+    return paths
 
 
 class _FailingHandle:
