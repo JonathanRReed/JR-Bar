@@ -39,7 +39,7 @@ struct WhatsNewView: View {
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading,
                       spacing: JRBarTokens.Space.lg) {
-                ForEach(Array(entries.dropFirst().prefix(4))) { entry in
+                ForEach(Array(entries.dropFirst().prefix(WhatsNewCatalog.maximumRows - 1))) { entry in
                     entryCard(entry)
                         .padding(JRBarTokens.Space.md)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

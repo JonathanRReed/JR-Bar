@@ -33,30 +33,30 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.10.0"
+    static let releaseID = "0.10.1"
 
     /// The header's one line.
-    static let headline = "Your providers, playing together."
+    static let headline = "Quicker, clearer, and a little festive."
 
-    /// The window has room for this many rows and no more.
-    static let maximumRows = 8
+    /// The window has room for this many rows and no more: the lead and
+    /// four cards. The view draws exactly this many.
+    static let maximumRows = 5
 
     static let entries: [WhatsNewEntry] = [
-        WhatsNewEntry(id: "mix", symbol: "waveform.path", title: "Mix",
-            detail: "Choose how several providers share your lights, with each provider keeping its own animation.",
-            tryIt: .window(.effects), opens: "Opens Studio", keys: "⌥⌘L"),
-        WhatsNewEntry(id: "agent-groups", symbol: "person.3", title: "Agent groups",
-            detail: "Related agents share one row and one place on the lights, while asks stay individual.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel"),
-        WhatsNewEntry(id: "claude-sign-in", symbol: "key", title: "Claude stays signed in",
-            detail: "Usage follows Claude Code when it renews its sign-in.",
+        WhatsNewEntry(id: "notch-quick", symbol: "bolt", title: "A quicker notch",
+            detail: "The notch opens without the lag it had on hover."),
+        WhatsNewEntry(id: "time-left", symbol: "hourglass", title: "Time left, not a clock",
+            detail: "Usage forecasts say how long is left, or a clock time with its day if you prefer.",
             tryIt: .settings(page: "usage"), opens: "Opens Providers"),
-        WhatsNewEntry(id: "lighter", symbol: "leaf", title: "Lighter on your Mac",
-            detail: "The app holds about 120 MB and the daemon about 170 MB, down from up to 750 MB and 500 MB, with less CPU.",
-            tryIt: .window(.usage), opens: "Opens Usage Center"),
-        WhatsNewEntry(id: "studio", symbol: "slider.horizontal.3", title: "Studio owns the light",
-            detail: "Provider animations, mixes, colours and cues live together in Studio.",
-            tryIt: .window(.effects), opens: "Opens Studio"),
+        WhatsNewEntry(id: "awake-system", symbol: "cup.and.saucer", title: "Keep Awake, screen off",
+            detail: "Keep Awake holds the Mac while the display sleeps, and jrbar awake -- <command> holds it until a command finishes.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "dock-previews", symbol: "dock.rectangle", title: "Calendar and media previews",
+            detail: "Hover Calendar in the Dock for today's events, or a playing app for its controls.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "seasonal", symbol: "sparkles", title: "Seasonal touches",
+            detail: "Turn them on and the notch, the tank and the buddy dress up for holidays and birthdays you choose.",
+            tryIt: .settings(page: "toys"), opens: "Opens Utilities & Toys"),
     ]
 }
 

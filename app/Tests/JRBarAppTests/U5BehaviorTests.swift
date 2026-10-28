@@ -101,8 +101,8 @@ import Testing
             loading: false, scanning: false, error: nil)?.title == "Token history is off")
     }
 
-    @Test func whatsNewWaitsForAsksAndLeadsWithMix() {
-        #expect(WhatsNewCatalog.entries.map(\.id) == ["mix", "agent-groups", "claude-sign-in", "lighter", "studio"])
+    @Test func whatsNewWaitsForAsksAndListsThisRelease() {
+        #expect(WhatsNewCatalog.entries.map(\.id) == ["notch-quick", "time-left", "awake-system", "dock-previews", "seasonal"])
         #expect(!WhatsNewGate.isRight(.init(coreLive: true, locked: false, fullScreenInFront: false, asksWaiting: true)))
     }
 }

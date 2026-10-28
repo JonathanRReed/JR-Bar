@@ -27,6 +27,7 @@ JR-Bar 0.10.1 makes the notch quick to open again, says plainly when usage runs 
 - Every Settings pointer in the app, the CLI and the docs names a page that exists, and Settings › Providers counts refused hook events today with the newest one's reason.
 - The panel rebuilds agent rows only when they change, and the daemon reuses transcript rows it already parsed as sessions grow, and notices a rotated transcript even when its size and date match.
 - Fixed a crash in JavaScriptCore when checking or previewing a light program.
+- Fixed a crash when the notch's shelf refreshed your reminders. Calendar, Reminders, the Dock and seasonal touches now share one EventKit store that stays open, with one reminders read at a time.
 
 ## 0.10.0
 
