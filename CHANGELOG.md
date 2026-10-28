@@ -2,6 +2,32 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.10.1
+
+JR-Bar 0.10.1 makes the notch quick to open again, says plainly when usage runs out, and polishes small things across the app. It adds seasonal touches, Dock previews for Calendar and media, and a Keep Awake that holds the Mac without holding the screen.
+
+- The notch opens without the lag 0.10.0 had on hover. Clock captions reuse their formatters, and opening a card checks privacy, calendar and reminders once instead of twice.
+- Usage forecasts say how long is left ("Runs out in 2h 14m") instead of a bare clock time that read like the past. Settings › Providers › Usage offers clock times with the day instead. Compact captions fit without shrinking the notch's text, and a forecast that has passed is no longer shown as a time to come.
+- Whole hours drop their minutes everywhere: "1h", not "1h 00m", and whole days read "3d". `jrbar usage` says "42% used · resets in 2h 14m", the same as the app.
+- Keep Awake now holds the computer, not the screen. The display sleeps as usual, and with the lid closed it turns off while the Mac keeps running. Keep the display on was turned off once for everyone; turn it back on if you want the screen held.
+- `jrbar awake -- <command>` keeps the Mac awake until the command exits and passes its exit code through, and `jrbar awake --pid N` holds until a running process exits. JR-Bar shows the command's name, never its arguments.
+- Five minutes before a timed Keep Awake session ends, one notice offers +30 min. Focus and quiet hours hold it back, and a switch on the card turns it off. The Keep Awake cup in the panel and the notch's Awake chip steam, and the steam thins as the session runs out.
+- When a hold doesn't take, Keep Awake says "Couldn't hold the Mac awake" and offers Try again.
+- Every utility card says what it costs, and the Menu Bar and Dock chips name the app that draws them ("Ice draws the menu bar") instead of saying "Parked".
+- Hover Calendar in the Dock to see today's remaining and upcoming events, with calendar colours and Open Calendar. A playing app's Dock preview has playback controls. Calendar and Media each have their own switch, and calendar reads and media subscriptions stop when the preview closes.
+- Seasonal touches (off by default, in Settings › Utilities & Toys): on 17 holidays and the birthdays you tag from your Birthdays calendar, the notch, the tank, the buddy and Settings dress for the day. A garland runs along the Screen Bar, and each holiday has its own switch. Dates come from your calendars, or from JR-Bar's own rules when calendar access is off. Names stay on this Mac.
+- The buddy's eyes follow your pointer when it comes near (Reduce Motion keeps them centred). Fry and tetras swim as little schools. An asking fish wears amber, like the buddy and the notch. On battery the tank's decorations rest while the fish keep swimming.
+- The buddy's badges, sleep marks and celebration glyphs are back in proportion, the crab wears its hat on its shell, and the buddy's card has one character picker. The aquarium card and palette offer Show Aquarium, the shop is split by category, and goals are one click away.
+- Fold: the Duo folds your desktop at full resolution and in its own colours, so text stays sharp as a fold begins. Its blur moves as a front from the hinge, closer to the iPhone Duo, and bright detail glows into the frost instead of turning grey. For this release, `defaults write com.jonathanreed.jrbar jrbar.foldClassicBlur -bool YES` brings back the 0.10.0 blur to compare.
+- An agent row says when something is off: stale, snoozed, its hook feed quiet, or ended without saying it finished. Otherwise it says what the agent is doing ("Running Bash"). A group counts the workers it lists, a failed worker says Failed, a row no longer repeats its folder, and a nearly full context window shows a thin bar.
+- The status menu says how the monitor is, what the lights are playing, and each menu-bar provider's usage ("Claude 5h 42% used · resets 1:17 PM"). The panel's Usage section says when it last read, and ⌘R refreshes it.
+- Errors read as plain sentences, never "The operation couldn't be completed" or a code such as "Cli session unavailable". A dropped monitor connection says why, a failed Settings change names the control, and the quota alert names the window, how much is used and when it resets.
+- A plan with no quota (OpenCode without Go, a Kiro or Gemini plan that reports none) says "No quota source" instead of a red warning with Retry. A row that only needs you to sign in or turn usage on is no longer drawn as a failure.
+- Usage Center reads its figures and resets to VoiceOver and explains empty readings. Device and Studio controls work from the keyboard, and Control Center respects Reduce Motion.
+- Every Settings pointer in the app, the CLI and the docs names a page that exists, and Settings › Providers counts refused hook events today with the newest one's reason.
+- The panel rebuilds agent rows only when they change, and the daemon reuses transcript rows it already parsed as sessions grow, and notices a rotated transcript even when its size and date match.
+- Fixed a crash in JavaScriptCore when checking or previewing a light program.
+
 ## 0.10.0
 
 JR-Bar 0.10.0 makes the lights do what you chose, keeps Claude usage current, groups related agents, and does the same work with far less CPU and memory. The panel, Settings and Studio were rebuilt around one design system.
