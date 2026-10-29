@@ -132,6 +132,7 @@ let package = Package(
         .testTarget(
             name: "JRBarAppTests",
             dependencies: ["JRBarApp", "JRBarCore", "JRBarUI", "JRBarTestSupport"],
+            resources: [.copy("Fixtures")],
             swiftSettings: testSwiftSettings + appSwiftSettings,
             linkerSettings: appTestLinkerSettings
         ),

@@ -128,14 +128,15 @@ struct PanelComposition {
     /// row adds a "Stale · Read 41m ago" line, so `connected: false` gives
     /// it the stale row's room.
     static func usageHeight(_ usage: CoreProviderUsage, connected: Bool = true) -> CGFloat {
+        let additional = UsageGaugeRow.panelAdditionalHeight(usage)
         if usage.availability == "not_found" { return UsageGaugeRow.compactRowHeight }
         let action = usage.action?.isEmpty == false
         // A neutral row with a button (a sign-in) has its status, the age
         // line the monitor's absence adds, and the button on three lines.
-        if action, !connected, usage.availability != "failing" { return 96 }
-        if action || usage.availability == "failing" { return 88 }
+        if action, !connected, usage.availability != "failing" { return 96 + additional }
+        if action || usage.availability == "failing" { return 88 + additional }
         let stale = !connected || usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability)
-        return stale ? 64 : UsageGaugeRow.compactRowHeight
+        return (stale ? 64 : UsageGaugeRow.compactRowHeight) + additional
     }
 }
 
@@ -389,7 +390,7 @@ struct PanelProviderSection: View {
             ? { store.retryPanelUsage(usage) } : nil
         let name = usage.instanceLabel ?? ProviderPalette.displayName(for: usage.id)
         return UsageGaugeRow(provider: usage, name: name, now: store.now.timeIntervalSince1970,
-                             connected: store.isLive, accent: style.accent, style: .compact,
+                             connected: store.isLive, accent: style.accent, style: .panel,
                              windowNames: store.panelWindowNames, snapshotReceivedAt: store.usageSnapshotReceivedAt, suppressDisconnectedStatus: true,
                              forecasts: Dictionary(usage.windows.map { window in
                                  (window.id, UsageCenterStore.forecast(for: usage, window: window, core: store.core, now: store.now))

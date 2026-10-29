@@ -55,7 +55,7 @@ enum StatusMenuLines {
                 return "\(name) · \(action)"
             }
             guard let window = provider.headlineWindow else { return nil }
-            let lead = "\(name) \(window.name)"
+            let lead = "\(name) \(window.placementLabel)"
             let stale = !live || provider.isStale
             let tail = stale ? " · \(UsageStatus.stale.word)" : ""
             if let resets = window.resetsAt, resets <= now {

@@ -175,7 +175,7 @@ extension PanelStore {
 
     var panelWindowNames: [String] {
         let measured = panelUsage.filter { $0.quotaSource && !$0.usageIsOff && $0.availability != "not_found" }
-        return Array(UsageGaugeRow.orderedWindowNames(measured.flatMap { $0.windows.map(\.name) }).prefix(2))
+        return measured.contains(where: { !$0.windows.isEmpty }) ? ["5h", "7d"] : []
     }
 
     func movePanelProvider(_ source: String, before destination: String) async {

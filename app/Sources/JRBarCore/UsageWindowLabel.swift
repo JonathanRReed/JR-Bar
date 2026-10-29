@@ -20,11 +20,16 @@ public enum UsageWindowLabel {
     public static func column(_ name: String) -> String {
         let label = short(id: nil, name: name)
         if let cadence = cadence(id: nil, name: name) { return "\(label) \(cadence)" }
+        for pool in ["Standard", "Core"] where name.hasPrefix(pool + " ") {
+            let suffix = String(name.dropFirst(pool.count + 1))
+            let cadence = short(id: nil, name: suffix)
+            if ["5h", "7d", "Monthly"].contains(cadence) { return "\(pool) \(cadence)" }
+        }
         let parts = name.split(separator: " ", maxSplits: 1)
         if parts.count == 2, ["5h", "7d"].contains(String(parts[0])) {
             return "\(short(id: nil, name: String(parts[1]))) \(parts[0])"
         }
-        return label
+        return known(name) ?? name
     }
 
     private static func pool(_ raw: String) -> (label: String, cadence: String)? {

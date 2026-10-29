@@ -1,0 +1,1534 @@
+{
+  "now": 1789069544.0,
+  "cases": [
+    {
+      "name": "antigravity-quota.json",
+      "provider": {
+        "id": "antigravity",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "Pro",
+          "label": "user@example.com",
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "Gemini 5-Hour",
+            "id": "gemini-five-hour",
+            "used_pct": 40.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789092000.0,
+            "scope": "gemini",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Gemini Weekly",
+            "id": "gemini-weekly",
+            "used_pct": 10.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789430400.0,
+            "scope": "gemini",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Claude + GPT Weekly",
+            "id": "claude-gpt-weekly",
+            "used_pct": 55.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789430400.0,
+            "scope": "claude-gpt",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "claude-gpt-weekly",
+          "name": "Claude + GPT Weekly",
+          "used_pct": 55.0,
+          "resets_at": 1789430400.0,
+          "reason": "least_headroom",
+          "candidates": 3
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "gemini-five-hour": "5h",
+        "gemini-weekly": "7d",
+        "claude-gpt-weekly": "7d"
+      }
+    },
+    {
+      "name": "claude-usage-max.json",
+      "provider": {
+        "id": "claude",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": 46.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789080600.453792,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "claude-oauth",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 58.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789488000.45381,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "claude-oauth",
+            "detail": false
+          },
+          {
+            "name": "7d Fable",
+            "id": "fable-only",
+            "used_pct": 100.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789487999.638991,
+            "scope": "all",
+            "model": "fable",
+            "bindable": false,
+            "forecast": null,
+            "source": "claude-oauth",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 58.0,
+          "resets_at": 1789488000.45381,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d",
+        "fable-only": "7d"
+      }
+    },
+    {
+      "name": "codex-app-server-rate-limits-plus.json",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "plus",
+          "label": null,
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789078256.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-app-server",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 62.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789440279.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-app-server",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 62.0,
+          "resets_at": 1789440279.0,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d"
+      }
+    },
+    {
+      "name": "codex-app-server-rate-limits-pro.json",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "pro",
+          "label": null,
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 100.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789440279.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-app-server",
+            "detail": false
+          },
+          {
+            "name": "Spark 5-hour",
+            "id": "spark-five-hour",
+            "used_pct": 100.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789078256.0,
+            "scope": "all",
+            "model": "spark",
+            "bindable": false,
+            "forecast": null,
+            "source": "codex-app-server",
+            "detail": false
+          },
+          {
+            "name": "Spark Weekly",
+            "id": "spark-weekly",
+            "used_pct": 85.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789501977.0,
+            "scope": "all",
+            "model": "spark",
+            "bindable": false,
+            "forecast": null,
+            "source": "codex-app-server",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 100.0,
+          "resets_at": 1789440279.0,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "weekly": "7d",
+        "spark-five-hour": "5h",
+        "spark-weekly": "7d"
+      }
+    },
+    {
+      "name": "codex-rollout-rate-limits-spark.json",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Spark 5-hour",
+            "id": "spark-five-hour",
+            "used_pct": 100.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789078256.0,
+            "scope": "all",
+            "model": "spark",
+            "bindable": false,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          },
+          {
+            "name": "Spark Weekly",
+            "id": "spark-weekly",
+            "used_pct": 85.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789501977.0,
+            "scope": "all",
+            "model": "spark",
+            "bindable": false,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": null,
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "spark-five-hour": "5h",
+        "spark-weekly": "7d"
+      }
+    },
+    {
+      "name": "cursor-usage-summary.json",
+      "provider": {
+        "id": "cursor",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "pro",
+          "label": "user@example.com",
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "Included plan",
+            "id": "included-plan",
+            "used_pct": 24.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790812800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "cursor-account-api",
+            "detail": false
+          },
+          {
+            "name": "Auto + Composer",
+            "id": "auto-composer",
+            "used_pct": 40.5,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790812800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "cursor-account-api",
+            "detail": false
+          },
+          {
+            "name": "API models",
+            "id": "api-models",
+            "used_pct": 0.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790812800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "cursor-account-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "auto-composer",
+          "name": "Auto + Composer",
+          "used_pct": 40.5,
+          "resets_at": 1790812800.0,
+          "reason": "least_headroom",
+          "candidates": 3
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": 2.5,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "included-plan": "labelled",
+        "auto-composer": "labelled",
+        "api-models": "labelled"
+      }
+    },
+    {
+      "name": "devin-usage.json",
+      "provider": {
+        "id": "devin",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "team",
+          "label": null,
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "Daily",
+            "id": "daily",
+            "used_pct": 35.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789084800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "devin-account-api",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 62.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789344000.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "devin-account-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 62.0,
+          "resets_at": 1789344000.0,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "daily": "labelled",
+        "weekly": "7d"
+      }
+    },
+    {
+      "name": "gemini-code-assist-quota.json",
+      "provider": {
+        "id": "gemini",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "gemini-3-pro",
+            "id": "model-gemini-3-pro",
+            "used_pct": 20.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789084800.0,
+            "scope": "model",
+            "model": "gemini-3-pro",
+            "bindable": false,
+            "forecast": null,
+            "source": "gemini-code-assist",
+            "detail": false
+          },
+          {
+            "name": "gemini-3-flash",
+            "id": "model-gemini-3-flash",
+            "used_pct": 0.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789084800.0,
+            "scope": "model",
+            "model": "gemini-3-flash",
+            "bindable": false,
+            "forecast": null,
+            "source": "gemini-code-assist",
+            "detail": false
+          },
+          {
+            "name": "gemini-2.5-flash-lite",
+            "id": "model-gemini-2-5-flash-lite",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789084800.0,
+            "scope": "model",
+            "model": "gemini-2.5-flash-lite",
+            "bindable": false,
+            "forecast": null,
+            "source": "gemini-code-assist",
+            "detail": false
+          }
+        ],
+        "constrained": null,
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "model-gemini-3-pro": "labelled",
+        "model-gemini-3-flash": "labelled",
+        "model-gemini-2-5-flash-lite": "labelled"
+      }
+    },
+    {
+      "name": "grok-billing.json",
+      "provider": {
+        "id": "grok",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "SuperGrok",
+          "label": "user@example.com",
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "Credits",
+            "id": "credits",
+            "used_pct": 25.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790812800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "grok-billing",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "credits",
+          "name": "Credits",
+          "used_pct": 25.0,
+          "resets_at": 1790812800.0,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "credits": "labelled"
+      }
+    },
+    {
+      "name": "openai-api-usage.json",
+      "provider": {
+        "id": "openai-api",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [],
+        "constrained": null,
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 1050,
+          "cached_input": 0,
+          "output": 210
+        },
+        "estimated_cost_usd": 0.42,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {}
+    },
+    {
+      "name": "opencode-go-usage.json",
+      "provider": {
+        "id": "opencode",
+        "instance": "default",
+        "quota_source": true,
+        "account": {
+          "plan": "Go",
+          "label": null,
+          "fidelity": "official"
+        },
+        "windows": [
+          {
+            "name": "5h",
+            "id": "go-rolling",
+            "used_pct": 42.5,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790286000.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "opencode-go-api",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "go-weekly",
+            "used_pct": 18.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790640000.0,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "opencode-go-api",
+            "detail": false
+          },
+          {
+            "name": "Monthly",
+            "id": "go-monthly",
+            "used_pct": 7.2,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1790812800.0,
+            "scope": "all",
+            "model": null,
+            "bindable": false,
+            "forecast": null,
+            "source": "opencode-go-api",
+            "detail": true
+          }
+        ],
+        "constrained": {
+          "id": "go-rolling",
+          "name": "5h",
+          "used_pct": 42.5,
+          "resets_at": 1790286000.0,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "go-rolling": "5h",
+        "go-weekly": "7d",
+        "go-monthly": "labelled"
+      }
+    },
+    {
+      "name": "factory-pools",
+      "provider": {
+        "id": "factory",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Standard 5-hour",
+            "id": "standard-5h",
+            "used_pct": 12.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789073444.0,
+            "scope": "standard",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": false
+          },
+          {
+            "name": "Standard 7-day",
+            "id": "standard-7d",
+            "used_pct": 34.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789159544.0,
+            "scope": "standard",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": false
+          },
+          {
+            "name": "Standard Monthly",
+            "id": "standard-30d",
+            "used_pct": 56.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "standard",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": false
+          },
+          {
+            "name": "Core 5-hour",
+            "id": "core-5h",
+            "used_pct": 12.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789073444.0,
+            "scope": "core",
+            "model": null,
+            "bindable": false,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": true
+          },
+          {
+            "name": "Core 7-day",
+            "id": "core-7d",
+            "used_pct": 34.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1789159544.0,
+            "scope": "core",
+            "model": null,
+            "bindable": false,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": true
+          },
+          {
+            "name": "Core Monthly",
+            "id": "core-30d",
+            "used_pct": 56.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "core",
+            "model": null,
+            "bindable": false,
+            "forecast": null,
+            "source": "factory-billing-limits",
+            "detail": true
+          }
+        ],
+        "constrained": {
+          "id": "standard-30d",
+          "name": "Standard Monthly",
+          "used_pct": 56.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 3
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "standard-5h": "5h",
+        "standard-7d": "7d",
+        "standard-30d": "labelled",
+        "core-5h": "5h",
+        "core-7d": "7d",
+        "core-30d": "labelled"
+      }
+    },
+    {
+      "name": "factory-legacy",
+      "provider": {
+        "id": "factory",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Standard billing period",
+            "id": "standard-billing",
+            "used_pct": 20.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "organization-standard",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "factory-subscription-usage",
+            "detail": false
+          },
+          {
+            "name": "Premium billing period",
+            "id": "premium-billing",
+            "used_pct": 40.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "organization-premium",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "factory-subscription-usage",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "premium-billing",
+          "name": "Premium billing period",
+          "used_pct": 40.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "standard-billing": "labelled",
+        "premium-billing": "labelled"
+      }
+    },
+    {
+      "name": "kiro-credits",
+      "provider": {
+        "id": "kiro",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Monthly",
+            "id": "monthly",
+            "used_pct": 50.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1800000000.0,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kiro-cli-api",
+            "detail": false
+          },
+          {
+            "name": "Overage credits",
+            "id": "overage",
+            "used_pct": 10.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": 1800000000.0,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kiro-cli-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "monthly",
+          "name": "Monthly",
+          "used_pct": 50.0,
+          "resets_at": 1800000000.0,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": 0.1,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "monthly": "labelled",
+        "overage": "labelled"
+      }
+    },
+    {
+      "name": "kimi-windows",
+      "provider": {
+        "id": "kimi",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kimi-code-api",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kimi-code-api",
+            "detail": false
+          },
+          {
+            "name": "Monthly",
+            "id": "monthly",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kimi-code-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "five-hour",
+          "name": "5h",
+          "used_pct": 30.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 3
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d",
+        "monthly": "labelled"
+      }
+    },
+    {
+      "name": "kilo-credits-pass",
+      "provider": {
+        "id": "kilo",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Credits",
+            "id": "credits",
+            "used_pct": 40.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kilo-api",
+            "detail": false
+          },
+          {
+            "name": "Kilo Pass",
+            "id": "pass",
+            "used_pct": 25.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "account",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "kilo-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "credits",
+          "name": "Credits",
+          "used_pct": 40.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": 6.0,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "credits": "labelled",
+        "pass": "labelled"
+      }
+    },
+    {
+      "name": "claude-model-caps",
+      "provider": {
+        "id": "claude",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "weekly-opus",
+            "id": "weekly-opus",
+            "used_pct": 20.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": "opus",
+            "bindable": true,
+            "forecast": null,
+            "source": "claude-oauth",
+            "detail": false
+          },
+          {
+            "name": "weekly-sonnet",
+            "id": "weekly-sonnet",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": "sonnet",
+            "bindable": true,
+            "forecast": null,
+            "source": "claude-oauth",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly-sonnet",
+          "name": "weekly-sonnet",
+          "used_pct": 30.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 2
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "weekly-opus": "7d",
+        "weekly-sonnet": "7d"
+      }
+    },
+    {
+      "name": "antigravity-all-pools",
+      "provider": {
+        "id": "antigravity",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Gemini 5-Hour",
+            "id": "gemini-five-hour",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "gemini",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Gemini Weekly",
+            "id": "gemini-weekly",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "gemini",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Gemini Session",
+            "id": "gemini-session",
+            "used_pct": 20.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "gemini",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Claude + GPT 5-Hour",
+            "id": "claude-gpt-five-hour",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "claude-gpt",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Claude + GPT Weekly",
+            "id": "claude-gpt-weekly",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "claude-gpt",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Claude + GPT Session",
+            "id": "claude-gpt-session",
+            "used_pct": 20.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "claude-gpt",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Gemini 4 Argon 5-Hour",
+            "id": "gemini-argon-five-hour",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "gemini-argon",
+            "model": "gemini-4-argon",
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          },
+          {
+            "name": "Gemini 4 Argon Weekly",
+            "id": "gemini-argon-weekly",
+            "used_pct": 28.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "gemini-argon",
+            "model": "gemini-4-argon",
+            "bindable": true,
+            "forecast": null,
+            "source": "antigravity-app",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "gemini-five-hour",
+          "name": "Gemini 5-Hour",
+          "used_pct": 28.0,
+          "resets_at": null,
+          "reason": "least_headroom",
+          "candidates": 8
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "gemini-five-hour": "5h",
+        "gemini-weekly": "7d",
+        "gemini-session": "labelled",
+        "claude-gpt-five-hour": "5h",
+        "claude-gpt-weekly": "7d",
+        "claude-gpt-session": "labelled",
+        "gemini-argon-five-hour": "5h",
+        "gemini-argon-weekly": "7d"
+      }
+    }
+  ]
+}

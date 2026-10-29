@@ -146,11 +146,13 @@ public struct UsageGaugeHeader: View {
 /// A provider's independent quota windows. This view starts no polling or clock.
 public struct UsageGaugeRow: View {
     @Environment(\.jrbarInk) private var neutralInk
-    public enum Style: Sendable { case compact, detail }
+    public enum Style: Sendable { case compact, panel, detail }
     public static let columnWidth: CGFloat = 76
     public static let compactRowHeight: CGFloat = 36
     fileprivate static let compactIdentityWidth: CGFloat = 100
     fileprivate static let compactPercentWidth: CGFloat = 40
+    private static let panelCellHeight: CGFloat = 32
+    private static let panelPoolLabelHeight: CGFloat = 14
     public let provider: CoreProviderUsage
     public let includeAbsent: Bool
     public let name: String
@@ -220,7 +222,7 @@ public struct UsageGaugeRow: View {
                   !["absent", "not_found"].contains(provider.availability) else { return [String]() }
             return provider.windows.compactMap { window -> String? in
                 let reading = UsageGaugeReading(window: window, provider: provider, now: now, connected: connected)
-                return reading.stale && reading.elapsed ? nil : window.name
+                return reading.stale && reading.elapsed ? nil : window.overviewColumn
             }
         }
         return orderedWindowNames(names)
@@ -250,7 +252,7 @@ public struct UsageGaugeRow: View {
     public var body: some View {
         if provider.availability != "absent" || includeAbsent {
             Group {
-                if style == .compact { compact } else { detail }
+                if style != .detail { compact } else { detail }
             }
             .foregroundStyle(neutralInk.label)
             .onChange(of: provider) { _, _ in fallbackSnapshotAt = now }
@@ -259,7 +261,7 @@ public struct UsageGaugeRow: View {
 
     private var identity: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(name).font((style == .compact ? JRBarTokens.TypeStyle.callout : .headline).font).lineLimit(1).truncationMode(.tail)
+            Text(name).font((style != .detail ? JRBarTokens.TypeStyle.callout : .headline).font).lineLimit(1).truncationMode(.tail)
                 .layoutPriority(1)
             if let status {
                 HStack(spacing: 3) {
@@ -305,7 +307,7 @@ public struct UsageGaugeRow: View {
             } else {
                 if let onOpen {
                     Button(action: onOpen) {
-                        compactWindows
+                        compactContent
                             .frame(minHeight: Self.compactRowHeight - JRBarTokens.Space.xs)
                             .contentShape(Rectangle())
                     }
@@ -314,7 +316,7 @@ public struct UsageGaugeRow: View {
                         .accessibilityValue(accessibilityValue)
                         .accessibilityHint("Show provider usage")
                 } else {
-                    compactWindows
+                    compactContent
                 }
                 if (status != nil && status != UsageStatus.noReading.word) || (isStale && showsWindows) {
                     compactReadingStatus.padding(.leading, 30)
@@ -326,6 +328,79 @@ public struct UsageGaugeRow: View {
         .frame(minHeight: Self.compactRowHeight)
         .background(hovering ? neutralInk.hover : .clear, in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
         .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder private var compactContent: some View {
+        if style == .panel && showsWindows && Self.panelAdditionalHeight(provider) > 0 {
+            panelWindows
+        } else {
+            compactWindows
+        }
+    }
+
+    /// The panel keeps two duration columns and gives other windows their own row.
+    private var panelWindows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ProviderLogoTile(provider: provider.id, accent: tileAccent)
+                compactIdentity.frame(width: Self.compactIdentityWidth - 30)
+                ForEach([UsageWindowPlacement.fiveHour, .weekly], id: \.rawValue) { placement in
+                    let windows = provider.windows.filter { $0.placement == placement }
+                    VStack(spacing: 8) {
+                        if windows.isEmpty {
+                            Text("—").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
+                                .frame(width: Self.compactPercentWidth, alignment: .trailing)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        ForEach(windows) { window in
+                            VStack(alignment: .leading, spacing: 2) {
+                                if window.overviewColumn != placement.rawValue {
+                                    let title = UsageWindowLabel.column(window.name)
+                                    let suffix = " " + placement.rawValue
+                                    let poolTitle = title.hasSuffix(suffix) ? String(title.dropLast(suffix.count)) : title
+                                    Text(poolTitle)
+                                        .font(JRBarTokens.TypeStyle.caption.font)
+                                        .foregroundStyle(neutralInk.secondary).lineLimit(1)
+                                        .frame(height: Self.panelPoolLabelHeight, alignment: .leading)
+                                        .help(window.name)
+                                }
+                                CompactUsageGaugeColumn(reading: reading(for: window), accent: accent)
+                                    .frame(height: Self.panelCellHeight)
+                            }
+                        }
+                    }
+                    .frame(minWidth: compactColumnWidth, maxWidth: .infinity)
+                }
+            }
+            .frame(minHeight: Self.panelCellHeight)
+            ForEach(provider.windows.filter { $0.placement == .labelled }) { window in
+                HStack(spacing: 10) {
+                    Text(window.placementLabel).font(JRBarTokens.TypeStyle.callout.font)
+                        .lineLimit(1).help(window.name)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    CompactUsageGaugeColumn(reading: reading(for: window), accent: accent)
+                        .frame(width: compactColumnWidth)
+                }
+                .frame(height: Self.panelCellHeight)
+                .padding(.leading, 30)
+            }
+        }
+    }
+
+    public static func panelAdditionalHeight(_ provider: CoreProviderUsage) -> CGFloat {
+        guard provider.quotaSource, !provider.usageIsOff,
+              !["absent", "not_found"].contains(provider.availability) else { return 0 }
+        let heights = [UsageWindowPlacement.fiveHour, .weekly].map { placement -> CGFloat in
+            let windows = provider.windows.filter { $0.placement == placement }
+            let labels = windows.filter { $0.overviewColumn != placement.rawValue }.count
+            let cells = CGFloat(max(1, windows.count)) * panelCellHeight
+            let gaps = CGFloat(max(0, windows.count - 1)) * 8
+            let captions = CGFloat(labels) * (panelPoolLabelHeight + 2)
+            return cells + gaps + captions
+        }
+        let otherCount = provider.windows.filter { $0.placement == .labelled }.count
+        let additionalColumns = max(0, (heights.max() ?? panelCellHeight) - panelCellHeight)
+        return additionalColumns + CGFloat(otherCount) * (panelCellHeight + 8)
     }
 
     @ViewBuilder private var compactWindows: some View {
@@ -450,7 +525,7 @@ public struct UsageGaugeRow: View {
     }
 
     @ViewBuilder private func column(_ name: String, compact: Bool) -> some View {
-        if let window = provider.windows.first(where: { $0.name == name }),
+        if let window = provider.windows.first(where: { $0.name == name || $0.overviewColumn == name }),
            !compact || (showsWindows && !(reading(for: window).stale && reading(for: window).elapsed)) {
             let reading = reading(for: window)
             Group {
