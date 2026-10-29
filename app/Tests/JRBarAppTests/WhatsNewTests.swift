@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -9,7 +10,7 @@ import Testing
 /// window comes up on its own, and the stamp that keeps it to once per
 /// release. Nothing here shows a window or runs a real command.
 @MainActor
-@Suite struct WhatsNewTests {
+@Suite(.renderProofAppearance) struct WhatsNewTests {
     final class Log {
         var stamped: [String] = []
         var ran: [AppCommand] = []
@@ -60,6 +61,10 @@ import Testing
             guard case .settings(let page)? = entry.tryIt else { continue }
             #expect(page.map { SettingsPageName.known.contains($0) } ?? true, "\(entry.id): \(page ?? "nil")")
         }
+    }
+
+    @Test func releaseNotesMatchTheDisplayedRelease() {
+        #expect(WhatsNewView.releaseNotesURL.lastPathComponent == "v" + WhatsNewCatalog.releaseID)
     }
 
     // MARK: The gate

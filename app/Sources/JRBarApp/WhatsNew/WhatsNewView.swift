@@ -12,6 +12,8 @@ struct WhatsNewView: View {
     let tryIt: @MainActor (AppCommand) async -> String?
     let onDone: @MainActor () -> Void
 
+    static let releaseNotesURL = URL(string: "https://github.com/jonathanrreed/JR-Bar/releases/tag/v\(WhatsNewCatalog.releaseID)")!
+
     static let width: CGFloat = 660
     @ViewState private var refusals: [String: String] = [:]
     @ViewState private var pending: Set<String> = []
@@ -47,7 +49,7 @@ struct WhatsNewView: View {
                 }
             }
             HStack {
-                Link("Full release notes", destination: URL(string: "https://github.com/jonathanrreed/JR-Bar/releases/tag/v0.10.0")!)
+                Link("Full release notes", destination: Self.releaseNotesURL)
                 Spacer()
                 Button("Continue", action: onDone).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             }
@@ -98,7 +100,7 @@ struct WhatsNewView: View {
         }
     }
 
-    /// "Version 0.9.9" from the running bundle; a bare `swift build` has
+    /// The version from the running bundle; a bare `swift build` has
     /// no Info.plist to read.
     static func versionLine(bundle: Bundle = .main) -> String {
         let version = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?
