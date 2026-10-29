@@ -50,13 +50,14 @@ enum WhatsNewCatalog {
             detail: "Choose the browser profile where you signed in to Devin, allow access, and import.",
             tryIt: .settings(page: "providers"), opens: "Opens Providers"),
         WhatsNewEntry(id: "fix-actions", symbol: "arrow.triangle.2.circlepath", title: "The button that fixes it",
-            detail: "A provider that needs you offers Sign in, Reconnect or Allow usage instead of Retry.",
+            detail: "A provider that needs you offers Sign in, Reconnect or Add API key instead of Retry.",
             tryIt: .window(.usage), opens: "Opens Usage Center"),
         WhatsNewEntry(id: "plain-words", symbol: "text.bubble", title: "Plain words",
             detail: "Internal codes are gone, and History's events run in time order in your own clock.",
             tryIt: .window(.history), opens: "Opens History"),
-        WhatsNewEntry(id: "tidy-tank", symbol: "fish", title: "A tidier tank",
-            detail: "Fish names never pile up, and asking or working fish keep theirs first."),
+        WhatsNewEntry(id: "every-window", symbol: "chart.bar", title: "Every reading shows",
+            detail: "Credits, daily and monthly allowances show beside the 5-hour and weekly columns.",
+            tryIt: .panel(toggle: false), opens: "Opens the panel"),
     ]
 }
 
