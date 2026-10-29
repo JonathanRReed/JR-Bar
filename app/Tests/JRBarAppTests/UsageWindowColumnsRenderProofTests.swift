@@ -13,7 +13,8 @@ struct UsageWindowColumnsRenderProofTests {
 
     static func providers() -> [CoreProviderUsage] {
         var codex = PanelCompositionTests.usage("codex")
-        codex.windows = [CoreUsageWindow(name: "7d", usedPct: 23, resetsAt: now + 172800)]
+        codex.windows = [CoreUsageWindow(name: "5h", usedPct: nil),
+                         CoreUsageWindow(name: "7d", usedPct: 23, resetsAt: now + 172800)]
         var claude = PanelCompositionTests.usage("claude")
         claude.windows[0].usedPct = 4
         claude.windows[1].usedPct = 81
@@ -56,23 +57,21 @@ struct UsageWindowColumnsRenderProofTests {
                         section.gauge(provider).frame(height: PanelComposition.usageHeight(provider))
                     }
                 }
-                try await U5Proof.render(allRows, name: "G-windows-all-\(Int(width))", width: width, dark: dark)
-                let beforeRows = VStack(spacing: 0) {
-                    SectionHeader("Usage").padding(.horizontal, 12).frame(height: 28)
-                    UsageGaugeHeader(windowNames: ["5h", "7d"]).frame(height: 20)
-                    ForEach(providers) { provider in
-                        UsageGaugeRow(provider: provider, name: ProviderPalette.displayName(for: provider.id),
-                            now: Self.now, style: .compact, windowNames: ["5h", "7d"],
-                            forecasts: section.gauge(provider).forecasts)
-                            .frame(height: UsageGaugeRow.compactRowHeight)
-                    }
-                }
-                try await U5Proof.render(beforeRows, name: "G-before-windows-all-\(Int(width))", width: width, dark: dark)
+                try await U5Proof.render(allRows, name: "G2-windows-all-\(Int(width))", width: width, dark: dark)
                 try await U5Proof.render(PanelView(store: panel, panelWidth: width),
-                    name: "G-panel-first-\(Int(width))", width: width, dark: dark)
+                    name: "G2-panel-first-\(Int(width))", width: width, dark: dark)
                 let pools = PanelCompositionTests.store(usage: Array(providers.suffix(2)))
                 try await U5Proof.render(PanelView(store: pools, panelWidth: width),
-                    name: "G-panel-pools-\(Int(width))", width: width, dark: dark)
+                    name: "G2-panel-pools-\(Int(width))", width: width, dark: dark)
+                let matrix = try UsageWindowMatrixTests.fixture()
+                for id in ["cursor", "kiro"] {
+                    let provider = try #require(matrix.cases.first { $0.provider.id == id }?.provider)
+                    let ownPanel = PanelCompositionTests.store(usage: [provider])
+                    ownPanel.now = Date(timeIntervalSince1970: matrix.now)
+                    let ownSection = PanelProviderSection(store: ownPanel, composition: PanelComposition(store: ownPanel))
+                    try await U5Proof.render(ownSection.gauge(provider),
+                        name: "G2-\(id)-only-\(Int(width))", width: width, dark: dark)
+                }
             }
         }
     }
