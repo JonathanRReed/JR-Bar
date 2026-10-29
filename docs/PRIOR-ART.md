@@ -943,3 +943,37 @@ The public documentation does not guarantee these dashboard endpoints or their
 response shapes for API keys. Synthetic tests verify request construction and
 parsing; a real key must still confirm account access and reported allowances.
 JR-Bar does not consume browser-owned WorkOS refresh tokens.
+
+## Factory sign-in feasibility and key validation, 0.10.2
+
+Reviewed Factory's [CLI reference](https://docs.factory.com/droid-cli/cli-reference),
+[Zed integration](https://docs.factory.com/integrations/zed),
+[Python SDK](https://docs.factory.com/sdk/python) and
+[TypeScript SDK](https://docs.factory.com/sdk/typescript) on October 29, 2026.
+The public documentation repository is
+[Factory-AI/factory at 892925c655a97e7a0bc7d558236015ebb22cb214](https://github.com/Factory-AI/factory/tree/892925c655a97e7a0bc7d558236015ebb22cb214).
+No repository licence was found at that revision; no code was copied.
+Local Droid 0.232.0 version and command help were also inspected. Its encrypted
+session was neither read nor decrypted.
+
+Factory documents browser device-code confirmation for Droid and `/login` in
+its interactive CLI. The SDK can use Droid's authentication to run Droid, but
+these sources provide no registration or credential-export contract for an
+independent JR-Bar login. Daemon and doctor help expose no token-export command.
+Factory's public [OpenID metadata](https://auth.factory.ai/.well-known/openid-configuration)
+and [OAuth metadata](https://auth.factory.ai/.well-known/oauth-authorization-server)
+advertise device authorization at `/oauth2/device_authorization`, token exchange
+at `/oauth2/token`, PKCE S256 and public clients. Neither advertises a registration
+endpoint or Client ID Metadata Document support. These were unauthenticated GETs;
+no device authorization or token exchange was started.
+WorkOS documents [public-client device authorization](https://workos.com/docs/authkit/cli-auth)
+and [third-party WorkOS Connect clients](https://workos.com/docs/reference/workos-connect/cli-auth).
+These are provider documentation with no source revision or licence. They do
+not establish permission to reuse Factory's Droid client ID for JR-Bar.
+No supported Factory client registration for JR-Bar was found, so JR-Bar does
+not implement that device flow or consume another application's refresh token.
+
+JR-Bar independently reuses its existing Factory account and billing reader to
+validate an explicitly pasted API key before saving it. The dashboard endpoint
+and live-key limitations recorded above still apply. Browser opening and Save
+are separate user actions; neither enables ongoing collection.

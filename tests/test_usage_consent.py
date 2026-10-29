@@ -1084,6 +1084,17 @@ def test_the_disclosed_hosts_are_the_hosts_the_collectors_use() -> None:
     assert usage_consent_row(default_provider_usage_settings().preference("cursor"))["hosts"] == ["cursor.com"]
 
 
+def test_factory_disclosure_distinguishes_explicit_key_check_from_ongoing_usage() -> None:
+    detail = usage_disclosure("factory").detail
+    assert "saved API key first" in detail
+    assert "older imported access token" in detail
+    assert "previously approved browser profile" in detail
+    assert "never uses browser refresh tokens or Droid credentials" in detail
+    assert "Save API key checks the key once" in detail
+    assert "this switch controls ongoing usage requests" in detail
+    assert "leaves token renewal to the browser" not in detail
+
+
 # --- the cross-Mac usage sync is off on a fresh install too -------------------------------------
 
 

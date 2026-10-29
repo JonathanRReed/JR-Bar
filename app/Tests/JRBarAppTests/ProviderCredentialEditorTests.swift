@@ -107,7 +107,7 @@ struct ProviderCredentialEditorTests {
         #expect(model.available)
         #expect(model.secret.isEmpty)
         #expect(model.instance == "work")
-        #expect(model.message == "API key saved. The usage switch controls requests.")
+        #expect(model.message == "Factory key validated and saved. The usage switch controls ongoing requests.")
     }
 
     @Test("provider key edits keep other providers and instances untouched")

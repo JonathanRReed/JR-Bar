@@ -23,10 +23,14 @@ final class ProviderCredentialEditorModel {
     private let saveOperation: @MainActor (String) async throws -> Void
     private let removeOperation: @MainActor () async throws -> Void
     private let onChanged: @MainActor () -> Void
+    private let openFactoryKeyPage: @MainActor () -> Bool
 
     init(provider: String, instance: String, account: String, available: Bool,
          save: @escaping @MainActor (String) async throws -> Void,
          remove: @escaping @MainActor () async throws -> Void,
+         openFactoryKeyPage: @escaping @MainActor () -> Bool = {
+             DesktopServices.automatic.open(URL(string: "https://app.factory.ai/settings/api-keys")!)
+         },
          onChanged: @escaping @MainActor () -> Void = {}) {
         self.provider = provider
         self.instance = instance
@@ -35,6 +39,7 @@ final class ProviderCredentialEditorModel {
         self.saveOperation = save
         self.removeOperation = remove
         self.onChanged = onChanged
+        self.openFactoryKeyPage = openFactoryKeyPage
     }
 
     func updateAvailability(_ value: Bool) {
@@ -51,6 +56,14 @@ final class ProviderCredentialEditorModel {
         active = true
         secret = ""
         message = nil
+    }
+
+    func beginConnection() {
+        guard !busy else { return }
+        beginEditing()
+        if isFactoryKey, !available, !openFactoryKeyPage() {
+            message = "Could not open Factory. Use Create a Factory API key below."
+        }
     }
 
     func cancel() {
@@ -85,7 +98,9 @@ final class ProviderCredentialEditorModel {
             guard active, generation == request else { return false }
             pendingAvailability = nil
             available = true
-            message = "\(credentialTitle) saved. The usage switch controls requests."
+            message = isFactoryKey
+                ? "Factory key validated and saved. The usage switch controls ongoing requests."
+                : "\(credentialTitle) saved. The usage switch controls requests."
             onChanged()
             return true
         } catch {
@@ -128,6 +143,11 @@ final class ProviderCredentialEditorModel {
         case "unauthenticated": return "Restart JR-Bar to reconnect securely, then try again."
         case "unknown_instance", "unknown_provider": return "This account is unavailable. Reload providers and try again."
         case "bad_reply": return "The monitor did not confirm this account. Reload providers and try again."
+        case "authentication_required": return "Factory rejected this key. Create a new key and try again."
+        case "usage_access_denied": return "This key cannot read Factory usage. Check its account and permissions."
+        case "rate_limited": return "Factory is limiting requests. Wait a moment and try Save again."
+        case "network_unavailable": return "Could not reach Factory. Check your connection and try Save again."
+        case "invalid_response": return "Factory returned unreadable usage. The key was not saved. Try again later."
         default:
             return removing ? "Could not remove the \(credential). Try again." : "Could not save the \(credential). Enter it again and retry."
         }
@@ -150,7 +170,7 @@ struct ProviderCredentialEditor: View {
             Text(model.instance == "default" ? "Default account" : "Account: \(model.instance)")
                 .jrbarType(.caption).foregroundStyle(.secondary)
             if model.isFactoryKey {
-                Text("Factory no longer shares its browser sign-in, so JR-Bar needs an API key to read usage.")
+                Text("Connect JR-Bar with a Factory API key. Browser sign-in is unavailable.")
                     .jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
                 if model.available {
                     Text("Factory API key saved.").jrbarType(.callout)
@@ -173,7 +193,7 @@ struct ProviderCredentialEditor: View {
                     .disabled(model.busy)
             }
             Text(model.isFactoryKey
-                 ? "Stored in JR-Bar's Keychain. Usage requests go to api.factory.ai and use your saved API key first. Saving a key does not turn on usage."
+                 ? "Save checks this key with api.factory.ai, then stores it in JR-Bar's Keychain. It does not turn on ongoing usage requests."
                  : "Stored in JR-Bar's Keychain. Saving a credential does not turn on usage. The usage switch controls requests to \(model.providerName).")
                 .jrbarType(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -189,8 +209,12 @@ struct ProviderCredentialEditor: View {
                 Button(showsKeyField ? "Cancel" : "Done") { model.cancel(); dismiss() }
                     .keyboardShortcut(.cancelAction)
                 if showsKeyField {
-                    Button(model.busy ? "Saving…" : "Save \(model.credentialName)") {
-                        _ = Task { if await model.save() { dismiss() } }
+                    Button(model.busy ? (model.isFactoryKey ? "Checking…" : "Saving…") : "Save \(model.credentialName)") {
+                        _ = Task {
+                            if await model.save() {
+                                if model.isFactoryKey { replacing = false } else { dismiss() }
+                            }
+                        }
                     }
                     .keyboardShortcut(.defaultAction)
                     .disabled(model.busy || model.secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -325,7 +349,11 @@ struct ProviderSavedCredentialControls: View {
         _model = ViewState(initialValue: ProviderCredentialEditorModel(
             provider: row.id, instance: row.instance, account: account, available: saved,
             save: { secret in
-                _ = try await core.setProviderCredential(row.id, account: account, secret: secret, instance: row.instance)
+                if row.id == "factory", account == "api-key" {
+                    _ = try await core.connectFactoryAPIKey(secret, instance: row.instance)
+                } else {
+                    _ = try await core.setProviderCredential(row.id, account: account, secret: secret, instance: row.instance)
+                }
             },
             remove: {
                 _ = try await core.deleteProviderCredential(row.id, account: account, instance: row.instance)
@@ -338,7 +366,7 @@ struct ProviderSavedCredentialControls: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Button(credentialActionTitle) {
-                    model.beginEditing()
+                    model.beginConnection()
                     editing = true
                 }
                 .accessibilityLabel(model.available ? "Replace \(model.providerName) \(model.credentialName)" : "Add \(model.providerName) \(model.credentialName)")
@@ -363,7 +391,7 @@ struct ProviderSavedCredentialControls: View {
         }
         .onChange(of: connectRequest, initial: true) { _, request in
             guard request > 0 else { return }
-            model.beginEditing()
+            model.beginConnection()
             editing = true
         }
         .onChange(of: row.credentials) { _, credentials in
