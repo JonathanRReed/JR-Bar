@@ -78,6 +78,17 @@ struct ProviderSignInRecoveryTests {
         #expect(!gauge.accessibilityValue.contains(UsageStatus.needsSignIn.word))
     }
 
+    @Test func menuAddsOnlyAccountsThatNeedConnection() {
+        let healthy = CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 30)], state: "ready")
+        var secondary = healthy
+        secondary.instance = "work"
+        let signedOut = Self.reading("factory")
+        let candidates = AppDelegate.usageMenuProviders(metered: [healthy], usage: [healthy, secondary, signedOut])
+        #expect(candidates.map(\.identity) == [healthy.identity, signedOut.identity])
+        let repeated = AppDelegate.usageMenuProviders(metered: [signedOut], usage: [signedOut])
+        #expect(repeated.count == 1)
+    }
+
     @Test func devinImportFailureShowsTheFix() async {
         let selectedProfile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Zen test profile")
         let fix = "Sign in at app.devin.ai in Zen using the selected profile, then Import again."

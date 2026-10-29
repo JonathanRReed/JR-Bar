@@ -1833,9 +1833,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Self.statusMeter(for: provider, core: store.core, document: document, now: now)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
-        let menuProviders = store.providerList.arranged(usage.filter {
-            $0.headlineWindow != nil || ["manage", "sign_in", "resign_in"].contains($0.actionKind ?? "")
-        }, provider: { $0.id }, surface: .menuBar)
+        let menuCandidates = Self.usageMenuProviders(metered: shown, usage: usage)
+        let menuProviders = store.providerList.arranged(menuCandidates, provider: { $0.id }, surface: .menuBar)
         let lines = StatusMenuLines.usage(menuProviders, live: store.isLive, now: now)
         let menuActions = menuProviders.map { provider -> String? in
             if ["manage", "sign_in", "resign_in"].contains(provider.actionKind ?? "") { return provider.identity }
@@ -1924,6 +1923,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let lapsed = window?.resetsAt.map { $0 <= now } ?? false
         let fraction = lapsed ? nil : window?.usedPct.map { $0 / 100 }
         return MeterReading(fraction: fraction, stale: stale, current: !stale && !lapsed)
+    }
+
+    nonisolated static func usageMenuProviders(metered: [CoreProviderUsage], usage: [CoreProviderUsage]) -> [CoreProviderUsage] {
+        let selected = Set(metered.map(\.identity))
+        let connections = usage.filter {
+            !selected.contains($0.identity) && ["manage", "sign_in", "resign_in"].contains($0.actionKind ?? "")
+        }
+        return metered + connections
     }
 
     /// The providers the strip meters, in the panel's order: the ones
