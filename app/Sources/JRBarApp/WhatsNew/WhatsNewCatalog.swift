@@ -33,30 +33,30 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.10.1"
+    static let releaseID = "0.10.2"
 
     /// The header's one line.
-    static let headline = "Quicker, clearer, and a little festive."
+    static let headline = "Permissions and sign-ins that work."
 
     /// The window has room for this many rows and no more: the lead and
     /// four cards. The view draws exactly this many.
     static let maximumRows = 5
 
     static let entries: [WhatsNewEntry] = [
-        WhatsNewEntry(id: "notch-quick", symbol: "bolt", title: "A quicker notch",
-            detail: "The notch opens without the lag it had on hover."),
-        WhatsNewEntry(id: "time-left", symbol: "hourglass", title: "Time left, not a clock",
-            detail: "Usage forecasts say how long is left, or a clock time with its day if you prefer.",
-            tryIt: .settings(page: "usage"), opens: "Opens Providers"),
-        WhatsNewEntry(id: "awake-system", symbol: "cup.and.saucer", title: "Keep Awake, screen off",
-            detail: "Keep Awake holds the Mac while the display sleeps, and jrbar awake -- <command> holds it until a command finishes.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
-        WhatsNewEntry(id: "dock-previews", symbol: "dock.rectangle", title: "Calendar and media previews",
-            detail: "Hover Calendar in the Dock for today's events, or a playing app for its controls.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
-        WhatsNewEntry(id: "seasonal", symbol: "sparkles", title: "Seasonal touches",
-            detail: "Turn them on and the notch, the tank and the buddy dress up for holidays and birthdays you choose.",
-            tryIt: .settings(page: "toys"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "permissions", symbol: "lock.open", title: "Allow Access works",
+            detail: "Calendar, Reminders, the camera and system audio can ask for access, and every Allow button now does something.",
+            tryIt: .settings(page: "privacy"), opens: "Opens Privacy"),
+        WhatsNewEntry(id: "connect-devin", symbol: "person.badge.key", title: "Connect Devin",
+            detail: "Choose the browser profile where you signed in to Devin, allow access, and import.",
+            tryIt: .settings(page: "providers"), opens: "Opens Providers"),
+        WhatsNewEntry(id: "fix-actions", symbol: "arrow.triangle.2.circlepath", title: "The button that fixes it",
+            detail: "A provider that needs you offers Sign in, Reconnect or Allow usage instead of Retry.",
+            tryIt: .window(.usage), opens: "Opens Usage Center"),
+        WhatsNewEntry(id: "plain-words", symbol: "text.bubble", title: "Plain words",
+            detail: "Internal codes are gone, and History's events run in time order in your own clock.",
+            tryIt: .window(.history), opens: "Opens History"),
+        WhatsNewEntry(id: "tidy-tank", symbol: "fish", title: "A tidier tank",
+            detail: "Fish names never pile up, and asking or working fish keep theirs first."),
     ]
 }
 

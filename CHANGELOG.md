@@ -2,6 +2,20 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.10.2
+
+JR-Bar 0.10.2 fixes permissions that a signed build could never get, makes Devin and Factory sign-in work again, and clears out small mistakes that crept in.
+
+- Calendar, Reminders, the camera and system audio work in the signed app. 0.10.1 lacked the entitlements macOS needs before it will ask, so Allow Access in the Dock's Calendar preview did nothing. Every permission button now shows the prompt, opens the right pane of System Settings, or explains that Calendar needs full access, and the Dock, notch, reminders, seasonal touches and Mirror refresh once access changes.
+- Privacy prompts keep their apostrophes and quotes.
+- Connect Devin by choosing the browser profile where you signed in and allowing access, then Import. A failed import says what to do and keeps the sign-in you had, and Devin's account no longer shows a made-up organization name.
+- A provider that needs you offers the action that fixes it: Sign in, Reconnect, Allow usage or Connect. Factory's expired session offers Reconnect instead of Retry, and Factory stays in the status menu while it needs sign-in. Retry remains only where a refresh can help.
+- Usage Center and other views show plain words instead of internal codes such as "transcript_not_found".
+- History's Events list runs newest first by when each event happened, names every event in plain words, and shows times in your own clock.
+- Aquarium names no longer pile on top of each other or the "While you were away" banner; asking and working fish keep their labels first.
+- What's New links to the release notes for the version it shows.
+- Fold keeps the Duo blur from 0.10.1, and the temporary switch to compare it with the old blur is gone.
+
 ## 0.10.1
 
 JR-Bar 0.10.1 makes the notch quick to open again, says plainly when usage runs out, and polishes small things across the app. It adds seasonal touches, Dock previews for Calendar and media, and a Keep Awake that holds the Mac without holding the screen.
