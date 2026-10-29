@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>JR-Bar reads the playing app's audio levels only while the notch's Audio visualizer setting is on, to draw its six-band animation. Audio is never recorded or stored.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>JR-Bar announces a device connecting in the notch — "AirPods connected". Nothing is paired or sent.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>JR-Bar shows the next event on the shelf and the Dock's Calendar tile, and only after you ask it to. Nothing leaves the Mac.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>JR-Bar's Mirror row shows the Mac's own camera in the notch card — and only while the row is on. Nothing is recorded or sent.</string>
+	<key>NSFocusStatusUsageDescription</key>
+	<string>JR-Bar uses Focus Status only when you choose Allow Focus Status, so Do Not Disturb can follow whether a macOS Focus is active.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>JR-Bar lists your next reminders on the shelf — and only after you ask it to. Checking one off writes back to Reminders; nothing else is sent anywhere.</string>
+</dict>
+</plist>

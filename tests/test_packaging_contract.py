@@ -159,17 +159,11 @@ def test_version_declarations_agree__and_2_more() -> None:
         encoding="utf-8"
     )
 
-    description = (
+    import plistlib
+
+    descriptions = plistlib.loads((REPO_ROOT / "packaging/privacy_usage.plist").read_bytes())
+    assert descriptions["NSFocusStatusUsageDescription"] == (
         "JR-Bar uses Focus Status only when you choose Allow Focus Status, "
         "so Do Not Disturb can follow whether a macOS Focus is active."
     )
-    assert f'FOCUS_STATUS_USAGE_DESCRIPTION="{description}"' in source
-    assert (
-        'Add :NSFocusStatusUsageDescription string $FOCUS_STATUS_USAGE_DESCRIPTION'
-        in source
-    )
-    assert (
-        'Set :NSFocusStatusUsageDescription $FOCUS_STATUS_USAGE_DESCRIPTION'
-        in source
-    )
-
+    assert '"$ROOT_DIR/packaging/write_privacy_usage.py"' in source
