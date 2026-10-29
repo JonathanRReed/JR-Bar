@@ -9,10 +9,10 @@ import Testing
 struct FactorySheetTerminationTests {
     @Test("the Factory sheet permits quit and restores its window policy when removed")
     func factorySheetAllowsQuit() {
-        let model = FactoryBrowserConnectionModel(available: false,
-            load: { [] }, importSession: { _ in "unused" }, disconnect: { "unused" })
-        let hosting = NSHostingView(rootView: FactoryBrowserConnectionSheet(
-            model: model, instance: "default", dismiss: {}))
+        let model = ProviderCredentialEditorModel(provider: "factory", instance: "default", account: "api-key",
+            available: false, save: { _ in }, remove: {})
+        let hosting = NSHostingView(rootView: ProviderCredentialEditor(
+            model: model, dismiss: {}))
         let window = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 500, height: 600),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

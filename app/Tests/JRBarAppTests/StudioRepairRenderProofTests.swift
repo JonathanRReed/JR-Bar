@@ -33,27 +33,21 @@ struct StudioRepairRenderProofTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
-    func currentOutputAndFactoryConsent() throws {
+    func currentOutputAndFactoryConsent() async throws {
         let path = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-studio-repair"
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let lights = CoreLights(surfaces: ["screen_bar": CoreLightSurface(program: "#168CFF", ledCount: 8)])
-        let profile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Test browser")
-        let connection = FactoryBrowserConnectionModel(available: false, load: { [profile] },
-            importSession: { _ in "unused" }, disconnect: { "unused" })
-        connection.profiles = [profile]
-        connection.selected = profile
+        let connection = ProviderCredentialEditorModel(provider: "factory", instance: "default", account: "api-key",
+            available: false, save: { _ in }, remove: {})
         for dark in [false, true] {
             let output = EffectLiveOutput(lights: lights, connected: true).padding(16)
                 .frame(width: 330, height: 160).background(Color(nsColor: .windowBackgroundColor))
             let bitmap = try SettingsRenderProofTests.snapshot(output, size: CGSize(width: 330, height: 160), dark: dark)
             let png = try #require(bitmap.representation(using: .png, properties: [:]))
             try png.write(to: directory.appendingPathComponent("studio-output-\(dark).png"))
-            let sheet = FactoryBrowserConnectionSheet(model: connection, instance: "default", dismiss: {})
-                .frame(width: 560, height: 620).background(Color(nsColor: .windowBackgroundColor))
-            let consent = try SettingsRenderProofTests.snapshot(sheet, size: CGSize(width: 560, height: 620), dark: dark)
-            let consentPNG = try #require(consent.representation(using: .png, properties: [:]))
-            try consentPNG.write(to: directory.appendingPathComponent("factory-consent-\(dark).png"))
+            try await U5Proof.render(ProviderCredentialEditor(model: connection, dismiss: {}),
+                name: "factory-consent", width: 420, dark: dark)
         }
     }
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

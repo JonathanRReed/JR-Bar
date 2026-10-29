@@ -193,7 +193,7 @@ final class FactoryBrowserConnectionModel {
 }
 
 @MainActor
-struct FactoryBrowserConnectionSheet: View {
+struct DevinBrowserConnectionSheet: View {
     @Bindable var model: FactoryBrowserConnectionModel
     let instance: String
     let dismiss: () -> Void
@@ -232,9 +232,7 @@ struct FactoryBrowserConnectionSheet: View {
                     Toggle("Allow \(model.name) access to this browser profile", isOn: $model.approved)
                         .toggleStyle(.checkbox)
                         .disabled(model.busy)
-                    Text(model.provider == "factory"
-                         ? "Read app.factory.ai and auth.factory.ai sign-in from this profile, save it in Keychain, and pick up browser renewals while Factory usage is enabled. Usage requests go to api.factory.ai. The browser owns its refresh token. Connecting does not turn on usage."
-                         : "Read app.devin.ai sign-in and organization from this profile, save the sign-in in Keychain, and allow this profile to repair it while Devin usage is enabled. Usage requests go to app.devin.ai. Importing does not turn on usage.")
+                    Text("Read app.devin.ai sign-in and organization from this profile, save the sign-in in Keychain, and allow this profile to repair it while Devin usage is enabled. Usage requests go to app.devin.ai. Importing does not turn on usage.")
                         .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let message = model.message, !model.needsAPIKey {
@@ -268,7 +266,7 @@ struct FactoryBrowserConnectionSheet: View {
 }
 
 @MainActor
-struct FactoryBrowserConnectionControls: View {
+struct DevinBrowserConnectionControls: View {
     let row: ProviderRow
     let core: CoreModel
     let connectRequest: Int
@@ -289,14 +287,8 @@ struct FactoryBrowserConnectionControls: View {
         _model = ViewState(initialValue: FactoryBrowserConnectionModel(
             provider: row.id,
             available: row.credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available },
-            load: {
-                if row.id == "devin" { return try await core.devinSessionProfiles() }
-                return try await core.factorySessionProfiles()
-            },
-            importSession: { profile in
-                if row.id == "devin" { return try await core.importDevinSession(profile, instance: row.instance) }
-                return try await core.importFactorySession(profile, instance: row.instance)
-            },
+            load: { try await core.devinSessionProfiles() },
+            importSession: { profile in try await core.importDevinSession(profile, instance: row.instance) },
             disconnect: { try await core.disconnectFactorySession(instance: row.instance) },
             refreshUsage: {
                 let reply = try await core.refreshUsage(providers: [row.id])
@@ -340,7 +332,7 @@ struct FactoryBrowserConnectionControls: View {
                 onAddAPIKey()
             }
         }) {
-            FactoryBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
+            DevinBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
                 onAddAPIKey: { keyAfterDismiss = true; editing = false })
         }
         .onDisappear { model.cancel() }
@@ -353,12 +345,5 @@ struct FactoryBrowserConnectionControls: View {
             editing = true
         }
         .fixedSize()
-        if model.available && row.id == "factory" {
-            Button("Disconnect browser session") {
-                model.beginEditing()
-                _ = Task { await model.disconnect() }
-            }
-            .fixedSize()
-        }
     }
 }

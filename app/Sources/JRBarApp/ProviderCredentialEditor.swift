@@ -12,6 +12,7 @@ final class ProviderCredentialEditorModel {
     var providerName: String { ProviderStyle.style(for: provider).name }
     var credentialName: String { account == "web-session" ? "web token" : "API key" }
     var credentialTitle: String { account == "web-session" ? "Web token" : "API key" }
+    var isFactoryKey: Bool { provider == "factory" && account == "api-key" }
     var secret = ""
     private(set) var busy = false
     private(set) var message: String?
@@ -138,22 +139,45 @@ struct ProviderCredentialEditor: View {
     @Bindable var model: ProviderCredentialEditorModel
     let dismiss: () -> Void
     @FocusState private var keyFocused: Bool
+    @ViewState private var replacing = false
+
+    private var showsKeyField: Bool { !model.isFactoryKey || !model.available || replacing }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("\(model.providerName) \(model.credentialName)").jrbarType(.headline)
+            Text(model.isFactoryKey ? "Connect Factory" : "\(model.providerName) \(model.credentialName)")
+                .jrbarType(.headline)
             Text(model.instance == "default" ? "Default account" : "Account: \(model.instance)")
                 .jrbarType(.caption).foregroundStyle(.secondary)
-            SecureField(model.credentialTitle, text: $model.secret)
-                .focused($keyFocused)
-                .textFieldStyle(.roundedBorder)
-                .privacySensitive()
-                .accessibilityLabel("\(model.providerName) \(model.credentialName)")
-                .disabled(model.busy)
-            Text("Stored in JR-Bar's Keychain. Saving a credential does not turn on usage. The usage switch controls requests to \(model.providerName).")
+            if model.isFactoryKey {
+                Text("Factory no longer shares its browser sign-in, so JR-Bar needs an API key to read usage.")
+                    .jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
+                if model.available {
+                    Text("Factory API key saved.").jrbarType(.callout)
+                    HStack {
+                        Button("Replace") { replacing = true; keyFocused = true }
+                            .disabled(model.busy)
+                        Button("Remove", role: .destructive) {
+                            _ = Task { await model.remove() }
+                        }
+                        .disabled(model.busy)
+                    }
+                }
+            }
+            if showsKeyField {
+                SecureField(model.credentialTitle, text: $model.secret)
+                    .focused($keyFocused)
+                    .textFieldStyle(.roundedBorder)
+                    .privacySensitive()
+                    .accessibilityLabel("\(model.providerName) \(model.credentialName)")
+                    .disabled(model.busy)
+            }
+            Text(model.isFactoryKey
+                 ? "Stored in JR-Bar's Keychain. Usage requests go to api.factory.ai and use your saved API key first. Saving a key does not turn on usage."
+                 : "Stored in JR-Bar's Keychain. Saving a credential does not turn on usage. The usage switch controls requests to \(model.providerName).")
                 .jrbarType(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if model.provider == "factory", model.account == "api-key" {
+            if model.isFactoryKey {
                 Link("Create a Factory API key", destination: URL(string: "https://app.factory.ai/settings/api-keys")!)
             }
             if let message = model.message {
@@ -162,18 +186,29 @@ struct ProviderCredentialEditor: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { model.cancel(); dismiss() }
+                Button(showsKeyField ? "Cancel" : "Done") { model.cancel(); dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(model.busy ? "Saving…" : "Save \(model.credentialName)") {
-                    _ = Task { if await model.save() { dismiss() } }
+                if showsKeyField {
+                    Button(model.busy ? "Saving…" : "Save \(model.credentialName)") {
+                        _ = Task { if await model.save() { dismiss() } }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(model.busy || model.secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.busy || model.secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)
         .frame(width: 420)
-        .onAppear { keyFocused = true }
+        .fixedSize(horizontal: false, vertical: model.isFactoryKey)
+        .background {
+            if model.isFactoryKey {
+                NonblockingSheetWindow().frame(width: 0, height: 0).allowsHitTesting(false)
+            }
+        }
+        .onAppear { keyFocused = showsKeyField }
+        .onChange(of: model.available) { _, available in
+            if !available { keyFocused = true }
+        }
         .onDisappear { model.cancel() }
     }
 }
@@ -215,19 +250,18 @@ struct ProviderCredentialControls: View {
                 }
                 .id("source-\(row.identity)")
             }
-            if ["factory", "devin"].contains(row.id) {
-                if row.id == "factory" { keyControls }
-                FactoryBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
+            if row.id == "factory" {
+                keyControls
+            } else if row.id == "devin" {
+                DevinBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
                     onConnectPresented: onConnectPresented, onAddAPIKey: {
                         keyExpanded = true
                         localKeyRequest += 1
                     }, onChanged: onChanged)
-                if row.id == "devin" {
-                    DisclosureGroup("API key", isExpanded: $keyExpanded) {
-                        keyControls.padding(.top, 6)
-                    }
-                    .jrbarType(.callout)
+                DisclosureGroup("API key", isExpanded: $keyExpanded) {
+                    keyControls.padding(.top, 6)
                 }
+                .jrbarType(.callout)
             } else {
                 ProviderSavedCredentialControls(row: row, core: core, account: "api-key", onChanged: onChanged)
                 if row.id == "kimi" {
@@ -252,6 +286,11 @@ struct ProviderCredentialControls: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .onChange(of: connectRequest, initial: true) { _, request in
+            guard row.id == "factory", request > 0 else { return }
+            localKeyRequest += 1
+            onConnectPresented()
         }
         .onChange(of: keyConnectRequest, initial: true) { _, request in
             guard request > 0 else { return }
@@ -298,7 +337,7 @@ struct ProviderSavedCredentialControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Button(model.available ? "Replace \(model.credentialName)…" : "Add \(model.credentialName)…") {
+                Button(credentialActionTitle) {
                     model.beginEditing()
                     editing = true
                 }
@@ -334,6 +373,11 @@ struct ProviderSavedCredentialControls: View {
             ProviderCredentialEditor(model: model, dismiss: { editing = false })
         }
         .onDisappear { model.cancel() }
+    }
+
+    private var credentialActionTitle: String {
+        let credential = model.isFactoryKey ? "Factory API key" : model.credentialName
+        return model.available ? "Replace \(credential)…" : "Add \(credential)…"
     }
 }
 

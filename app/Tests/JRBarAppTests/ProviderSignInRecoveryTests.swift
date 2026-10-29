@@ -12,7 +12,7 @@ import Testing
 struct ProviderSignInRecoveryTests {
     static func reading(_ id: String) -> CoreProviderUsage {
         var value = CoreProviderUsage(id: id, windows: [], state: "needs_sign_in",
-                                      action: "Reconnect \(id.capitalized) browser session", reason: "browser_session_expired")
+                                      action: id == "factory" ? "Add Factory API key" : "Reconnect Devin browser session", reason: "browser_session_expired")
         value.actionKind = "manage"
         value.availability = "available"
         value.quotaSource = false
@@ -34,12 +34,17 @@ struct ProviderSignInRecoveryTests {
         #expect(opened == providerReading.identity)
         let lines = StatusMenuLines.usage([providerReading], live: true, now: PanelCompositionTests.time)
         #expect(lines.count == 1)
-        #expect(lines[0].contains("Reconnect"))
+        #expect(lines[0].contains(provider == "factory" ? "Add Factory API key" : "Reconnect"))
         let usageStore = UsageCenterStore(core: store.core)
         usageStore.runProviderAction(providerReading)
-        #expect(usageStore.browserConnectRequests[providerReading.identity] == 1)
-        usageStore.didPresentBrowserConnection(providerReading.identity)
-        #expect(usageStore.browserConnectRequests[providerReading.identity] == nil)
+        if provider == "factory" {
+            #expect(usageStore.credentialConnectRequests[providerReading.identity] == 1)
+            #expect(usageStore.browserConnectRequests.isEmpty)
+            usageStore.didPresentCredentialConnection(providerReading.identity)
+        } else {
+            #expect(usageStore.browserConnectRequests[providerReading.identity] == 1)
+            usageStore.didPresentBrowserConnection(providerReading.identity)
+        }
         var consentReading = providerReading
         consentReading.reason = "usage_consent_required"
         usageStore.runProviderAction(consentReading)
@@ -167,11 +172,13 @@ struct ProviderSignInRecoveryTests {
                 let model = FactoryBrowserConnectionModel(provider: provider, available: false,
                     load: { [profile] }, importSession: { _ in "Unused." }, disconnect: { "Unused." })
                 await model.load()
-                let sheet = FactoryBrowserConnectionSheet(model: model, instance: "default", dismiss: {})
-                    .frame(width: 480, height: 560).background(Color(nsColor: .windowBackgroundColor))
-                let sheetBitmap = try SettingsRenderProofTests.snapshot(sheet, size: CGSize(width: 480, height: 560), dark: dark)
-                let sheetPNG = try #require(sheetBitmap.representation(using: .png, properties: [:]))
-                try sheetPNG.write(to: directory.appendingPathComponent("signin-\(provider)-sheet-\(dark).png"))
+                if provider == "devin" {
+                    let sheet = DevinBrowserConnectionSheet(model: model, instance: "default", dismiss: {})
+                        .frame(width: 480, height: 560).background(Color(nsColor: .windowBackgroundColor))
+                    let sheetBitmap = try SettingsRenderProofTests.snapshot(sheet, size: CGSize(width: 480, height: 560), dark: dark)
+                    let sheetPNG = try #require(sheetBitmap.representation(using: .png, properties: [:]))
+                    try sheetPNG.write(to: directory.appendingPathComponent("signin-\(provider)-sheet-\(dark).png"))
+                }
                 let core = CoreModel(socketPath: "/tmp/jrbar-signin-proof-unused.sock")
                 core.handle(.connected)
                 core.apply(.state(CoreState()))
@@ -196,27 +203,11 @@ struct ProviderSignInRecoveryTests {
         let path = try #require(ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"])
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let profile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Zen test profile")
         for dark in [false, true] {
-            let model = FactoryBrowserConnectionModel(available: false, load: { [profile] },
-                importSession: { _ in throw CoreReplyError(code: "browser_token_unavailable") },
-                disconnect: { "Unused." })
-            await model.load()
-            model.approved = true
-            _ = await model.connect()
-            let sheet = FactoryBrowserConnectionSheet(model: model, instance: "work", dismiss: {}, onAddAPIKey: {})
-                .frame(width: 480, height: 600).background(Color(nsColor: .windowBackgroundColor))
-            let sheetImage = try SettingsRenderProofTests.snapshot(sheet, size: CGSize(width: 480, height: 600), dark: dark)
-            let sheetPNG = try #require(sheetImage.representation(using: .png, properties: [:]))
-            try sheetPNG.write(to: directory.appendingPathComponent("factory-token-unavailable-\(dark).png"))
             let editorModel = ProviderCredentialEditorModel(provider: "factory", instance: "work", account: "api-key",
                 available: false, save: { _ in }, remove: {}, onChanged: {})
-            let editor = ProviderCredentialEditor(model: editorModel, dismiss: {})
-                .frame(width: 420, height: 340)
-                .background(Color(nsColor: .windowBackgroundColor))
-            let editorImage = try SettingsRenderProofTests.snapshot(editor, size: CGSize(width: 420, height: 340), dark: dark)
-            let editorPNG = try #require(editorImage.representation(using: .png, properties: [:]))
-            try editorPNG.write(to: directory.appendingPathComponent("factory-key-editor-\(dark).png"))
+            try await U5Proof.render(ProviderCredentialEditor(model: editorModel, dismiss: {}),
+                name: "factory-key-editor", width: 420, dark: dark)
             var reading = Self.reading("factory")
             reading.reason = "browser_token_unavailable"
             reading.action = "Add Factory API key"
