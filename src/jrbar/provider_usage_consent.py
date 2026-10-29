@@ -218,15 +218,15 @@ _DISCLOSURES: dict[str, UsageDisclosure] = {
         ),
         _disclosure(
             "factory",
-            hosts=("api.factory.ai", "api.workos.com"),
-            credential="your explicitly connected Factory browser session or optional API key in JR-Bar Keychain",
+            hosts=("api.factory.ai",),
+            credential="your Factory API key or explicitly imported browser access token in JR-Bar Keychain",
             summary=(
                 "JR-Bar will ask Factory for your subscription usage limits "
-                "with the browser session or API key you connect. Browser session renewal sends its refresh token to WorkOS only after you explicitly permit it. Nothing else is sent."
+                "with the API key or browser access token you connect. JR-Bar never uses a browser refresh token. Nothing else is sent."
             ),
             detail=(
                 "Asks api.factory.ai for Standard and Core usage windows "
-                "with your saved browser session or optional API key. If you explicitly connect a browser session, api.workos.com renews its tokens. Browser storage is read only when you choose Import."
+                "with your saved API key first, or a browser access token. Browser storage is read only for an explicit import or an approved background repair. JR-Bar leaves token renewal to the browser."
             ),
         ),
         _disclosure(
