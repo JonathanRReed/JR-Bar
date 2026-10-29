@@ -98,6 +98,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     var onOpenOverview: (@MainActor () -> Void)?
     var onOpenReplay: (@MainActor () -> Void)?
     var onOpenUsageCenter: (@MainActor () -> Void)?
+    var onOpenProviderUsage: (@MainActor (String) -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
     /// The ⇧⌘K palette.
@@ -954,12 +955,18 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The menu's usage lines, one per metered provider, below the lights
     /// line. The same figures the meters draw, in words a screen reader and
     /// the keyboard can reach.
-    func setUsageLines(_ lines: [String]) {
-        guard lines != usageItems.map(\.title) else { return }
+    func setUsageLines(_ lines: [String], providers: [String?] = []) {
+        let identities = lines.indices.map { providers.indices.contains($0) ? providers[$0] : nil }
+        let current = usageItems.map { $0.representedObject as? String }
+        guard lines != usageItems.map(\.title) || identities != current else { return }
         for item in usageItems { menu.removeItem(item) }
-        usageItems = lines.map { line in
-            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-            item.isEnabled = false
+        usageItems = lines.enumerated().map { index, line in
+            let provider = identities[index]
+            let action = provider == nil ? nil : #selector(openProviderUsage(_:))
+            let item = NSMenuItem(title: line, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = provider
+            item.isEnabled = provider != nil
             item.attributedTitle = NSAttributedString(string: line, attributes: [
                 .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
                 .foregroundColor: NSColor.secondaryLabelColor,
@@ -1051,6 +1058,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             hiddenItemsMenuItem.submenu = nil
             hiddenItemsMenuItem.isHidden = true
         }
+    }
+
+    @objc private func openProviderUsage(_ sender: NSMenuItem) {
+        guard let provider = sender.representedObject as? String else { return }
+        onOpenProviderUsage?(provider)
     }
 
     @objc private func openPanel(_ sender: Any?) {

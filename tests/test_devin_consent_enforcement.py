@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from jrbar.provider_browser_consent import BrowserConsentStore
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
@@ -94,7 +96,8 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
             AssertionError("missing consent must fail before filesystem access")
         ),
     )
-    assert provider_browser_access._import_browser_session("devin") is None
+    with pytest.raises(provider_browser_access.BrowserImportError, match="Choose one Devin browser profile"):
+        provider_browser_access._import_browser_session("devin")
 
     # --- scenario: unauthorized_background_repair_requires_exact_persisted_consent
     monkeypatch.undo()

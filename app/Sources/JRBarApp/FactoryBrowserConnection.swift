@@ -6,6 +6,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class FactoryBrowserConnectionModel {
+    let provider: String
+    var name: String { ProviderStyle.style(for: provider).name }
     var profiles: [FactorySessionProfile] = []
     var selected: FactorySessionProfile? {
         didSet { if selected != oldValue { approved = false } }
@@ -24,12 +26,13 @@ final class FactoryBrowserConnectionModel {
     private let disconnectOperation: @MainActor () async throws -> String
     private let onChanged: @MainActor () -> Void
 
-    init(available: Bool,
+    init(provider: String = "factory", available: Bool,
          load: @escaping @MainActor () async throws -> [FactorySessionProfile],
          importSession: @escaping @MainActor (FactorySessionProfile) async throws -> String,
          disconnect: @escaping @MainActor () async throws -> String,
          refreshUsage: (@MainActor () async throws -> String)? = nil,
          onChanged: @escaping @MainActor () -> Void = {}) {
+        self.provider = provider
         self.available = available
         self.loadOperation = load
         self.importOperation = importSession
@@ -88,7 +91,7 @@ final class FactoryBrowserConnectionModel {
             if profiles.isEmpty { message = "No supported browser profiles found. Open your browser, then reload profiles." }
         } catch {
             guard active, generation == request else { return }
-            message = Self.failureWords(error)
+            message = failureWords(error)
         }
     }
 
@@ -114,13 +117,13 @@ final class FactoryBrowserConnectionModel {
                 do {
                     let refreshMessage = try await refreshOperation()
                     guard active, generation == request else { return false }
-                    self.message = "Factory browser sign-in saved. \(refreshMessage)"
+                    self.message = "\(name) browser sign-in saved. \(refreshMessage)"
                 } catch {
                     guard active, generation == request else { return false }
                     if (error as? CoreReplyError)?.code == "usage_off" {
-                        self.message = "Factory browser sign-in saved. Turn on Show Factory usage to check this account."
+                        self.message = "\(name) browser sign-in saved. Turn on Show \(name) usage to check this account."
                     } else {
-                        self.message = "Factory browser sign-in saved. Open Usage Center and choose Refresh to check usage."
+                        self.message = "\(name) browser sign-in saved. Open Usage Center and choose Refresh to check usage."
                     }
                 }
             }
@@ -128,7 +131,7 @@ final class FactoryBrowserConnectionModel {
             return true
         } catch {
             guard active, generation == request else { return false }
-            message = Self.failureWords(error)
+            message = failureWords(error)
             return false
         }
     }
@@ -153,22 +156,24 @@ final class FactoryBrowserConnectionModel {
             onChanged()
         } catch {
             guard active, generation == request else { return }
-            message = Self.failureWords(error)
+            message = failureWords(error)
         }
     }
 
-    private static func failureWords(_ error: Error) -> String {
+    private func failureWords(_ error: Error) -> String {
         if let client = error as? CoreClientError, client == .notConnected {
             return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
+        case "browser_import_failed":
+            return (error as? CoreReplyError)?.message ?? "Browser import failed. Choose the profile again and retry."
         case "browser_session_not_found":
-            return "Sign in to Factory in the selected browser profile, then connect again."
-        case "unknown_instance": return "This Factory account is unavailable. Reload providers and try again."
+            return "Sign in at app.\(provider).ai in the selected browser profile, then Import again."
+        case "unknown_instance": return "This \(name) account is unavailable. Reload providers and try again."
         case "credential_unavailable": return "Could not save the browser sign-in in Keychain. Try again."
         case "invalid_args": return "Reload profiles and choose one again."
         case "unauthenticated": return "Restart JR-Bar to reconnect securely, then try again."
-        default: return "Could not complete the Factory connection. Try again."
+        default: return "Could not complete the \(name) connection. Try again."
         }
     }
 }
@@ -181,12 +186,12 @@ struct FactoryBrowserConnectionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connect Factory").jrbarType(.heading).fontWeight(.semibold)
+            Text("Connect \(model.name)").jrbarType(.heading).fontWeight(.semibold)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Use a browser profile where you’re signed in to Factory. An API key is optional.")
-                    Link("Sign in to Factory in your browser", destination: URL(string: "https://app.factory.ai")!)
-                    Text("After signing in, return here. Choose that browser profile, approve access, then click Connect.")
+                    Text("Choose the browser profile where you signed in to \(model.name).")
+                    Link("Sign in to \(model.name) in your browser", destination: URL(string: "https://app.\(model.provider).ai")!)
+                    Text("After signing in, return here. Choose that browser profile, approve access, then click Import.")
                         .jrbarType(.caption).foregroundStyle(.secondary)
                     if model.profiles.isEmpty {
                         Text(model.busy ? "Loading browser profiles…" : "No browser profile selected.")
@@ -201,12 +206,14 @@ struct FactoryBrowserConnectionSheet: View {
                     }
                     Button("Reload profiles") { _ = Task { await model.load() } }
                         .disabled(model.busy)
-                    Text(instance == "default" ? "Default Factory account" : "Factory account: \(instance)")
+                    Text(instance == "default" ? "Default \(model.name) account" : "\(model.name) account: \(instance)")
                         .jrbarType(.caption).foregroundStyle(.secondary)
-                    Toggle("Keep Factory connected using this browser profile", isOn: $model.approved)
+                    Toggle("Allow \(model.name) access to this browser profile", isOn: $model.approved)
                         .toggleStyle(.checkbox)
                         .disabled(model.busy)
-                    Text("Allow JR-Bar to read Factory sign-in from this profile, save it in Keychain, and pick up browser renewals while Factory usage is enabled. Usage requests go to api.factory.ai. The browser keeps ownership of its refresh token. Connecting does not turn on usage.")
+                    Text(model.provider == "factory"
+                         ? "Read app.factory.ai and auth.factory.ai sign-in from this profile, save it in Keychain, and pick up browser renewals while Factory usage is enabled. Usage requests go to api.factory.ai. The browser owns its refresh token. Connecting does not turn on usage."
+                         : "Read app.devin.ai sign-in and organization from this profile, save the sign-in in Keychain, and allow this profile to repair it while Devin usage is enabled. Usage requests go to app.devin.ai. Importing does not turn on usage.")
                         .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let message = model.message {
@@ -219,7 +226,7 @@ struct FactoryBrowserConnectionSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { model.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button(model.busy ? "Working…" : "Connect") {
+                Button(model.busy ? "Working…" : "Import") {
                     _ = Task { if await model.connect() { dismiss() } }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -238,18 +245,34 @@ struct FactoryBrowserConnectionSheet: View {
 struct FactoryBrowserConnectionControls: View {
     let row: ProviderRow
     let core: CoreModel
+    let connectRequest: Int
+    let onConnectPresented: @MainActor () -> Void
     @ViewState private var model: FactoryBrowserConnectionModel
     @ViewState private var editing = false
 
-    init(row: ProviderRow, core: CoreModel, onChanged: @escaping @MainActor () -> Void) {
+    init(row: ProviderRow, core: CoreModel, connectRequest: Int = 0,
+         onConnectPresented: @escaping @MainActor () -> Void = {}, onChanged: @escaping @MainActor () -> Void) {
         self.row = row
         self.core = core
+        self.connectRequest = connectRequest
+        self.onConnectPresented = onConnectPresented
         _model = ViewState(initialValue: FactoryBrowserConnectionModel(
-            available: row.credentials.contains { $0.account == "web-session" && $0.available },
-            load: { try await core.factorySessionProfiles() },
-            importSession: { try await core.importFactorySession($0, instance: row.instance) },
+            provider: row.id,
+            available: row.credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available },
+            load: {
+                if row.id == "devin" { return try await core.devinSessionProfiles() }
+                return try await core.factorySessionProfiles()
+            },
+            importSession: { profile in
+                if row.id == "devin" { return try await core.importDevinSession(profile, instance: row.instance) }
+                return try await core.importFactorySession(profile, instance: row.instance)
+            },
             disconnect: { try await core.disconnectFactorySession(instance: row.instance) },
-            refreshUsage: { try await core.providerAction("factory", instance: row.instance) },
+            refreshUsage: {
+                let reply = try await core.refreshUsage(providers: [row.id])
+                guard reply.ok else { throw reply.error ?? CoreReplyError(code: "unavailable") }
+                return "Usage refresh requested."
+            },
             onChanged: onChanged
         ))
     }
@@ -271,8 +294,14 @@ struct FactoryBrowserConnectionControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .onChange(of: connectRequest, initial: true) { _, request in
+            guard request > 0 else { return }
+            model.beginEditing()
+            editing = true
+            onConnectPresented()
+        }
         .onChange(of: row.credentials) { _, credentials in
-            model.updateAvailability(credentials.contains { $0.account == "web-session" && $0.available })
+            model.updateAvailability(credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available })
         }
         .sheet(isPresented: WindowPresenter.presentation($editing), onDismiss: { model.cancel() }) {
             FactoryBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false })
@@ -287,7 +316,7 @@ struct FactoryBrowserConnectionControls: View {
             editing = true
         }
         .fixedSize()
-        if model.available {
+        if model.available && row.id == "factory" {
             Button("Disconnect browser session") {
                 model.beginEditing()
                 _ = Task { await model.disconnect() }

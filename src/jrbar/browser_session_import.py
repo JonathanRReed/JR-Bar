@@ -46,7 +46,11 @@ _FEATURE_FLAG_ORG_PREFIX = "feature-flags-cache:org"
 _MIN_TOKEN_LENGTH = 20
 
 
-@dataclass(frozen=True, slots=True)
+class BrowserSessionReadError(Exception):
+    """A safe category, never a browser value or an underlying exception."""
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class BrowserSession:
     """One provider session lifted from a browser profile."""
 
@@ -155,7 +159,7 @@ def _copy_storage_file(path: Path, target: Path, stamp: tuple[int, int, int, int
                 remaining -= len(chunk)
 
 
-def read_local_storage(database: Path) -> dict[str, str]:
+def read_local_storage(database: Path, *, strict: bool = False) -> dict[str, str]:
     """Read one origin's Devin fields from a private SQLite/WAL snapshot."""
     path = Path(database)
     wal = path.with_name(path.name + "-wal")
@@ -170,6 +174,8 @@ def read_local_storage(database: Path) -> dict[str, str]:
             if wal_stamp is not None:
                 _copy_storage_file(wal, snapshot.with_name(snapshot.name + "-wal"), wal_stamp)
             if _storage_stamp(path) != database_stamp or _storage_stamp(wal) != wal_stamp:
+                if strict:
+                    raise BrowserSessionReadError("storage_changed")
                 return {}
             connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=1.0)
             try:
@@ -195,7 +201,10 @@ def read_local_storage(database: Path) -> dict[str, str]:
                 ).fetchall()
             finally:
                 connection.close()
-    except (OSError, sqlite3.Error):
+    except (OSError, sqlite3.Error) as error:
+        if strict:
+            category = "storage_unreadable" if isinstance(error, OSError) else "storage_invalid"
+            raise BrowserSessionReadError(category) from None
         return {}
     entries: dict[str, str] = {}
     for key, value, compression in rows:
@@ -348,10 +357,10 @@ def import_devin_session_from_profile(
     home: Path,
     browser: str,
     profile: str,
+    strict: bool = False,
 ) -> BrowserSession | None:
     """Read one named profile after the caller checks its consent grant."""
     if str(browser).lower() in {"brave", "chrome", "chromium", "edge"}:
-        from .provider_browser_consent import extract_devin_session
         from .provider_browser_import import (
             chromium_profile_directory,
             read_chromium_local_storage,
@@ -359,21 +368,22 @@ def import_devin_session_from_profile(
 
         profile_root = chromium_profile_directory(Path(home), browser=browser, profile=profile)
         if profile_root is None:
+            if strict:
+                raise BrowserSessionReadError("profile_not_found")
             return None
         try:
             storage = read_chromium_local_storage(
                 profile_root,
                 origin=DEVIN_ORIGIN,
                 allowed_keys=("auth1_session",),
-                allowed_prefixes=(_EXTERNAL_ORG_PREFIX,),
+                allowed_prefixes=(_EXTERNAL_ORG_PREFIX, "auth0spajs@@::", "post-auth-", _FEATURE_FLAG_ORG_PREFIX),
             )
-        except (ModuleNotFoundError, OSError):
+        except (ModuleNotFoundError, OSError) as error:
+            if strict:
+                category = "reader_unavailable" if isinstance(error, ModuleNotFoundError) else "storage_unreadable"
+                raise BrowserSessionReadError(category) from None
             return None
-        token, organization = extract_devin_session(storage)
-        if token is None:
-            return None
-        internal_id = organization if organization and is_internal_organization_id(organization) else None
-        return BrowserSession(token, organization, internal_id, f"{browser.title()} {profile}")
+        return devin_session_from_entries(storage, source_label=f"{browser.title()} {profile}")
 
     profile_root = firefox_profile_directory(
         Path(home),
@@ -381,11 +391,13 @@ def import_devin_session_from_profile(
         profile=profile,
     )
     if profile_root is None:
+        if strict:
+            raise BrowserSessionReadError("profile_not_found")
         return None
     database = _devin_database_for_profile(profile_root)
     if database is None:
         return None
-    entries = read_local_storage(database)
+    entries = read_local_storage(database, strict=strict)
     if not entries:
         return None
     label = next(

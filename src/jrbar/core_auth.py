@@ -135,6 +135,8 @@ _PRIVILEGED_COMMANDS: Final = (
     "claude_statusline_uninstall",
     "usage_hooks_test",
     "set_provider_enabled",
+    "devin_session_profiles",
+    "devin_session_import",
     "factory_session_profiles",
     "factory_session_import",
     "factory_session_disconnect",

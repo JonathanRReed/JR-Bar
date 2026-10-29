@@ -530,7 +530,6 @@ def collect_devin(
             action="Retry",
         )
     document = dict(payload)
-    document.setdefault("organization", organization or organization_id)
     try:
         return parse_devin_usage(document, observed_at=observed_at)
     except ValueError:

@@ -1,28 +1,6 @@
-"""The staged browser-access flow behind provider card action buttons.
+"""Explicit provider imports and reconnects with visible, secret-free results.
 
-"Enable Devin browser access" was a dead button: every non-claude action
-fell through to a plain refresh, which changed nothing visible and read
-as broken (it was). The flow is now three explicit, honest stages, each
-one click, each saying exactly what happens next:
-
-  1. "Enable <X> browser access"   -> flips the provider's
-     browser_sources flag and says what the next click will do.
-  2. "Import <X> browser session"  -> takes the session the user's own
-     browser already holds (browser_session_import), stores it, and
-     refreshes. No key, no page, no clipboard.
-  3. only if there is no such session -> falls back to the manual
-     route: open the provider's token page, then read a pasted key FROM
-     THE CLIPBOARD on an explicit second click.
-
-Stage 2 is the point. Asking for an API key was never the design, it
-was the absence of one -- "Enable browser access" flipped a flag and
-NOTHING in this app ever read a browser, so the manual paste was the
-only path that existed. Reported as "Why do I need an API key? The
-implementation inside of CodexBar doesn't require an API key."
-
-Organization-style options ("Choose Devin organization") keep the
-copy-then-click pattern, but an imported session fills the organization
-in on its own, so that stage is normally never reached.
+Browser reads require an exact persisted provider, instance and profile grant.
 """
 
 from __future__ import annotations
@@ -125,88 +103,111 @@ def _consented_devin_session(
     )
 
 
+class BrowserImportError(Exception):
+    """A fixed, safe explanation for a failed explicit import."""
+
+
 def _load_consented_devin_session(
     *,
     source_instance_id: str = "default",
     require_background_repair: bool = False,
+    strict: bool = False,
 ):
-    """Load one exact persisted grant, then read only its selected profile."""
+    """Read one exact grant. Explicit clicks report why a read was refused."""
+    from pathlib import Path
+
+    from .browser_session_import import BrowserSessionReadError, import_devin_session_from_profile
+    from .provider_browser_consent import load_browser_consents
+
     try:
-        from pathlib import Path
+        loaded = load_browser_consents()
+        if loaded.read_only:
+            raise BrowserImportError("Browser permissions could not be read. Reopen Settings > Providers and choose the Devin browser profile again.")
 
-        from .browser_session_import import import_devin_session_from_profile
-        from .provider_browser_consent import load_browser_consents
+        def read(**kwargs):
+            browser = str(kwargs["browser"]).title()
+            try:
+                session = import_devin_session_from_profile(**kwargs, strict=strict)
+            except BrowserSessionReadError as error:
+                fixes = {
+                    "profile_not_found": "The selected browser profile was not found. Reload profiles in Settings > Providers and choose it again.",
+                    "reader_unavailable": "This build cannot read Chromium storage. Update JR-Bar or choose Firefox or Zen, then Import again.",
+                    "storage_changed": "Browser storage changed during import. Wait for the browser to finish saving, then Import again.",
+                    "storage_invalid": "The browser session database could not be read. Open app.devin.ai in the selected profile, then Import again.",
+                }
+                raise BrowserImportError(fixes.get(str(error), "Browser storage could not be opened. Check JR-Bar's browser access, then Import again.")) from None
+            if session is None and strict:
+                raise BrowserImportError(f"Sign in at app.devin.ai in {browser} using the selected profile, then Import again.")
+            return session
 
-        loaded_consents = load_browser_consents()
-        if loaded_consents.read_only:
-            return None
-        return _consented_devin_session(
-            home=Path.home(),
-            consents=loaded_consents.store,
-            session_reader=import_devin_session_from_profile,
+        session = _consented_devin_session(
+            home=Path.home(), consents=loaded.store, session_reader=read,
             source_instance_id=source_instance_id,
             require_background_repair=require_background_repair,
         )
+        if session is None and strict:
+            raise BrowserImportError("Choose one Devin browser profile in Settings > Providers and allow access, then Import again.")
+        return session
+    except BrowserImportError:
+        if strict:
+            raise
+        return None
     except Exception:
+        if strict:
+            raise BrowserImportError("Devin browser access could not be checked. Reopen Settings > Providers and choose the profile again.") from None
         return None
 
 
 def _import_browser_session(
     provider_id: str,
     source_instance_id: str = "default",
+    *,
+    credential_store=None,
 ) -> str | None:
-    """Lift the provider's own session out of the user's browser.
-
-    This is what "browser access" was always supposed to mean. Returns
-    the success message, or None when there is no session to take -- in
-    which case the caller falls back to the manual paste. Devin only for
-    now: its session is a token in Firefox or Chromium local storage.
-    """
+    """Import an exact consented profile, or report a safe, actionable failure."""
     if provider_id != "devin":
         return None
+    from .provider_credential_store import ProviderCredentialStore
+
+    session = _load_consented_devin_session(source_instance_id=source_instance_id, strict=True)
+    if session is None:
+        raise BrowserImportError("No Devin browser session was found. Sign in at app.devin.ai in the selected profile, then Import again.")
+    store = credential_store if credential_store is not None else ProviderCredentialStore()
     try:
-        from .provider_credential_store import ProviderCredentialStore
+        if source_instance_id == "default":
+            store.set(provider_id, "token", session.token)
+        else:
+            from .provider_instances import ProviderInstanceKey
 
-        session = _load_consented_devin_session(
-            source_instance_id=source_instance_id,
-        )
-        if session is None:
-            return None
-        credential_store = ProviderCredentialStore()
-        try:
-            if source_instance_id == "default":
-                credential_store.set(provider_id, "token", session.token)
-            else:
-                from .provider_instances import ProviderInstanceKey
-
-                credential_store.set_for_instance(
-                    ProviderInstanceKey(provider_id, source_instance_id),
-                    "token",
-                    session.token,
-                )
-        except Exception:
-            return "JR-Bar couldn't save this browser session to Keychain. Check the login keychain and try Import again."
-        loaded = load_provider_usage_settings()
-        settings = loaded.settings
-        if session.organization:
-            settings = settings.with_option(
-                provider_id,
-                "organization",
-                session.organization,
-                source_instance_id=source_instance_id,
-            )
-        if session.internal_organization_id:
-            settings = settings.with_option(
-                provider_id,
-                "organization_id",
-                session.internal_organization_id,
-                source_instance_id=source_instance_id,
-            )
-        save_provider_usage_settings(settings, loaded=loaded)
+            store.set_for_instance(ProviderInstanceKey(provider_id, source_instance_id), "token", session.token)
     except Exception:
-        return None
-    where = session.source_label.split(" ")[0]
-    return f"Signed in as your {where} session — no API key needed. Refreshing usage now."
+        raise BrowserImportError("JR-Bar couldn't save this browser session to Keychain. Check the login keychain and try Import again.") from None
+    try:
+        loaded = load_provider_usage_settings()
+        settings = loaded.settings.with_browser_sources(provider_id, True, source_instance_id=source_instance_id)
+        for option, value in (("organization", session.organization), ("organization_id", session.internal_organization_id)):
+            if value:
+                settings = settings.with_option(provider_id, option, value, source_instance_id=source_instance_id)
+        save_provider_usage_settings(settings, loaded=loaded)
+        from .provider_browser_consent import load_browser_consents
+        from .provider_management import record_browser_import
+
+        grants = [row for row in load_browser_consents().store.consents
+                  if row.provider_id == provider_id and row.source_instance_id == source_instance_id]
+        if len(grants) == 1:
+            row = grants[0]
+            record_browser_import(provider_id, source_instance_id, row.browser, row.profile, session.token)
+    except Exception:
+        raise BrowserImportError("Devin's session was saved, but its organization settings could not be saved. Reload Settings > Providers, then Import again.") from None
+    return "Devin browser session imported. Refresh usage to verify the sign-in."
+
+
+def _run_session_import(provider_id, source_instance_id, credential_store, session_importer):
+    if session_importer is None:
+        return _import_browser_session(provider_id, source_instance_id, credential_store=credential_store)
+    if source_instance_id == "default":
+        return session_importer(provider_id)
+    return session_importer(provider_id, source_instance_id)
 
 
 def _signed_out_hint(title: str, url: str) -> str:
@@ -257,12 +258,12 @@ def handle_provider_usage_action(
             f"'Import {title} browser session' on the same card."
         )
     if label.startswith("Import ") and "browser session" in label:
-        importer = session_importer or _import_browser_session
-        imported = (
-            importer(provider_id)
-            if source_instance_id == "default"
-            else importer(provider_id, source_instance_id)
-        )
+        try:
+            imported = _run_session_import(provider_id, source_instance_id, credential_store, session_importer)
+        except BrowserImportError as error:
+            return str(error)
+        except Exception:
+            return "Browser import failed. Choose the profile again in Settings > Providers, then Import again."
         if imported is not None:
             return imported
         clipboard = clipboard_reader()
@@ -278,8 +279,8 @@ def handle_provider_usage_action(
                         "token",
                         clipboard.strip(),
                     )
-            except Exception as exc:
-                return f"Could not store the {title} session: {exc}"
+            except Exception:
+                return f"Could not save the {title} session. Check the login keychain, then Import again."
             return f"{title} session imported — refreshing usage now."
         url = PROVIDER_TOKEN_PAGES.get(provider_id)
         if url is not None:
@@ -295,39 +296,20 @@ def handle_provider_usage_action(
             + (_signed_out_hint(title, url) if url is not None else "")
         )
     if label == f"Reconnect {title}" and provider_id in PROVIDER_TOKEN_PAGES:
-        # A wrong-but-plausible token wedged here forever: the label
-        # matched nothing, fell through to a bare refresh, and the same
-        # 401 came back -- the dead-button pattern all over again.
-        # Clear the bad credential and re-enter the import stage.
         try:
-            if source_instance_id == "default":
-                credential_store.delete(provider_id, "token")
-            else:
-                from .provider_instances import ProviderInstanceKey
-
-                credential_store.delete_for_instance(
-                    ProviderInstanceKey(provider_id, source_instance_id),
-                    "token",
-                )
+            reimported = _run_session_import(provider_id, source_instance_id, credential_store, session_importer)
+        except BrowserImportError as error:
+            return str(error)
         except Exception:
-            pass
-        # A rotated session is the COMMON case, not a wrong key: Devin
-        # reissues its web token routinely. Re-read the browser before
-        # sending the user off to hunt for a credential.
-        importer = session_importer or _import_browser_session
-        reimported = (
-            importer(provider_id)
-            if source_instance_id == "default"
-            else importer(provider_id, source_instance_id)
-        )
+            return "Browser import failed. Choose the profile again in Settings > Providers, then Import again."
         if reimported is not None:
             return reimported
         url = PROVIDER_TOKEN_PAGES.get(provider_id)
         if url is not None:
             url_opener(url)
         return (
-            f"The stored {title} session was rejected and has been "
-            f"cleared. Copy a fresh API key (page opened), then click "
+            f"The stored {title} session was rejected and was "
+            f"not replaced. Copy a fresh API key (page opened), then click "
             f"'Import {title} browser session'."
             + (_signed_out_hint(title, url) if url is not None else "")
         )
@@ -456,8 +438,8 @@ def handle_provider_usage_action(
                     source_instance_id=source_instance_id,
                 )
                 save_provider_usage_settings(updated, loaded=loaded)
-            except Exception as exc:
-                return f"Could not save the organization: {exc}"
+            except Exception:
+                return "Could not save the organization. Reload Settings > Providers and try again."
             return f"{title} organization set to {clipboard!r} — refreshing."
         return (
             f"Copy your {title} organization name, then click "

@@ -1147,7 +1147,26 @@ final class UsageCenterStore {
     /// Runs the staged flow behind the provider's current action label —
     /// clipboard import, reconnect, repair. The daemon's own message is
     /// surfaced verbatim; it may be a success note, not only an error.
+    private(set) var browserConnectRequests: [String: Int] = [:]
+
+    func didPresentBrowserConnection(_ identity: String) {
+        browserConnectRequests.removeValue(forKey: identity)
+    }
+
     func runProviderAction(_ provider: CoreProviderUsage) {
+        if provider.actionKind == "manage", provider.reason == "usage_consent_required" {
+            focus(provider: provider.identity)
+            actionSucceeded(.providerAction(provider.identity), message: "Turn on Show usage in the connection controls to allow this provider's usage requests.")
+            return
+        }
+        if provider.actionKind == "manage", ["devin", "factory"].contains(provider.id) {
+            browserConnectRequests[provider.identity, default: 0] += 1
+            return
+        }
+        if provider.actionKind == "sign_in" {
+            fixSignIn(provider)
+            return
+        }
         guard !managing.contains(provider.identity) else { return }
         managing.insert(provider.identity)
         Task { [weak self] in

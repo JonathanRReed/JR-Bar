@@ -658,7 +658,7 @@ def staged_bench(tmp_path: Path, provider: str, *, secrets=None, importer=None, 
     return b
 
 
-def test_a_rejected_devin_token_is_cleared_and_the_token_page_is_returned(tmp_path: Path) -> None:
+def test_a_rejected_devin_token_is_kept_until_replaced_and_the_token_page_is_returned(tmp_path: Path) -> None:
     b = staged_bench(tmp_path, "devin", secrets={("devin", "default", "token"): "rejected-token-value-000000"})
 
     result = b.fixer.sign_in(
@@ -666,16 +666,16 @@ def test_a_rejected_devin_token_is_cleared_and_the_token_page_is_returned(tmp_pa
     )
 
     assert result.outcome == "staged"
-    assert b.store.deletions() == [("delete", "devin", "token")], "the wedged credential is cleared"
-    assert ("devin", "default", "token") not in b.store.secrets
+    assert b.store.deletions() == []
+    assert ("devin", "default", "token") in b.store.secrets
     assert result.sign_in_url == "https://app.devin.ai/settings/api-keys"
-    assert "rejected and has been cleared" in result.message
+    assert "rejected and was not replaced" in result.message
     assert result.command is None
     # The card's own flow answered: nothing else ran.
     assert b.reread.calls == [] and b.terminal.calls == [] and b.run.calls == []
 
 
-def test_a_rejected_cursor_token_is_cleared_and_the_token_page_is_returned(tmp_path: Path) -> None:
+def test_a_rejected_cursor_token_is_kept_until_replaced_and_the_token_page_is_returned(tmp_path: Path) -> None:
     b = staged_bench(tmp_path, "cursor", secrets={("cursor", "default", "token"): "rejected-token-value-000000"})
 
     result = b.fixer.sign_in(
@@ -683,7 +683,7 @@ def test_a_rejected_cursor_token_is_cleared_and_the_token_page_is_returned(tmp_p
     )
 
     assert result.outcome == "staged"
-    assert b.store.deletions() == [("delete", "cursor", "token")]
+    assert b.store.deletions() == []
     assert result.sign_in_url == "https://cursor.com/settings"
     assert "Cursor session was rejected" in result.message
     assert b.reread.calls == [] and b.terminal.calls == []
@@ -694,6 +694,7 @@ def test_a_consented_browser_session_replaces_the_rejected_devin_token(tmp_path:
 
     def importer(provider, *rest):
         sessions.append((provider, *rest))
+        b.store.set(provider, "token", "synthetic-replacement-session")
         return "Signed in as your Firefox session — no API key needed. Refreshing usage now."
 
     b = staged_bench(
@@ -705,11 +706,12 @@ def test_a_consented_browser_session_replaces_the_rejected_devin_token(tmp_path:
     assert result.outcome == "staged"
     assert result.message.startswith("Signed in as your Firefox session")
     assert sessions == [("devin",)]
-    assert b.store.deletions() == [("delete", "devin", "token")]
+    assert b.store.deletions() == []
+    assert b.store.secrets[("devin", "default", "token")] == "synthetic-replacement-session"
     assert result.sign_in_url is None, "a session was taken: there is no page to open"
 
 
-def test_a_second_devin_account_clears_only_its_own_token(tmp_path: Path) -> None:
+def test_a_failed_second_devin_import_preserves_both_accounts(tmp_path: Path) -> None:
     b = staged_bench(
         tmp_path,
         "devin",
@@ -719,7 +721,8 @@ def test_a_second_devin_account_clears_only_its_own_token(tmp_path: Path) -> Non
     result = b.fixer.sign_in("devin", "work", reason_code="authentication_required", action_label="Reconnect Devin")
 
     assert result.outcome == "staged"
-    assert b.store.deletions() == [("delete_for_instance", "devin", "work", "token")]
+    assert b.store.deletions() == []
+    assert ("devin", "work", "token") in b.store.secrets
     assert ("devin", "default", "token") in b.store.secrets, "the main account's token is untouched"
 
 

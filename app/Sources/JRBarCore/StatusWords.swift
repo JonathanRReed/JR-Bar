@@ -120,7 +120,11 @@ public enum UsageStatus: String, CaseIterable, Sendable {
     public static func provider(_ provider: CoreProviderUsage) -> Self {
         if provider.incident?.isEmpty == false { return .incident }
         if provider.usageIsOff || ["disabled", "off"].contains(provider.state) { return .off }
-        if provider.isSignedOut { return .needsSignIn }
+        if provider.isSignedOut || ["sign_in", "resign_in"].contains(provider.actionKind ?? "") { return .needsSignIn }
+        if provider.actionKind == "manage" {
+            let consentReasons = ["usage_consent_required", "browser_consent_required", "browser_refresh_consent_required"]
+            return consentReasons.contains(provider.reason ?? "") ? .needsConsent : .needsSignIn
+        }
         // The daemon's answer that this account has no quota ("no Go
         // subscription", "this plan reports none") is neutral, whatever
         // state carried it.

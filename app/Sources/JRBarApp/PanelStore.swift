@@ -1504,8 +1504,17 @@ final class PanelStore {
     func runUsageAction(_ usage: CoreProviderUsage, action: String? = nil) {
         Task { [weak self] in
             guard let self else { return }
-            do { self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance, action: action)) }
-            catch { self.show(toast: MonitorWords.reason(error)) }
+            do {
+                if action == "sign_in" {
+                    let result = try await self.core.signInProvider(usage.id, instance: usage.instance)
+                    self.show(toast: result.message)
+                    if let address = result.signInURL, let url = URL(string: address) {
+                        DesktopServices.automatic.open(url)
+                    }
+                } else {
+                    self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance, action: action))
+                }
+            } catch { self.show(toast: MonitorWords.reason(error)) }
         }
     }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }

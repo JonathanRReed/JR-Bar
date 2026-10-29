@@ -12,6 +12,9 @@ GONE_READING_SECONDS = 7 * 24 * 60 * 60
 _CAUSES = {
     "account_identity_unavailable": "{label} did not say which account this is. Retry in a moment.",
     "authentication_required": "{label} needs you to sign in again.",
+    "browser_session_not_imported": "Import a {label} browser session in Settings > Providers.",
+    "browser_consent_required": "Choose a {label} browser profile in Settings > Providers and allow access.",
+    "browser_refresh_consent_required": "Reconnect {label} in Settings > Providers to allow browser updates.",
     "browser_session_expired": "The {label} browser session expired. Reconnect it in Settings > Providers.",
     "claude_keychain_access_lost": "Keychain access lost after Claude renewed its sign-in. Allow it again.",
     "cleartext_refused": "{label}'s usage address is not secure, so JR-Bar did not ask it.",
@@ -83,7 +86,9 @@ _NEEDS_PERSON_REASONS = {
     "authentication_required", "cli_session_changed", "cli_session_unavailable", "credential_changed",
     "usage_consent_required", "usage_connection_required", "usage_permission_missing",
     "web_session_unavailable", "invalid_web_session", "web_session_changed", "web_session_account_changed",
-    "browser_session_expired", "token_refresh_failed", "claude_keychain_access_lost",
+    "browser_session_expired", "browser_session_not_imported", "browser_consent_required",
+    "browser_refresh_consent_required", "token_refresh_failed", "claude_keychain_access_lost",
+    "cliproxy_account_signed_out", "cliproxy_key_missing", "cliproxy_key_rejected",
 }
 
 #: Reasons that say this account has no quota to read: an answer, not a
@@ -94,29 +99,34 @@ NO_QUOTA_REASONS = frozenset({
     "quota_license_required", "code_assist_tier_ineligible", "cli_default_account_only",
 })
 
-#: Providers whose row action only asks for a refresh: the app cannot run a
-#: CLI login or grant consent from the panel, so the instruction goes in the
-#: status sentence and the button says Retry.
-_REFRESH_ONLY = {"factory", "kilo", "kimi", "kiro"}
-#: The sign-in command each refresh-only CLI provider names.
-_CLI_SIGN_IN = {"kiro": "kiro-cli login", "kilo": "kilo auth login", "kimi": "kimi login"}
-
-
 def status_sentence(reason: str | None, label: str) -> str:
     """The plain sentence for a reason code; never the code itself."""
     template = _CAUSES.get(reason or "")
     return template.format(label=label) if template else ATTENTION
 
 
-def _refresh_only_fix(provider_id: str, state: str, reason: str | None, label: str) -> tuple[str | None, str | None]:
-    """(status sentence, honest action) for a refresh-only provider's row."""
-    if state in {"disabled", "unsupported"} or reason in {"usage_consent_required", "disabled"}:
-        return None, None
-    command = _CLI_SIGN_IN.get(provider_id)
-    if command and (state == "needs_sign_in" or reason in _NEEDS_PERSON_REASONS):
-        extra = " or add a Kilo API key in Settings > Providers" if provider_id == "kilo" else ""
-        return f"Run {command} in Terminal{extra}, then Retry.", "Retry"
-    return None, "Retry"
+def sign_in_action(provider_id: str, state: str, reason: str | None) -> tuple[str, str] | None:
+    """One action contract for every provider and every sign-in/consent failure."""
+    if state in {"disabled", "unsupported"} or reason in NO_QUOTA_REASONS or reason == "usage_not_turned_on":
+        return None
+    if state not in _NEEDS_PERSON_STATES and reason not in _NEEDS_PERSON_REASONS:
+        return None
+    label = provider_descriptor(provider_id).label
+    if reason and reason.startswith("cliproxy_"):
+        return "Reconnect CLIProxyAPI account", "manage"
+    if provider_id == "claude" and reason == "claude_keychain_access_lost":
+        return "Allow Claude Keychain access", "resign_in"
+    if reason == "usage_consent_required":
+        return f"Allow {label} usage", "manage"
+    if provider_id == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported"}:
+        action = "Enable Cursor browser access" if reason == "browser_consent_required" else "Import Cursor browser session"
+        return action, "sign_in"
+    if provider_id in {"devin", "factory"}:
+        verb = "Import" if reason in {"browser_consent_required", "browser_session_not_imported"} else "Reconnect"
+        return f"{verb} {label} browser session", "manage"
+    if state == "needs_consent" or provider_id in {"kimi", "kilo", "cliproxy"}:
+        return f"Connect {label}", "manage"
+    return f"Sign in to {label}", "sign_in"
 
 
 def availability_document(snapshot, *, now: float, installed: bool | None, hidden: bool = False) -> dict:
@@ -133,6 +143,10 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
         installed = None
     if state == "ready" and measured:
         # A live quota answer is stronger evidence than a local app marker.
+        installed = None
+    person_action = sign_in_action(snapshot.provider_id, state, reason)
+    # A browser-backed or remote account can need sign-in without a local CLI.
+    if person_action is not None:
         installed = None
     if installed is False:
         if not measured:
@@ -157,12 +171,12 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
                       status_text=status_sentence(reason or state, label))
     elif state == "ready" and any(lane.reset_at is not None and lane.reset_at <= now for lane in snapshot.lanes):
         fields.update(status_text="Quota window reset since the last reading", action="Retry")
-    if snapshot.provider_id in _REFRESH_ONLY and snapshot.action_label not in {None, "Retry", "Retry later"} \
-            and fields["action_kind"] is None:
-        instruction, action = _refresh_only_fix(snapshot.provider_id, state, reason, label)
-        if instruction:
-            fields["status_text"] = instruction
-        elif state == "unsupported" and reason:
+    if person_action is not None:
+        action, kind = person_action
+        fields.update(action=action, action_kind=kind)
+    elif snapshot.provider_id in {"factory", "kilo", "kimi", "kiro"} \
+            and snapshot.action_label not in {None, "Retry", "Retry later"}:
+        fields["action"] = None if state in {"disabled", "unsupported"} else "Retry"
+        if state == "unsupported" and reason:
             fields["status_text"] = status_sentence(reason, label)
-        fields["action"] = action
     return fields

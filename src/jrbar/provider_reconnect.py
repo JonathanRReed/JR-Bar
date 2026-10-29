@@ -1233,18 +1233,15 @@ def reconnect_provider(
             return ResignInResult(provider_id, "Rescanning Codex CLI activity now.")
 
     if provider_id == "devin":
+        from .provider_browser_access import BrowserImportError, _run_session_import
+
         imported = None
         try:
-            from .provider_browser_access import _import_browser_session
-
-            importer = session_importer or _import_browser_session
-            imported = (
-                importer(provider_id)
-                if source_instance_id == "default"
-                else importer(provider_id, source_instance_id)
-            )
+            imported = _run_session_import(provider_id, source_instance_id, store, session_importer)
+        except BrowserImportError as error:
+            return ResignInResult(provider_id, str(error), outcome=RepairOutcome.UNAVAILABLE)
         except Exception:
-            imported = None
+            return ResignInResult(provider_id, "Devin browser import failed. Choose the profile again in Settings > Providers, then Import again.", outcome=RepairOutcome.UNAVAILABLE)
         if imported is not None:
             return ResignInResult(provider_id, imported, changed=True)
         return ResignInResult(
