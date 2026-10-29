@@ -41,6 +41,7 @@ def test_usage_descriptions_and_resource_entitlements_are_complete():
 def test_both_builders_preserve_the_source_privacy_strings(tmp_path, builder):
     source = (ROOT / builder).read_text()
     assert "write_privacy_usage.py" in source
+    assert not re.search(r"NS\w+UsageDescription", source), "keep every usage string in privacy_usage.plist"
     assert not re.search(r'PlistBuddy.*NS\w+UsageDescription', source)
     target = tmp_path / "Info.plist"
     target.write_bytes(plistlib.dumps({"CFBundleName": "Synthetic app"}))

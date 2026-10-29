@@ -488,7 +488,7 @@ struct SetupPermissionRow: View {
     private var dotColor: Color {
         switch status {
         case .granted: return Tone.done.color
-        case .needed, .denied: return Tone.neutral.color
+        case .needed, .denied, .restricted, .writeOnly: return Tone.neutral.color
         case .unavailable, .unknown: return Color(nsColor: .tertiaryLabelColor)
         }
     }

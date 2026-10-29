@@ -914,7 +914,8 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     )
     # Wi-Fi rules read the network name, which macOS gates behind Location.
     descriptions = plistlib.loads((REPO_ROOT / "packaging/privacy_usage.plist").read_bytes())
-    assert {key: info[key] for key in descriptions} == descriptions
+    assert {key: value for key, value in info.items()
+            if key.startswith("NS") and key.endswith("UsageDescription")} == descriptions
     assert info["NSLocationUsageDescription"] == info["NSLocationWhenInUseUsageDescription"]
     assert "never read or sent" in info["NSLocationUsageDescription"]
     entitlements = plistlib.loads((packaging_dir / "entitlements.plist").read_bytes())
@@ -929,7 +930,8 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (daemon / "Contents" / "Frameworks" / "libpython3.12.dylib").is_file()
     daemon_info = plistlib.loads((daemon / "Contents" / "Info.plist").read_bytes())
     assert daemon_info["CFBundleIdentifier"] == "com.jonathanreed.jrbar.core"
-    assert {key: daemon_info[key] for key in descriptions} == descriptions
+    assert {key: value for key, value in daemon_info.items()
+            if key.startswith("NS") and key.endswith("UsageDescription")} == descriptions
     assert daemon_info["LSUIElement"] is True
     assert daemon_info["LSMinimumSystemVersion"] == "26.0"
     assert daemon_info["CFBundleShortVersionString"] == "0.5.0"

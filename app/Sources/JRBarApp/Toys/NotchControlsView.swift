@@ -34,7 +34,7 @@ extension NotchToy {
                 let card = self.cardModel
                 Task { @MainActor in
                     if on { await SetupModel.requestCalendar() }
-                    calendar.sync(enabled: on && card.pinned)
+                    calendar.sync(enabled: self.settings.calendar && card.pinned)
                 }
             })
     }
@@ -72,7 +72,7 @@ extension NotchToy {
                 let card = self.cardModel
                 Task { @MainActor in
                     if on { await SetupModel.requestReminders() }
-                    reminders.sync(enabled: on && card.pinned)
+                    reminders.sync(enabled: self.settings.reminders && card.pinned)
                 }
             })
     }
@@ -470,7 +470,9 @@ struct NotchControlsView: View {
                                    granted: String) -> String {
         switch status {
         case .granted: return granted
-        case .denied, .unavailable:
+        case .writeOnly:
+            return "Full access is needed. Turn on to open System Settings."
+        case .denied, .restricted, .unavailable:
             return "\(app) access is off — turning this on opens System Settings, or allow it in Setup."
         default:
             return "Turning this on asks for \(app) access once; Setup has the same row."

@@ -1091,19 +1091,28 @@ struct CalendarGlowSection: View {
 struct EventKitAccessNote: View {
     let entity: EKEntityType
 
-    private var status: EKAuthorizationStatus { EKEventStore.authorizationStatus(for: entity) }
+    @ViewState private var status: EKAuthorizationStatus = .notDetermined
 
     var body: some View {
-        if Self.isRefused(status) {
-            StatusBanner(entity == .event ? "Calendar access is off" : "Reminders access is off",
-                         detail: "Allow access in System Settings to show these events.") {
-                Button("Open Settings") {
-                    let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-                        DesktopServices.automatic.open(url)
+        Group {
+            if Self.isRefused(status) {
+                StatusBanner(entity == .event ? "Calendar access is off" : "Reminders access is off",
+                             detail: status == .writeOnly ? "Full access is needed to read these events."
+                                : "Allow access in System Settings to show these events.") {
+                    Button("Open Settings") {
+                        _ = Task { @MainActor in
+                            await SetupModel.act(on: entity == .event ? .calendar : .reminders)
+                        }
                     }
                 }
             }
+        }
+        .task { status = EKEventStore.authorizationStatus(for: entity) }
+        .onReceive(NotificationCenter.default.publisher(for: PermissionRequest.didChange)) { _ in
+            status = EKEventStore.authorizationStatus(for: entity)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            status = EKEventStore.authorizationStatus(for: entity)
         }
     }
 

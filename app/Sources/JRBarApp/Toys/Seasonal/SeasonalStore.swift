@@ -1,5 +1,5 @@
 @preconcurrency import EventKit
-import Foundation
+import AppKit
 import JRBarCore
 import Observation
 
@@ -114,7 +114,8 @@ final class SeasonalStore {
 
     func start() {
         guard !isRunning else { return }
-        let names: [Notification.Name] = [.NSCalendarDayChanged, .EKEventStoreChanged]
+        let names: [Notification.Name] = [.NSCalendarDayChanged, .EKEventStoreChanged,
+                                         PermissionRequest.didChange, NSApplication.didBecomeActiveNotification]
         for name in names {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }

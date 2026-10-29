@@ -14,7 +14,8 @@ struct NotchCardSourceStartTests {
         func count(_ source: String) -> Int { lock.withLock { values[source, default: 0] } }
     }
 
-    @Test func oneReadPerSourceOnEachOpen() {
+    @Test(arguments: PermissionRequestTests.permissions)
+    func oneReadPerSourceOnEachOpenAndPermissionRefresh(permission: SetupPermission) {
         let calls = Calls()
         let power = AlcovePowerState(hasBattery: false, onAC: true, charging: false,
                                      percent: 0, fullyCharged: false)
@@ -29,7 +30,9 @@ struct NotchCardSourceStartTests {
         utility.readOutputs = { ([], nil) }
         utility.watchOutputs = { _ in {} }
         let tray = ShelfTrayModel(defaults: ScratchDefaults.open(ScratchDefaults.suiteName("source-starts")))
-        let model = NotchCardModel(timers: ShelfTimerModel.scratch(), tray: tray, utility: utility)
+        let center = NotificationCenter()
+        let model = NotchCardModel(timers: ShelfTimerModel.scratch(), tray: tray, utility: utility,
+                                  permissionCenter: center)
         model.mediaEnabled = { false }
         model.mirrorEnabled = { false }
         model.readPrivacy = { calls.note("privacy"); return nil }
@@ -39,9 +42,18 @@ struct NotchCardSourceStartTests {
         for opened in 1...2 {
             model.pinned = true
             for source in ["privacy", "calendar", "reminders"] {
-                #expect(calls.count(source) == opened, "\(source) starts once per open")
+                #expect(calls.count(source) == (opened - 1) * 3 + 1, "\(source) starts once per open")
+            }
+            center.post(name: PermissionRequest.didChange, object: permission)
+            for source in ["calendar", "reminders"] {
+                #expect(calls.count(source) == (opened - 1) * 3 + 2)
+            }
+            center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+            for source in ["calendar", "reminders"] {
+                #expect(calls.count(source) == opened * 3)
             }
             model.pinned = false
+            center.post(name: PermissionRequest.didChange, object: nil)
         }
     }
 }

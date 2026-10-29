@@ -29,6 +29,21 @@ struct ShelfMirrorStateTests {
         while model.state != state { await Task.yield() }
     }
 
+    @Test("a permission refresh recovers a visible mirror without reopening it", .timeLimit(.minutes(2)))
+    func refreshAfterExternalGrant() async {
+        let driver = Driver()
+        let model = ShelfMirrorModel(driver: driver, authorization: { .denied },
+                                     requestAccess: { _ in Issue.record("must not ask again") })
+        defer { model.sync(enabled: false) }
+        model.sync(enabled: true)
+        #expect(model.state == .denied)
+        model.authorization = { .authorized }
+        model.sync(enabled: true)
+        #expect(model.state == .starting)
+        await wait(model, for: .live)
+        #expect(driver.counts.starts == 1)
+    }
+
     @Test("an authorized open shows starting before the preview becomes live", .timeLimit(.minutes(2)))
     func startingThenLive() async {
         let driver = Driver()
