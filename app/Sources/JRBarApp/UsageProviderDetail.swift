@@ -40,11 +40,11 @@ struct UsageProviderDetail: View {
                 }
             }
             if let row = store.row(for: provider.identity) {
-                if provider.actionKind == "manage" {
-                    UsageProviderConnection(provider: provider, store: store, row: row)
+                if provider.actionKind == "manage" || connectionOwnsAction {
+                    connection(row)
                 } else {
                     DisclosureGroup("Connection") {
-                        UsageProviderConnection(provider: provider, store: store, row: row)
+                        connection(row)
                     }
                 }
             }
@@ -139,7 +139,19 @@ struct UsageProviderDetail: View {
                       accent: accent, style: .detail, pace: pace,
                       forecasts: Dictionary(inspections.map { ($0.window.id, $0.displayForecast) }, uniquingKeysWith: { first, _ in first }),
                       onInspect: { inspectedWindow = $0 },
-                      onAction: { store.runProviderAction(provider) }, onRetry: quotaRetry)
+                      onAction: connectionOwnsAction ? nil : { store.runProviderAction(provider) }, onRetry: quotaRetry)
+    }
+
+    var connectionOwnsAction: Bool {
+        guard let row = store.row(for: provider.identity) else { return false }
+        if row.usageConsent != nil, provider.usageIsOff || provider.reason == "usage_consent_required" { return true }
+        return ["factory", "devin", "kimi", "kilo"].contains(provider.id)
+            && (provider.actionKind == "manage" || provider.isSignedOut)
+    }
+
+    private func connection(_ row: ProviderRow) -> some View {
+        UsageProviderConnection(provider: provider, store: store, row: row,
+            showsRecovery: provider.action?.isEmpty != false && !connectionOwnsAction)
     }
 
     private var pace: [String: Double] { store.quotaPace(for: provider) }

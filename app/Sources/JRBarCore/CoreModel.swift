@@ -733,6 +733,13 @@ public final class CoreModel {
     }
 
     @discardableResult
+    public func connectFactoryAPIKey(_ secret: String, instance: String = "default") async throws -> ProviderCredentialReceipt {
+        let normalized = try Self.normalizedProviderSecret(secret)
+        return try await providerCredentialCommand("connect_factory_api_key", provider: "factory",
+            account: "api-key", instance: instance, secret: normalized, available: true)
+    }
+
+    @discardableResult
     public func deleteProviderCredential(
         _ provider: String, account: String, instance: String = "default"
     ) async throws -> ProviderCredentialReceipt {
@@ -762,7 +769,8 @@ public final class CoreModel {
             "provider": .string(provider), "account": .string(account), "instance": .string(instance),
         ]
         if let secret { args["secret"] = .string(secret) }
-        let reply = try await send(command, args: args)
+        let timeout: TimeInterval? = command == "connect_factory_api_key" ? 75 : nil
+        let reply = try await send(command, args: args, timeout: timeout)
         guard reply.ok else {
             throw CoreReplyError(code: reply.error?.code ?? "credential_unavailable")
         }

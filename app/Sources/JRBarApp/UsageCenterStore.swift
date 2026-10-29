@@ -1400,11 +1400,13 @@ final class UsageCenterStore {
         // A provider that is off says so on its card; the line keeps only
         // who the account is.
         if provider.usageIsOff { return parts.joined(separator: " · ") }
-        // A source that is not ready carries the daemon's fix-it hint
-        // ("Reconnect Claude"); that says more than repeating the badge's
-        // word. The reason code stays out: the status sentence says why.
+        // Recovery actions belong to buttons, never to the account's name.
         if let action = provider.action, !action.isEmpty {
-            parts.append(action)
+            if parts.isEmpty {
+                let instance = provider.instance ?? "default"
+                let fallback = instance == "default" ? "Default" : UsageSourceNotes.instanceBadge(instance)
+                parts.append(provider.instanceLabel ?? fallback)
+            }
             return parts.joined(separator: " · ")
         }
         // With no quota source there is no figure for "Official" to vouch

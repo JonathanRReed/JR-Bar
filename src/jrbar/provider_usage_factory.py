@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlencode
@@ -146,6 +147,53 @@ def parse_factory_usage(payload, *, observed_at: float, auth: object | None = No
                      account_plan=plan, account_discriminator=discriminator)
 
 
+def _factory_headers(secret):
+    return {"Authorization": f"Bearer {secret}", "Accept": "application/json",
+            "Content-Type": "application/json", "Origin": "https://app.factory.ai",
+            "Referer": "https://app.factory.ai/", "x-factory-client": "web-app"}
+
+
+def _billing_usage(auth, headers, *, observed_at, http_json):
+    if not isinstance(auth, dict):
+        raise ValueError("invalid auth response")
+    payload = http_json("GET", f"{_BASE}/billing/limits", headers=headers)
+    if isinstance(payload, dict) and payload.get("usesTokenRateLimitsBilling") is False:
+        query = {"useCache": "true"}
+        user = auth.get("userProfile")
+        user_id = _text(user.get("id")) if isinstance(user, dict) else None
+        if user_id is not None:
+            query["userId"] = user_id
+        legacy = http_json("GET", f"{_BASE}/organization/subscription/usage?{urlencode(query)}", headers=headers)
+        if not isinstance(legacy, dict):
+            raise ValueError("invalid legacy response")
+        payload = {**legacy, "usesTokenRateLimitsBilling": False}
+    return parse_factory_usage(payload, observed_at=observed_at, auth=auth)
+
+
+def validate_factory_api_key(secret, *, http_json=None):
+    """Probe only the supplied key after the person's explicit Save action."""
+    from .core_server import CommandError
+
+    http_json = http_json or _default_http_json
+    headers = _factory_headers(secret)
+    try:
+        auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
+        auth = _authenticated_identity(auth, secret)
+        if _identity(auth)[0] is None:
+            raise ValueError("missing account identity")
+        _billing_usage(auth, headers, observed_at=time.time(), http_json=http_json)
+    except ProviderHttpError as error:
+        code = {401: "authentication_required", 403: "usage_access_denied",
+                429: "rate_limited"}.get(error.status, "network_unavailable")
+        if error.reason in {"invalid_json", "response_too_large"}:
+            code = "invalid_response"
+        raise CommandError(code, "Factory key could not be validated") from None
+    except (ValueError, TypeError, OverflowError):
+        raise CommandError("invalid_response", "Factory returned an unreadable usage response") from None
+    except Exception:
+        raise CommandError("network_unavailable", "Factory could not be reached") from None
+
+
 def collect_factory(preference, *, observed_at, credentials, http_json=_default_http_json, _fallback_attempted=False) -> ProviderUsageSnapshot:
     """Read only the connected profile after its usage consent is enabled."""
     def failure(state, reason, action):
@@ -190,9 +238,7 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
         if not session.get("access_token"):
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "browser_token_unavailable", "Add Factory API key")
-    headers = {"Authorization": f"Bearer {session.get('access_token', '') if session is not None else key.secret}", "Accept": "application/json",
-               "Content-Type": "application/json", "Origin": "https://app.factory.ai",
-               "Referer": "https://app.factory.ai/", "x-factory-client": "web-app"}
+    headers = _factory_headers(session.get("access_token", "") if session is not None else key.secret)
     try:
         if session is not None:
             may_read_browser = background_repair_allowed(
@@ -237,20 +283,7 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
         else:
             auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             auth = _authenticated_identity(auth, key.secret)
-        if not isinstance(auth, dict):
-            raise ValueError("invalid auth response")
-        payload = http_json("GET", f"{_BASE}/billing/limits", headers=headers)
-        if isinstance(payload, dict) and payload.get("usesTokenRateLimitsBilling") is False:
-            query = {"useCache": "true"}
-            user = auth.get("userProfile")
-            user_id = _text(user.get("id")) if isinstance(user, dict) else None
-            if user_id is not None:
-                query["userId"] = user_id
-            legacy = http_json("GET", f"{_BASE}/organization/subscription/usage?{urlencode(query)}", headers=headers)
-            if not isinstance(legacy, dict):
-                raise ValueError("invalid legacy response")
-            payload = {**legacy, "usesTokenRateLimitsBilling": False}
-        result = parse_factory_usage(payload, observed_at=observed_at, auth=auth)
+        result = _billing_usage(auth, headers, observed_at=observed_at, http_json=http_json)
         if session is not None:
             with SESSION_LOCK:
                 current = _credential(credentials, "factory", "web-session")

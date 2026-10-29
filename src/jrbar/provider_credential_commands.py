@@ -11,7 +11,7 @@ from .provider_usage_platform import provider_descriptor
 from .provider_usage_settings import load_provider_usage_settings
 
 
-def change_credential(args, credentials, *, delete=False):
+def change_credential(args, credentials, *, delete=False, validate=None):
     provider = args.get("provider")
     account = args.get("account")
     instance = args.get("instance", "default")
@@ -47,6 +47,8 @@ def change_credential(args, credentials, *, delete=False):
             valid = False
         if not valid:
             raise CommandError("invalid_args", "secret must be a nonempty single line of at most 64 KiB")
+        if validate is not None:
+            validate(secret)
     result = {"provider": provider, "instance": instance, "account": account}
     try:
         if not delete:

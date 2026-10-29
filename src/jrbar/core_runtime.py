@@ -2773,6 +2773,22 @@ def _cmd_set_provider_credential(self, args):
         raise CommandError("credential_unavailable", "provider credential storage is unavailable") from None
 
 
+@command("connect_factory_api_key", main_thread=False)
+def _cmd_connect_factory_api_key(self, args):
+    from .provider_credential_commands import change_credential
+    from .provider_usage_factory import validate_factory_api_key
+
+    try:
+        return change_credential(
+            {**args, "provider": "factory", "account": "api-key"},
+            _provider_credentials(self), validate=validate_factory_api_key,
+        )
+    except CommandError:
+        raise
+    except Exception:
+        raise CommandError("credential_unavailable", "provider credential storage is unavailable") from None
+
+
 @command("delete_provider_credential", main_thread=False)
 def _cmd_delete_provider_credential(self, args):
     from .provider_credential_commands import change_credential

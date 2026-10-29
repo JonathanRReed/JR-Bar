@@ -227,7 +227,7 @@ struct ProviderSignInRecoveryTests {
              "credentials":[{"account":"web-session","available":true}],
              "usage_consent":{"granted":true,"question":"Show Factory usage?",
               "summary":"JR-Bar will ask Factory for your subscription usage limits with the API key or browser access token you connect. JR-Bar never uses a browser refresh token. Nothing else is sent.",
-              "detail":"Asks api.factory.ai for Standard and Core usage windows with your saved API key first, or a browser access token. Browser storage is read only for an explicit import or an approved background repair. JR-Bar leaves token renewal to the browser.",
+              "detail":"Asks api.factory.ai for Standard and Core usage windows with your saved API key first. An older imported access token can still be used while valid; a previously approved browser profile may repair it. JR-Bar never uses browser refresh tokens or Droid credentials. Save API key checks the key once; this switch controls ongoing usage requests.",
               "hosts":["api.factory.ai"],"credential":"your Factory API key or explicitly imported browser access token in JR-Bar Keychain"}}
             """#.utf8))
             let connection = UsageProviderConnection(provider: reading, store: store, row: providerRow)

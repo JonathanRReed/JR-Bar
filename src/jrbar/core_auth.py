@@ -141,6 +141,7 @@ _PRIVILEGED_COMMANDS: Final = (
     "factory_session_import",
     "factory_session_disconnect",
     "set_provider_credential",
+    "connect_factory_api_key",
     "delete_provider_credential",
     "provider_consent",
     "provider_add_instance",

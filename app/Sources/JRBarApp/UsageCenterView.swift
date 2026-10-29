@@ -138,6 +138,7 @@ struct UsageProviderConnection: View {
     let provider: CoreProviderUsage
     @Bindable var store: UsageCenterStore
     let row: ProviderRow
+    var showsRecovery = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -165,7 +166,7 @@ struct UsageProviderConnection: View {
                 .controlSize(.small)
                 .toggleStyle(.checkbox)
                 .help("Enable or disable this provider's quota collection")
-                ProviderFixControls(provider: provider, store: store)
+                if showsRecovery { ProviderFixControls(provider: provider, store: store) }
                 Spacer()
                 if row.supportsInstances {
                     AddAccountButton(providerID: provider.id, row: row, store: store)
