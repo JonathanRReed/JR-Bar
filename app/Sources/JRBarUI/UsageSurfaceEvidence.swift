@@ -9,6 +9,19 @@ public struct UsageGaugeEvidence: PreferenceKey {
     }
 }
 
+public enum UsageGaugeCellState: String, Decodable, Sendable {
+    case empty, dash, reading
+    case ownCell = "own-cell"
+}
+
+/// Column evidence distinguishes a missing window from a missing reading.
+public struct UsageGaugeCellEvidence: PreferenceKey {
+    public static let defaultValue: [String: UsageGaugeCellState] = [:]
+    public static func reduce(value: inout [String: UsageGaugeCellState], nextValue: () -> [String: UsageGaugeCellState]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, last in last })
+    }
+}
+
 public struct UsageForecastEvidence: PreferenceKey {
     public static let defaultValue: [String: UsageForecast] = [:]
     public static func reduce(value: inout [String: UsageForecast], nextValue: () -> [String: UsageForecast]) {

@@ -18,6 +18,7 @@ struct UsageWindowMatrixTests {
         var name: String
         var provider: CoreProviderUsage
         var placements: [String: UsageWindowPlacement]
+        var panel_cells: [String: UsageGaugeCellState]
     }
 
     static func fixture() throws -> Matrix {
@@ -27,6 +28,10 @@ struct UsageWindowMatrixTests {
 
     @Test func everyParserWindowLandsAndRenders() async throws {
         let matrix = try Self.fixture()
+        let overviewNames = UsageOverviewTable.windowNames(providers: matrix.cases.map(\.provider),
+            now: matrix.now, connected: true)
+        let panel = PanelCompositionTests.store(usage: matrix.cases.map(\.provider))
+        panel.now = Date(timeIntervalSince1970: matrix.now)
         for entry in matrix.cases {
             let provider = entry.provider
             for window in provider.windows {
@@ -34,25 +39,31 @@ struct UsageWindowMatrixTests {
             }
             let names = UsageOverviewTable.windowNames(providers: [provider], now: matrix.now, connected: true)
             #expect(provider.windows.allSatisfy { names.contains($0.overviewColumn) })
-            let panel = PanelCompositionTests.store(usage: [provider])
-            panel.now = Date(timeIntervalSince1970: matrix.now)
             let row = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider)
             for width: CGFloat in [320, 372] {
                 let rendered = await evidence(row.frame(width: width))
                 let measured = provider.windows.filter { $0.usedPct != nil }
                 for window in measured {
-                    #expect(rendered[window.id]?.percentUsed == window.usedPct, "\(entry.name): \(window.id) at \(width)")
+                    #expect(rendered.readings[window.id]?.percentUsed == window.usedPct, "\(entry.name): \(window.id) at \(width)")
                 }
-                if !measured.isEmpty { #expect(!rendered.isEmpty, "\(entry.name) must not show only dashes") }
+                if !measured.isEmpty { #expect(!rendered.readings.isEmpty, "\(entry.name) must not show only dashes") }
+                for column in ["5h", "7d"] {
+                    #expect((rendered.cells[column] ?? .empty) == entry.panel_cells[column], "\(entry.name): \(column) at \(width)")
+                }
                 let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
                 #expect(host.fittingSize.width == width)
                 #expect(host.fittingSize.height <= PanelComposition.usageHeight(provider), "\(entry.name): \(host.fittingSize.height)")
             }
             let overview = UsageGaugeRow(provider: provider, name: provider.id, now: matrix.now,
-                style: .compact, windowNames: names)
-            let overviewReadings = await evidence(overview.frame(width: 180 + CGFloat(names.count) * 100))
+                style: .compact, windowNames: overviewNames)
+            let overviewReadings = await evidence(overview.frame(width: 180 + CGFloat(overviewNames.count) * 120))
             for window in provider.windows where window.usedPct != nil {
-                #expect(overviewReadings[window.id]?.percentUsed == window.usedPct)
+                #expect(overviewReadings.readings[window.id]?.percentUsed == window.usedPct)
+            }
+            for column in overviewNames {
+                let window = provider.windows.first { $0.name == column || $0.overviewColumn == column }
+                let expected: UsageGaugeCellState = window.map { $0.usedPct == nil ? .dash : .reading } ?? .empty
+                #expect((overviewReadings.cells[column] ?? .empty) == expected, "\(entry.name): overview \(column)")
             }
             let headline = provider.headlineWindow
             #expect(UsageCenterStore.primaryWindow(of: provider) == headline)
@@ -62,9 +73,22 @@ struct UsageWindowMatrixTests {
             if let headline {
                 #expect(lines.count == 1)
                 #expect(lines[0].contains(headline.placementLabel))
-                #expect(lines[0].contains(headline.percentText))
+                let amount = headline.usedPct == nil ? UsageStatus.noReading.word : headline.percentText
+                #expect(lines[0].contains(amount))
             } else { #expect(lines.isEmpty) }
         }
+    }
+
+    @Test func grokMainRowHasItsCreditsAndNoDash() async throws {
+        let matrix = try Self.fixture()
+        let grok = try #require(matrix.cases.first { $0.provider.id == "grok" }?.provider)
+        let row = UsageGaugeRow(provider: grok, name: "Grok", now: matrix.now,
+            style: .panel, windowNames: ["5h", "7d"])
+        let rendered = await evidence(row.frame(width: 320))
+        #expect(rendered.cells == ["5h": .empty, "7d": .ownCell])
+        #expect(!rendered.cells.values.contains(.dash))
+        #expect(rendered.readings["credits"]?.percentUsed == grok.windows.first?.usedPct)
+        #expect(UsageGaugeRow.panelAdditionalHeight(grok) == 16)
     }
 
     @Test func resetCountdownDoesNotImplyDurationAndUnknownStaysUnknown() {
@@ -83,9 +107,15 @@ struct UsageWindowMatrixTests {
         #expect(UsageWindowLabel.column("Included plan") == "Included plan")
     }
 
-    private func evidence<V: View>(_ view: V) async -> [String: UsageGaugeReading] {
+    private struct Evidence {
         var readings: [String: UsageGaugeReading] = [:]
-        let root = view.onPreferenceChange(UsageGaugeEvidence.self) { readings = $0 }
+        var cells: [String: UsageGaugeCellState] = [:]
+    }
+
+    private func evidence<V: View>(_ view: V) async -> Evidence {
+        var result = Evidence()
+        let root = view.onPreferenceChange(UsageGaugeEvidence.self) { result.readings = $0 }
+            .onPreferenceChange(UsageGaugeCellEvidence.self) { result.cells = $0 }
             .environment(\.renderSnapshot, true)
         let host = NSHostingView(rootView: root)
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 1000, height: 1000),
@@ -101,6 +131,6 @@ struct UsageWindowMatrixTests {
                 DispatchQueue.main.async { continuation.resume() }
             }
         }
-        return readings
+        return result
     }
 }
