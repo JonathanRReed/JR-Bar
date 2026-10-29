@@ -65,11 +65,17 @@ extension AquariumView {
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
-            if let away = toy?.awayNotice {
+            if let away = awayNotice {
                 awayBanner(away)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.tankSpace)) } action: {
+                        labelObstacles["away"] = $0
+                    }
             }
             if let n = toy?.notice {
                 rewardCard(n)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.tankSpace)) } action: {
+                        labelObstacles["reward"] = $0
+                    }
             }
             Spacer()
             if let toast = toy?.toast {

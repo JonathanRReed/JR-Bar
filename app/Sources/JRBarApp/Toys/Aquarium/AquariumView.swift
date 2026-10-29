@@ -37,12 +37,17 @@ struct AquariumView: View {
         var settings: AquariumSettings?
         /// Fixed animation phase for focused render proofs.
         var visualTime: TimeInterval?
-        /// The power facts for the shot; nil is normal power, so a proof
-        /// never depends on the Mac it renders on.
+        /// An away banner for label collision proofs.
+        var awayNotice: AquariumAwaySummary?
+        /// The power facts for the shot; nil uses normal power.
         var power: PowerPolicy?
         /// A seasonal set for the shot (`SeasonalStore`); nil is none.
         var season: SeasonalOccasion?
     }
+
+    @ViewState var labelObstacles: [String: CGRect] = [:]
+
+    var awayNotice: AquariumAwaySummary? { toy?.awayNotice ?? fixture?.awayNotice }
 
     let toy: AquariumToy?
     let fixture: Fixture?
@@ -362,16 +367,45 @@ struct AquariumView: View {
                     // fish draw, because an eater's dart bends its
                     // layout.
                     if !isStill { applyPursuits(meals, to: &layouts, now: context.date) }
-                    // The nameplate's target, off the previous
-                    // frame's boxes: a fish wearing the tag skips
-                    // its always-on chip so the two never stack.
+                    for aFish in order.ordered where aFish.isFry && !aFish.isRetired(at: context.date) {
+                        let parent = parentContext(of: aFish, mains: order.mains, layouts: layouts)
+                        layouts[aFish.id] = layout(of: aFish, in: size, at: t, now: context.date, parent: parent)
+                    }
+                    // The nameplate and chip pass use the same current-frame target.
                     let nameplateID: String? = {
                         let probe = hoverProbe.point
                             ?? (hoverProbe.flashUntil > context.date
                                 ? hoverProbe.flashPoint : nil)
                         guard let probe else { return nil }
-                        return hoverProbe.boxes.last(where: { $0.rect.contains(probe) })?.id
+                        return nameplateTarget(in: order.ordered, layouts: layouts, point: probe, now: context.date)
                     }()
+                    var obstacles: [CGRect] = []
+                    if awayNotice != nil {
+                        obstacles.append(labelObstacles["away"] ?? CGRect(origin: .zero, size: size))
+                    }
+                    if toy?.notice != nil {
+                        obstacles.append(labelObstacles["reward"] ?? CGRect(origin: .zero, size: size))
+                    }
+                    let chromeObstacles = obstacles
+                    if let nameplateID, let named = order.ordered.first(where: { $0.id == nameplateID }),
+                       let l = layouts[nameplateID] {
+                        obstacles.append(nameplateFrame(canvas: canvas, size: size, fish: named, layout: l))
+                    }
+                    let candidates = showLabels ? order.ordered.compactMap { aFish -> AquariumLabelLayout.Candidate? in
+                        guard !aFish.isFry, aFish.id != nameplateID,
+                              !aFish.isRetired(at: context.date), let l = layouts[aFish.id] else { return nil }
+                        let distance = hoverProbe.point.map { point in
+                            let dx = point.x - l.x
+                            let dy = point.y - l.y
+                            return dx * dx + dy * dy
+                        } ?? .infinity
+                        return AquariumLabelLayout.Candidate(
+                            id: aFish.id, frame: labelFrame(canvas: canvas, size: size, fish: aFish, layout: l),
+                            state: aFish.state, pointerDistance: distance,
+                            updatedAt: aFish.lastUpdate?.timeIntervalSince1970 ?? aFish.stateSince.timeIntervalSince1970)
+                    } : []
+                    let visibleLabels = AquariumLabelLayout.visible(candidates, in: CGRect(origin: .zero, size: size),
+                                                                   avoiding: obstacles)
                     hoverProbe.boxes.removeAll(keepingCapacity: true)
                     for aFish in order.ordered where !aFish.isRetired(at: context.date) {
                         let parent = parentContext(of: aFish, mains: order.mains,
@@ -382,7 +416,7 @@ struct AquariumView: View {
                         layouts[aFish.id] = l
                         drawFish(canvas: &canvas, size: size, t: t, now: context.date,
                                  fish: aFish, layout: l, parent: parent,
-                                 showLabels: showLabels && aFish.id != nameplateID)
+                                 showLabels: false)
                         // The hover/tap hit area, front-most fish wins.
                         hoverProbe.boxes.append((aFish.id, hitBox(of: aFish, layout: l)))
                     }
@@ -440,19 +474,22 @@ struct AquariumView: View {
                     // on top.
                     drawSurface(canvas: &canvas, size: size, t: ot)
                     drawGlass(canvas: &canvas, size: size)
+                    // Names stay above bodies and scenery, so a later fish cannot cover the text.
+                    for aFish in order.ordered where visibleLabels.contains(aFish.id) {
+                        guard let l = layouts[aFish.id] else { continue }
+                        drawFishLabel(canvas: &canvas, size: size, fish: aFish, layout: l)
+                    }
                     // A hovered or tapped fish gets a name tag over
                     // the glass — this is how a fry says its
                     // worker's name.
-                    let probe = hoverProbe.point
-                        ?? (hoverProbe.flashUntil > context.date
-                            ? hoverProbe.flashPoint : nil)
-                    // Labels › Never keeps the tag for the fish you
-                    // selected, so the inspector's fish still names itself.
-                    if let point = probe,
-                       let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
-                       labelStyle != .never || hit.id == selectedID,
-                       let l = layouts[hit.id],
-                       let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
+                    // Labels set to Never still name the selected fish.
+                    if let nameplateID,
+                       labelStyle != .never || nameplateID == selectedID,
+                       let l = layouts[nameplateID],
+                       let hitFish = order.ordered.first(where: { $0.id == nameplateID }),
+                       !chromeObstacles.contains(where: {
+                           $0.insetBy(dx: -4, dy: -4).intersects(nameplateFrame(canvas: canvas, size: size, fish: hitFish, layout: l))
+                       }) {
                         drawNameplate(canvas: &canvas, size: size,
                                       fish: hitFish, layout: l)
                     }
@@ -570,7 +607,7 @@ struct AquariumView: View {
                     }
                     .transition(.opacity)
                 }
-                if toy != nil, !ambient {
+                if (toy != nil || fixture?.awayNotice != nil), !ambient {
                     gameChrome(fish: fish)
                 }
             }
@@ -1246,6 +1283,13 @@ struct AquariumView: View {
             return anchor.lane * 0.85
         }
         return fish.lane
+    }
+
+    func nameplateTarget(in roster: [Fish], layouts: [String: Layout], point: CGPoint, now: Date) -> String? {
+        roster.reversed().first { fish in
+            guard !fish.isRetired(at: now), let pose = layouts[fish.id] else { return false }
+            return hitBox(of: fish, layout: pose).contains(point)
+        }?.id
     }
 
     /// The fish a fry schools around, with its already-computed layout.

@@ -678,6 +678,18 @@ extension AquariumView {
         return (hat, accessory)
     }
 
+    func labelFrame(canvas: GraphicsContext, size: CGSize, fish: Fish, layout l: Layout) -> CGRect {
+        let (_, textSize) = textCache.chip(for: fish.label, canvas: canvas)
+        let dotRoom = fish.state == .surfacing ? 9.0 : 0
+        let drawn = drawnSize(of: fish, layout: l)
+        let below = max(drawn.above, drawn.below)
+        let width = textSize.width + 13 + dotRoom
+        let height = textSize.height + 5
+        let x = min(max(l.x - width / 2, 8), size.width - width - 8)
+        let y = min(l.y + below + 14 - height / 2, size.height - height - 8)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
     func drawFish(canvas: inout GraphicsContext, size: CGSize, t: Double, now: Date,
                           fish: Fish, layout l: Layout,
                           parent: (fish: Fish, layout: Layout)?, showLabels: Bool) {
@@ -977,44 +989,43 @@ extension AquariumView {
                    anchor: .center)
         }
 
-        // The label rides under the fish like a floating tag: small
-        // type in a thin translucent chip, tied to the body by a
-        // hairline tether — not a heavy slab glued underneath.
-        if showLabels, !fish.isFry {
-            var lc = canvas
-            lc.opacity = fish.state == .sinking ? 1 : l.opacity * 0.85
-            // Resolved glyphs are cached across frames — the label
-            // doesn't change between reduces, only its anchor does.
-            let (resolved, textSize) = textCache.chip(for: fish.label, canvas: canvas)
-            // An asking fish's chip leads with an amber dot.
-            let asking = fish.state == .surfacing
-            let dotRoom: Double = asking ? 9 : 0
-            let chipX = min(max(l.x, textSize.width / 2 + 14), size.width - textSize.width / 2 - 14)
-            let chipY = min(l.y + height / 2 + 14, size.height - 14)
-            let chip = CGRect(x: chipX - textSize.width / 2 - 6.5 - dotRoom,
-                              y: chipY - textSize.height / 2 - 2.5,
-                              width: textSize.width + 13 + dotRoom, height: textSize.height + 5)
-            // The tether: a hairline from the body's underside down to
-            // the chip — invisible when the chip is clamped sideways.
-            if abs(chipX - l.x) < 20 {
-                var tether = Path()
-                tether.move(to: CGPoint(x: l.x, y: l.y + height / 2 + 3))
-                tether.addLine(to: CGPoint(x: chipX, y: chip.minY))
-                lc.stroke(tether, with: .color(.white.opacity(0.16)), lineWidth: 0.7)
-            }
-            let pill = Path(roundedRect: chip, cornerRadius: chip.height / 2)
-            lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(fish.state == .sinking ? 0.65 : 0.38)))
-            // A glassy edge: brighter where the surface light catches it.
-            lc.stroke(pill, with: .linearGradient(
-                Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),
-                startPoint: CGPoint(x: 0, y: chip.minY), endPoint: CGPoint(x: 0, y: chip.maxY)),
-                lineWidth: 0.6)
-            if asking {
-                let dot = CGRect(x: chip.minX + 5.5, y: chipY - 2.75, width: 5.5, height: 5.5)
-                lc.fill(Path(ellipseIn: dot), with: .color(Tone.ask.color))
-            }
-            lc.draw(resolved, at: CGPoint(x: chipX, y: chipY), anchor: .center)
+        if showLabels { drawFishLabel(canvas: &canvas, size: size, fish: fish, layout: l) }
+    }
+
+    func drawFishLabel(canvas: inout GraphicsContext, size: CGSize, fish: Fish, layout l: Layout) {
+        guard !fish.isFry else { return }
+        let drawn = drawnSize(of: fish, layout: l)
+        let height = max(drawn.above, drawn.below) * 2
+        var lc = canvas
+        lc.opacity = fish.state == .sinking ? 1 : l.opacity * 0.85
+        // Cached glyphs keep their size between frames. Only the anchor moves.
+        let (resolved, _) = textCache.chip(for: fish.label, canvas: canvas)
+        // An asking fish's chip leads with an amber dot.
+        let asking = fish.state == .surfacing
+        let dotRoom: Double = asking ? 9 : 0
+        let chip = labelFrame(canvas: canvas, size: size, fish: fish, layout: l)
+        let chipX = chip.midX + dotRoom / 2
+        let chipY = chip.midY
+        // The tether: a hairline from the body's underside down to
+        // the chip — invisible when the chip is clamped sideways.
+        if abs(chipX - l.x) < 20 {
+            var tether = Path()
+            tether.move(to: CGPoint(x: l.x, y: l.y + height / 2 + 3))
+            tether.addLine(to: CGPoint(x: chipX, y: chip.minY))
+            lc.stroke(tether, with: .color(.white.opacity(0.16)), lineWidth: 0.7)
         }
+        let pill = Path(roundedRect: chip, cornerRadius: chip.height / 2)
+        lc.fill(pill, with: .color(Color(red: 0.02, green: 0.07, blue: 0.13).opacity(fish.state == .sinking ? 0.65 : 0.38)))
+        // A glassy edge: brighter where the surface light catches it.
+        lc.stroke(pill, with: .linearGradient(
+            Gradient(colors: [.white.opacity(0.22), .white.opacity(0.05)]),
+            startPoint: CGPoint(x: 0, y: chip.minY), endPoint: CGPoint(x: 0, y: chip.maxY)),
+            lineWidth: 0.6)
+        if asking {
+            let dot = CGRect(x: chip.minX + 5.5, y: chipY - 2.75, width: 5.5, height: 5.5)
+            lc.fill(Path(ellipseIn: dot), with: .color(Tone.ask.color))
+        }
+        lc.draw(resolved, at: CGPoint(x: chipX, y: chipY), anchor: .center)
     }
 
     /// The empty-tank caption, resolved & measured once per frame so

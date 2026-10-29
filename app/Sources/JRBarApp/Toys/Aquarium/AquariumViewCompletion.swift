@@ -250,8 +250,7 @@ extension AquariumView {
     /// by a dot in its provider's colour, parked just above the body.
     /// Fry get it too — this is where a worker's name shows when
     /// labels are off.
-    func drawNameplate(canvas: inout GraphicsContext, size: CGSize,
-                               fish: Fish, layout l: Layout) {
+    func nameplateFrame(canvas: GraphicsContext, size: CGSize, fish: Fish, layout l: Layout) -> CGRect {
         let drawn = drawnSize(of: fish, layout: l)
         // A fish flying an overlay mark keeps it in view: the tag
         // rides above the mark instead of over it.
@@ -259,16 +258,23 @@ extension AquariumView {
         if fish.plan?.overlay != nil, !fish.isFry {
             mark = max(3.4, drawn.length * 0.10) * 2 + 6
         }
-        let tag = canvas
-        let resolved: GraphicsContext.ResolvedText
-        let textSize: CGSize
-        (resolved, textSize) = textCache.tag(for: fish.label, canvas: canvas)
+        let (_, textSize) = textCache.tag(for: fish.label, canvas: canvas)
         let dot = 6.0
         let width = textSize.width + dot + 22
         let cx = min(max(l.x, width / 2 + 14), size.width - width / 2 - 14)
         let cy = max(l.y - max(drawn.above, drawn.below) - 14 - mark, 16)
         let rect = CGRect(x: cx - width / 2, y: cy - textSize.height / 2 - 4,
                           width: width, height: textSize.height + 8)
+        return rect
+    }
+
+    func drawNameplate(canvas: inout GraphicsContext, size: CGSize,
+                               fish: Fish, layout l: Layout) {
+        let tag = canvas
+        let (resolved, textSize) = textCache.tag(for: fish.label, canvas: canvas)
+        let dot = 6.0
+        let rect = nameplateFrame(canvas: canvas, size: size, fish: fish, layout: l)
+        let cy = rect.midY
         let pill = Path(roundedRect: rect, cornerRadius: rect.height / 2)
         tag.fill(pill, with: .color(Color(red: 0.02, green: 0.08, blue: 0.16).opacity(0.80)))
         tag.stroke(pill, with: .linearGradient(
