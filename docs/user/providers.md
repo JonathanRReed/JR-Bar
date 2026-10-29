@@ -178,13 +178,12 @@ read. Nothing runs until you click it.
   JR-Bar leaves renewal and the refresh token with Claude Code. A named Claude
   profile keeps its own credential; update that profile's credential instead of
   replacing it with the default Claude Code account.
-- **Factory.** Connect the browser profile where you use Factory. The checkbox
-  **Keep Factory connected using this browser profile** allows JR-Bar to pick
-  up that profile's current access token as the browser renews it. Usage
-  requests still need their separate switch. JR-Bar leaves renewal to the
-  browser so the two apps do not invalidate each other's refresh tokens.
-  Existing connections need this permission once. If the browser itself has
-  signed out, sign in there again. An API key is another connection option.
+- **Factory.** Choose Add Factory API key on the affected account. Create a key
+  using the link in the editor, paste it and save. A saved key takes priority
+  over a browser session. Turn on Show Factory usage, then Refresh usage.
+  Factory may keep its access token in memory, leaving only a refresh token in
+  browser storage. JR-Bar reports that it cannot use this sign-in and offers
+  the key editor. It never spends a browser-owned refresh token.
 - **Grok.** Opens your terminal on `grok login`. JR-Bar notices on its own when
   the CLI saves the new sign-in.
 - **Codex and OpenCode.** Opens your terminal on `codex login` or `opencode
@@ -192,9 +191,10 @@ read. Nothing runs until you click it.
   for another reason is told so instead.
 - **Devin and Cursor.** Their usage comes from a session or token JR-Bar holds,
   not from a CLI login, so Fix sign-in does what the card's old Reconnect button
-  did: it clears the rejected stored token, imports your browser session again
-  where you have allowed that, and otherwise opens the provider's token page and
-  says what to copy.
+  did: it imports a replacement where you have allowed that and otherwise
+  opens the provider's token page and says what to copy. A failed import keeps
+  the previous credential. When sign-in data lacks a usable access token,
+  Devin offers its API-key editor and Cursor offers manual session-token import.
 - **Gemini CLI and Antigravity.** Their sign-in does not go through a login
   command JR-Bar can open, so Fix sign-in says where to sign in.
 

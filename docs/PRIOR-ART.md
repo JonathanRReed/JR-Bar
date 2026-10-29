@@ -925,3 +925,21 @@ resource entitlement. No implementation code was copied.
 The official sample archive has no published Git commit. Its SHA-256 is
 `46edc0114dd5ecb11fdfd1b87b1f57628be71988a460c5cb0b831a237a5fe657`.
 The archive's `LICENSE.txt` is MIT, copyright 2024 Apple Inc.
+
+
+## Factory API-key authentication, 0.10.2
+
+Reviewed Factory's [Analytics API authentication](https://docs.factory.com/api-reference/analytics)
+on October 29, 2026. It documents `Authorization: Bearer` for keys created at
+[Factory's API-key settings](https://app.factory.ai/settings/api-keys).
+The [Droid CLI reference](https://docs.factory.com/droid-cli/cli-reference)
+documents `FACTORY_API_KEY`. These are provider documentation, with no pinned
+source commit or source licence; no code was copied. The earlier pinned
+CodexBar reviews above remain the source credit for the dashboard endpoints.
+
+JR-Bar sends the selected key to `/api/app/auth/me`, `/api/billing/limits` and,
+for legacy billing, `/api/organization/subscription/usage` on `api.factory.ai`.
+The public documentation does not guarantee these dashboard endpoints or their
+response shapes for API keys. Synthetic tests verify request construction and
+parsing; a real key must still confirm account access and reported allowances.
+JR-Bar does not consume browser-owned WorkOS refresh tokens.

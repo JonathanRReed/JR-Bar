@@ -14,31 +14,30 @@ there are informational and become available as tested support ships.
 
 ## Factory subscription usage
 
-In Settings > Providers > Provider usage, choose Connect browser
-session under Factory. The same control is on Factory's Usage Center card,
-including a named account. Sign in at [Factory](https://app.factory.ai)
-in your browser, select that browser profile, then approve the import and
-choose Connect. JR-Bar reads only that profile's Factory sign-in and saves
-it in its own Keychain entry. It does not scan other profiles or launch
-Droid. Supported profiles include Zen, Firefox, LibreWolf, Waterfox, Chrome,
-Brave, Chromium and Edge.
+Create a key in [Factory's API-key settings](https://app.factory.ai/settings/api-keys).
+In Settings > Providers, find the Factory account you want to connect and choose
+Add API key. Paste the key and save it. The same controls are in Usage Center.
+JR-Bar stores the key in its own Keychain entry. A saved key takes priority over
+a browser session, including a session imported before this update.
 
-Turn on Show Factory usage when you want JR-Bar to read its limits, then
-choose Refresh usage on the Factory card. JR-Bar asks `api.factory.ai` for
-the account's observed limits. The connection approval also lets
-`api.workos.com` renew the saved session while usage is on. Normal refreshes
-use the saved session without reading your browser again.
+Turn on Show Factory usage when you want JR-Bar to read its limits, then choose
+Refresh usage. Saving a key does not turn usage on. Requests go to
+`api.factory.ai` and carry the saved key as a bearer credential.
 
-Disconnect browser session removes that account's saved browser sign-in
-and its import grant. It does not sign you out of Factory in your browser.
-Connecting or disconnecting does not change the usage switch. These
-explicit local actions can run while usage is off and make no provider
-request.
+Browser import works only while the selected profile shares an access token.
+Factory now keeps that token in memory in some browser sessions. If the profile
+holds only a refresh token, JR-Bar says "Factory no longer shares its sign-in
+with other apps" and offers Add Factory API key. It does not save that import.
+An older saved session with the same problem shows the same action on its first
+read after upgrading. JR-Bar never uses a browser's refresh token because doing
+so can sign the person out of Factory.
 
-Expand the optional API key controls if you prefer a key. You can create one in
-[Factory's API-key settings](https://app.factory.ai/settings/api-keys).
-A saved browser session takes priority. A failed browser session asks you
-to reconnect instead of silently switching to an API key's account.
+For profiles that still share an access token, Connect browser session reads
+only the profile you select and approve. Supported profiles include Zen,
+Firefox, LibreWolf, Waterfox, Chrome, Brave, Chromium and Edge. Approval can
+allow JR-Bar to pick up that profile's current access token while usage is on.
+Disconnect browser session removes its saved session and grant without signing
+you out of Factory or changing the usage switch.
 
 Standard's five-hour, seven-day and monthly windows drive the subscription
 headline. Factory's separate Core pool stays visible as detail and does not
