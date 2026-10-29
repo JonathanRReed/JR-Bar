@@ -636,6 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             // scroll to that card and flash it.
             usageWindow?.show(focusedProvider: provider)
         }
+        statusItem.onOpenProviderUsage = { [weak usageWindow] provider in usageWindow?.show(focusedProvider: provider) }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         let studioDefaults: UserDefaults = .standard
@@ -1832,7 +1833,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             Self.statusMeter(for: provider, core: store.core, document: document, now: now)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
-        statusItem.setUsageLines(StatusMenuLines.usage(shown, live: store.isLive, now: now))
+        let menuProviders = store.providerList.arranged(usage.filter {
+            $0.headlineWindow != nil || ["manage", "sign_in", "resign_in"].contains($0.actionKind ?? "")
+        }, provider: { $0.id }, surface: .menuBar)
+        let lines = StatusMenuLines.usage(menuProviders, live: store.isLive, now: now)
+        let menuActions = menuProviders.map { provider -> String? in
+            if ["manage", "sign_in", "resign_in"].contains(provider.actionKind ?? "") { return provider.identity }
+            return nil
+        }
+        statusItem.setUsageLines(lines, providers: menuActions)
         statusItem.dotState = dotState()
     }
 

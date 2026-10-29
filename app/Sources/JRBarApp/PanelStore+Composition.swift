@@ -188,7 +188,8 @@ extension PanelStore {
     }
 
     func panelUsageAction(_ usage: CoreProviderUsage) {
-        if usage.action == "Retry" || usage.action == "Retry later" { retryPanelUsage(usage) }
+        if usage.actionKind == "manage" { openUsageCenter(provider: usage.identity) }
+        else if usage.action == "Retry" || usage.action == "Retry later" { retryPanelUsage(usage) }
         else { runUsageAction(usage, action: usage.actionKind) }
     }
 
@@ -221,6 +222,8 @@ extension PanelStore {
             do {
                 let reply = try await self.requestUsageRefresh([usage.id])
                 guard reply.ok else { throw reply.error ?? CoreReplyError(code: "refused") }
+                let name = usage.instanceLabel ?? ProviderPalette.displayName(for: usage.id)
+                self.show(toast: "\(name) usage refresh requested.")
             } catch { self.show(toast: MonitorWords.reason(error)) }
         }
     }

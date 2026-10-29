@@ -49,8 +49,12 @@ enum StatusMenuLines {
     static func usage(_ providers: [CoreProviderUsage], live: Bool, now: Double,
                       locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .current) -> [String] {
         providers.compactMap { provider in
-            guard let window = provider.headlineWindow else { return nil }
             let name = provider.instanceLabel ?? ProviderPalette.displayName(for: provider.id)
+            if let kind = provider.actionKind, ["sign_in", "manage", "resign_in"].contains(kind),
+               let action = provider.action {
+                return "\(name) · \(action)"
+            }
+            guard let window = provider.headlineWindow else { return nil }
             let lead = "\(name) \(window.name)"
             let stale = !live || provider.isStale
             let tail = stale ? " · \(UsageStatus.stale.word)" : ""

@@ -34,7 +34,7 @@ def test_person_actions_never_refresh_or_disappear(provider, state, reason, monk
     kind = row["action_kind"]
     if provider == "claude" and reason == "claude_keychain_access_lost":
         assert kind == "resign_in"
-    elif provider in {"devin", "factory", "kilo", "kimi"} or state is ProviderSourceState.NEEDS_CONSENT or reason == "usage_consent_required":
+    elif reason.startswith("cliproxy_") or provider in {"devin", "factory", "kilo", "kimi"} or state is ProviderSourceState.NEEDS_CONSENT or reason == "usage_consent_required":
         assert kind == "manage"
     else:
         assert kind == "sign_in"
@@ -67,3 +67,30 @@ def test_routing_ids_never_become_account_names(label):
 @pytest.mark.parametrize("label", ["Example team", "Example Studio", "person@example.test"])
 def test_real_names_remain_available(label):
     assert account_display_label(label) == label
+
+
+@pytest.mark.parametrize("provider", ["factory", "kilo", "kimi", "kiro"])
+@pytest.mark.parametrize("state,reason,action,expected", [
+    (ProviderSourceState.RATE_LIMITED, "rate_limited", "Retry later", "Retry later"),
+    (ProviderSourceState.ERROR, "network_unavailable", "Retry", "Retry"),
+    (ProviderSourceState.DISABLED, "disabled", "Enable usage", None),
+    (ProviderSourceState.UNSUPPORTED, "source_unavailable", "Check source", None),
+])
+def test_non_signin_actions_keep_the_release_behavior(provider, state, reason, action, expected):
+    snapshot = failure_snapshot(provider, observed_at=10, state=state, reason=reason, action=action)
+    row = availability_document(snapshot, now=10, installed=True)
+    assert row.get("action", snapshot.action_label) == expected
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("reason", ["cliproxy_account_signed_out", "cliproxy_key_missing", "cliproxy_key_rejected"])
+def test_proxy_sign_in_preserves_the_authentication_owner(provider, reason, monkeypatch):
+    snapshot = failure_snapshot(provider, observed_at=10, state=ProviderSourceState.NEEDS_SIGN_IN,
+                                reason=reason, action="Retry")
+    controller = SimpleNamespace(provider_usage_state=SimpleNamespace(snapshots=(snapshot,)),
+                                 _request_provider_usage=lambda **_: pytest.fail("sign-in became a refresh"))
+    monkeypatch.setattr(core_runtime, "_cmd_provider_sign_in", lambda *_: pytest.fail("the provider CLI does not own proxy sign-in"))
+    row = availability_document(snapshot, now=10, installed=True)
+    assert row["action"] == "Reconnect CLIProxyAPI account" and row["action_kind"] == "manage"
+    reply = core_runtime._cmd_provider_action(controller, {"provider": provider})
+    assert "CLIProxy" in reply["message"]

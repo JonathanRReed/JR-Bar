@@ -34,6 +34,14 @@ struct FactorySessionTests {
         ])
         #expect(!unconfirmed.ok)
         #expect(unconfirmed.error?.code == "invalid_args")
+        let devinProfiles = try await core.devinSessionProfiles()
+        let devinProfile = try #require(devinProfiles.first)
+        let devinImported = try await core.importDevinSession(devinProfile, instance: "work")
+        #expect(devinImported == "Imported Devin browser sign-in for work.")
+        do {
+            _ = try await core.importDevinSession(devinProfile, instance: "wrong-reply")
+            Issue.record("a Devin import for another account was accepted")
+        } catch { #expect((error as? CoreReplyError)?.code == "bad_reply") }
     }
 
     @MainActor
@@ -45,5 +53,9 @@ struct FactorySessionTests {
             try await core.importFactorySession(.init(browser: "zen", profile: "synthetic.default", label: "Zen"), instance: "work")
         }
         await #expect(throws: CoreClientError.notConnected) { try await core.disconnectFactorySession(instance: "work") }
+        await #expect(throws: CoreClientError.notConnected) { try await core.devinSessionProfiles() }
+        await #expect(throws: CoreClientError.notConnected) {
+            try await core.importDevinSession(.init(browser: "zen", profile: "synthetic.default", label: "Zen"), instance: "work")
+        }
     }
 }

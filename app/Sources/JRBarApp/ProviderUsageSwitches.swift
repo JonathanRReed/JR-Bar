@@ -253,7 +253,7 @@ struct ProviderUsageSwitchRow: View {
                     ))
                     .disabled(model.busy.contains(row.id) || !core.isLive)
                 }
-                if ["factory", "kimi", "kilo"].contains(row.id) {
+                if ["factory", "devin", "kimi", "kilo"].contains(row.id) {
                     ProviderCredentialControls(row: row, core: core, onOptionsSaved: { model.accept($0) }) { model.refresh(core: core) }
                         .id(row.identity)
                 }

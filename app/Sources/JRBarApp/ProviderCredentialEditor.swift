@@ -181,14 +181,19 @@ struct ProviderCredentialControls: View {
     let core: CoreModel
     let onChanged: @MainActor () -> Void
     let onOptionsSaved: @MainActor (ProviderRow) -> Void
+    let connectRequest: Int
+    let onConnectPresented: @MainActor () -> Void
 
-    init(row: ProviderRow, core: CoreModel,
+    init(row: ProviderRow, core: CoreModel, connectRequest: Int = 0,
+         onConnectPresented: @escaping @MainActor () -> Void = {},
          onOptionsSaved: @escaping @MainActor (ProviderRow) -> Void = { _ in },
          onChanged: @escaping @MainActor () -> Void) {
         self.row = row
         self.core = core
         self.onChanged = onChanged
         self.onOptionsSaved = onOptionsSaved
+        self.connectRequest = connectRequest
+        self.onConnectPresented = onConnectPresented
     }
 
     var body: some View {
@@ -200,10 +205,11 @@ struct ProviderCredentialControls: View {
                 }
                 .id("source-\(row.identity)")
             }
-            if row.id == "factory" {
-                FactoryBrowserConnectionControls(row: row, core: core, onChanged: onChanged)
+            if ["factory", "devin"].contains(row.id) {
+                FactoryBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
+                                                 onConnectPresented: onConnectPresented, onChanged: onChanged)
                 DisclosureGroup("API key, optional") {
-                    ProviderSavedCredentialControls(row: row, core: core, account: "api-key", onChanged: onChanged)
+                    ProviderSavedCredentialControls(row: row, core: core, account: row.id == "devin" ? "token" : "api-key", onChanged: onChanged)
                         .padding(.top, 6)
                 }
                 .jrbarType(.callout)

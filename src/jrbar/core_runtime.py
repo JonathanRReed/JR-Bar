@@ -3079,8 +3079,15 @@ def _cmd_provider_action(self, args):
             if action in {"sign_in", "manage"} and kind != action:
                 raise CommandError("unavailable", "This provider action changed. Reload providers and try again.")
             if kind == "manage":
+                from .provider_availability import status_sentence
+
+                message = (
+                    status_sentence(snapshot.reason_code, descriptor.label)
+                    if (snapshot.reason_code or "").startswith("cliproxy_")
+                    else f"Open Settings > Providers and choose {descriptor.label} to reconnect or allow access."
+                )
                 return {"provider": provider, "instance": instance,
-                        "message": f"Open Settings > Providers and choose {descriptor.label} to reconnect or allow access."}
+                        "message": message}
             if kind == "sign_in":
                 return _cmd_provider_sign_in(self, {"provider": provider, "instance": instance})
             staged_action = availability.get("action", snapshot.action_label)

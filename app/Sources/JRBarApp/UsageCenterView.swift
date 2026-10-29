@@ -141,8 +141,12 @@ struct UsageProviderConnection: View {
             if let consent = row.usageConsent {
                 UsageConsentSwitch(row: row, consent: consent, store: store)
             }
-            if ["factory", "kimi", "kilo"].contains(row.id) {
-                ProviderCredentialControls(row: row, core: store.core) { _ = store.loadProviderRows() }
+            if ["factory", "devin", "kimi", "kilo"].contains(row.id) {
+                ProviderCredentialControls(row: row, core: store.core,
+                                           connectRequest: store.browserConnectRequests[provider.identity] ?? 0,
+                                           onConnectPresented: { store.didPresentBrowserConnection(provider.identity) }) {
+                    _ = store.loadProviderRows()
+                }
                     .id(row.identity)
             }
             HStack(spacing: 10) {
@@ -297,15 +301,13 @@ struct ProviderFixControls: View {
     @Bindable var store: UsageCenterStore
 
     var body: some View {
-        if ["factory", "kimi", "kilo"].contains(provider.id) {
-            if !provider.usageIsOff && provider.state != "disabled" {
-                Button("Refresh usage") { store.runProviderAction(provider) }
-                    .controlSize(.small)
-            }
+        if provider.actionKind == "manage" {
+            // The browser, credential and consent controls are directly above this row.
+            EmptyView()
         } else if provider.usageIsOff {
             // Nothing to fix: the card's own "Turn on" is the one button.
             EmptyView()
-        } else if provider.offersSignInFix {
+        } else if provider.offersSignInFix || provider.actionKind == "sign_in" {
             FixSignInButton(provider: provider, store: store)
             if let action = provider.action, !action.isEmpty {
                 Text(action)
@@ -313,6 +315,11 @@ struct ProviderFixControls: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
+            }
+        } else if ["factory", "kimi", "kilo"].contains(provider.id) {
+            if provider.state != "disabled" {
+                Button("Refresh usage") { store.runProviderAction(provider) }
+                    .controlSize(.small)
             }
         } else {
             if let action = provider.action, !action.isEmpty {

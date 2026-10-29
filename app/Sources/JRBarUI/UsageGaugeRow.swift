@@ -236,6 +236,10 @@ public struct UsageGaugeRow: View {
         if !connected && !suppressDisconnectedStatus { return MonitorWords.label }
         if provider.availability == "not_found" { return provider.statusText ?? "Not found on this Mac" }
         if provider.usageIsOff { return UsageStatus.off.word }
+        let recovery = UsageStatus.provider(provider)
+        if recovery == .needsSignIn || recovery == .needsConsent {
+            return provider.statusText ?? recovery.word
+        }
         if !provider.quotaSource { return UsageStatus.noQuotaSource.word }
         if let status = provider.statusText { return status }
         if isStale && showsWindows { return UsageStatus.stale.word }

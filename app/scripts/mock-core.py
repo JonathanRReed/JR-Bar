@@ -3296,6 +3296,15 @@ class World:
                 (self.consent_granted.add if enabled else self.consent_granted.discard)(provider)
             self.push_state()
             result = {"provider": consent_row(provider, enabled)}
+        elif name == "devin_session_profiles":
+            result = {"profiles": [{"browser": "zen", "profile": "synthetic.default", "label": "Zen test profile"}]}
+        elif name == "devin_session_import":
+            instance = args.get("instance", "default")
+            if args.get("confirm") is not True or args.get("browser") != "zen" or args.get("profile") != "synthetic.default":
+                return self._error(cid, "invalid_args", "Choose and confirm one profile")
+            confirmed = "other" if instance == "wrong-reply" else instance
+            result = {"provider": "devin", "instance": confirmed,
+                      "message": f"Imported Devin browser sign-in for {instance}."}
         elif name == "factory_session_profiles":
             if args:
                 return self._error(cid, "invalid_args", "factory_session_profiles takes no arguments")

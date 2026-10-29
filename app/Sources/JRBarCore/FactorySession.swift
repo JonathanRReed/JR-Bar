@@ -14,6 +14,27 @@ public struct FactorySessionProfile: Codable, Hashable, Identifiable, Sendable {
 }
 
 extension CoreModel {
+    public func devinSessionProfiles() async throws -> [FactorySessionProfile] {
+        let reply = try await send("devin_session_profiles", timeout: 8)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "unavailable") }
+        return try ReplyDecoding.decode([FactorySessionProfile].self, from: reply.result?["profiles"])
+    }
+
+    public func importDevinSession(_ profile: FactorySessionProfile, instance: String) async throws -> String {
+        let reply = try await send("devin_session_import", args: [
+            "browser": .string(profile.browser), "profile": .string(profile.profile),
+            "instance": .string(instance), "confirm": .bool(true),
+            "background_repair": .bool(true),
+        ], timeout: 30)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "browser_import_failed") }
+        guard reply.result?["provider"]?.stringValue == "devin",
+              reply.result?["instance"]?.stringValue == instance,
+              let message = reply.result?["message"]?.stringValue, !message.isEmpty else {
+            throw CoreReplyError(code: "bad_reply", message: "The monitor did not confirm this Devin account")
+        }
+        return message
+    }
+
     public func factorySessionProfiles() async throws -> [FactorySessionProfile] {
         let reply = try await send("factory_session_profiles", timeout: 8)
         guard reply.ok else {

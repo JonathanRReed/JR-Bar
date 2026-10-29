@@ -112,6 +112,8 @@ def sign_in_action(provider_id: str, state: str, reason: str | None) -> tuple[st
     if state not in _NEEDS_PERSON_STATES and reason not in _NEEDS_PERSON_REASONS:
         return None
     label = provider_descriptor(provider_id).label
+    if reason and reason.startswith("cliproxy_"):
+        return "Reconnect CLIProxyAPI account", "manage"
     if provider_id == "claude" and reason == "claude_keychain_access_lost":
         return "Allow Claude Keychain access", "resign_in"
     if reason == "usage_consent_required":
@@ -169,7 +171,9 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
     if person_action is not None:
         action, kind = person_action
         fields.update(action=action, action_kind=kind)
-    elif snapshot.provider_id in {"factory", "kilo", "kimi", "kiro"} and snapshot.action_label:
-        if state not in {"disabled", "unsupported"}:
-            fields["action"] = "Retry"
+    elif snapshot.provider_id in {"factory", "kilo", "kimi", "kiro"} \
+            and snapshot.action_label not in {None, "Retry", "Retry later"}:
+        fields["action"] = None if state in {"disabled", "unsupported"} else "Retry"
+        if state == "unsupported" and reason:
+            fields["status_text"] = status_sentence(reason, label)
     return fields

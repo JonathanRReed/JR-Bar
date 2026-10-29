@@ -40,8 +40,12 @@ struct UsageProviderDetail: View {
                 }
             }
             if let row = store.row(for: provider.identity) {
-                DisclosureGroup("Connection") {
+                if provider.actionKind == "manage" {
                     UsageProviderConnection(provider: provider, store: store, row: row)
+                } else {
+                    DisclosureGroup("Connection") {
+                        UsageProviderConnection(provider: provider, store: store, row: row)
+                    }
                 }
             }
             if let note = store.signInNotes[provider.identity] { SignInNoteLine(note: note) }
