@@ -95,6 +95,21 @@ public enum UsageTime {
         }
     }
 
+    /// When a logged event happened, to the second, in the person's own clock:
+    /// "12:56:32 PM" today, "Oct 25, 12:56:32 PM" on any other day.
+    public static func eventStamp(_ epoch: Double, now: Double, locale: Locale = .autoupdatingCurrent,
+                                  timeZone: TimeZone = .current) -> String {
+        guard epoch.isFinite else { return "" }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let date = Date(timeIntervalSince1970: epoch)
+        let today = calendar.isDate(date, inSameDayAs: Date(timeIntervalSince1970: now))
+        return UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone,
+                                                        format: .template(today ? "jms" : "MMMdjms")) {
+            $0.string(from: date)
+        }
+    }
+
     public static func dayPeriods(locale: Locale = .current, timeZone: TimeZone = .current) -> [String] {
         UsageDateFormatters.shared.withFormatter(locale: locale, timeZone: timeZone, format: .template("jm")) {
             [$0.amSymbol, $0.pmSymbol].filter { !$0.isEmpty }

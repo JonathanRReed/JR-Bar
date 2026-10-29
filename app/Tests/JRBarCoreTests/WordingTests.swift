@@ -4,6 +4,20 @@ import Testing
 
 @Suite("Shared wording")
 struct WordingTests {
+    @Test func eventStampsUseThePersonsClockAndNameOtherDays() {
+        let us = Locale(identifier: "en_US")
+        let utc = TimeZone(identifier: "UTC")!
+        let now = 1793232000.0 + 13 * 3600  // 13:00 UTC, 29 October 2026
+        let earlierToday = now - 3_208          // 12:06:32 UTC
+        #expect(UsageTime.eventStamp(earlierToday, now: now, locale: us, timeZone: utc) == "12:06:32\u{202F}PM")
+        let twoDaysAgo = earlierToday - 2 * 86_400
+        let other = UsageTime.eventStamp(twoDaysAgo, now: now, locale: us, timeZone: utc)
+        #expect(other.hasPrefix("Oct 2") && other.hasSuffix("12:06:32\u{202F}PM"), "\(other)")
+        let uk = UsageTime.eventStamp(earlierToday, now: now, locale: Locale(identifier: "en_GB"), timeZone: utc)
+        #expect(uk == "12:06:32", "a 24-hour locale keeps its own clock: \(uk)")
+        #expect(UsageTime.eventStamp(.nan, now: now) == "")
+    }
+
     @Test func numbers() {
         #expect(UsageNumber.percent(nil) == "—")
         #expect(UsageNumber.percent(99.6) == "99%")

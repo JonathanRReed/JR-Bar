@@ -793,19 +793,30 @@ struct EventLogRow: View {
     @Bindable var store: HistoryStore
 
     private var category: EventLogCategory { EventLogCategory.of(event.kind) }
+    private var headline: String {
+        LightLog.text(for: event, privacyMode: store.core.state?.usage?.privacyMode)
+    }
+
+    /// The kind's words for the right-hand column, or nil when the headline
+    /// already starts with them ("Device connected · Test light").
+    static func kindColumn(kind: String, headline: String) -> String? {
+        let title = EventKindWords.title(kind)
+        return headline.localizedCaseInsensitiveContains(title) ? nil : title
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(event.at.map { EventLogStyle.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
-                .jrbarType(.caption).fontDesign(.monospaced)
+            Text(event.at.map { UsageTime.eventStamp($0, now: Date().timeIntervalSince1970) } ?? "—")
+                .jrbarType(.caption).monospacedDigit()
                 .foregroundStyle(.tertiary)
-                .frame(width: 64, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize()
             Image(systemName: EventLogStyle.symbol(category))
                 .jrbarType(.caption)
                 .foregroundStyle(EventLogStyle.color(category))
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
-                Text(LightLog.text(for: event, privacyMode: store.core.state?.usage?.privacyMode))
+                Text(headline)
                     .jrbarType(.callout).fontWeight(.medium)
                     .lineLimit(1)
                 if let detail = event.detail ?? event.message, !detail.isEmpty, detail != event.label {
@@ -813,7 +824,10 @@ struct EventLogRow: View {
                 }
             }
             Spacer()
-            Text(EventKindWords.title(event.kind)).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.quaternary).lineLimit(1)
+            // The kind only earns its own column when the headline doesn't already say it.
+            if let kindTitle = Self.kindColumn(kind: event.kind, headline: headline) {
+                Text(kindTitle).jrbarType(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            }
             if store.canReveal(event) {
                 Button {
                     store.reveal(event)
@@ -855,11 +869,6 @@ enum EventLogStyle {
         }
     }
 
-    static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm:ss"
-        return formatter
-    }()
 }
 
 struct KindBadge: View {
