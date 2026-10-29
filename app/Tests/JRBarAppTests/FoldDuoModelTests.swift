@@ -158,14 +158,7 @@ struct FoldDuoModelTests {
         }
     }
 
-    @Test("the classic blur grows from a sharp hinge to 0.10 H at Blur 1")
-    func classicBlurCurve() {
-        #expect(FoldDuoModel.classicSigma(e: 0, motion: 1, blur: 1) == 0)
-        #expect(abs(FoldDuoModel.classicSigma(e: 1, motion: 1, blur: 1) - 0.10) < 1e-12)
-        #expect(abs(FoldDuoModel.classicSigma(e: 1, motion: 1, blur: 0.6) - 0.06) < 1e-12)
-        #expect(FoldDuoModel.classicSigma(e: 1, motion: 0, blur: 1) == 0)
-        #expect(FoldDuoModel.classicSigma(e: 0.5, motion: 1, blur: 1) < 0.05, "e^1.35 keeps the middle crisper")
-    }
+
 
     /// The front's progress at `angle` from a lid resting at 110°, at the
     /// default fade.
@@ -225,24 +218,15 @@ struct FoldDuoModelTests {
         #expect(tenDown > 4, "the far edge 10° from rest: \(tenDown) px")
     }
 
-    @Test("the front keeps the hinge side sharper and frosts the outer band harder than the classic blur")
-    func frontAgainstClassic() {
-        // A third of the close: lid at 75° from 110°.
-        let angle = 75.0
-        let m = FoldDuoModel.motion(delta: 110 - angle, reference: 110, fadeLength: 0.55)
-        let p = progress(angle)
+    @Test("the front keeps the hinge side sharp and frosts the outer band")
+    func frontBands() {
+        let p = progress(75)
         for e in [0.15, 0.25, 0.4] {
-            let front = FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6)
-            let classic = FoldDuoModel.classicSigma(e: e, motion: m, blur: 0.6)
-            #expect(front < classic, "e \(e): front \(front), classic \(classic)")
+            #expect(FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6) < 0.01)
         }
         for e in [0.8, 0.9, 1.0] {
-            let front = FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6)
-            let classic = FoldDuoModel.classicSigma(e: e, motion: m, blur: 0.6)
-            #expect(front > 3 * classic, "e \(e): front \(front), classic \(classic)")
+            #expect(FoldDuoModel.frontSigma(e: e, progress: p, blur: 0.6) > 0.08)
         }
-        // The outer band is fully frosted by then.
-        #expect(abs(FoldDuoModel.frontSigma(e: 0.95, progress: p, blur: 0.6) - 0.14) < 1e-12)
     }
 
     @Test("a reopen clears as a front: the fully frosted band retreats to the far edge, the hinge side first")
@@ -267,18 +251,7 @@ struct FoldDuoModelTests {
         #expect(lastFrosted > 1, "nothing frosted at rest")
     }
 
-    @Test("the hidden comparison switch picks the classic blur; nothing set is the front")
-    func blurShapeSwitch() {
-        let name = "devin.jrbar.test.foldblur.\(UUID().uuidString)"
-        let suite = UserDefaults(suiteName: name)!
-        defer { suite.removePersistentDomain(forName: name) }
-        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .front)
-        suite.set(true, forKey: FoldDuoModel.BlurShape.classicKey)
-        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .classic)
-        suite.set(false, forKey: FoldDuoModel.BlurShape.classicKey)
-        #expect(FoldDuoModel.BlurShape.current(defaults: suite) == .front)
-        #expect(FoldDuoModel.BlurShape.classicKey == "jrbar.foldClassicBlur")
-    }
+
 
     @Test("the end fade is black at edge-on + 2° and clear from edge-on + 22°")
     func endFadeCurve() {
@@ -314,7 +287,6 @@ struct FoldDuoModelTests {
         #expect(p.eyeF == 2.6 && p.eyeU == 2.0)
         #expect(p.hold == 1)
         #expect(abs(p.blurMax - 0.14) < 1e-6)
-        #expect(p.blurFront == 1)
         let reach = FoldDuoModel.blurProgress(delta: 30, reference: 110, fadeLength: 0.55) / 0.5
         #expect(abs(Double(p.blurReach) - reach) < 1e-6)
         #expect(p.frontOctaves == 8 && abs(p.frontStart - 0.07) < 1e-7)
@@ -325,12 +297,6 @@ struct FoldDuoModelTests {
         #expect(p.blackout == 0)
         #expect(p.imageSize == SIMD2<Float>(2560, 1662), "the upload's size survives the tick")
         #expect(p.lodCount == 8)
-        // The classic blur, from the hidden comparison switch.
-        FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
-                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: false,
-                           shape: .classic)
-        #expect(abs(p.blurMax - 0.06) < 1e-6)
-        #expect(p.blurFront == 0)
         // Reduce Motion: no warp and no blur, darkening only.
         FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
                            blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: true)
@@ -355,10 +321,9 @@ struct FoldDuoModelTests {
         #expect(MemoryLayout<P>.offset(of: \P.blackout) == 132)
         #expect(MemoryLayout<P>.offset(of: \P.lodCount) == 136)
         #expect(MemoryLayout<P>.offset(of: \P.pyramidShift) == 140)
-        #expect(MemoryLayout<P>.offset(of: \P.blurFront) == 144)
-        #expect(MemoryLayout<P>.offset(of: \P.blurReach) == 148)
-        #expect(MemoryLayout<P>.offset(of: \P.frontOctaves) == 152)
-        #expect(MemoryLayout<P>.offset(of: \P.frontStart) == 156)
+        #expect(MemoryLayout<P>.offset(of: \P.blurReach) == 144)
+        #expect(MemoryLayout<P>.offset(of: \P.frontOctaves) == 148)
+        #expect(MemoryLayout<P>.offset(of: \P.frontStart) == 152)
         #expect(MemoryLayout<P>.stride == 160)
     }
 

@@ -235,15 +235,14 @@ struct FoldRenderProofTests {
     /// overlay is out (no travel yet), else the look's overlay — the
     /// toy's own mapping for each look, from a lid resting at 110°.
     static func renderPanel(_ rig: Rig, angle: Double, blur: Double = 0.6,
-                            shade: Double = 0.67,
-                            shape: FoldDuoModel.BlurShape = .front) throws -> MTLTexture {
+                            shade: Double = 0.67) throws -> MTLTexture {
         let delta = rest - angle
         guard delta > 0.2 else { return rig.desktop }
         let renderer = rig.renderer
         if renderer.look == .duo {
             FoldDuoModel.apply(to: &renderer.params, reference: rest, theta: angle, hold: 1,
                                perspective: 0.6, blur: blur, shade: shade, fadeLength: 0.55,
-                               reduceMotion: false, shape: shape)
+                               reduceMotion: false)
         } else {
             FoldPortalModel.apply(to: &renderer.params,
                                   delta: FoldMath.deltaRadians(angle: angle, reference: rest),
@@ -692,7 +691,7 @@ struct FoldRenderProofTests {
     /// What one Duo frame costs the GPU, drawn at the 14-inch panel's own
     /// size (3024×1964, the overlay's drawable) from the 1x picture the
     /// capture used to film and from the Retina one it films now, with
-    /// each blur: the median of five batches of 40 draws back to back at
+    /// the Duo blur: the median of five batches of 40 draws back to back at
     /// each lid angle, after a warm-up batch. Written to `fold-duo-gpu.txt`.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to measure the Duo's GPU cost"))
@@ -702,7 +701,6 @@ struct FoldRenderProofTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let panelWidth = 3024, panelHeight = 1964
         var lines: [String] = []
-        let shapes: [FoldDuoModel.BlurShape] = [.classic, .front]
         for scale in [1, 2] {
             let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
             renderer.look = .duo
@@ -711,25 +709,23 @@ struct FoldRenderProofTests {
             let size = CGSize(width: panelWidth, height: panelHeight)
             let picture = "\(Self.width * scale)x\(Self.height * scale)"
             let pyramid = renderer.duoPyramid.map { "\($0.mipmapLevelCount) levels, \($0.allocatedSize / 1_000_000) MB" } ?? "none"
-            for shape in shapes {
-                var medians: [String] = []
-                for angle in [100.0, 90, 75, 60] {
-                    FoldDuoModel.apply(to: &renderer.params, reference: Self.rest, theta: angle, hold: 1,
-                                       perspective: 0.6, blur: 0.6, shade: 0.67, fadeLength: 0.55,
-                                       reduceMotion: false, shape: shape)
-                    _ = renderer.gpuTimePerFrame(to: out, size: size, frames: 40)
-                    var times: [Double] = []
-                    for _ in 0..<5 {
-                        let time = try #require(renderer.gpuTimePerFrame(to: out, size: size, frames: 40))
-                        times.append(time * 1000)
-                    }
-                    times.sort()
-                    medians.append(String(format: "%.0f° %.3f ms", angle, times[times.count / 2]))
+            var medians: [String] = []
+            for angle in [100.0, 90, 75, 60] {
+                FoldDuoModel.apply(to: &renderer.params, reference: Self.rest, theta: angle, hold: 1,
+                                   perspective: 0.6, blur: 0.6, shade: 0.67, fadeLength: 0.55,
+                                   reduceMotion: false)
+                _ = renderer.gpuTimePerFrame(to: out, size: size, frames: 40)
+                var times: [Double] = []
+                for _ in 0..<5 {
+                    let time = try #require(renderer.gpuTimePerFrame(to: out, size: size, frames: 40))
+                    times.append(time * 1000)
                 }
-                let label = shape == .front ? "front" : "classic"
-                lines.append("picture \(picture) (pyramid \(pyramid)), \(label) blur, drawn at "
-                             + "\(panelWidth)x\(panelHeight): " + medians.joined(separator: ", "))
+                times.sort()
+                medians.append(String(format: "%.0f° %.3f ms", angle, times[times.count / 2]))
             }
+            let label = "front"
+            lines.append("picture \(picture) (pyramid \(pyramid)), \(label) blur, drawn at "
+                         + "\(panelWidth)x\(panelHeight): " + medians.joined(separator: ", "))
         }
         let report = lines.joined(separator: "\n") + "\n"
         print("fold proof: GPU per Duo frame\n" + report)
@@ -771,101 +767,19 @@ struct FoldRenderProofTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let rig = try Self.makeRig(.duo)
         var lines: [String] = []
-        let shapes: [FoldDuoModel.BlurShape] = [.classic, .front]
-        for shape in shapes {
-            for shade in [0.67, 0] {
-                var cells: [String] = []
-                for angle in [110.0, 90, 80, 75] {
-                    let panel = try Self.renderPanel(rig, angle: angle, shade: shade, shape: shape)
-                    let seen = Self.pixels(try Self.renderObserver(rig, panel: panel, angle: angle))
-                    cells.append(String(format: "%.0f° %.1f", angle, Self.checkerMean(seen)))
-                }
-                let label = shape == .front ? "front" : "classic"
-                lines.append(String(format: "%@ blur, shade %.2f: ", label, shade) + cells.joined(separator: ", "))
+        for shade in [0.67, 0] {
+            var cells: [String] = []
+            for angle in [110.0, 90, 80, 75] {
+                let panel = try Self.renderPanel(rig, angle: angle, shade: shade)
+                let seen = Self.pixels(try Self.renderObserver(rig, panel: panel, angle: angle))
+                cells.append(String(format: "%.0f° %.1f", angle, Self.checkerMean(seen)))
             }
+            let label = "front"
+            lines.append(String(format: "%@ blur, shade %.2f: ", label, shade) + cells.joined(separator: ", "))
         }
         let report = lines.joined(separator: "\n") + "\n"
         print("fold proof: checker window mean as the eye sees it\n" + report)
         try report.write(to: dir.appendingPathComponent("fold-duo-checker.txt"), atomically: true, encoding: .utf8)
-    }
-
-    /// The two blurs side by side: the classic 0.10.0 curve on top, the
-    /// front underneath, at the same lid angles and the default knobs.
-    /// Seated-eye and glass strips, plus full-size pairs at three angles.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
-                   "set JRBAR_RENDER_PROOF=1 to write the blur comparison"))
-    func blurComparison() throws {
-        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
-                      ?? "/tmp/jrbar-audit", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let rig = try Self.makeRig(.duo)
-        var eyes: [(Double, CGImage, CGImage)] = []
-        var glasses: [(Double, CGImage, CGImage)] = []
-        var eyeCaptions: [(glass: String, eye: String)] = []
-        var glassCaptions: [(glass: String, eye: String)] = []
-        for angle in [100.0, 90, 80, 75, 70, 60] {
-            let old = try Self.renderPanel(rig, angle: angle, shape: .classic)
-            let new = try Self.renderPanel(rig, angle: angle, shape: .front)
-            let oldEye = try Self.image(try Self.renderObserver(rig, panel: old, angle: angle))
-            let newEye = try Self.image(try Self.renderObserver(rig, panel: new, angle: angle))
-            eyes.append((angle, oldEye, newEye))
-            glasses.append((angle, try Self.image(old), try Self.image(new)))
-            eyeCaptions.append((glass: String(format: "old blur · seated eye, %.0f°", angle),
-                                eye: String(format: "new blur · seated eye, %.0f°", angle)))
-            glassCaptions.append((glass: String(format: "old blur · glass, %.0f°", angle),
-                                  eye: String(format: "new blur · glass, %.0f°", angle)))
-            if [90.0, 80, 75].contains(angle) {
-                let pair = try Self.pair(oldEye, newEye, left: String(format: "old blur, %.0f°", angle),
-                                         right: String(format: "new blur, %.0f°", angle))
-                try Self.writePNG(pair, to: dir.appendingPathComponent(String(format: "fold-duo-compare-%.0f.png", angle)))
-            }
-        }
-        let eyeTitle = "Duo close, seated eye: old blur (top) and new blur (bottom) at the same lid angles"
-        try Self.writePNG(try Self.makeStrip(eyes, title: eyeTitle, captions: eyeCaptions),
-                          to: dir.appendingPathComponent("fold-duo-blur-compare-eye-strip.png"))
-        let glassTitle = "Duo close, glass: old blur (top) and new blur (bottom) at the same lid angles"
-        try Self.writePNG(try Self.makeStrip(glasses, title: glassTitle, captions: glassCaptions),
-                          to: dir.appendingPathComponent("fold-duo-blur-compare-glass-strip.png"))
-    }
-
-    /// The reopen from the black hold, old blur on top and new underneath,
-    /// as the seated eye sees it: the same lid, the same motion, frames at
-    /// equal steps of time. The new one should clear from the hinge out.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
-                   "set JRBAR_RENDER_PROOF=1 to write the reopen comparison"))
-    func reopenComparison() throws {
-        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
-                      ?? "/tmp/jrbar-audit", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let rig = try Self.makeRig(.duo)
-        var motion = FoldMotion()
-        var ease = FoldGateEase()
-        let dt = 1.0 / 60
-        var cells: [(Double, CGImage, CGImage)] = []
-        var captions: [(glass: String, eye: String)] = []
-        let picks: Set<Int> = [30, 36, 40, 44, 48, 52, 56, 60]
-        motion.feedDirect(FoldBlackout.releaseAngle)
-        motion.tick(at: 0, dt: dt)
-        for frame in 0...90 {
-            let now = Double(frame) * dt
-            let u = min(1, Double(frame) / 60)
-            let lid = FoldBlackout.releaseAngle + (Self.rest - FoldBlackout.releaseAngle) * (u * u * (3 - 2 * u))
-            motion.feedDirect(lid)
-            let drawn = motion.tick(at: now, dt: dt) ?? lid
-            let delta = ease.tick(target: max(0, Self.rest - drawn) * .pi / 180, dt: dt)
-            guard picks.contains(frame) else { continue }
-            let glassAngle = Self.rest - delta * 180 / .pi
-            let old = try Self.renderPanel(rig, angle: glassAngle, shape: .classic)
-            let new = try Self.renderPanel(rig, angle: glassAngle, shape: .front)
-            cells.append((glassAngle, try Self.image(try Self.renderObserver(rig, panel: old, angle: lid)),
-                          try Self.image(try Self.renderObserver(rig, panel: new, angle: lid))))
-            captions.append((glass: String(format: "old blur · %.2f s · lid %.0f°", now, lid),
-                             eye: String(format: "new blur · %.2f s · lid %.0f°", now, lid)))
-        }
-        let title = "Duo reopen, seated eye: old blur (top) and new blur (bottom); "
-            + "the new one clears from the hinge out, the far edge last"
-        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions),
-                          to: dir.appendingPathComponent("fold-duo-reopen-compare-strip.png"))
     }
 
     /// The capture's resolution at the hinge: the same fold drawn on the

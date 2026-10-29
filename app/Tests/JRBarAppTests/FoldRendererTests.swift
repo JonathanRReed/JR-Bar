@@ -228,11 +228,10 @@ import Testing
     }
 
     private static func duo(_ renderer: FoldRenderer, theta: Double, blur: Double = 0.6,
-                            shade: Double = 2.0 / 3, fadeLength: Double = 0.55,
-                            shape: FoldDuoModel.BlurShape = .front) {
+                            shade: Double = 2.0 / 3, fadeLength: Double = 0.55) {
         FoldDuoModel.apply(to: &renderer.params, reference: 110, theta: theta, hold: 1,
                            perspective: 0.6, blur: blur, shade: shade,
-                           fadeLength: fadeLength, reduceMotion: false, shape: shape)
+                           fadeLength: fadeLength, reduceMotion: false)
     }
 
     /// Mean and standard deviation over a band of rows and columns.
@@ -287,28 +286,20 @@ import Testing
     @Test func theFrontKeepsTheMiddleSharpAndFrostsTheOuterBandOnTheGPU() throws {
         // A third of the close (75° from 110°), no darkening. Glass rows
         // 64–80 show picture rows e ≈ 0.43–0.35 and rows 0–8 e ≈ 0.78–0.73:
-        // the front keeps the first sharper than the classic blur and
+        // the front keeps the first sharp and
         // frosts the second flat, so the shape reaches the shader.
         let width = 256, height = 160
         let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { x, y in
             ((x / 8) + (y / 8)) % 2 == 0 ? 255 : 0
         })
         let out = try Self.makeTarget(renderer.device, width: width, height: height)
-        func bands(_ shape: FoldDuoModel.BlurShape) throws -> (middle: Double, outer: Double) {
-            Self.duo(renderer, theta: 75, shade: 0, shape: shape)
-            #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
-            let px = Self.grays(out)
-            let middle = Self.stats(px, width: width, rows: 64..<80, columns: 64..<192)
-            let outer = Self.stats(px, width: width, rows: 0..<8, columns: 64..<192)
-            return (middle.sd, outer.sd)
-        }
-        let front = try bands(.front)
-        let classic = try bands(.classic)
-        #expect(front.middle > classic.middle + 8, "middle contrast: front \(front.middle), classic \(classic.middle)")
-        // Sharp as the hinge band reads: the glass resamples the picture.
-        #expect(front.middle >= 0.8 * 127.5, "the front's middle is still sharp: \(front.middle)")
-        #expect(front.outer < 0.5 * classic.outer, "outer contrast: front \(front.outer), classic \(classic.outer)")
-        #expect(front.outer < 6, "the front's outer band is frosted flat: \(front.outer)")
+        Self.duo(renderer, theta: 75, shade: 0)
+        #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
+        let px = Self.grays(out)
+        let middle = Self.stats(px, width: width, rows: 64..<80, columns: 64..<192)
+        let outer = Self.stats(px, width: width, rows: 0..<8, columns: 64..<192)
+        #expect(middle.sd >= 0.8 * 127.5, "the middle stays sharp: \(middle.sd)")
+        #expect(outer.sd < 6, "the outer band is frosted flat: \(outer.sd)")
     }
 
     @Test func duoTakesTheFarEdgeToBlackAndLeavesTheHingeBright() throws {

@@ -126,9 +126,6 @@ final class FoldToy: Toy {
     /// How a fold already under way comes into view when its first frame
     /// lands late: opacity on the lid's travel, never a rush to catch up.
     @ObservationIgnored private var entryFade = FoldEntryFade()
-    /// The Duo's blur for this gesture: read from the hidden comparison
-    /// switch as the overlay orders in (`FoldDuoModel.BlurShape`).
-    @ObservationIgnored private var duoBlurShape = FoldDuoModel.BlurShape.front
     /// The reference the Duo draws this gesture from: taken as the
     /// overlay orders in and kept until it orders out, so an unwind that
     /// outlives its anchor (the dwell re-seat, a reopen that settles
@@ -1066,7 +1063,6 @@ final class FoldToy: Toy {
             // fades in on the lid's travel instead of popping.
             if !overlay.isVisible {
                 entryFade.begin(delta: displayedDelta, at: now)
-                duoBlurShape = FoldDuoModel.BlurShape.current()
             }
             let entry = entryFade.opacity(delta: displayedDelta, at: now)
             // `apply` writes only the animatable fields, so the upload's
@@ -1083,8 +1079,7 @@ final class FoldToy: Toy {
                                    theta: reference - displayedDelta * 180 / .pi,
                                    hold: settings.holdStrength, perspective: settings.perspective,
                                    blur: settings.blur, shade: settings.shade,
-                                   fadeLength: settings.fadeLength, reduceMotion: reduceMotion,
-                                   shape: duoBlurShape)
+                                   fadeLength: settings.fadeLength, reduceMotion: reduceMotion)
                 // The first degrees fade the overlay in, and so does the
                 // lid's next stretch of travel when a late first frame
                 // lands on a fold already under way.

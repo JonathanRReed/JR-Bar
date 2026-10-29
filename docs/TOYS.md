@@ -426,29 +426,21 @@ and commits are in [PRIOR-ART.md](PRIOR-ART.md).
     edge-on (37.6° for the default eye) the pixel is black. `motion =
     smoothstep(δ / (fadeLength·(θref − 5°)))` has zero slope at the
     start. In the picture's own rows (e = 0 at the hinge row, 1 at the
-    far edge) the blur is a **front** (`FoldDuoModel.BlurShape.front`):
+    far edge) the blur is a **front** (`FoldDuoModel.frontSigma`):
     with r = (e − 0.07)/0.93 and the travel p = δ / (fadeLength·(θref −
     5°)) capped at 1, a row's frost is a = min(1, r·p / 0.5) and its σ =
     0.233·Blur·(2^(8a) − 1)/255 H. The pyramid level, which is log2 σ,
     so rises in a straight line with distance and travel. The hinge-side
     7 % never blurs, the middle stays sharper than it used to for longer,
     and the outer band frosts hard by a third of the close: fully frosted
-    at 0.14 H (default Blur) from 29° down off a 110° rest, against
-    0.03 H for the classic curve there. A reopen clears as a front from
+    at 0.14 H (default Blur) from 29° down off a 110° rest. A reopen clears as a front from
     the hinge outward: the fully frosted band retreats to the far edge,
     which is the last to come into focus, still soft 10° from rest.
     Under 0.82 px of blur the base is read as it is, so the first
     degrees are the desktop itself. σ is read as one pyramid
     level through a cubic B-spline (≈ 0.82·2^L px, MPS's decimation
     offset undone; `FoldRendererTests` pins it within 6/255 of a
-    Gaussian, so no ghost copies). **Classic blur (hidden, for
-    comparison in 0.10.1 only):** `defaults write com.jonathanreed.jrbar
-    jrbar.foldClassicBlur -bool YES` brings back the 0.10.0 curve, σ =
-    0.10·Blur·motion·e^1.35 H, from the next fold; `defaults delete
-    com.jonathanreed.jrbar jrbar.foldClassicBlur` goes back to the front.
-    Everything else, the full-resolution capture and the linear light
-    included, is the same either way. The switch goes in the release
-    after 0.10.1. Darkening is
+    Gaussian, so no ghost copies). Darkening is
     min(1, 3·Shade·motion·((e − 0.2)/0.8)^1.35): the hinge-side fifth
     never darkens and the far edge is black once motion ≥ 0.5 at the
     default Shade. The end fade runs from clear at edge-on + 22° to black
