@@ -14,8 +14,13 @@ from jrbar.provider_usage_factory import parse_factory_usage
 from jrbar.provider_usage_kilo import parse_kilo_usage
 from jrbar.provider_usage_kimi import parse_kimi_usage
 from jrbar.provider_usage_kiro import parse_kiro_usage
-from jrbar.provider_usage_parsers import parse_antigravity_usage, parse_claude_usage
-from jrbar.provider_usage_platform import provider_descriptors
+from jrbar.provider_usage_parsers import parse_antigravity_usage, parse_claude_usage, parse_codex_usage
+from jrbar.provider_usage_platform import (
+    ProviderSourceState,
+    failure_snapshot,
+    provider_descriptors,
+    select_authoritative_snapshot,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "app/Tests/JRBarAppTests/Fixtures/usage-window-matrix.json"
 
@@ -60,6 +65,20 @@ def matrix():
         groups.append({"displayName": group, "buckets": buckets})
     snapshots.append(("antigravity-all-pools", parse_antigravity_usage(
         {"response": {"groups": groups}}, observed_at=CLOCK)))
+    unknown_codex = parse_codex_usage(windows=[
+        {"label": "5-hour", "used_percent": None},
+        {"label": "Weekly", "used_percent": 23}], observed_at=CLOCK)
+    missing_reading = failure_snapshot("codex", observed_at=CLOCK, state=ProviderSourceState.UNAVAILABLE,
+                                      reason="reading_evidence_missing", action="Retry")
+    snapshots += [
+        ("codex-unknown-five-hour", unknown_codex),
+        ("codex-last-good", select_authoritative_snapshot((missing_reading,), last_known_good=unknown_codex)),
+        ("codex-weekly-only", parse_codex_usage(windows=[
+            {"label": "Weekly", "used_percent": 23}], observed_at=CLOCK)),
+        ("codex-all-unknown", parse_codex_usage(windows=[
+            {"label": "5-hour", "used_percent": None},
+            {"label": "Weekly", "used_percent": None}], observed_at=CLOCK)),
+    ]
     cases = []
     for name, snapshot in snapshots:
         document = usage_document(SimpleNamespace(snapshots=(snapshot,)))
@@ -69,7 +88,15 @@ def matrix():
             key = window["id"]
             assert key in FIVE_HOUR | WEEKLY | LABELLED, f"add an explicit placement for {key}"
             placements[key] = "5h" if key in FIVE_HOUR else "7d" if key in WEEKLY else "labelled"
-        cases.append({"name": name, "provider": provider, "placements": placements})
+        panel_cells = {}
+        own_only = bool(placements) and set(placements.values()) == {"labelled"}
+        for column in ("5h", "7d"):
+            windows = [w for w in provider["windows"] if placements[w["id"]] == column]
+            if windows:
+                panel_cells[column] = "reading" if any(w["used_pct"] is not None for w in windows) else "dash"
+            else:
+                panel_cells[column] = "own-cell" if own_only and column == "7d" else "empty"
+        cases.append({"name": name, "provider": provider, "placements": placements, "panel_cells": panel_cells})
     return {"now": CLOCK - 3600, "cases": cases}
 
 
@@ -80,6 +107,13 @@ def test_matrix_matches_real_parsers_and_every_registered_provider():
     assert json.loads(FIXTURE.read_text()) == generated
     covered = {key for case in generated["cases"] for key in case["placements"]}
     assert covered == FIVE_HOUR | WEEKLY | LABELLED
+    by_name = {case["name"]: case for case in generated["cases"]}
+    assert by_name["grok-billing.json"]["panel_cells"] == {"5h": "empty", "7d": "own-cell"}
+    assert by_name["devin-usage.json"]["panel_cells"] == {"5h": "empty", "7d": "reading"}
+    assert by_name["codex-unknown-five-hour"]["panel_cells"] == {"5h": "dash", "7d": "reading"}
+    assert by_name["codex-last-good"]["panel_cells"] == {"5h": "dash", "7d": "reading"}
+    assert by_name["codex-weekly-only"]["panel_cells"] == {"5h": "empty", "7d": "reading"}
+    assert by_name["codex-all-unknown"]["panel_cells"] == {"5h": "dash", "7d": "dash"}
 
 
 if __name__ == "__main__":

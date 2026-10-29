@@ -91,6 +91,10 @@
         "gemini-five-hour": "5h",
         "gemini-weekly": "7d",
         "claude-gpt-weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -179,6 +183,10 @@
         "five-hour": "5h",
         "weekly": "7d",
         "fable-only": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -256,6 +264,10 @@
       "placements": {
         "five-hour": "5h",
         "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -348,6 +360,10 @@
         "weekly": "7d",
         "spark-five-hour": "5h",
         "spark-weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -414,6 +430,10 @@
       "placements": {
         "spark-five-hour": "5h",
         "spark-weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -506,6 +526,10 @@
         "included-plan": "labelled",
         "auto-composer": "labelled",
         "api-models": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -583,6 +607,10 @@
       "placements": {
         "daily": "labelled",
         "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "reading"
       }
     },
     {
@@ -664,6 +692,10 @@
         "model-gemini-3-pro": "labelled",
         "model-gemini-3-flash": "labelled",
         "model-gemini-2-5-flash-lite": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -726,6 +758,10 @@
       },
       "placements": {
         "credits": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -760,7 +796,11 @@
         "panel_visible": true,
         "action_kind": null
       },
-      "placements": {}
+      "placements": {},
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "empty"
+      }
     },
     {
       "name": "opencode-go-usage.json",
@@ -852,6 +892,10 @@
         "go-rolling": "5h",
         "go-weekly": "7d",
         "go-monthly": "labelled"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -985,6 +1029,10 @@
         "core-5h": "5h",
         "core-7d": "7d",
         "core-30d": "labelled"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -1058,6 +1106,10 @@
       "placements": {
         "standard-billing": "labelled",
         "premium-billing": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -1131,6 +1183,10 @@
       "placements": {
         "monthly": "labelled",
         "overage": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -1219,6 +1275,10 @@
         "five-hour": "5h",
         "weekly": "7d",
         "monthly": "labelled"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
       }
     },
     {
@@ -1292,6 +1352,10 @@
       "placements": {
         "credits": "labelled",
         "pass": "labelled"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "own-cell"
       }
     },
     {
@@ -1365,6 +1429,10 @@
       "placements": {
         "weekly-opus": "7d",
         "weekly-sonnet": "7d"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "reading"
       }
     },
     {
@@ -1528,6 +1596,296 @@
         "claude-gpt-session": "labelled",
         "gemini-argon-five-hour": "5h",
         "gemini-argon-weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "reading",
+        "7d": "reading"
+      }
+    },
+    {
+      "name": "codex-unknown-five-hour",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 23.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 23.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "dash",
+        "7d": "reading"
+      }
+    },
+    {
+      "name": "codex-last-good",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 23.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 23.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "stale",
+        "state": "stale",
+        "incident": null,
+        "reset_credits": null,
+        "reason": "reading_evidence_missing",
+        "action": "Retry",
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "failing",
+        "status_text": "No fresh quota reading yet.",
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "dash",
+        "7d": "reading"
+      }
+    },
+    {
+      "name": "codex-weekly-only",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 23.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 23.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "empty",
+        "7d": "reading"
+      }
+    },
+    {
+      "name": "codex-all-unknown",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": null,
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h",
+        "weekly": "7d"
+      },
+      "panel_cells": {
+        "5h": "dash",
+        "7d": "dash"
       }
     }
   ]

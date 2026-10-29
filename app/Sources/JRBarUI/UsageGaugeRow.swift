@@ -338,19 +338,22 @@ public struct UsageGaugeRow: View {
         }
     }
 
-    /// The panel keeps two duration columns and gives other windows their own row.
+    /// Own-only providers start beside their identity; mixed providers keep duration columns.
     private var panelWindows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let ownWindows = provider.windows.filter { $0.placement == .labelled }
+        let ownOnly = ownWindows.count == provider.windows.count
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 ProviderLogoTile(provider: provider.id, accent: tileAccent)
                 compactIdentity.frame(width: Self.compactIdentityWidth - 30)
                 ForEach([UsageWindowPlacement.fiveHour, .weekly], id: \.rawValue) { placement in
-                    let windows = provider.windows.filter { $0.placement == placement }
+                    let windows = ownOnly && placement == .weekly ? Array(ownWindows.prefix(1))
+                        : provider.windows.filter { $0.placement == placement }
                     VStack(spacing: 8) {
                         if windows.isEmpty {
-                            Text("—").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
-                                .frame(width: Self.compactPercentWidth, alignment: .trailing)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Color.clear.frame(height: Self.panelCellHeight)
+                                .accessibilityHidden(true)
+                                .preference(key: UsageGaugeCellEvidence.self, value: [placement.rawValue: .empty])
                         }
                         ForEach(windows) { window in
                             VStack(alignment: .leading, spacing: 2) {
@@ -364,21 +367,23 @@ public struct UsageGaugeRow: View {
                                         .frame(height: Self.panelPoolLabelHeight, alignment: .leading)
                                         .help(window.name)
                                 }
-                                CompactUsageGaugeColumn(reading: reading(for: window), accent: accent)
+                                compactGauge(window)
                                     .frame(height: Self.panelCellHeight)
                             }
+                            .preference(key: UsageGaugeCellEvidence.self,
+                                value: [placement.rawValue: ownOnly ? .ownCell : cellState(window)])
                         }
                     }
                     .frame(minWidth: compactColumnWidth, maxWidth: .infinity)
                 }
             }
             .frame(minHeight: Self.panelCellHeight)
-            ForEach(provider.windows.filter { $0.placement == .labelled }) { window in
+            ForEach(ownOnly ? Array(ownWindows.dropFirst()) : ownWindows) { window in
                 HStack(spacing: 10) {
                     Text(window.placementLabel).font(JRBarTokens.TypeStyle.callout.font)
                         .lineLimit(1).help(window.name)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    CompactUsageGaugeColumn(reading: reading(for: window), accent: accent)
+                    compactGauge(window)
                         .frame(width: compactColumnWidth)
                 }
                 .frame(height: Self.panelCellHeight)
@@ -399,6 +404,9 @@ public struct UsageGaugeRow: View {
             return cells + gaps + captions
         }
         let otherCount = provider.windows.filter { $0.placement == .labelled }.count
+        if otherCount > 0 && otherCount == provider.windows.count {
+            return panelPoolLabelHeight + 2 + CGFloat(otherCount - 1) * (panelCellHeight + 8)
+        }
         let additionalColumns = max(0, (heights.max() ?? panelCellHeight) - panelCellHeight)
         return additionalColumns + CGFloat(otherCount) * (panelCellHeight + 8)
     }
@@ -408,7 +416,7 @@ public struct UsageGaugeRow: View {
             HStack(spacing: 10) {
                 ProviderLogoTile(provider: provider.id, accent: tileAccent, dim: ["not_found", "absent"].contains(provider.availability))
                 compactIdentity.frame(width: Self.compactIdentityWidth - 30)
-                if status == UsageStatus.noReading.word {
+                if status == UsageStatus.noReading.word && !showsWindows {
                     Text(UsageStatus.noReading.word).font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(neutralInk.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 } else if !windowNames.isEmpty {
@@ -524,13 +532,36 @@ public struct UsageGaugeRow: View {
                           locale: locale, timeZone: timeZone, forecast: forecasts[window.id])
     }
 
+    private func cellState(_ window: CoreUsageWindow) -> UsageGaugeCellState {
+        let value = reading(for: window)
+        return value.percentUsed == nil && !value.elapsed ? .dash : .reading
+    }
+
+    private var unknownCell: some View {
+        Text(UsageWindowLabel.unknownPercent)
+            .font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
+            .frame(width: Self.compactPercentWidth, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(UsageStatus.noReading.word)
+    }
+
+    @ViewBuilder private func compactGauge(_ window: CoreUsageWindow) -> some View {
+        let value = reading(for: window)
+        if cellState(window) == .dash && value.footnote.isEmpty {
+            unknownCell
+                .preference(key: UsageGaugeEvidence.self, value: [window.id: value])
+        } else {
+            CompactUsageGaugeColumn(reading: value, accent: accent)
+        }
+    }
+
     @ViewBuilder private func column(_ name: String, compact: Bool) -> some View {
         if let window = provider.windows.first(where: { $0.name == name || $0.overviewColumn == name }),
            !compact || (showsWindows && !(reading(for: window).stale && reading(for: window).elapsed)) {
             let reading = reading(for: window)
             Group {
                 if compact {
-                    CompactUsageGaugeColumn(reading: reading, accent: accent)
+                    compactGauge(window)
                 } else {
                     if let onInspect {
                         Button { onInspect(window) } label: {
@@ -546,11 +577,13 @@ public struct UsageGaugeRow: View {
                 }
             }
             .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity)
+            .preference(key: UsageGaugeCellEvidence.self, value: [name: cellState(window)])
         } else {
-            Text("—").font(JRBarTokens.TypeStyle.body.font).foregroundStyle(neutralInk.secondary)
-                .frame(width: compact ? Self.compactPercentWidth : nil, alignment: .trailing)
-                .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity, alignment: compact ? .leading : .center)
-                .accessibilityLabel("\(name): no window")
+            Color.clear
+                .frame(minWidth: compact ? compactColumnWidth : nil, maxWidth: .infinity)
+                .frame(height: 0)
+                .accessibilityHidden(true)
+                .preference(key: UsageGaugeCellEvidence.self, value: [name: .empty])
         }
     }
 }
@@ -571,9 +604,10 @@ private struct CompactUsageGaugeColumn: View {
                     JRBarGauge(value: used, tint: accent, stale: reading.stale, height: 4)
                 }
             } else {
-                Text(reading.elapsed ? UsageStatus.reset.word : UsageStatus.noReading.word)
-                    .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .caption).font).lineLimit(1)
+                Text(reading.elapsed ? UsageStatus.reset.word : UsageWindowLabel.unknownPercent)
+                    .font((reading.elapsed ? JRBarTokens.TypeStyle.headline : .body).font).lineLimit(1)
                     .foregroundStyle(reading.elapsed ? JRBarTokens.Ink.reset : neutralInk.secondary)
+                    .frame(width: reading.elapsed ? nil : UsageGaugeRow.compactPercentWidth, alignment: .trailing)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Text(reading.footnoteForms.last ?? reading.footnote)
