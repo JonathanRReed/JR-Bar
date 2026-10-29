@@ -246,6 +246,21 @@ class UsageLane:
         )
 
 
+def account_display_label(value: object) -> str | None:
+    """Keep names; discard URL paths, generated ids and placeholder labels."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    label = value.strip()
+    if len(label) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in label):
+        return None
+    lowered = label.lower()
+    if lowered.startswith(("org/", "organizations/", "org-", "org_", "your-organization", "your-workspace")):
+        return None
+    if re.fullmatch(r"[0-9a-fA-F-]{8,}", label) or re.search(r"[-_][0-9a-fA-F]{8,}$", label):
+        return None
+    return label
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderUsageSnapshot:
     provider_id: str
@@ -291,6 +306,7 @@ class ProviderUsageSnapshot:
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
+        object.__setattr__(self, "account_label", account_display_label(self.account_label))
         if self.token_history_state not in (None, "ready", "stale", "building", "failed", "disk_full", "damaged", "over_cap"):
             raise ValueError("invalid token history state")
         if self.reset_credits is not None and (

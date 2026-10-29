@@ -45,7 +45,9 @@ def test_failed_keychain_write_does_not_claim_browser_sign_in(monkeypatch) -> No
     )
     monkeypatch.setattr(provider_browser_access, "save_provider_usage_settings", lambda *_args, **_kwargs: saves.append(True))
 
-    message = provider_browser_access._import_browser_session("devin")
+    with pytest.raises(provider_browser_access.BrowserImportError) as caught:
+        provider_browser_access._import_browser_session("devin")
+    message = str(caught.value)
 
     assert message is not None and "Keychain" in message and "Signed in" not in message
     assert saves == []
@@ -59,6 +61,7 @@ def test_import_with_token_on_clipboard_stores_it__and_2_more() -> None:
         "Import Devin browser session",
         credential_store=store,
         clipboard_reader=lambda: "  devin_api_key_abcdef1234567890  ",
+        session_importer=lambda _provider: None,
         url_opener=lambda _url: None,
     )
     assert store.saved[("devin", "token")] == "devin_api_key_abcdef1234567890"
@@ -110,9 +113,8 @@ def test_plausible_token_rejects_prose_and_fragments__and_2_more() -> None:
     )
     assert "grok login" in message
 
-    # --- scenario: reconnect_clears_the_bad_token_and_reopens_import
-    """A wrong-but-plausible token must not wedge the provider forever:
-    Reconnect clears the credential and re-enters the import stage."""
+    # --- scenario: reconnect_preserves_the_token_until_a_replacement_is_found
+    """A failed re-import keeps the existing credential and explains the next step."""
     opened = []
 
     class DeletingStore(FakeStore):
@@ -129,9 +131,9 @@ def test_plausible_token_rejects_prose_and_fragments__and_2_more() -> None:
         clipboard_reader=lambda: "", url_opener=opened.append,
         session_importer=lambda provider: None,
     )
-    assert store.deleted == [("devin", "token")]
+    assert store.deleted == []
     assert opened and "devin" in opened[0]
-    assert "cleared" in message and "Import Devin" in message
+    assert "not replaced" in message and "Import Devin" in message
 
 
 

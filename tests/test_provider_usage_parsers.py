@@ -104,7 +104,7 @@ def test_devin_maps_daily_and_weekly_windows__and_2_more() -> None:
         ("Daily", 75),
         ("Weekly", 40),
     ]
-    assert snapshot.account_label == "org_example"
+    assert snapshot.account_label is None
 
     # --- scenario: grok_maps_cli_proxy_credit_usage_and_reset
     snapshot = parse_grok_usage(

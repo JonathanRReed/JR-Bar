@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from jrbar import provider_browser_import
 from jrbar.browser_session_import import import_devin_session_from_profile
 from jrbar.provider_browser_access import _consented_devin_session
@@ -141,7 +143,31 @@ def test_consented_chrome_profile_returns_its_devin_session(tmp_path: Path, monk
 
     assert session is not None
     assert session.token == "auth1_fixture_value_long"
-    assert session.organization == "org_fixture"
+    assert session.organization == "org/fixture"
+
+
+@pytest.mark.parametrize("browser,relative", sorted(provider_browser_import._CHROMIUM_PROFILE_ROOT_BY_BROWSER.items()))
+@pytest.mark.parametrize("auth_key,payload", [
+    ("auth1_session", {"token": "auth1_synthetic_value_long"}),
+    ("auth0spajs@@::synthetic", {"body": {"access_token": "eyJ.synthetic.access_token"}}),
+])
+def test_chromium_family_uses_the_same_session_and_org_decoder(tmp_path, monkeypatch, browser, relative, auth_key, payload):
+    root = tmp_path / "Library/Application Support" / relative / "Default/Local Storage/leveldb"
+    root.mkdir(parents=True)
+    (root / "000001.log").write_bytes(b"synthetic")
+    def record(sequence, key, value):
+        user_key = b"_https://app.devin.ai\x00\x01" + key.encode()
+        return Record(sequence, KeyState.Live, user_key, b"\x01" + value.encode())
+    records = [record(1, auth_key, json.dumps(payload)),
+               record(2, "post-auth-v3-user-synthetic-org_name-example", ""),
+               record(3, "feature-flags-cache:org-synthetic", "")]
+    monkeypatch.setattr(provider_browser_import, "_default_leveldb_runtime",
+                        lambda: (lambda path: RawDb(path, records, []), KeyState.Live, KeyState.Deleted))
+    session = import_devin_session_from_profile(home=tmp_path, browser=browser, profile="Default", strict=True)
+    assert session is not None
+    assert session.organization == "org/example"
+    assert session.internal_organization_id == "org-synthetic"
+    assert "auth1_" not in repr(session) and "access_token" not in repr(session)
 
 
 def test_import_requires_exact_provider_browser_profile_consent(tmp_path: Path):

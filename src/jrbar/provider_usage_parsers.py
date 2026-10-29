@@ -486,12 +486,11 @@ def parse_devin_usage(payload: object, *, observed_at: float) -> ProviderUsageSn
                 source_id="devin-account-api",
             )
         )
-    organization = payload.get("organization", payload.get("organization_id"))
-    label = str(organization).strip() if organization else None
-    if label:
-        # "org/acme" and "organizations/org-0a14..." are URL shapes, not
-        # names -- the card should read "acme", not a path fragment.
-        label = label.removeprefix("organizations/").removeprefix("org/")
+    organization = payload.get("organization")
+    if isinstance(organization, dict):
+        label = organization.get("name") or organization.get("display_name")
+    else:
+        label = payload.get("organization_name") or payload.get("workspace_name") or organization
     plan = payload.get("plan", payload.get("subscription_plan"))
     return _snapshot(
         "devin",

@@ -76,13 +76,13 @@ def test_sign_in_and_consent_are_neutral_with_their_fix():
     signed_out = availability_document(kiro(ProviderSourceState.NEEDS_SIGN_IN, "cli_session_unavailable",
                                             "Run kiro-cli login"), now=10, installed=True)
     assert signed_out["availability"] == "available"
-    assert signed_out["status_text"] == "Run kiro-cli login in Terminal, then Retry."
-    assert signed_out["action"] == "Retry"
+    assert signed_out["status_text"] == "No Kiro CLI sign-in was found."
+    assert signed_out["action_kind"] == "sign_in"
     consent = availability_document(kiro(ProviderSourceState.NEEDS_CONSENT, "usage_consent_required",
                                          "Allow Kiro usage"), now=10, installed=True)
     assert consent["availability"] == "available"
     assert consent["status_text"] == "Turn on Kiro usage in Settings > Providers."
-    assert consent["action"] is None
+    assert consent["action_kind"] == "manage"
 
 
 @pytest.mark.parametrize("provider,state,reason,label", [
@@ -94,14 +94,16 @@ def test_sign_in_and_consent_are_neutral_with_their_fix():
     ("kimi", ProviderSourceState.ERROR, "invalid_configuration", "Check Kimi Code source"),
     ("factory", ProviderSourceState.NEEDS_SIGN_IN, "web_session_changed", "Reconnect Factory browser session"),
 ])
-def test_refresh_only_providers_never_promise_an_action_they_cannot_take(provider, state, reason, label):
+def test_provider_rows_offer_the_flow_that_can_fix_their_state(provider, state, reason, label):
     snapshot = failure_snapshot(provider, observed_at=10, state=state, reason=reason, action=label)
     row = availability_document(snapshot, now=10, installed=True)
-    assert row["action"] in {None, "Retry"}
+    if state in {ProviderSourceState.NEEDS_SIGN_IN, ProviderSourceState.NEEDS_CONSENT}:
+        assert row["action_kind"] in {"manage", "sign_in"}
+        assert row["action"] not in {None, "Retry"}
+    else:
+        assert row["action"] in {None, "Retry"}
     if row["status_text"]:
         assert "_" not in row["status_text"]
-    if provider == "kilo":
-        assert row["status_text"] == "Run kilo auth login in Terminal or add a Kilo API key in Settings > Providers, then Retry."
 
 
 def test_a_failing_source_with_a_sign_in_reason_and_a_last_reading_is_not_red():

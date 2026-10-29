@@ -2726,6 +2726,20 @@ def _provider_credentials(self):
     return store
 
 
+@command("devin_session_profiles", main_thread=False)
+def _cmd_devin_session_profiles(self, args):
+    from .devin_session import profiles
+
+    return profiles(args)
+
+
+@command("devin_session_import", main_thread=False)
+def _cmd_devin_session_import(self, args):
+    from .devin_session import import_session
+
+    return import_session(args, _provider_credentials(self))
+
+
 @command("factory_session_profiles", main_thread=False)
 def _cmd_factory_session_profiles(self, args):
     from .factory_session import profiles
@@ -3010,9 +3024,9 @@ def _cmd_provider_action(self, args):
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
     if action is not None and (
-        not isinstance(action, str) or action not in {"resign_in", "hide", "open_app"}
+        not isinstance(action, str) or action not in {"resign_in", "hide", "open_app", "sign_in", "manage"}
     ):
-        raise CommandError("invalid_args", "action must be resign_in, hide or open_app")
+        raise CommandError("invalid_args", "action must be resign_in, hide, open_app, sign_in or manage")
     from .provider_browser_access import perform_provider_usage_action
     from .provider_usage_platform import provider_descriptor
 
@@ -3021,7 +3035,7 @@ def _cmd_provider_action(self, args):
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
     on_main(lambda: _require_usage_on(self, provider, instance))
-    if action in {None, "hide", "open_app"}:
+    if action in {None, "hide", "open_app", "sign_in", "manage"}:
         from .provider_availability import availability_document
 
         snapshot = next((item for item in getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
@@ -3061,6 +3075,14 @@ def _cmd_provider_action(self, args):
                 return {"provider": provider, "instance": instance, "message": f"Opening {descriptor.label}."}
             if availability["action_kind"] == "hide":
                 raise CommandError("invalid_args", "Choose the explicit hide action")
+            kind = availability["action_kind"]
+            if action in {"sign_in", "manage"} and kind != action:
+                raise CommandError("unavailable", "This provider action changed. Reload providers and try again.")
+            if kind == "manage":
+                return {"provider": provider, "instance": instance,
+                        "message": f"Open Settings > Providers and choose {descriptor.label} to reconnect or allow access."}
+            if kind == "sign_in":
+                return _cmd_provider_sign_in(self, {"provider": provider, "instance": instance})
             staged_action = availability.get("action", snapshot.action_label)
             if staged_action in {"Retry", "Retry later"}:
                 on_main(lambda: self._request_provider_usage(force=True, providers=((provider, instance),)))
@@ -3070,7 +3092,7 @@ def _cmd_provider_action(self, args):
                 "Connect Claude usage", "Reconnect Claude", "Allow Claude Keychain access",
             }:
                 action = "resign_in"
-    if action in {"hide", "open_app"}:
+    if action in {"hide", "open_app", "sign_in", "manage"}:
         raise CommandError("unavailable", "No current provider row for this action")
     if provider == "factory" or (provider in {"kimi", "kilo", "kiro"} and action is None):
         snapshots = getattr(getattr(self, "provider_usage_state", None), "snapshots", ())

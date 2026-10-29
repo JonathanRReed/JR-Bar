@@ -493,7 +493,8 @@ def test_every_slow_lane_command_belongs_to_exactly_one_lane() -> None:
 
     assert SCAN_LANE_COMMANDS == {"usage_graph", "usage_history"}
     assert ACTION_LANE_COMMANDS == {
-        "provider_sign_in", "provider_action", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
+        "provider_sign_in", "provider_action", "devin_session_profiles", "devin_session_import",
+        "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
     }
     assert not SCAN_LANE_COMMANDS & READ_LANE_COMMANDS
     assert not ACTION_LANE_COMMANDS & (SCAN_LANE_COMMANDS | READ_LANE_COMMANDS)
