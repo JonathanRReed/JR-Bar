@@ -176,7 +176,7 @@ struct ReconstructedTimelineView: View {
             kind = filter
         } label: {
             HStack(spacing: 4) {
-                Text(filter.rawValue)
+                Text(filter.rawValue) // jrbar-token-exception: KindFilter raw values are display titles
                     .jrbarType(.caption).fontWeight(picked ? .semibold : .medium)
                 Text("\(count)")
                     .jrbarType(.caption).fontWeight(.semibold).monospacedDigit()

@@ -327,7 +327,7 @@ struct PaletteRowView: View {
             ForEach(tags, id: \.self) { tag in
                 PaletteTagView(tag: tag)
             }
-            Text(item.kind)
+            Text(item.kind) // jrbar-token-exception: PaletteItem.kind contains display titles
                 .jrbarType(.callout)
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)

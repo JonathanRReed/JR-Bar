@@ -200,7 +200,7 @@ public struct SessionUsageDocument: Decodable, Hashable, Sendable {
         case "transcript_unreadable": return "The transcript could not be read"
         case "not_found": return "The monitor no longer holds this session"
         case "reading": return "Still reading the transcript"
-        default: return gap.replacingOccurrences(of: "_", with: " ")
+        default: return "No usage reading is available for this session"
         }
     }
 }
@@ -261,5 +261,18 @@ extension CoreModel {
         var args: [String: JSONValue] = ["ids": .array(ids.map(JSONValue.string))]
         if let since { args["since"] = .number(since) }
         return try await request("session_usage", args: args, as: SessionUsageDocument.self)
+    }
+}
+
+/// Gaps shared by the run comparison and export preview.
+public enum AuditGapWords {
+    public static func text(_ gap: String) -> String {
+        switch gap {
+        case "artifacts_not_tracked": "Files changed are unknown because the transcript was not read."
+        case "model_not_tracked": "The model is not tracked for each session."
+        case "transcript_not_found", "transcript_unreadable", "reading", "remote", "unsupported_provider", "not_found":
+            SessionUsageDocument.gapText(gap)
+        default: gap.contains(" ") && !gap.contains("_") ? gap : "Some session details are unavailable."
+        }
     }
 }

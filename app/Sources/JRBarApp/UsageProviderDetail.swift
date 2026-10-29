@@ -155,12 +155,12 @@ enum UsageHistoryPresentation {
                       loading: Bool, scanning: Bool, error: String?) -> State? {
         if disabled { return State(title: "Token history is off", detail: nil) }
         switch provider.tokenHistoryState {
-        case "disk_full": return State(title: "Disk full", detail: "Free space to resume token history. Last totals stay visible.", failure: true)
-        case "damaged": return State(title: "Token history needs repair", detail: "The cache is damaged. Recovery will retry from local transcripts.", failure: true, retry: true)
-        case "over_cap": return State(title: "Token history reached its size limit", detail: "Local token history exceeded its 4 GB cache limit. Last totals stay visible.", failure: true)
-        case "failed": return State(title: "Token history refresh failed", detail: error ?? "Showing the last totals.", failure: true, retry: true)
-        case "building": return State(title: "Building token history", detail: "Showing records read so far.")
-        case "stale": return State(title: "Token history is stale", detail: "Showing the last totals.", retry: true)
+        case "disk_full": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: "Free space to resume token history. Last totals stay visible.", failure: true)
+        case "damaged": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: "The cache is damaged. Recovery will retry from local transcripts.", failure: true, retry: true)
+        case "over_cap": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: "Local token history exceeded its 4 GB cache limit. Last totals stay visible.", failure: true)
+        case "failed": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: error ?? "Showing the last totals.", failure: true, retry: true)
+        case "building": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: "Showing records read so far.")
+        case "stale": return State(title: TokenHistoryWords.title(provider.tokenHistoryState), detail: "Showing the last totals.", retry: true)
         default: break
         }
         if let error { return State(title: "Token history refresh failed", detail: error, failure: true, retry: true) }
@@ -192,7 +192,7 @@ struct UsageSessionContext: View {
                         .monospacedDigit().foregroundStyle(JRBarTokens.Ink.secondary)
                         .accessibilityLabel("Context: \(tokens) of \(window) tokens")
                 } else {
-                    Text(gap ?? "No context reading").font(JRBarTokens.TypeStyle.caption.font)
+                    Text(gap.map(SessionUsageDocument.gapText) ?? "No context reading").font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(JRBarTokens.Ink.secondary)
                 }
             }

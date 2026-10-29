@@ -49,6 +49,27 @@ public enum LightWhy: String, CaseIterable, Sendable {
     case idleDim = "idle_dim"
     case battery, calendar, reminder, escalation, preview, studio, unknown
 
+    public var displayName: String {
+        switch self {
+        case .idle: "Idle"
+        case .working: "Working"
+        case .waiting: "Waiting on you"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .capacity: "Usage limit"
+        case .quiet: "Quiet"
+        case .sleepDim: "Display asleep"
+        case .idleDim: "Dimmed while idle"
+        case .battery: "On battery"
+        case .calendar: "Calendar"
+        case .reminder: "Reminder"
+        case .escalation: "Escalation"
+        case .preview: "Preview"
+        case .studio: "Studio"
+        case .unknown: "Light status"
+        }
+    }
+
     /// The documented word, or the older spellings the daemon and the
     /// Python attention model used for the same thing; nil for anything else.
     public static func parse(_ raw: String?) -> LightWhy? {
@@ -100,7 +121,7 @@ public enum LightExplainer {
         let why = normalise(rawWhy)
         let kind = LightWhy.parse(rawWhy) ?? .unknown
         let context = Context(state: state, settings: settings, surface: surface, now: now)
-        let (motion, reason, session) = line(kind: kind, raw: rawWhy, context: context)
+        let (motion, reason, session) = line(kind: kind, reasonReported: !why.isEmpty && why != "unknown", context: context)
         return LightExplanation(why: why, kind: kind, motion: motion, reason: reason, session: session,
                                 details: details(lights: lights, context: context, kind: kind))
     }
@@ -113,7 +134,7 @@ public enum LightExplainer {
     // MARK: The sentence
 
     /// Motion word, reason and the session for one `why`.
-    static func line(kind: LightWhy, raw: String, context: Context) -> (String, String, String?) {
+    static func line(kind: LightWhy, reasonReported: Bool, context: Context) -> (String, String, String?) {
         let derived = derivedMotion(surface: context.surface, kind: kind)
         let subject = context.subject(for: kind)
         switch kind {
@@ -128,7 +149,7 @@ public enum LightExplainer {
             guard let who = subject ?? context.openAsk.map({ context.who($0.0) }) else { return ("Amber pulse", "An agent is waiting on you", nil) }
             var qualifiers: [String] = []
             let ask = context.openAsk?.1 ?? context.state?.session(withID: who.id ?? "")?.ask
-            if let kind = ask?.kind, !kind.isEmpty { qualifiers.append(kind.replacingOccurrences(of: "_", with: " ")) }
+            if let kind = ask?.kind, !kind.isEmpty { qualifiers.append(AskKindWords.title(kind).lowercased()) }
             let waited = ask?.openedAt.map { context.now.timeIntervalSince1970 - $0 } ?? context.detail?.secondsInState
             if let waited, let elapsed = elapsed(seconds: waited) { qualifiers.append(elapsed) }
             let suffix = qualifiers.isEmpty ? "" : " (\(qualifiers.joined(separator: ", ")))"
@@ -181,14 +202,10 @@ public enum LightExplainer {
             // Today's daemon may send a word the table has no line for: say
             // what the light looks like and who is on top, never a UUID.
             let who = subject ?? context.topSession.map(context.who)
-            let humanised = raw.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "_", with: " ")
-            let unexplained = normalise(raw) == "unknown" || humanised.isEmpty
             if let who {
-                let verb = context.activityWord(for: who.id)
-                let suffix = unexplained ? "" : " (\(humanised))"
-                return (derived, "\(who.name) \(verb)\(suffix)", who.id)
+                return (derived, "\(who.name) \(context.activityWord(for: who.id))", who.id)
             }
-            return (derived, unexplained ? "No reason given" : "Reason: \(humanised)", nil)
+            return (derived, reasonReported ? "Light status unavailable" : "No reason given", nil)
         }
     }
 
@@ -265,9 +282,8 @@ public enum LightExplainer {
         case nil, "":
             if kind == .working { return colour.map { "Breathing \($0)" } ?? "Breathing" }
             return cap.map { "\($0) light" } ?? "Light"
-        case let other?:
-            let named = other.replacingOccurrences(of: "_", with: " ")
-            return cap.map { "\($0) \(named)" } ?? named.prefix(1).uppercased() + named.dropFirst()
+        default:
+            return cap.map { "\($0) light" } ?? "Light"
         }
     }
 
@@ -408,7 +424,11 @@ public enum LightExplainer {
     static func dimmingWord(_ word: String, lights: CoreLights) -> String {
         switch word {
         case "auto_dim", "night_dim": return AutoDimReadout.dimmingWord(lights.autoDim)
-        default: return word.replacingOccurrences(of: "_", with: " ")
+        case "idle_dim": return "idle dim"
+        case "quiet": return "quiet"
+        case "sleep": return "sleep"
+        case "battery": return "battery"
+        default: return "dimmed"
         }
     }
 

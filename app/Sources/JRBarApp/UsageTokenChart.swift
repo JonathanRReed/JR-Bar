@@ -38,7 +38,7 @@ struct UsageTokenChart: View {
                         if hidden.contains(kind) { hidden.remove(kind) } else { hidden.insert(kind) }
                     } label: {
                         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
-                            Label(kind, systemImage: hidden.contains(kind) ? "circle" : "circle.fill")
+                            Label(kind, systemImage: hidden.contains(kind) ? "circle" : "circle.fill") // jrbar-token-exception: Chart kinds are Input, Output, Cache reads and Cost
                                 .font(JRBarTokens.TypeStyle.caption.font)
                             Text(formatted(total)).font(JRBarTokens.TypeStyle.heading.font)
                                 .monospacedDigit()
@@ -98,7 +98,7 @@ struct UsageTokenChart: View {
                                 .font(JRBarTokens.TypeStyle.headline.font)
                             ForEach(data.byDate[date] ?? []) { point in
                                 HStack {
-                                    Text(point.kind)
+                                    Text(point.kind) // jrbar-token-exception: Chart kinds are Input, Output, Cache reads and Cost
                                     Spacer()
                                     Text(formatted(point.value)).monospacedDigit()
                                 }.foregroundStyle(color(point.kind))

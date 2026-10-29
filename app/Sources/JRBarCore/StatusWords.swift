@@ -105,6 +105,18 @@ public enum UsageStatus: String, CaseIterable, Sendable {
     case stale, usedUp, runsOut, noReading, noQuotaSource, noPace, reset, holding, paused, comfortable, notBurning, resetsFirst, incident
     case off, needsConsent, needsSignIn, unavailable, ready
 
+    public static func sourceState(_ raw: String?) -> Self {
+        switch raw {
+        case "ready": .ready
+        case "stale", "source_idle", "missing_recent", "failing": .stale
+        case "disabled", "off": .off
+        case "needs_consent": .needsConsent
+        case "needs_sign_in": .needsSignIn
+        case "no_quota_source": .noQuotaSource
+        default: .unavailable
+        }
+    }
+
     public static func provider(_ provider: CoreProviderUsage) -> Self {
         if provider.incident?.isEmpty == false { return .incident }
         if provider.usageIsOff || ["disabled", "off"].contains(provider.state) { return .off }

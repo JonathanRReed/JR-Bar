@@ -220,3 +220,107 @@ def test_art_glyph_tokens_only_belong_to_their_named_figures():
             assert offenders(figure, "app/Sources/JRBarApp/Unrelated.swift")
             assert offenders(f"struct ReadingLabel {{ var body: some View {{ Text(\"Read\").font({call}) }} }}", file)
     assert offenders("Text(\"!\").font(.system(size: 5.2))", next(iter(ART_GLYPH_CONTEXTS)))
+
+
+@pytest.mark.parametrize("source", [
+    'Text(gap ?? "No context reading")',
+    'Text(event.kind)',
+    'Text(row.kind.replacingOccurrences(of: "_", with: " "))',
+    'Label(row.state ?? "Unknown", systemImage: "circle")',
+    r'Text("Result: \(reply.reason)")',
+    'Text(fish.plan?.evidence ?? fish.state.rawValue)',
+])
+def test_raw_ui_codes_need_wording(source):
+    assert any(hit.startswith("raw-code-words:") for hit in offenders(source))
+
+
+@pytest.mark.parametrize("source", [
+    'Text(gap.map(SessionUsageDocument.gapText) ?? "No context reading")',
+    'Text(EventKindWords.title(event.kind))',
+    'Text(fish.state.displayName)',
+    'Text(error.kind.explanation)',
+    r'logger.info("Result: \(reply.reason)")',
+    'Text("state")',
+])
+def test_converted_codes_and_logs_pass(source):
+    assert not any(hit.startswith("raw-code-words:") for hit in offenders(source))
+
+
+def test_release_version_literals_have_one_source():
+    import re
+
+    from scripts.check_design_tokens import swift_regions
+
+    root = Path(__file__).resolve().parents[1] / "app/Sources"
+    literal = re.compile(r'(?<![\w.])v?\d+\.\d+\.\d+(?![\w.])')
+    for path in root.rglob("*.swift"):
+        text, _ = swift_regions(path.read_text())
+        if path.name == "WhatsNewCatalog.swift":
+            text = re.sub(r'static let releaseID = "[^"]+"', '', text)
+        assert not literal.search(text), str(path.relative_to(root))
+
+
+def test_event_titles_cover_daemon_publications():
+    import ast
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    titles = set(re.findall(r'"([a-z_]+)":', (root / "app/Sources/JRBarCore/EventKindWords.swift").read_text()))
+    emitted = set()
+    for path in (root / "src/jrbar").rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        constants = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                constants[node.target.id] = node.value
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+            if name not in {"_core_publish_event", "publish", "_publish", "publish_event"}:
+                continue
+            # This callback publishes roster links, not core events.
+            if path.name == "lineage_adapters.py":
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Name):
+                first = constants.get(first.id, first)
+            if isinstance(first, ast.Dict):
+                first = next((value for key, value in zip(first.keys, first.values)
+                              if isinstance(key, ast.Constant) and key.value == "kind"), first)
+            choices = [first.body, first.orelse] if isinstance(first, ast.IfExp) else [first]
+            for value in choices:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    emitted.add(value.value)
+    # These helpers choose the kind before calling the publication boundary.
+    source = (root / "src/jrbar/core_runtime.py").read_text()
+    for function in ["device_transitions", "_diff_ask_episodes"]:
+        tree = ast.parse(source)
+        body = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function)
+        emitted.update(value.value for value in ast.walk(body)
+                       if isinstance(value, ast.Constant) and isinstance(value.value, str)
+                       and value.value in {"device_connected", "device_disconnected", "ask_opened", "ask_resolved"})
+    assert emitted <= titles, emitted - titles
+
+
+def test_every_render_proof_suite_pins_appearance_before_test_bodies():
+    root = Path(__file__).resolve().parents[1] / "app/Tests"
+    import re
+
+    for path in root.rglob("*.swift"):
+        source = path.read_text()
+        if "JRBAR_RENDER_PROOF" not in source and "RenderProof" not in path.name:
+            continue
+        # The unchanged GPU recovery proof draws textures without AppKit colors.
+        if path.name == "FoldFarFrameRecoveryTests.swift":
+            assert "NSHostingView" not in source and "controlAccentColor" not in source
+            continue
+        # These geometry proofs stay unchanged and use the shared renderer's entry guard.
+        if path.name in {"NotchReleaseParityTests.swift", "NotchShadowTests.swift"}:
+            assert "ProofRender.write(" in source
+            renderer = (root / "JRBarAppTests/NotchSurfaceRenderProofTests.swift").read_text()
+            helper = renderer.split("enum ProofRender {", 1)[1]
+            assert helper.index("RenderProofAppearance.pinDefaultAccent()") < helper.index("NSHostingView(")
+            continue
+        for suite in re.finditer(r'@Suite\(([^\n]*)\)', source):
+            assert ".renderProofAppearance" in suite[1], path.name

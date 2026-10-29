@@ -324,7 +324,7 @@ struct Provided<Content: View>: View {
                 .settingControl(recordsControl ? paths : [])
                 .disabled(!provided || !store.isLive)
             if let reason = Self.reason(live: store.isLive, hasDocument: store.hasDocument, provided: provided) {
-                Text(reason).jrbarType(.caption).foregroundStyle(.secondary)
+                Text(reason).jrbarType(.caption).foregroundStyle(.secondary) // jrbar-token-exception: SettingAvailability.reason returns a sentence
             }
         }
     }

@@ -71,7 +71,7 @@ struct OverviewFactRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if let evidence {
-                    Text(evidence.rawValue)
+                    Text(evidence.rawValue) // jrbar-token-exception: OverviewEvidence raw values are display titles
                         .jrbarType(.caption).fontWeight(.semibold)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
                         .background(evidence.tint.opacity(0.14), in: .capsule)
@@ -80,7 +80,7 @@ struct OverviewFactRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(evidence.map { "\(name): \(value) (\($0.rawValue))" } ?? "\(name): \(value)")
+        .accessibilityLabel(evidence.map { "\(name): \(value) (\($0.rawValue))" } ?? "\(name): \(value)") // jrbar-token-exception: OverviewEvidence raw values are display titles
     }
 }
 
@@ -425,11 +425,11 @@ struct OverviewSessionInspector: View {
                 }
             }
             .disabled(reason != nil || store.askDesk.isPending(entry.id))
-            .help(reason ?? (ask.isHeldForDecision
+            .help(reason ?? (ask.isHeldForDecision // jrbar-token-exception: askDisabledReason returns a sentence
                 ? "Answered through the agent's own permission hook — the monitor's verdict is shown on the status line"
                 : "Send the answer to the session's terminal — the monitor's verdict is shown on the status line"))
             if let reason {
-                Label(reason, systemImage: "info.circle")
+                Label(reason, systemImage: "info.circle") // jrbar-token-exception: askDisabledReason returns a sentence
                     .jrbarType(.caption).foregroundStyle(.secondary)
             }
         }

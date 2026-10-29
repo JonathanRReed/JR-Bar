@@ -335,7 +335,7 @@ struct AgentRow: View {
         } else if let doctor, let reason = HooksDoctor.repairReason(doctor) {
             // Something to fix, and the fix beside it.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(reason)
+                Text(reason) // jrbar-token-exception: HooksDoctor.repairReason returns a sentence
                     .jrbarType(.caption)
                     .foregroundStyle(Tone.neutral.color)
                     .lineLimit(2)

@@ -13,6 +13,17 @@ public enum FishState: String, Equatable, Sendable, CaseIterable {
     case surfacing
     case sinking
     case leaving
+
+    public var displayName: String {
+        switch self {
+        case .swimming: "Working"
+        case .idling: "Idle"
+        case .surfacing: "Waiting on you"
+        case .sinking: "Session failed"
+        case .leaving: "Session completed"
+        }
+    }
+
 }
 
 /// The kind of fish a provider swims as (docs/TOYS.md): pure data —

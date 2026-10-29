@@ -143,8 +143,7 @@ extension CoreSession {
     var activityCaption: String {
         if let ask { return ask.summary ?? "Waiting on you" }
         if let message, !message.isEmpty { return message }
-        if let event { return event }
         if let tool { return tool }
-        return mode?.replacingOccurrences(of: "_", with: " ") ?? "—"
+        return SessionActivity.reduce(self).word
     }
 }

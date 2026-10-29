@@ -88,7 +88,7 @@ private struct GraphHeader: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Picker("Show", selection: $store.graphScope) {
-                    ForEach(OverviewStore.GraphScope.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(OverviewStore.GraphScope.allCases) { Text($0.rawValue).tag($0) } // jrbar-token-exception: GraphScope raw values are display titles
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
                 .help("Active: live sessions and the last hour's finishes · Everything: every session on record")

@@ -617,7 +617,7 @@ struct AskRow: View {
             if isDemo {
                 DemoAskBadge()
             } else {
-                StatusBadge(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask", tone: .ask)
+                StatusBadge(AskKindWords.title(row.ask?.kind), tone: .ask)
             }
             staleCapsule
             if row.ask?.isDestructive == true {

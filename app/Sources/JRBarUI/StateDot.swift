@@ -57,7 +57,7 @@ public struct StateDot: View {
                 Circle().fill(state == .stale ? neutralInk.tertiary : state.ink).frame(width: 8, height: 8)
             }
         }
-        .accessibilityLabel(overrideLabel ?? state.rawValue.capitalized)
+        .accessibilityLabel(overrideLabel ?? state.rawValue.capitalized) // jrbar-token-exception: State has single-word display values
     }
 
     private struct BreathingDot: View {

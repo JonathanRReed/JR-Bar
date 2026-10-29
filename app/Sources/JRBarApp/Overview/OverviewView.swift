@@ -512,7 +512,7 @@ struct OverviewView: View {
                         }
                     } else if let entry, let reason = store.askDisabledReason(for: entry),
                               entry.session.ask != nil {
-                        Text(reason)
+                        Text(reason) // jrbar-token-exception: askDisabledReason returns a sentence
                     }
                     if let entry {
                         Divider()
@@ -845,11 +845,7 @@ struct CompareRunsSheet: View {
     }
 
     private static func gapText(_ gap: String) -> String {
-        switch gap {
-        case "artifacts_not_tracked": "Files changed are unknown for a run whose transcript was not read."
-        case "model_not_tracked": "Model is not tracked per session — differences are unknown, not equal."
-        default: gap
-        }
+        AuditGapWords.text(gap)
     }
 }
 
@@ -884,7 +880,7 @@ private struct ExportPreviewSheet: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Gaps").jrbarType(.caption).fontWeight(.semibold).foregroundStyle(.tertiary)
                         ForEach(gaps, id: \.self) { gap in
-                            Text("· \(gap)").jrbarType(.caption).foregroundStyle(.secondary)
+                            Text("· \(AuditGapWords.text(gap))").jrbarType(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }

@@ -523,8 +523,8 @@ struct LEDSStudioView: View {
     private func errorLabel(_ error: LEDSParseError, device: String) -> some View {
         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
             Label(error.line > 0
-                  ? "\(device) rejects line \(error.line), column \(error.column): \(error.kind.rawValue)"
-                  : "\(device) rejects the program: \(error.kind.rawValue)",
+                  ? "\(device) rejects line \(error.line), column \(error.column)"
+                  : "\(device) rejects the program",
                   systemImage: "xmark.octagon.fill")
                 .jrbarType(.callout).fontWeight(.medium)
                 .foregroundStyle(Tone.failure.color)

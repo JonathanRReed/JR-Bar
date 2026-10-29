@@ -169,7 +169,7 @@ struct StudioWhatPlays: View {
             }
             ForEach(lights.auditions.keys.sorted(), id: \.self) { name in
                 if let audition = lights.auditions[name] {
-                    Text("Last preview on \(name): \(audition.reason)").jrbarType(.caption)
+                    Text("Last preview on \(name): \(audition.reason)").jrbarType(.caption) // jrbar-token-exception: The preview protocol supplies reason sentences
                     warnings(audition.playbackWarnings)
                 }
             }
@@ -179,20 +179,20 @@ struct StudioWhatPlays: View {
             if lights.scenario == .live {
                 if let plan = lights.plan {
                     ForEach(plan.devices) { device in
-                        Text("\(lights.deviceName(device.device)): \(device.reason)")
+                        Text("\(lights.deviceName(device.device)): \(device.reason)") // jrbar-token-exception: The light plan protocol supplies reason sentences
                         if let cue = device.cueReason { Text(cue).foregroundStyle(.secondary) }
                         warnings(device.playbackWarnings)
                     }
                     if plan.devices.isEmpty { Text("No light devices are configured.").foregroundStyle(.secondary) }
                 } else { Text("Waiting for the daemon's light plan.").foregroundStyle(.secondary) }
             } else if let preview = lights.selectedPreview {
-                Text(preview.reason)
+                Text(preview.reason) // jrbar-token-exception: The preview protocol supplies reason sentences
                 Text(preview.label).jrbarType(.caption).foregroundStyle(.secondary)
                 warnings(preview.playbackWarnings)
             } else { Text("Waiting for the daemon's preview.").foregroundStyle(.secondary) }
             if lights.scenario != .live {
                 ForEach(lights.plan?.devices.filter { !$0.warnings.isEmpty } ?? []) { device in
-                    Text("Live \(lights.deviceName(device.device)): \(device.reason)").jrbarType(.caption)
+                    Text("Live \(lights.deviceName(device.device)): \(device.reason)").jrbarType(.caption) // jrbar-token-exception: The light plan protocol supplies reason sentences
                     warnings(device.playbackWarnings)
                 }
             }

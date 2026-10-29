@@ -119,6 +119,35 @@ ART_GLYPH_CONTEXTS = {
 }
 
 
+
+RAW_UI_VALUE = re.compile(r"(?:[\w$]+(?:\?\.|\.))*(?:reason|state|kind|gap|rawValue)(?:\.(?:capitalized|lowercased\(\)|replacingOccurrences\([^)]*\)(?:\.capitalized)?))?\??$")
+UI_SINK = re.compile(r"\b(?:Text|Label|StatusBadge|accessibilityLabel|help)\(")
+
+
+def raw_ui_codes(text: str, code: str):
+    """Inspect the displayed argument, including fallbacks and interpolations, not logs or tags."""
+    for sink in UI_SINK.finditer(code):
+        start = sink.end()
+        depth = 0
+        end = start
+        for end in range(start, len(code)):
+            char = code[end]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                break
+        argument = text[start:end].strip()
+        values = re.findall(r"\\\(([^()]+)\)", argument)
+        # Strings are blanked in code, so a literal containing code-like words is harmless.
+        values += code[start:end].strip().split("??")
+        for value in values:
+            if RAW_UI_VALUE.fullmatch(value.strip()):
+                yield sink.start(), value.strip()
+
 def offenders(source: str, path: str = "") -> Counter[str]:
     text, code = swift_regions(source)
     exception_lines = {
@@ -137,6 +166,9 @@ def offenders(source: str, path: str = "") -> Counter[str]:
                 contexts.append(declaration[1])
         if allowed is None or allowed not in contexts:
             found[f"art-glyph: {match[1]} outside its figure"] += 1
+    for offset, value in raw_ui_codes(text, code):
+        if source.count("\n", 0, offset) not in exception_lines:
+            found[f"raw-code-words: {value}"] += 1
     for match in ICON_BUTTON.finditer(text):
         body = text[match.end():text.find("}", match.end())]
         following = text[match.start():].split("\n")[:ICON_BUTTON_LINES]
@@ -160,7 +192,7 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
             continue
-        text_checks = {"retired-page", "error-words", "reason-code-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        text_checks = {"retired-page", "error-words", "reason-code-words", "raw-code-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

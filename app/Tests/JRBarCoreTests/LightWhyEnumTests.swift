@@ -237,14 +237,14 @@ struct LightWhyEnumTests {
         let unknown = try #require(Self.explain("moon_phase", [Self.codexDone, Self.legacy]))
         #expect(unknown.kind == .unknown)
         #expect(unknown.why == "moon_phase")
-        #expect(unknown.headline == "Breathing orange: Claude session is working (moon phase)")
+        #expect(unknown.headline == "Breathing orange: Claude session is working")
         #expect(unknown.session == Self.mainID)
         let explicit = try #require(Self.explain("unknown", [Self.codexDone]))
         #expect(explicit.headline == "Breathing orange: Codex session finished")
         let nobody = try #require(Self.explain("unknown", []))
         #expect(nobody.reason == "No reason given")
         let asking = try #require(Self.explain("moon_phase", [Self.main], asks: [CoreAsk(session: Self.mainID, kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 5, summary: "?")]))
-        #expect(asking.reason == "Claude jr-bar-67 is waiting on you (moon phase)")
+        #expect(asking.reason == "Claude jr-bar-67 is waiting on you")
     }
 
     @Test("the fallback colour comes from the brightest LED of a whole program")

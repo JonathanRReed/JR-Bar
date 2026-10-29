@@ -1612,7 +1612,7 @@ final class PanelStore {
         case "needs_sign_in": return "signed out"
         case "needs_consent": return usage.usageIsOff ? "usage off" : "needs consent"
         case let state? where state != "ready" && state != "stale" && usage.windows.isEmpty:
-            return state.replacingOccurrences(of: "_", with: " ")
+            return UsageStatus.sourceState(state).word.lowercased()
         default:
             guard usage.windows.isEmpty else { return "at 0%" }
             return usage.quotaSource ? "no windows" : "no quota source"
@@ -1715,7 +1715,7 @@ final class PanelStore {
         if noRoomForOneMore, fix == nil { parts.append("no room for +1") }
         if parts.isEmpty {
             if !action.isEmpty { return action }
-            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
+            if let state = usage.state, !state.isEmpty, state != "ready" { return UsageStatus.sourceState(state).word.lowercased() }
             return "no reset time"
         }
         return parts.joined(separator: " · ")
@@ -1761,7 +1761,7 @@ final class PanelStore {
         case "pro": return "Pro"
         case "dot": return "Dot"
         case "screen_bar": return "Screen Bar"
-        default: return kind.replacingOccurrences(of: "_", with: " ")
+        default: return "Light device"
         }
     }
 
@@ -2501,7 +2501,7 @@ final class PanelStore {
         // `reason`; "guarded" as a bare hint would read like a verdict.
         case "guarded": return nil
         case nil, "": return nil
-        case let other?: return other.replacingOccurrences(of: "_", with: " ")
+        default: return nil
         }
     }
 }

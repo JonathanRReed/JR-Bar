@@ -224,7 +224,7 @@ struct UsageOverviewChart: View {
                 }
             }
             ForEach(providers.filter { stale($0) }, id: \.self) { provider in
-                Text(ProviderPalette.displayName(for: provider) + " · " + (states[provider] ?? "unknown").replacingOccurrences(of: "_", with: " ") + ". Showing last totals.")
+                Text(ProviderPalette.displayName(for: provider) + " · " + TokenHistoryWords.title(states[provider]) + ". Showing last totals.")
                     .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(JRBarTokens.Ink.stale).lineLimit(1)
             }
             Chart {

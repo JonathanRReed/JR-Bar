@@ -85,10 +85,18 @@ struct SessionUsageTests {
         #expect(ModelName.display(nil) == nil)
     }
 
+    @Test("every gap has words", arguments: ["remote", "unsupported_provider", "transcript_not_found",
+                                             "transcript_unreadable", "not_found", "reading", "future_gap"])
+    func gapMatrix(gap: String) {
+        let words = SessionUsageDocument.gapText(gap)
+        #expect(!words.contains("_"))
+        #expect(words.first?.isUppercase == true)
+    }
+
     @Test("gap words are plain")
     func gapWords() {
         #expect(SessionUsageDocument.gapText("remote") == "The transcript is on the peer Mac")
-        #expect(SessionUsageDocument.gapText("some_new_gap") == "some new gap")
+        #expect(SessionUsageDocument.gapText("some_new_gap") == "No usage reading is available for this session")
         #expect(SessionUsageDocument.gapText("reading") == "Still reading the transcript")
     }
 }

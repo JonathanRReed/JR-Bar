@@ -295,3 +295,19 @@ extension CoreSession {
         return !signalsFailure(at: now)
     }
 }
+
+/// Request kinds as display words, shared by ask cards and light explanations.
+public enum AskKindWords {
+    public static func title(_ kind: String?) -> String {
+        switch kind {
+        case "permission": "Permission"
+        case "approval": "Approval"
+        case "review": "Review"
+        case "input": "Input"
+        case "input_required": "Input needed"
+        case "question": "Question"
+        case "dialog", "dialogue": "Dialog"
+        default: "Ask"
+        }
+    }
+}

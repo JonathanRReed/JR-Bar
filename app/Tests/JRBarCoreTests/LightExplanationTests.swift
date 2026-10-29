@@ -97,6 +97,18 @@ struct LightExplanationTests {
         #expect(twelve.hasSuffix("AM") || twelve.hasSuffix("PM"), "\(twelve)")
     }
 
+    @Test("unknown light reasons and motion stay in diagnostics", arguments: [false, true], ["future_reason", "another_internal_code"])
+    func unknownCodes(withSession: Bool, reason: String) throws {
+        let state = Self.state(sessions: withSession ? [Self.gemini] : [])
+        let reading = Self.lights(why: reason, motion: "new_motion_code", fallback: "#AF52DE")
+        let explanation = try #require(LightExplainer.explain(lights: reading, state: state, settings: nil, now: Self.now))
+        #expect(explanation.why == reason)
+        #expect(!explanation.reason.contains("_"))
+        #expect(!explanation.reason.contains("internal"))
+        #expect(!explanation.motion.contains("_"))
+        #expect(!explanation.motion.contains("new motion"))
+    }
+
     @Test("idle, failed and unknown whys all produce a line")
     func others() throws {
         let idle = try #require(LightExplainer.explain(lights: Self.lights(why: "idle", motion: "breathe", fallback: "#020204"), state: Self.state(), settings: nil, now: Self.now))
@@ -108,7 +120,7 @@ struct LightExplanationTests {
         let unknown = try #require(LightExplainer.explain(lights: Self.lights(why: "Moon-Phase", motion: "sweep", fallback: "#AF52DE"), state: Self.state(), settings: nil, now: Self.now))
         #expect(unknown.why == "moon_phase")
         #expect(unknown.motion == "Purple sweep")
-        #expect(unknown.reason == "Reason: Moon-Phase")
+        #expect(unknown.reason == "Light status unavailable")
         #expect(LightExplainer.explain(lights: nil, state: nil, settings: nil) == nil)
         #expect(LightExplainer.explain(lights: CoreLights(), state: nil, settings: nil) == nil)
     }

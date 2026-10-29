@@ -1075,7 +1075,7 @@ extension AquariumView {
                             .lineLimit(1)
                     }
                 } else {
-                    Text(fish.plan?.evidence ?? fish.state.rawValue)
+                    Text(fish.plan?.evidence ?? fish.state.displayName)
                         .jrbarType(.caption).fontDesign(.monospaced)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

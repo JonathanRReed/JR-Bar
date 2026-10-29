@@ -533,10 +533,10 @@ struct WhyDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "light.max").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.secondary)
                     Text(explanation.motion).font(JRBarTokens.TypeStyle.callout.font)
-                    Text("· \(explanation.why.replacingOccurrences(of: "_", with: " "))")
+                    Text("· \(explanation.kind.displayName)")
                         .font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(.tertiary)
                 }
-                Text(explanation.reason).font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(explanation.reason).font(JRBarTokens.TypeStyle.callout.font).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) // jrbar-token-exception: LightExplainer supplies a sentence
                 if !explanation.details.isEmpty {
                     Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
                     Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {

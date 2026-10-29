@@ -1348,7 +1348,7 @@ final class UsageCenterStore {
         case "derived", "estimated": return "Estimated reading"
         case "manual": return "Entered by hand"
         case nil, "": return "Source not reported"
-        case let other?: return other.replacingOccurrences(of: "_", with: " ").capitalized + " reading"
+        default: return "Source not reported"
         }
     }
 
