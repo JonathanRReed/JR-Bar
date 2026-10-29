@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import datetime
 from urllib.parse import urlencode
 
+from .browser_session_import import BrowserSessionReadError
 from .provider_usage_collectors import ProviderHttpError, _credential, _default_http_json
 from .provider_usage_parsers import _snapshot
 from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane, failure_snapshot
@@ -203,7 +204,7 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                     return False
                 try:
                     current = read_browser_session(session["browser"], session["profile"])
-                except (OSError, ValueError):
+                except (OSError, ValueError, BrowserSessionReadError):
                     return False
                 if current is None or not current.get("access_token"):
                     return False

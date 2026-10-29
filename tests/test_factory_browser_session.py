@@ -921,3 +921,22 @@ def test_chromium_incomplete_factory_import_preserves_previous_session(context, 
     assert caught.value.code == "browser_token_unavailable"
     assert store.get("factory", "web-session").secret == previous
     assert not load_browser_consents().store.consents
+
+
+
+def test_incomplete_background_browser_storage_keeps_saved_access(context, monkeypatch):
+    from jrbar import factory_session as module
+    from jrbar.browser_session_import import BrowserSessionReadError
+
+    _, store = context
+    monkeypatch.setattr(module, "read_browser_session", lambda *_: session())
+    module.import_session({"browser": "zen", "profile": "synthetic.default", "confirm": True,
+                           "background_repair": True}, store)
+    def incomplete(*_):
+        raise BrowserSessionReadError("browser_token_unavailable")
+    monkeypatch.setattr(module, "read_browser_session", incomplete)
+    def http(_method, url, **kwargs):
+        assert kwargs["headers"]["Authorization"] == "Bearer synthetic-access-token"
+        return auth() if url.endswith("/auth/me") else billing()
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.state is ProviderSourceState.READY
