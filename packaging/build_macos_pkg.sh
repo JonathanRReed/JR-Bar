@@ -55,10 +55,6 @@ ENVIRONMENT_SNAPSHOT="$DIST_DIR/release-environment.txt"
 APP_ID="com.jonathanreed.jrbar"
 PRODUCT_DISPLAY_NAME="JR-Bar"
 MINIMUM_SUPPORTED_MACOS="26.0"
-APPLE_EVENTS_USAGE_DESCRIPTION="JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open."
-FOCUS_STATUS_USAGE_DESCRIPTION="JR-Bar uses Focus Status only when you choose Allow Focus Status, so Do Not Disturb can follow whether a macOS Focus is active."
-AUDIO_CAPTURE_USAGE_DESCRIPTION="JR-Bar reads the playing app's audio levels only while the notch's Audio visualizer setting is on, to draw its six-band animation. Audio is never recorded or stored."
-LOCATION_USAGE_DESCRIPTION="JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent."
 SPARKLE_FEED_URL="https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
 SPARKLE_PUBLIC_KEY_FILE="$ROOT_DIR/packaging/sparkle_public_ed_key.txt"
 
@@ -484,9 +480,10 @@ echo "==> assembling $APP_PATH"
 /usr/bin/ditto "$CORE_APP" "$HELPERS/jrbar-core.app"
 /usr/bin/install -m 755 "$HOOK_DIR/jrbar-hook" "$HELPERS/jrbar-hook"
 # The daemon is headless: never a Dock tile, never a window. It inherits the
-# app's Automation grant through the process tree, but TCC reads the usage
-# strings from the bundle it finds first, so it carries them too.
+# app's grants through the process tree. TCC can read the helper bundle's
+# descriptions first, so it carries the same reviewed privacy strings.
 CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/write_privacy_usage.py" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$CORE_PLIST"
 # The daemon's whole job is timeliness (timers, socket fan-out, hook
@@ -499,8 +496,6 @@ CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CORE_PLIST"
-/usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST"
 
 if [ -e "$APP_PATH/Contents/Frameworks/Sparkle.framework" ] || \
     [ -L "$APP_PATH/Contents/Frameworks/Sparkle.framework" ]; then
@@ -520,6 +515,7 @@ fi
     "$SPARKLE_DISTRIBUTION/LICENSE" \
     "$APP_PATH/Contents/Resources/ThirdPartyLicenses/Sparkle.txt"
 
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/write_privacy_usage.py" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
 # The build number, not the marketing version: see BUILD_NUMBER above.
@@ -531,16 +527,6 @@ fi
     /usr/libexec/PlistBuddy -c "Set :CFBundleName $PRODUCT_DISPLAY_NAME" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $MINIMUM_SUPPORTED_MACOS" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MINIMUM_SUPPORTED_MACOS" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string $APPLE_EVENTS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :NSFocusStatusUsageDescription string $FOCUS_STATUS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSFocusStatusUsageDescription $FOCUS_STATUS_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :NSAudioCaptureUsageDescription string $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSAudioCaptureUsageDescription $AUDIO_CAPTURE_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :NSLocationUsageDescription string $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSLocationUsageDescription $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription $LOCATION_USAGE_DESCRIPTION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \

@@ -31,7 +31,7 @@ enum PermissionHealth {
             switch status {
             case .granted:
                 keep.append(permission.rawValue)
-            case .needed, .denied:
+            case .needed, .denied, .restricted, .writeOnly:
                 if remembered != nil, before.contains(permission.rawValue) { lost.append(permission) }
             case .unknown, .unavailable:
                 if before.contains(permission.rawValue) { keep.append(permission.rawValue) }

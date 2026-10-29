@@ -44,7 +44,10 @@ final class ShelfMirrorModel {
              AVCaptureDevice.authorizationStatus(for: .video)
          },
          requestAccess: @escaping (@escaping @Sendable (Bool) -> Void) -> Void = { completion in
-             AVCaptureDevice.requestAccess(for: .video, completionHandler: completion)
+             _ = Task { @MainActor in
+                 let status = await SetupModel.requestCamera()
+                 completion(status == .granted)
+             }
          }) {
         self.driver = driver ?? ShelfMirrorCameraDriver()
         self.queue = queue
@@ -67,7 +70,10 @@ final class ShelfMirrorModel {
     /// opens or closes. Unpinning always closes it — an open lens with
     /// no visible preview would be the camera-indicator trap.
     func sync(enabled: Bool) {
-        guard enabled != self.enabled else { return }
+        guard enabled != self.enabled else {
+            if enabled, state == .denied, authorization() == .authorized { retry() }
+            return
+        }
         self.enabled = enabled
         generation += 1
         runGate.update(enabled: enabled, generation: generation)

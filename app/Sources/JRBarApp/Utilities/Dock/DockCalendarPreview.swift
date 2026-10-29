@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 @preconcurrency import EventKit
 
 /// A visible Dock card borrows the shelf's cache. Hovering never asks for access.
@@ -19,7 +19,7 @@ final class DockCalendarPreview {
     private(set) var running = false
     private var work: DispatchWorkItem?
     private var timer: Timer?
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var generation = 0
     private var dirty = false
 
@@ -29,11 +29,19 @@ final class DockCalendarPreview {
         stop()
         running = true
         onChange(authorization() == .fullAccess ? .loading : .noAccess)
-        observer = reader.notifications.addObserver(
+        observers.append(reader.notifications.addObserver(
             forName: ShelfCalendarReader.didChange, object: reader, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.storeChanged() }
-        }
+        })
+        observers.append(reader.notifications.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.reader.invalidate()
+                self?.storeChanged()
+            }
+        })
         refresh()
     }
 
@@ -44,8 +52,10 @@ final class DockCalendarPreview {
         work = nil
         timer?.invalidate()
         timer = nil
-        if let observer { reader.notifications.removeObserver(observer) }
-        observer = nil
+        for observer in observers {
+            reader.notifications.removeObserver(observer)
+        }
+        observers.removeAll()
         dirty = false
     }
 

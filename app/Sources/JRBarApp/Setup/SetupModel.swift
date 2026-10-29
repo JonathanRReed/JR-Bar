@@ -154,9 +154,9 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
     var canPrompt: Bool {
         switch self {
         case .notifications, .calendar, .reminders, .camera, .screenRecording,
-             .focusStatus, .automation, .location:
+             .focusStatus, .automation, .location, .bluetooth:
             return true
-        case .accessibility, .fullDiskAccess, .audioCapture, .bluetooth, .lidHelper:
+        case .accessibility, .fullDiskAccess, .audioCapture, .lidHelper:
             return false
         }
     }
@@ -173,7 +173,11 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         switch status {
         case .granted, .unavailable:
             return nil
-        case .denied:
+        case .writeOnly:
+            return ("Allow Full Access…", true)
+        case .denied, .restricted:
+            return ("Open Settings…", true)
+        case .unknown where self != .automation:
             return ("Open Settings…", true)
         case .needed, .unknown:
             return canPrompt ? ("Grant…", false) : ("Open Settings…", true)
@@ -189,6 +193,8 @@ enum SetupPermissionStatus: String, Equatable, Sendable {
     case needed
     /// Amber dot — refused once; the only way back is the pane.
     case denied
+    case restricted
+    case writeOnly
     /// Grey dot — nothing this build can ask for (e.g. notifications on
     /// an unbundled `swift run`, which has no notification centre).
     case unavailable
@@ -200,6 +206,8 @@ enum SetupPermissionStatus: String, Equatable, Sendable {
         case .granted: return "Granted"
         case .needed: return "Needed"
         case .denied: return "Denied"
+        case .restricted: return "Restricted"
+        case .writeOnly: return "Full access needed"
         case .unavailable: return "Not available"
         case .unknown: return "Unknown"
         }
@@ -447,7 +455,7 @@ extension SetupModel {
         switch status {
         case .authorizedAlways, .authorizedWhenInUse: return .granted
         case .denied: return .denied
-        case .restricted: return .unavailable
+        case .restricted: return .restricted
         case .notDetermined: return .needed
         @unknown default: return .unknown
         }
@@ -498,11 +506,16 @@ extension SetupModel {
     /// `EKEventStore.authorizationStatus(for: .event)` — the same status
     /// read `ShelfCalendarModel.authorizeAndLoad` switches on.
     static func calendarStatus() -> SetupPermissionStatus {
-        switch EKEventStore.authorizationStatus(for: .event) {
+        eventKitStatus(EKEventStore.authorizationStatus(for: .event))
+    }
+
+    static func eventKitStatus(_ status: EKAuthorizationStatus) -> SetupPermissionStatus {
+        switch status {
         case .fullAccess: return .granted
         case .denied: return .denied
-        case .restricted: return .unavailable
-        case .notDetermined, .writeOnly: return .needed
+        case .restricted: return .restricted
+        case .notDetermined: return .needed
+        case .writeOnly: return .writeOnly
         @unknown default: return .unknown
         }
     }
@@ -510,13 +523,7 @@ extension SetupModel {
     /// `EKEventStore.authorizationStatus(for: .reminder)` — the same
     /// status read `ShelfReminders` switches on.
     static func reminderStatus() -> SetupPermissionStatus {
-        switch EKEventStore.authorizationStatus(for: .reminder) {
-        case .fullAccess: return .granted
-        case .denied: return .denied
-        case .restricted: return .unavailable
-        case .notDetermined, .writeOnly: return .needed
-        @unknown default: return .unknown
-        }
+        eventKitStatus(EKEventStore.authorizationStatus(for: .reminder))
     }
 
     /// `AVCaptureDevice.authorizationStatus(for: .video)` — the read
@@ -525,7 +532,7 @@ extension SetupModel {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: return .granted
         case .denied: return .denied
-        case .restricted: return .unavailable
+        case .restricted: return .restricted
         case .notDetermined: return .needed
         @unknown default: return .unknown
         }
@@ -533,13 +540,13 @@ extension SetupModel {
 
     /// `CBCentralManager.authorization` — the class property reads the
     /// Bluetooth TCC state without standing a central up, so the probe
-    /// can never prompt. The app's asker is `NotchAnnouncements`'s
-    /// `IOBluetoothDevice.register` handshake.
+    /// can never prompt. The explicit button creates a central without
+    /// scanning; announcements register only when their setting is on.
     static func bluetoothStatus() -> SetupPermissionStatus {
         switch CBCentralManager.authorization {
         case .allowedAlways: return .granted
         case .denied: return .denied
-        case .restricted: return .unavailable
+        case .restricted: return .restricted
         case .notDetermined: return .needed
         @unknown default: return .unknown
         }
@@ -554,7 +561,7 @@ extension SetupModel {
         switch INFocusStatusCenter.default.authorizationStatus {
         case .authorized: return .granted
         case .denied: return .denied
-        case .restricted: return .unavailable
+        case .restricted: return .restricted
         case .notDetermined: return .needed
         @unknown default: return .unknown
         }
@@ -585,8 +592,8 @@ extension SetupModel {
         case .reminders: await requestReminders()
         case .camera: await requestCamera()
         case .screenRecording: requestScreenRecording()
-        case .audioCapture: DesktopServices.automatic.open(audioCaptureSettingsURL)
-        case .bluetooth: DesktopServices.automatic.open(bluetoothSettingsURL)
+        case .audioCapture: await requestAudioCapture()
+        case .bluetooth: await requestBluetooth()
         case .accessibility:
             // macOS lists an app in the Accessibility pane only once it has
             // asked: opening the pane alone can leave the person looking for
@@ -594,7 +601,7 @@ extension SetupModel {
             accessibilityPrompt()
             openSettingsPane(accessibilitySettingsURL)
         case .automation: await requestAutomation()
-        case .location: requestLocation()
+        case .location: await requestLocation()
         case .fullDiskAccess: DesktopServices.automatic.open(fullDiskAccessSettingsURL)
         case .focusStatus: await requestFocusStatus()
         case .lidHelper: copyLidHelperCommand()
@@ -619,17 +626,18 @@ extension SetupModel {
     /// for macOS to ask, so it is launched first, hidden. A denied grant
     /// only changes in the Automation pane.
     static func requestAutomation() async {
-        if AutomationPermission.systemEvents(ask: false) == .denied {
-            DesktopServices.automatic.open(AutomationPermission.settingsURL)
-            return
-        }
-        let systemEvents = URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app")
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = false
-        configuration.addsToRecentItems = false
-        _ = try? await DesktopServices.automatic.openApplication(at: systemEvents, configuration: configuration)
-        let answer = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
-        if let pane = automationFollowUp(afterAsking: answer) { openSettingsPane(pane) }
+        await PermissionRequest.live(permission: .automation, status: {
+            let answer = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
+            return answer == .unavailable ? .needed : automationStatus(answer)
+        }, prompt: {
+            let systemEvents = URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app")
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            configuration.addsToRecentItems = false
+            _ = try? await DesktopServices.automatic.openApplication(at: systemEvents, configuration: configuration)
+            let answer = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
+            if let pane = automationFollowUp(afterAsking: answer) { openSettingsPane(pane) }
+        }, settingsURL: AutomationPermission.settingsURL).perform()
     }
 
     /// The pane to open once the Automation prompt has been answered: a
@@ -642,15 +650,16 @@ extension SetupModel {
     /// answered; nothing ever starts updates on it.
     private static let locationManager = CLLocationManager()
 
-    static func requestLocation() {
-        let status = locationStatus(locationManager.authorizationStatus,
-                                    servicesEnabled: CLLocationManager.locationServicesEnabled())
-        if status == .needed {
-            locationManager.requestWhenInUseAuthorization()
-        } else if status == .denied {
-            DesktopServices.automatic.open(locationSettingsURL)
-        }
+    static func requestLocation() async {
+        await PermissionRequest.live(permission: .location, status: {
+            locationStatus(locationManager.authorizationStatus,
+                           servicesEnabled: CLLocationManager.locationServicesEnabled())
+        }, prompt: {
+            await locationRequest.request(manager: locationManager)
+        }, settingsURL: locationSettingsURL).perform()
     }
+
+    private static let locationRequest = LocationPermissionRequest()
 
     static func copyLidHelperCommand() {
         let command = lidHelperCommand()
@@ -678,59 +687,46 @@ extension SetupModel {
     /// `requestFullAccessToEvents`, the call `ShelfCalendarModel` makes
     /// from its calendar button; a denied row deep-links instead.
     static func requestCalendar(reader: ShelfCalendarReader = .shared) async {
-        switch calendarStatus() {
-        case .needed:
-            _ = await reader.requestAccess()
-        case .denied, .unavailable:
-            DesktopServices.automatic.open(calendarSettingsURL)
-        default:
-            break
-        }
+        await PermissionRequest.live(permission: .calendar, status: { calendarStatus() },
+                                     prompt: { _ = await reader.requestAccess() },
+                                     settingsURL: calendarSettingsURL).perform()
     }
 
-    /// `requestFullAccessToReminders` — the call `ShelfReminders` makes
-    /// from its own enable path; a denied row deep-links instead.
     static func requestReminders(reader: ShelfCalendarReader = .shared) async {
-        switch reminderStatus() {
-        case .needed:
-            _ = await reader.requestAccess(to: .reminder)
-        case .denied, .unavailable:
-            DesktopServices.automatic.open(remindersSettingsURL)
-        default:
-            break
-        }
+        await PermissionRequest.live(permission: .reminders, status: { reminderStatus() },
+                                     prompt: { _ = await reader.requestAccess(to: .reminder) },
+                                     settingsURL: remindersSettingsURL).perform()
     }
 
-    /// `AVCaptureDevice.requestAccess(for: .video)` — `ShelfMirrorModel`'s
-    /// ask, made up front here instead of on the Mirror row's first
-    /// enable; a denied row deep-links to the Camera pane.
-    static func requestCamera() async {
-        switch cameraStatus() {
-        case .needed:
-            _ = await AVCaptureDevice.requestAccess(for: .video)
-        case .denied, .unavailable:
-            DesktopServices.automatic.open(cameraSettingsURL)
-        default:
-            break
-        }
+    @discardableResult
+    static func requestCamera() async -> SetupPermissionStatus {
+        await PermissionRequest.live(permission: .camera, status: { cameraStatus() },
+                                     prompt: { _ = await AVCaptureDevice.requestAccess(for: .video) },
+                                     settingsURL: cameraSettingsURL).perform()
     }
 
-    /// `INFocusStatusCenter.requestAuthorization` — the same call
-    /// `MenuBarSystemTriggerSource.requestFocusAuthorization` makes when
-    /// a Focus rule is added; a denied row deep-links to the Focus pane.
-    static func requestFocusStatus() async {
-        switch focusStatus() {
-        case .needed:
-            _ = await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                INFocusStatusCenter.default.requestAuthorization { _ in
-                    continuation.resume()
-                }
+    @discardableResult
+    static func requestFocusStatus() async -> SetupPermissionStatus {
+        await PermissionRequest.live(permission: .focusStatus, status: { focusStatus() }, prompt: {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                INFocusStatusCenter.default.requestAuthorization { _ in continuation.resume() }
             }
-        case .denied, .unavailable:
-            DesktopServices.automatic.open(focusSettingsURL)
-        default:
-            break
-        }
+        }, settingsURL: focusSettingsURL).perform()
+    }
+
+    static func requestBluetooth() async {
+        await PermissionRequest.live(permission: .bluetooth, status: { bluetoothStatus() }, prompt: {
+            await bluetoothRequest.request()
+        }, settingsURL: bluetoothSettingsURL).perform()
+    }
+
+    private static let bluetoothRequest = BluetoothPermissionRequest()
+
+    /// Core Audio exposes no public consent preflight or standalone request.
+    /// The visualizer's first start asks; this button opens the owning pane.
+    static func requestAudioCapture() async {
+        await PermissionRequest.live(permission: .audioCapture, status: { .unknown },
+                                     settingsURL: audioCaptureSettingsURL).perform()
     }
 
     /// `FoldCapturePermission.request()` — the Fold card's own path.

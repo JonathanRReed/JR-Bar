@@ -58,6 +58,12 @@ final class NotchCardModel {
             }
         }
     }
+    @ObservationIgnored private let permissionCenter: NotificationCenter
+    @ObservationIgnored private var permissionObservers: [NSObjectProtocol] = []
+    isolated deinit {
+        for observer in permissionObservers { permissionCenter.removeObserver(observer) }
+    }
+
     @ObservationIgnored private let sourceObservation = LifecycleObservation()
     var mediaEnabled: () -> Bool = { true }
     var presenceEnabled: () -> Bool = { true }
@@ -429,7 +435,9 @@ final class NotchCardModel {
     /// `utility` is the shared Now Playing and battery reader; the
     /// render proofs hand in one on a test feed.
     init(timers: ShelfTimerModel, tray: ShelfTrayModel,
-         utility: ShelfUtilityModel? = nil, mirror: ShelfMirrorModel? = nil, runtimeEnabled: Bool = true) {
+         utility: ShelfUtilityModel? = nil, mirror: ShelfMirrorModel? = nil, runtimeEnabled: Bool = true,
+         permissionCenter: NotificationCenter = .default) {
+        self.permissionCenter = permissionCenter
         self.timers = timers
         self.tray = tray
         self.utility = utility ?? ShelfUtilityModel()
@@ -437,6 +445,15 @@ final class NotchCardModel {
         self.runtimeEnabled = runtimeEnabled
         self.utility.inlineReads = !runtimeEnabled
         readsPrivacyOffMain = runtimeEnabled
+        if runtimeEnabled {
+            for name in [PermissionRequest.didChange, NSApplication.didBecomeActiveNotification] {
+                permissionObservers.append(permissionCenter.addObserver(
+                    forName: name, object: nil, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.syncSources() }
+                })
+            }
+        }
     }
 }
 
@@ -2843,12 +2860,18 @@ private struct ShelfMirrorRow: View {
             placeholder(title: "Camera access is off",
                         detail: "Allow JR-Bar in Privacy & Security, then retry.") {
                 Button("Settings…") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
-                        DesktopServices.automatic.open(url)
+                    _ = Task { @MainActor in
+                        await SetupModel.requestCamera()
+                        mirror.retry()
                     }
                 }
                 .controlSize(.mini)
-                Button("Retry") { mirror.retry() }
+                Button("Retry") {
+                    _ = Task { @MainActor in
+                        await SetupModel.requestCamera()
+                        mirror.retry()
+                    }
+                }
                     .controlSize(.mini)
                     .accessibilityLabel("Retry camera access")
             }

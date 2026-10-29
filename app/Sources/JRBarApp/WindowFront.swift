@@ -16,14 +16,18 @@ enum WindowFront {
     /// is asked instead.
     static let fallbackDelay: TimeInterval = 0.25
 
+    /// Permission prompts need an active accessory app without opening a window.
+    static func requestActivation(presenter: WindowPresenter = .automatic) {
+        presenter.perform { NSRunningApplication.current.activate() }
+        presenter.perform { NSApp.activate() }
+    }
+
     /// Activates the app and puts `window` in front and key on the
     /// Space you're on, out of the Dock if it was minimised. A nil
     /// `fallback` only asks: no Launch Services step follows.
     static func bring(_ window: NSWindow, fallback: Fallback? = .live,
                       presenter: WindowPresenter = .automatic) {
-        // Both calls: the pairing that reliably forces it on macOS 26/27.
-        presenter.perform { NSRunningApplication.current.activate() }
-        presenter.perform { NSApp.activate() }
+        requestActivation(presenter: presenter)
         presenter.perform { if window.isMiniaturized { window.deminiaturize(nil) } }
         orderIn(window, isOnActiveSpace: window.isOnActiveSpace) { front in
             presenter.order(front, as: .key)

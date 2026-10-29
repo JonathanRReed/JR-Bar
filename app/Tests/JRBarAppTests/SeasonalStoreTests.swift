@@ -54,6 +54,26 @@ struct SeasonalStoreTests {
         }
     }
 
+    @Test("permission actions and returning from Settings reread seasonal content",
+          arguments: PermissionRequestTests.permissions)
+    func permissionRefresh(permission: SetupPermission) async {
+        let (store, settings, counter, center) = make()
+        settings.value.enabled = true
+        store.settingsChanged()
+        await settle(store)
+        #expect(counter.reads == 1)
+        center.post(name: PermissionRequest.didChange, object: permission)
+        await settle(store)
+        #expect(counter.reads == 2)
+        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await settle(store)
+        #expect(counter.reads == 3)
+        store.stop()
+        center.post(name: PermissionRequest.didChange, object: permission)
+        await settle(store)
+        #expect(counter.reads == 3)
+    }
+
     @Test("off: no observers, no reads, nothing in season")
     func offCostsNothing() async {
         let (store, _, counter, center) = make()

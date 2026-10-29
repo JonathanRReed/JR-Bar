@@ -634,6 +634,8 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
     shutil.copy2(REPO_ROOT / "packaging" / "build_input_manifest.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "entitlements.plist", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "jrbar_entry.py", packaging_dir)
+    shutil.copy2(REPO_ROOT / "packaging" / "write_privacy_usage.py", packaging_dir)
+    shutil.copy2(REPO_ROOT / "packaging" / "privacy_usage.plist", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "verify_macos_app.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "scripts" / "postinstall", scripts_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "sign_macos_app.py", packaging_dir)
@@ -694,6 +696,9 @@ if [ "$script" = "${PACKAGE_TEST_FAIL_AT:-}" ]; then
     exit 97
 fi
 case "$script" in
+    write_privacy_usage.py)
+        exec /usr/bin/python3 "$@"
+        ;;
     prepare_sparkle.py)
         output=""
         while [ "$#" -gt 0 ]; do
@@ -908,6 +913,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "so Do Not Disturb can follow whether a macOS Focus is active."
     )
     # Wi-Fi rules read the network name, which macOS gates behind Location.
+    descriptions = plistlib.loads((REPO_ROOT / "packaging/privacy_usage.plist").read_bytes())
+    assert {key: value for key, value in info.items()
+            if key.startswith("NS") and key.endswith("UsageDescription")} == descriptions
     assert info["NSLocationUsageDescription"] == info["NSLocationWhenInUseUsageDescription"]
     assert "never read or sent" in info["NSLocationUsageDescription"]
     entitlements = plistlib.loads((packaging_dir / "entitlements.plist").read_bytes())
@@ -922,6 +930,8 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (daemon / "Contents" / "Frameworks" / "libpython3.12.dylib").is_file()
     daemon_info = plistlib.loads((daemon / "Contents" / "Info.plist").read_bytes())
     assert daemon_info["CFBundleIdentifier"] == "com.jonathanreed.jrbar.core"
+    assert {key: value for key, value in daemon_info.items()
+            if key.startswith("NS") and key.endswith("UsageDescription")} == descriptions
     assert daemon_info["LSUIElement"] is True
     assert daemon_info["LSMinimumSystemVersion"] == "26.0"
     assert daemon_info["CFBundleShortVersionString"] == "0.5.0"
@@ -940,7 +950,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "build-app.sh 0.5.0",
         "build.sh hook",
         "strip_build_origin.py",
+        "write_privacy_usage.py",
         "copy_runtime_notices.py",
+        "write_privacy_usage.py",
         "sign_macos_app.py",
         "verify_macos_app.py",
         "verify_daemon_runtime.py",

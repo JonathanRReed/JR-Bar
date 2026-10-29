@@ -121,18 +121,6 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>JR-Bar announces a device connecting in the notch — "AirPods connected". Nothing is paired or sent.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>JR-Bar's Mirror row shows the Mac's own camera in the notch card — and only while the row is on. Nothing is recorded or sent.</string>
-	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>JR-Bar shows the next event on the shelf and the Dock's Calendar tile, and only after you ask it to. Nothing leaves the Mac.</string>
-	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>JR-Bar lists your next reminders on the shelf — and only after you ask it to. Checking one off writes back to Reminders; nothing else is sent anywhere.</string>
-	<key>NSLocationUsageDescription</key>
-	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>JR-Bar's Wi-Fi rules need the network's name, which macOS shares only with Location on. Your location is never read or sent.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
@@ -150,6 +138,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+/usr/bin/python3 "$APP_DIR/../packaging/write_privacy_usage.py" "$BUNDLE/Contents/Info.plist"
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 # The provider marks ship in the binary; their sources, licences and the
 # trademark notice ship beside them, next to Sparkle's licence.
@@ -188,6 +177,7 @@ if [[ -x "$CORE_APP/Contents/MacOS/jrbar-core" ]]; then
     mkdir -p "$HELPERS"
     ditto "$CORE_APP" "$HELPERS/jrbar-core.app"
     CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
+    /usr/bin/python3 "$APP_DIR/../packaging/write_privacy_usage.py" "$CORE_PLIST"
     /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$CORE_PLIST" 2>/dev/null || \
         /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$CORE_PLIST"
     /usr/libexec/PlistBuddy -c "Add :LSAppNapIsDisabled bool true" "$CORE_PLIST" 2>/dev/null || \
@@ -223,6 +213,12 @@ if [[ -d "$HELPERS" ]]; then
             codesign --force --deep --sign "$SIGN_IDENTITY" --timestamp=none "$helper" 2>/dev/null || true
         done
 fi
-codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$BUNDLE"
+SIGN_OPTIONS=(--entitlements "$APP_DIR/../packaging/entitlements.plist")
+# Local identities without a Team ID keep the development signing behavior.
+# Developer ID builds exercise the same resource restrictions as distribution.
+if [[ "$SIGN_IDENTITY" == "Developer ID Application: "* ]]; then
+    SIGN_OPTIONS+=(--options runtime)
+fi
+codesign --force --sign "$SIGN_IDENTITY" "${SIGN_OPTIONS[@]}" --timestamp=none "$BUNDLE"
 codesign --verify --deep --strict "$BUNDLE" && echo "codesign verify: ok"
 echo "built $BUNDLE"

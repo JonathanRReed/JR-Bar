@@ -913,3 +913,15 @@ at commit `321def29e1c8634b4a5ef5299981ab00850e50fe`, under their BSD 2-Clause l
 to the caller. JR-Bar calls these public native APIs through its existing
 Objective-C adapter so unprotected values never cross into Python. No WebKit
 implementation code was copied.
+
+## Core Audio tap permissions, 2026-10-29
+
+Studied the entitlement file and build settings in Apple's
+[Capturing system audio with Core Audio taps](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)
+sample. The sample enables the hardened runtime and includes
+`com.apple.security.device.audio-input`. This informed the visualizer's
+resource entitlement. No implementation code was copied.
+
+The official sample archive has no published Git commit. Its SHA-256 is
+`46edc0114dd5ecb11fdfd1b87b1f57628be71988a460c5cb0b831a237a5fe657`.
+The archive's `LICENSE.txt` is MIT, copyright 2024 Apple Inc.

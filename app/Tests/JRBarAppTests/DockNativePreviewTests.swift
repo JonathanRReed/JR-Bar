@@ -48,6 +48,33 @@ struct DockNativePreviewTests {
         }
     }
 
+    @Test("every permission action invalidates the cache and refreshes a denied Dock card",
+          arguments: PermissionRequestTests.permissions)
+    func permissionRefresh(permission: SetupPermission) async {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let reader = ShelfCalendarReader(fetch: { _ in reads.withLock { $0 += 1 }; return [] })
+        _ = reader.events(from: Self.now)
+        #expect(reads.withLock { $0 } == 1)
+        let calendar = DockCalendarPreview(reader: reader)
+        calendar.scheduleRefreshOverride = {}
+        calendar.clock = { Self.now }
+        var allowed = false
+        calendar.authorization = { allowed ? .fullAccess : .denied }
+        var state = DockCalendarPreview.State.loading
+        calendar.onChange = { state = $0 }
+        calendar.start()
+        defer { calendar.stop() }
+        #expect(state == .noAccess)
+        allowed = true
+        PermissionRequest.refresh(permission, reader: reader, center: NotificationCenter())
+        await settle(calendar)
+        #expect(state == .events([]))
+        #expect(reads.withLock { $0 } == 2)
+        reader.notifications.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await settle(calendar)
+        #expect(reads.withLock { $0 } == 3)
+    }
+
     @Test("switches default on, tolerate old state, and round-trip independently")
     func switches() throws {
         let defaults = DockEnhanceSettings()

@@ -486,10 +486,9 @@ final class MenuBarSystemTriggerSource: MenuBarTriggerSource {
     /// The card's ask for the Focus grant — only ever called from the
     /// "add rule" path, so the prompt lands on an explicit user action.
     static func requestFocusAuthorization(then: @escaping @MainActor (Bool) -> Void) {
-        INFocusStatusCenter.default.requestAuthorization { status in
-            Task { @MainActor in
-                then(status == .authorized)
-            }
+        _ = Task { @MainActor in
+            let status = await SetupModel.requestFocusStatus()
+            then(status == .granted)
         }
     }
 
