@@ -487,6 +487,8 @@ public struct UsageGaugeRow: View {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(JRBarTokens.Ink.failure)
                     }
                     Text(status).foregroundStyle(provider.quotaSource && provider.availability == "failing" ? neutralInk.label : neutralInk.secondary)
+                        // Two lines fit the row's room; the full sentence is in the tooltip.
+                        .lineLimit(2).truncationMode(.tail)
                 }
                 .fixedSize(horizontal: false, vertical: true).help(status)
             }

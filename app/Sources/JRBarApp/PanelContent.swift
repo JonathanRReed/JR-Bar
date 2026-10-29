@@ -131,10 +131,10 @@ struct PanelComposition {
         let additional = UsageGaugeRow.panelAdditionalHeight(usage)
         if usage.availability == "not_found" { return UsageGaugeRow.compactRowHeight }
         let action = usage.action?.isEmpty == false
-        // A neutral row with a button (a sign-in) has its status, the age
-        // line the monitor's absence adds, and the button on three lines.
-        if action, !connected, usage.availability != "failing" { return 96 + additional }
-        if action || usage.availability == "failing" { return 88 + additional }
+        // A row with a button or a failure has its name, a status of up to
+        // two lines (the rest is in its tooltip) and the button. With the
+        // monitor down, the age line takes the status's second line.
+        if action || usage.availability == "failing" { return 96 + additional }
         let stale = !connected || usage.isStale || ["missing_recent", "source_idle"].contains(usage.availability)
         return (stale ? 64 : UsageGaugeRow.compactRowHeight) + additional
     }

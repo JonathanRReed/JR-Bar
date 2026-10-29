@@ -54,6 +54,33 @@ struct PanelCompositionTests {
         #expect(composition.totalHeight >= PanelComposition.usageHeight(Self.usage(), connected: false))
     }
 
+    /// A long recovery sentence stays inside the row's room: the status
+    /// keeps two lines and the rest lives in its tooltip.
+    @Test func longRecoveryMessagesStayInsideTheirRoom() {
+        let sentence = "The usage source is not available right now. Open the provider's app, sign in again, "
+            + "check that usage is turned on for this account, then come back and try once more."
+        var failing = Self.usage("factory", availability: "failing", action: "Add Factory API key")
+        failing.statusText = sentence
+        var signIn = Self.usage("kiro")
+        signIn.state = "needs_sign_in"
+        signIn.statusText = sentence
+        signIn.action = "Sign in to Kiro CLI"
+        for reading in [failing, signIn] {
+            for connected in [true, false] {
+                for width: CGFloat in [320, 372] {
+                    let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
+                                            now: Self.time + 2460, connected: connected, style: .compact,
+                                            windowNames: ["5h", "7d"], snapshotReceivedAt: Self.time,
+                                            suppressDisconnectedStatus: !connected, onAction: {})
+                    let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
+                    let room = PanelComposition.usageHeight(reading, connected: connected)
+                    #expect(host.fittingSize.height <= room,
+                            "\(reading.id) connected=\(connected) at \(width) pt is \(host.fittingSize.height) pt, room \(room)")
+                }
+            }
+        }
+    }
+
     @Test func theDisconnectedBannerUsesTheSharedMonitorWords() {
         let store = Self.store()
         store.core.handle(.disconnected(reason: "core closed the socket"))
