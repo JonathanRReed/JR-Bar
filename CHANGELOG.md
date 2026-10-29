@@ -10,7 +10,10 @@ JR-Bar 0.10.2 fixes permissions that a signed build could never get, makes Devin
 - Privacy prompts keep their apostrophes and quotes.
 - Connect Devin by choosing the browser profile where you signed in and allowing access, then Import. A failed import says what to do and keeps the sign-in you had, and Devin's account no longer shows a made-up organization name.
 - A provider that needs you offers the action that fixes it: Sign in, Reconnect, Allow usage or Connect, and Retry remains only where a refresh can help. Factory stays in the status menu while it needs you.
-- Connect Factory with an API key. Factory's website no longer keeps a sign-in other apps can read, so browser import could only fail and was shown as expired. The Connect Factory sheet now takes a key, with a link to create one, and a saved key is used even if an old browser sign-in is still stored.
+- Connect Factory with an API key. Factory's website no longer keeps a sign-in other apps can read, so browser import could only fail and was shown as expired. Add Factory API key opens Factory's key page and JR-Bar's sheet together, checks the key when you save it, and never replaces a working key with one that fails. A saved key is used even if an old browser sign-in is still stored.
+- Usage windows that aren't 5-hour or weekly show up: Grok's credits, Devin's daily allowance, Cursor's and Kiro's plan pools, and the monthly allowances other providers report. A provider whose only window is credits shows it on its own row, and a dash now only means a reading is missing, never that the provider doesn't have that kind of window. Named pools such as Antigravity's Gemini and Factory's Standard and Core land in the right column under their names.
+- Usage Center names each account instead of repeating its action, and Factory's description matches what JR-Bar actually does.
+- A long recovery message on a usage row keeps two lines and shows the rest in its tooltip instead of spilling out of the row.
 - Devin and Cursor say when they find a sign-in that is missing the part JR-Bar needs, instead of failing quietly.
 - Usage Center and other views show plain words instead of internal codes such as "transcript_not_found".
 - History's Events list runs newest first by when each event happened, names every event in plain words, and shows times in your own clock.
