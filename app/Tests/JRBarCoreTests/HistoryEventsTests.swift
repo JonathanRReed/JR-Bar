@@ -37,17 +37,54 @@ struct HistoryEventsTests {
         #expect(EventLogFilter(categories: [.devices], text: "sidepulse").apply(Self.journal).map(\.id) == ["3"])
     }
 
+    @Test("event search finds the words shown in the kind column")
+    func searchDisplayTitles() {
+        #expect(EventLogFilter(text: "Device connected").apply(Self.journal).map(\.id) == ["3"])
+    }
+
     @Test("the light log keeps what moved a light, newest first, in plain words")
     func lightLog() {
         let entries = LightLog.entries(from: Self.journal, limit: 3)
         #expect(entries.map(\.id) == ["6", "5", "4"])
         #expect(entries[0].text == "Claude crossed a quota threshold · 5h 80%")
-        #expect(entries[1].text == "escalated to stage 2")
+        #expect(entries[1].text == "Escalated to stage 2")
         #expect(entries[2].text == "Claude failed · JR-Bar")
         #expect(LightLog.text(for: Self.journal[0]) == "Codex asked · sidepulse-core")
         let pace = CoreEvent(id: "p", kind: "quota_pace", label: "5-hour", at: 200, provider: "codex", detail: "30% left")
         #expect(EventLogCategory.of(pace.kind) == .quota)
         #expect(LightLog.text(for: pace) == "Codex is running low · 5-hour")
+    }
+
+    @Test("event times lead, journal position breaks ties, and undated events come last")
+    func interleavedTimes() {
+        let events = [
+            CoreEvent(id: "old", kind: "completed", at: 100),
+            CoreEvent(id: "new", kind: "completed", at: 130),
+            CoreEvent(id: "late-old", kind: "completed", at: 100),
+            CoreEvent(id: "undated", kind: "completed"),
+            CoreEvent(id: "tie", kind: "completed", at: 130),
+        ]
+        let expected = ["tie", "new", "late-old", "old", "undated"]
+        #expect(EventLogFilter().apply(events).map(\.id) == expected)
+        #expect(LightLog.entries(from: events).map(\.id) == Array(expected.dropLast()))
+        #expect(EventLogFilter(text: "completed").apply(events).map(\.id) == expected)
+    }
+
+    @Test("event titles use words for every emitted kind", arguments: EventKindWords.titles.keys.sorted())
+    func eventTitles(kind: String) {
+        let title = EventKindWords.title(kind)
+        #expect(!title.contains("_"))
+        #expect(title.first?.isUppercase == true)
+        #expect(title != "Other event")
+        let event = CoreEvent(id: "fixture", kind: kind)
+        #expect(LightLog.text(for: event).first?.isUppercase == true)
+        #expect(!LightLog.text(for: event).contains("_"))
+    }
+
+    @Test("unrecognized event kinds do not become UI text")
+    func unknownEvent() {
+        #expect(EventKindWords.title("future_internal_code") == "Other event")
+        #expect(LightLog.text(for: CoreEvent(id: "new", kind: "future_internal_code")) == "Other event")
     }
 
     @Test("a row opens its timeline when it names a local session a reader exists for")

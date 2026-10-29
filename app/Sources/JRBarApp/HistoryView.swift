@@ -22,7 +22,7 @@ struct HistoryView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $store.mode) {
-                    ForEach(HistoryStore.Mode.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(HistoryStore.Mode.allCases) { Text($0.rawValue).tag($0) } // jrbar-token-exception: Mode raw values are the Activity and Events display titles
                 }
                 .pickerStyle(.segmented)
                 .help("Activity: what happened to sessions · Events: the monitor's event journal for this run")
@@ -813,7 +813,7 @@ struct EventLogRow: View {
                 }
             }
             Spacer()
-            Text(event.kind).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.quaternary).lineLimit(1)
+            Text(EventKindWords.title(event.kind)).jrbarType(.caption).fontDesign(.monospaced).foregroundStyle(.quaternary).lineLimit(1)
             if store.canReveal(event) {
                 Button {
                     store.reveal(event)

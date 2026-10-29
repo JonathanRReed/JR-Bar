@@ -129,7 +129,7 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         case "ended": return "Ended"
         case "quota_crossed": return "Quota crossed"
         case "ask_expired": return "Ask expired unanswered"
-        default: return kind.prefix(1).uppercased() + kind.dropFirst()
+        default: return EventKindWords.title(kind)
         }
     }
 }

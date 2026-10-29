@@ -81,16 +81,24 @@ public struct EventLogFilter: Equatable, Sendable {
         if !categories.isEmpty, !categories.contains(EventLogCategory.of(event.kind)) { return false }
         let needle = text.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
-            let haystack = [event.kind, event.label, event.detail, event.message, event.provider, event.session]
+            let haystack = [event.kind, EventKindWords.title(event.kind), event.label, event.detail, event.message, event.provider, event.session]
                 .compactMap { $0?.lowercased() }
             if !haystack.contains(where: { $0.contains(needle) }) { return false }
         }
         return true
     }
 
-    /// Newest first — the journal arrives oldest first.
+    /// Newest event time first; later journal entries win ties. Undated events come last.
     public func apply(_ events: [CoreEvent]) -> [CoreEvent] {
-        events.filter(matches).reversed()
+        Self.newestFirst(events.filter(matches))
+    }
+
+    public static func newestFirst(_ events: [CoreEvent]) -> [CoreEvent] {
+        events.enumerated().sorted { a, b in
+            let first = a.element.at.flatMap { $0.isFinite ? $0 : nil } ?? -.infinity
+            let second = b.element.at.flatMap { $0.isFinite ? $0 : nil } ?? -.infinity
+            return first == second ? a.offset > b.offset : first > second
+        }.map(\.element)
     }
 }
 
@@ -115,7 +123,7 @@ public struct LightLogEntry: Hashable, Sendable, Identifiable {
 public enum LightLog {
     public static func entries(from events: [CoreEvent], limit: Int = 5, privacyMode: Bool? = nil) -> [LightLogEntry] {
         var out: [LightLogEntry] = []
-        for event in events.reversed() {
+        for event in EventLogFilter.newestFirst(events) {
             let category = EventLogCategory.of(event.kind)
             guard category.movesALight, !EventLogFilter.hiddenKinds.contains(event.kind), let at = event.at else { continue }
             out.append(LightLogEntry(id: event.id, at: at, category: category, text: text(for: event, privacyMode: privacyMode)))
@@ -142,9 +150,10 @@ public enum LightLog {
         case "quota_crossed": verb = "crossed a quota threshold"
         case "quota_reset": verb = "quota reset"
         case "quota_pace": verb = "is running low"
-        default: verb = event.kind.replacingOccurrences(of: "_", with: " ")
+        default: verb = EventKindWords.title(event.kind)
         }
-        let head = [who, verb].compactMap { $0 }.joined(separator: " ")
+        let phrase = [who, verb].compactMap { $0 }.joined(separator: " ")
+        let head = who == nil ? phrase.prefix(1).uppercased() + phrase.dropFirst() : phrase
         if let subject, !subject.isEmpty, subject != who { return head + " · " + subject }
         if let detail = event.detail, !detail.isEmpty { return head + " · " + detail }
         return head

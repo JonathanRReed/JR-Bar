@@ -4,7 +4,7 @@ import Observation
 
 /// The Replay surface's store (S7.4/T39): a read-only view over the
 /// daemon's retained event journal. `replay_events` returns the journal
-/// in wire order (oldest→newest); the view displays newest first.
+/// in wire order (oldest→newest); History sorts by event time, then by journal position.
 /// Nothing here mutates — replay is fetch-and-render only, and the
 /// journal's own coverage (`retained`/`dropped`) travels with it.
 @MainActor @Observable
