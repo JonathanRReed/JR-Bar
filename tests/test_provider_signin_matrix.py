@@ -34,6 +34,8 @@ def test_person_actions_never_refresh_or_disappear(provider, state, reason, monk
     kind = row["action_kind"]
     if provider == "claude" and reason == "claude_keychain_access_lost":
         assert kind == "resign_in"
+    elif provider == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported"}:
+        assert kind == "sign_in"
     elif reason.startswith("cliproxy_") or provider in {"devin", "factory", "kilo", "kimi"} or state is ProviderSourceState.NEEDS_CONSENT or reason == "usage_consent_required":
         assert kind == "manage"
     else:
@@ -94,3 +96,22 @@ def test_proxy_sign_in_preserves_the_authentication_owner(provider, reason, monk
     assert row["action"] == "Reconnect CLIProxyAPI account" and row["action_kind"] == "manage"
     reply = core_runtime._cmd_provider_action(controller, {"provider": provider})
     assert "CLIProxy" in reply["message"]
+
+
+@pytest.mark.parametrize("reason,action", [
+    ("browser_consent_required", "Enable Cursor browser access"),
+    ("browser_session_not_imported", "Import Cursor browser session"),
+])
+def test_cursor_browser_actions_keep_the_existing_staged_flow(reason, action, monkeypatch):
+    snapshot = failure_snapshot("cursor", observed_at=10, state=ProviderSourceState.NEEDS_CONSENT,
+                                reason=reason, action=action)
+    row = availability_document(snapshot, now=10, installed=True)
+    assert row["action"] == action and row["action_kind"] == "sign_in"
+    calls = []
+    controller = SimpleNamespace(provider_usage_state=SimpleNamespace(snapshots=(snapshot,)),
+                                 _request_provider_usage=lambda **_: pytest.fail("staged import became a refresh"))
+    monkeypatch.setattr(core_runtime, "_cmd_provider_sign_in",
+                        lambda _controller, args: calls.append(args) or {"message": "Staged flow started."})
+    reply = core_runtime._cmd_provider_action(controller, {"provider": "cursor"})
+    assert calls == [{"provider": "cursor", "instance": "default"}]
+    assert reply["message"] == "Staged flow started."

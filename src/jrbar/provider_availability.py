@@ -118,6 +118,9 @@ def sign_in_action(provider_id: str, state: str, reason: str | None) -> tuple[st
         return "Allow Claude Keychain access", "resign_in"
     if reason == "usage_consent_required":
         return f"Allow {label} usage", "manage"
+    if provider_id == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported"}:
+        action = "Enable Cursor browser access" if reason == "browser_consent_required" else "Import Cursor browser session"
+        return action, "sign_in"
     if provider_id in {"devin", "factory"}:
         verb = "Import" if reason in {"browser_consent_required", "browser_session_not_imported"} else "Reconnect"
         return f"{verb} {label} browser session", "manage"
