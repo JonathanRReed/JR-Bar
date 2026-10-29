@@ -10,12 +10,19 @@ final class FactoryBrowserConnectionModel {
     var name: String { ProviderStyle.style(for: provider).name }
     var profiles: [FactorySessionProfile] = []
     var selected: FactorySessionProfile? {
-        didSet { if selected != oldValue { approved = false } }
+        didSet {
+            if selected != oldValue {
+                approved = false
+                needsAPIKey = false
+                message = nil
+            }
+        }
     }
     var approved = false
     private(set) var busy = false
     private(set) var available: Bool
     private(set) var message: String?
+    private(set) var needsAPIKey = false
     private var pendingAvailability: Bool?
     private var generation = 0
     private var active = true
@@ -48,6 +55,7 @@ final class FactoryBrowserConnectionModel {
         generation += 1
         active = true
         approved = false
+        needsAPIKey = false
         profiles = []
         selected = nil
         message = nil
@@ -73,6 +81,7 @@ final class FactoryBrowserConnectionModel {
 
     func load() async {
         guard active, !busy else { return }
+        needsAPIKey = false
         let request = generation
         busy = true
         loading = true
@@ -131,6 +140,7 @@ final class FactoryBrowserConnectionModel {
             return true
         } catch {
             guard active, generation == request else { return false }
+            needsAPIKey = (error as? CoreReplyError)?.code == "browser_token_unavailable"
             message = failureWords(error)
             return false
         }
@@ -165,6 +175,10 @@ final class FactoryBrowserConnectionModel {
             return "\(MonitorWords.sentence) Reconnect and try again."
         }
         switch (error as? CoreReplyError)?.code {
+        case "browser_token_unavailable":
+            return provider == "factory"
+                ? "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
+                : "Devin sign-in data was found, but its access token is unavailable. Add a Devin API key to read usage."
         case "browser_import_failed":
             return (error as? CoreReplyError)?.message ?? "Browser import failed. Choose the profile again and retry."
         case "browser_session_not_found":
@@ -183,10 +197,17 @@ struct FactoryBrowserConnectionSheet: View {
     @Bindable var model: FactoryBrowserConnectionModel
     let instance: String
     let dismiss: () -> Void
+    var onAddAPIKey: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Connect \(model.name)").jrbarType(.heading).fontWeight(.semibold)
+            if model.needsAPIKey {
+                Text(model.message ?? "This browser sign-in has no usable access token.")
+                    .jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
+                Link("Create a \(model.name) API key", destination:
+                    URL(string: "https://app.\(model.provider).ai/settings/api-keys")!)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Choose the browser profile where you signed in to \(model.name).")
@@ -216,7 +237,7 @@ struct FactoryBrowserConnectionSheet: View {
                          : "Read app.devin.ai sign-in and organization from this profile, save the sign-in in Keychain, and allow this profile to repair it while Devin usage is enabled. Usage requests go to app.devin.ai. Importing does not turn on usage.")
                         .jrbarType(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let message = model.message {
+                    if let message = model.message, !model.needsAPIKey {
                         Text(message).jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -226,17 +247,22 @@ struct FactoryBrowserConnectionSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { model.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button(model.busy ? "Working…" : "Import") {
-                    _ = Task { if await model.connect() { dismiss() } }
+                if model.needsAPIKey, let onAddAPIKey {
+                    Button("Add \(model.name) API key", action: onAddAPIKey)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button(model.busy ? "Working…" : "Import") {
+                        _ = Task { if await model.connect() { dismiss() } }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!model.canConnect)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.canConnect)
             }
         }
         .padding(24)
         .frame(minWidth: 340, idealWidth: 480, maxWidth: 540, minHeight: 390, idealHeight: 520, maxHeight: 640)
         .background(NonblockingSheetWindow().frame(width: 0, height: 0).allowsHitTesting(false))
-        .task { await model.load() }
+        .task { if model.profiles.isEmpty { await model.load() } }
         .onDisappear { model.cancel() }
     }
 }
@@ -247,15 +273,19 @@ struct FactoryBrowserConnectionControls: View {
     let core: CoreModel
     let connectRequest: Int
     let onConnectPresented: @MainActor () -> Void
+    let onAddAPIKey: @MainActor () -> Void
+    @ViewState private var keyAfterDismiss = false
     @ViewState private var model: FactoryBrowserConnectionModel
     @ViewState private var editing = false
 
     init(row: ProviderRow, core: CoreModel, connectRequest: Int = 0,
-         onConnectPresented: @escaping @MainActor () -> Void = {}, onChanged: @escaping @MainActor () -> Void) {
+         onConnectPresented: @escaping @MainActor () -> Void = {},
+         onAddAPIKey: @escaping @MainActor () -> Void = {}, onChanged: @escaping @MainActor () -> Void) {
         self.row = row
         self.core = core
         self.connectRequest = connectRequest
         self.onConnectPresented = onConnectPresented
+        self.onAddAPIKey = onAddAPIKey
         _model = ViewState(initialValue: FactoryBrowserConnectionModel(
             provider: row.id,
             available: row.credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available },
@@ -303,8 +333,15 @@ struct FactoryBrowserConnectionControls: View {
         .onChange(of: row.credentials) { _, credentials in
             model.updateAvailability(credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available })
         }
-        .sheet(isPresented: WindowPresenter.presentation($editing), onDismiss: { model.cancel() }) {
-            FactoryBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false })
+        .sheet(isPresented: WindowPresenter.presentation($editing), onDismiss: {
+            model.cancel()
+            if keyAfterDismiss {
+                keyAfterDismiss = false
+                onAddAPIKey()
+            }
+        }) {
+            FactoryBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
+                onAddAPIKey: { keyAfterDismiss = true; editing = false })
         }
         .onDisappear { model.cancel() }
     }

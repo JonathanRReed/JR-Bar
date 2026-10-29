@@ -104,6 +104,49 @@ struct ProviderSignInRecoveryTests {
         #expect(!model.available)
     }
 
+    @Test(arguments: ["factory", "devin"])
+    func unavailableBrowserTokenOpensOnlyThatAccountsKeyEditor(provider: String) {
+        var reading = Self.reading(provider)
+        reading.instance = "work"
+        reading.reason = "browser_token_unavailable"
+        reading.action = "Add \(ProviderPalette.displayName(for: provider)) API key"
+        let core = CoreModel(socketPath: "/tmp/jrbar-key-recovery-unused.sock")
+        let store = UsageCenterStore(core: core)
+        store.runProviderAction(reading)
+        #expect(store.credentialConnectRequests[reading.identity] == 1)
+        #expect(store.browserConnectRequests.isEmpty)
+        #expect(store.credentialConnectRequests[provider] == nil)
+        store.didPresentCredentialConnection(reading.identity)
+        #expect(store.credentialConnectRequests.isEmpty)
+        #expect(store.presentKeyRecovery(reading))
+        #expect(store.credentialConnectRequests[reading.identity] == 1)
+        var consent = reading
+        consent.reason = "usage_consent_required"
+        #expect(!store.presentKeyRecovery(consent))
+    }
+
+    @Test(arguments: ["factory", "devin"])
+    func incompleteImportKeepsTheSheetOpenWithAKeyAction(provider: String) async {
+        let profile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Zen test profile")
+        let model = FactoryBrowserConnectionModel(provider: provider, available: false,
+            load: { [profile] }, importSession: { _ in
+                throw CoreReplyError(code: "browser_token_unavailable", message: "synthetic-private-value")
+            }, disconnect: { "Unused." })
+        await model.load()
+        model.approved = true
+        #expect(await model.connect() == false)
+        #expect(model.needsAPIKey)
+        #expect(model.message?.contains("API key") == true)
+        #expect(model.message?.contains("expired") == false)
+        #expect(model.message?.contains("synthetic-private-value") == false)
+        #expect(!model.available)
+        await model.load()
+        #expect(!model.needsAPIKey)
+        #expect(model.message == nil)
+        model.beginEditing()
+        #expect(!model.needsAPIKey)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func rowsAndImportSheets() async throws {
         let path = try #require(ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"])
@@ -148,4 +191,60 @@ struct ProviderSignInRecoveryTests {
             }
         }
     }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
+    func unavailableTokenAndKeyEditorProofs() async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"])
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let profile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Zen test profile")
+        for dark in [false, true] {
+            let model = FactoryBrowserConnectionModel(available: false, load: { [profile] },
+                importSession: { _ in throw CoreReplyError(code: "browser_token_unavailable") },
+                disconnect: { "Unused." })
+            await model.load()
+            model.approved = true
+            _ = await model.connect()
+            let sheet = FactoryBrowserConnectionSheet(model: model, instance: "work", dismiss: {}, onAddAPIKey: {})
+                .frame(width: 480, height: 600).background(Color(nsColor: .windowBackgroundColor))
+            let sheetImage = try SettingsRenderProofTests.snapshot(sheet, size: CGSize(width: 480, height: 600), dark: dark)
+            let sheetPNG = try #require(sheetImage.representation(using: .png, properties: [:]))
+            try sheetPNG.write(to: directory.appendingPathComponent("factory-token-unavailable-\(dark).png"))
+            let editorModel = ProviderCredentialEditorModel(provider: "factory", instance: "work", account: "api-key",
+                available: false, save: { _ in }, remove: {}, onChanged: {})
+            let editor = ProviderCredentialEditor(model: editorModel, dismiss: {})
+                .frame(width: 420, height: 340)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let editorImage = try SettingsRenderProofTests.snapshot(editor, size: CGSize(width: 420, height: 340), dark: dark)
+            let editorPNG = try #require(editorImage.representation(using: .png, properties: [:]))
+            try editorPNG.write(to: directory.appendingPathComponent("factory-key-editor-\(dark).png"))
+            var reading = Self.reading("factory")
+            reading.reason = "browser_token_unavailable"
+            reading.action = "Add Factory API key"
+            reading.statusText = "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
+            let row = UsageGaugeRow(provider: reading, name: "Factory", now: PanelCompositionTests.time,
+                                    connected: true, style: .compact, windowNames: [], onAction: {})
+                .padding(16).frame(width: 380, height: 170).background(Color(nsColor: .windowBackgroundColor))
+            let rowImage = try SettingsRenderProofTests.snapshot(row, size: CGSize(width: 380, height: 170), dark: dark)
+            let rowPNG = try #require(rowImage.representation(using: .png, properties: [:]))
+            try rowPNG.write(to: directory.appendingPathComponent("factory-key-recovery-row-\(dark).png"))
+            let core = CoreModel(socketPath: "/tmp/jrbar-factory-consent-proof-unused.sock")
+            core.handle(.connected)
+            core.apply(.state(CoreState()))
+            let store = UsageCenterStore(core: core)
+            let providerRow = try JSONDecoder().decode(ProviderRow.self, from: Data(#"""
+            {"id":"factory","instance":"work","label":"Factory","enabled":true,
+             "credentials":[{"account":"web-session","available":true}],
+             "usage_consent":{"granted":true,"question":"Show Factory usage?",
+              "summary":"JR-Bar will ask Factory for your subscription usage limits with the API key or browser access token you connect. JR-Bar never uses a browser refresh token. Nothing else is sent.",
+              "detail":"Asks api.factory.ai for Standard and Core usage windows with your saved API key first, or a browser access token. Browser storage is read only for an explicit import or an approved background repair. JR-Bar leaves token renewal to the browser.",
+              "hosts":["api.factory.ai"],"credential":"your Factory API key or explicitly imported browser access token in JR-Bar Keychain"}}
+            """#.utf8))
+            let connection = UsageProviderConnection(provider: reading, store: store, row: providerRow)
+                .padding(16).frame(width: 560, height: 330).background(Color(nsColor: .windowBackgroundColor))
+            let connectionImage = try SettingsRenderProofTests.snapshot(connection, size: CGSize(width: 560, height: 330), dark: dark)
+            let connectionPNG = try #require(connectionImage.representation(using: .png, properties: [:]))
+            try connectionPNG.write(to: directory.appendingPathComponent("factory-key-consent-\(dark).png"))
+        }
+    }
+
 }

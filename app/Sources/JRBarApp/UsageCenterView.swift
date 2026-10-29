@@ -111,6 +111,9 @@ struct UsageCenterView: View {
         guard store.providers.contains(where: { $0.identity == identity }) else { return }
         selection = identity
         store.focusProvider = nil
+        if let provider = store.providers.first(where: { $0.identity == identity }) {
+            store.presentKeyRecovery(provider)
+        }
     }
 }
 
@@ -144,7 +147,9 @@ struct UsageProviderConnection: View {
             if ["factory", "devin", "kimi", "kilo"].contains(row.id) {
                 ProviderCredentialControls(row: row, core: store.core,
                                            connectRequest: store.browserConnectRequests[provider.identity] ?? 0,
-                                           onConnectPresented: { store.didPresentBrowserConnection(provider.identity) }) {
+                                           onConnectPresented: { store.didPresentBrowserConnection(provider.identity) },
+                                           keyConnectRequest: store.credentialConnectRequests[provider.identity] ?? 0,
+                                           onKeyConnectPresented: { store.didPresentCredentialConnection(provider.identity) }) {
                     _ = store.loadProviderRows()
                 }
                     .id(row.identity)

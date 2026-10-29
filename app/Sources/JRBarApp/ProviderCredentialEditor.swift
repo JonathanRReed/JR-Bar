@@ -137,6 +137,7 @@ final class ProviderCredentialEditorModel {
 struct ProviderCredentialEditor: View {
     @Bindable var model: ProviderCredentialEditorModel
     let dismiss: () -> Void
+    @FocusState private var keyFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -144,6 +145,7 @@ struct ProviderCredentialEditor: View {
             Text(model.instance == "default" ? "Default account" : "Account: \(model.instance)")
                 .jrbarType(.caption).foregroundStyle(.secondary)
             SecureField(model.credentialTitle, text: $model.secret)
+                .focused($keyFocused)
                 .textFieldStyle(.roundedBorder)
                 .privacySensitive()
                 .accessibilityLabel("\(model.providerName) \(model.credentialName)")
@@ -171,6 +173,7 @@ struct ProviderCredentialEditor: View {
         }
         .padding(24)
         .frame(width: 420)
+        .onAppear { keyFocused = true }
         .onDisappear { model.cancel() }
     }
 }
@@ -183,9 +186,14 @@ struct ProviderCredentialControls: View {
     let onOptionsSaved: @MainActor (ProviderRow) -> Void
     let connectRequest: Int
     let onConnectPresented: @MainActor () -> Void
+    let keyConnectRequest: Int
+    let onKeyConnectPresented: @MainActor () -> Void
+    @ViewState private var localKeyRequest = 0
+    @ViewState private var keyExpanded = false
 
     init(row: ProviderRow, core: CoreModel, connectRequest: Int = 0,
          onConnectPresented: @escaping @MainActor () -> Void = {},
+         keyConnectRequest: Int = 0, onKeyConnectPresented: @escaping @MainActor () -> Void = {},
          onOptionsSaved: @escaping @MainActor (ProviderRow) -> Void = { _ in },
          onChanged: @escaping @MainActor () -> Void) {
         self.row = row
@@ -193,6 +201,8 @@ struct ProviderCredentialControls: View {
         self.onChanged = onChanged
         self.onOptionsSaved = onOptionsSaved
         self.connectRequest = connectRequest
+        self.keyConnectRequest = keyConnectRequest
+        self.onKeyConnectPresented = onKeyConnectPresented
         self.onConnectPresented = onConnectPresented
     }
 
@@ -206,13 +216,18 @@ struct ProviderCredentialControls: View {
                 .id("source-\(row.identity)")
             }
             if ["factory", "devin"].contains(row.id) {
+                if row.id == "factory" { keyControls }
                 FactoryBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
-                                                 onConnectPresented: onConnectPresented, onChanged: onChanged)
-                DisclosureGroup("API key, optional") {
-                    ProviderSavedCredentialControls(row: row, core: core, account: row.id == "devin" ? "token" : "api-key", onChanged: onChanged)
-                        .padding(.top, 6)
+                    onConnectPresented: onConnectPresented, onAddAPIKey: {
+                        keyExpanded = true
+                        localKeyRequest += 1
+                    }, onChanged: onChanged)
+                if row.id == "devin" {
+                    DisclosureGroup("API key", isExpanded: $keyExpanded) {
+                        keyControls.padding(.top, 6)
+                    }
+                    .jrbarType(.callout)
                 }
-                .jrbarType(.callout)
             } else {
                 ProviderSavedCredentialControls(row: row, core: core, account: "api-key", onChanged: onChanged)
                 if row.id == "kimi" {
@@ -238,6 +253,18 @@ struct ProviderCredentialControls: View {
                 }
             }
         }
+        .onChange(of: keyConnectRequest, initial: true) { _, request in
+            guard request > 0 else { return }
+            keyExpanded = true
+            localKeyRequest += 1
+            onKeyConnectPresented()
+        }
+    }
+
+    private var keyControls: some View {
+        ProviderSavedCredentialControls(row: row, core: core,
+            account: row.id == "devin" ? "token" : "api-key", connectRequest: localKeyRequest,
+            onChanged: onChanged)
     }
 }
 
@@ -246,13 +273,15 @@ struct ProviderSavedCredentialControls: View {
     let row: ProviderRow
     let core: CoreModel
     let onChanged: @MainActor () -> Void
+    let connectRequest: Int
     @ViewState private var model: ProviderCredentialEditorModel
     @ViewState private var editing = false
 
-    init(row: ProviderRow, core: CoreModel, account: String, onChanged: @escaping @MainActor () -> Void) {
+    init(row: ProviderRow, core: CoreModel, account: String, connectRequest: Int = 0, onChanged: @escaping @MainActor () -> Void) {
         self.row = row
         self.core = core
         self.onChanged = onChanged
+        self.connectRequest = connectRequest
         let saved = row.credentials.contains { $0.account == account && $0.available }
         _model = ViewState(initialValue: ProviderCredentialEditorModel(
             provider: row.id, instance: row.instance, account: account, available: saved,
@@ -292,6 +321,11 @@ struct ProviderSavedCredentialControls: View {
                 Text("\(MonitorWords.sentence) Reconnect to manage this credential.")
                     .jrbarType(.caption).foregroundStyle(.secondary)
             }
+        }
+        .onChange(of: connectRequest, initial: true) { _, request in
+            guard request > 0 else { return }
+            model.beginEditing()
+            editing = true
         }
         .onChange(of: row.credentials) { _, credentials in
             model.updateAvailability(credentials.contains { $0.account == model.account && $0.available })

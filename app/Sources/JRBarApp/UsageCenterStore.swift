@@ -1148,9 +1148,25 @@ final class UsageCenterStore {
     /// clipboard import, reconnect, repair. The daemon's own message is
     /// surfaced verbatim; it may be a success note, not only an error.
     private(set) var browserConnectRequests: [String: Int] = [:]
+    private(set) var credentialConnectRequests: [String: Int] = [:]
+
+    func didPresentCredentialConnection(_ identity: String) {
+        credentialConnectRequests.removeValue(forKey: identity)
+    }
 
     func didPresentBrowserConnection(_ identity: String) {
         browserConnectRequests.removeValue(forKey: identity)
+    }
+
+    @discardableResult
+    func presentKeyRecovery(_ provider: CoreProviderUsage) -> Bool {
+        let keyRecovery = provider.reason == "browser_token_unavailable"
+            || (provider.id == "factory" && provider.reason == "authentication_required")
+        if provider.actionKind == "manage", ["factory", "devin"].contains(provider.id), keyRecovery {
+            credentialConnectRequests[provider.identity, default: 0] += 1
+            return true
+        }
+        return false
     }
 
     func runProviderAction(_ provider: CoreProviderUsage) {
@@ -1159,6 +1175,7 @@ final class UsageCenterStore {
             actionSucceeded(.providerAction(provider.identity), message: "Turn on Show usage in the connection controls to allow this provider's usage requests.")
             return
         }
+        if presentKeyRecovery(provider) { return }
         if provider.actionKind == "manage", ["devin", "factory"].contains(provider.id) {
             browserConnectRequests[provider.identity, default: 0] += 1
             return
