@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// a human can eyeball the Raycast-grade layout. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write /tmp/palette-proof PNGs (or
 /// `JRBAR_RENDER_PROOF_DIR` to pick the folder).
-@Suite("Palette render proof")
+@Suite("Palette render proof", .renderProofAppearance)
 @MainActor
 struct PaletteRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

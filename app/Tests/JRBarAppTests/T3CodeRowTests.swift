@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-@Suite struct T3CodeRowTests {
+@Suite(.renderProofAppearance) struct T3CodeRowTests {
     @Test("automatic detection ignores the legacy switch")
     func automaticDetection() throws {
         for enabled in [false, true] {
@@ -23,7 +24,7 @@ import JRBarCore
     }
 }
 
-@Suite("T3 installation visibility")
+@Suite("T3 installation visibility", .renderProofAppearance)
 struct T3CodeInstallationTests {
     @Test("installation status distinguishes an absent app from a stopped install")
     func installationStatus() throws {
@@ -41,7 +42,7 @@ struct T3CodeInstallationTests {
     }
 }
 
-@Suite("T3 row render proof")
+@Suite("T3 row render proof", .renderProofAppearance)
 @MainActor
 struct T3CodeRowRenderTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

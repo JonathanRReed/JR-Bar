@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Dock native preview render proofs", .serialized)
+@Suite("Dock native preview render proofs", .serialized, .renderProofAppearance)
 struct DockNativePreviewRenderProofTests {
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
     static var utc: Calendar {

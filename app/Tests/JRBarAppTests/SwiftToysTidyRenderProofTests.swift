@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,7 +9,7 @@ import JRBarCore
 /// Pictures of what the toys-tidy lane changed on screen. Off by default;
 /// set `JRBAR_RENDER_PROOF=1` to write `toys-tidy-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Toys tidy render proof", .serialized)
+@Suite("Toys tidy render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct SwiftToysTidyRenderProofTests {
     private typealias Fixture = DecidedAskFixture

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -9,7 +10,7 @@ import Testing
 /// setting that was changed outside JR-Bar, for an unavailable Keychain and for
 /// a daemon that has not sealed, and Advanced › Protected settings. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Settings seal render proof", .serialized)
+@Suite("Settings seal render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct SettingsSealRenderProofTests {
     private func write(_ name: String, _ view: some View, height: CGFloat = 330) throws {

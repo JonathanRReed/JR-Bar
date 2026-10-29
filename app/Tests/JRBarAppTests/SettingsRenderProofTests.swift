@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import JRBarUI
 import QuartzCore
 import AppKit
@@ -15,7 +16,7 @@ import Testing
 /// `/tmp/jrbar-settings-proof`). The document is the mock monitor's
 /// defaults (`app/scripts/mock-core.py`), or the JSON file named by
 /// `JRBAR_RENDER_PROOF_SETTINGS`.
-@Suite("Settings render proof")
+@Suite("Settings render proof", .renderProofAppearance)
 @MainActor
 struct SettingsRenderProofTests {
     init() throws {
@@ -216,6 +217,7 @@ struct SettingsRenderProofTests {
     /// controls included, which `ImageRenderer` cannot draw.
     static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool, growToFit: Bool = false,
                                   requiresKey: Bool = false) throws -> NSBitmapImageRep {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try RenderProofAppearance.pinDefaultAccent() }
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
@@ -887,6 +889,7 @@ extension SettingsRenderProofTests {
     }
 
     static func keySnapshot<V: View>(_ view: V, name: String, height: CGFloat, dark: Bool) async throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try RenderProofAppearance.pinDefaultAccent() }
         let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
         // NSApp is nil until something asks for the shared application; a
         // filtered proof run can reach here first.

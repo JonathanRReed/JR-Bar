@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -6,7 +7,7 @@ import QuartzCore
 import Testing
 @testable import JRBarApp
 
-@Suite("Screen Bar moving gradient proof", .serialized)
+@Suite("Screen Bar moving gradient proof", .serialized, .renderProofAppearance)
 @MainActor
 struct ScreenBarMotionRenderProofTests {
     /// Freeze values from the animation actually installed on each gradient.

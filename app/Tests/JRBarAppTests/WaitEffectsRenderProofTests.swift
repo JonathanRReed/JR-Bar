@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import Testing
 /// working rows doing different things. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`
 /// (default /tmp/waits-proof).
-@Suite("Wait effects render proof", .serialized)
+@Suite("Wait effects render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct WaitEffectsRenderProofTests {
     nonisolated static var enabled: Bool { ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" }

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -11,7 +12,7 @@ import JRBarCore
 /// strength so a gap, a seam or an overhang against the hardware shows.
 /// Off by default; `JRBAR_RENDER_PROOF=1` writes `notch-silhouette-*.png`
 /// into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Notch silhouette render proof")
+@Suite("Notch silhouette render proof", .renderProofAppearance)
 @MainActor
 struct NotchSilhouetteRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

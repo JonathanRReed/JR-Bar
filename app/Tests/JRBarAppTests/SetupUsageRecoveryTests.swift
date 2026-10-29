@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Observation
@@ -7,7 +8,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Setup usage recovery", .serialized)
+@Suite("Setup usage recovery", .serialized, .renderProofAppearance)
 struct SetupUsageRecoveryTests {
     @MainActor
     private final class ReadGate<Value: Sendable> {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Window recovery render proof")
+@Suite("Window recovery render proof", .renderProofAppearance)
 struct WindowRecoveryRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func disconnectedUsage() throws {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Menu Bar rule profile render proof")
+@Suite("Menu Bar rule profile render proof", .renderProofAppearance)
 struct MenuBarRuleProfileRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func selections() throws {

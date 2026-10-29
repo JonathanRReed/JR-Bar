@@ -5,7 +5,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch timer glance render proof", .temporaryDirectory, .serialized)
+@Suite("Notch timer glance render proof", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct NotchTimerGlanceRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

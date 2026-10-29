@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("History timeline cache", .timeLimit(.minutes(2)))
+@Suite("History timeline cache", .timeLimit(.minutes(2)), .renderProofAppearance)
 struct HistoryTimelineCacheTests {
     private func store() -> HistoryStore {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + UUID().uuidString + ".sock")

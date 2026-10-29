@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarLEDS
@@ -11,7 +12,7 @@ import Testing
 /// that a frame reaches the layers without a SwiftUI update, and — with
 /// `JRBAR_RENDER_PROOF=1` — that the layers look like the SwiftUI still
 /// they replaced, dots and band, light and dark.
-@Suite("LED preview strip")
+@Suite("LED preview strip", .renderProofAppearance)
 @MainActor
 struct LEDPreviewStripTests {
     /// A left-to-right sweep that never stops moving.

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -11,7 +12,7 @@ import JRBarCore
 /// continuous in position and speed). The pictures are written only with
 /// `JRBAR_RENDER_PROOF=1`: one contact sheet and two CSVs per scenario
 /// (`filmstrip-<name>.png`, `.csv`, `-dense.csv`) and a `filmstrip-metrics.csv`.
-@Suite("Notch motion filmstrip")
+@Suite("Notch motion filmstrip", .renderProofAppearance)
 @MainActor
 struct NotchFilmstripTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

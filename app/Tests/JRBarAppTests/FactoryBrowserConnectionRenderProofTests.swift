@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 @testable import JRBarCore
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Factory browser connection render proof")
+@Suite("Factory browser connection render proof", .renderProofAppearance)
 struct FactoryBrowserConnectionRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 

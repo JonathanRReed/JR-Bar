@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -16,7 +17,7 @@ import UniformTypeIdentifiers
 /// than as ImageRenderer's placeholder. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`
 /// (default `/tmp/jrbar-audit/utilities`).
-@Suite("Utility surfaces render proof")
+@Suite("Utility surfaces render proof", .renderProofAppearance)
 @MainActor
 struct UtilitySurfacesRenderProofTests {
     nonisolated static var enabled: Bool {

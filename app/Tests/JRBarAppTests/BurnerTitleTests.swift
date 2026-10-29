@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarUI
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Burners use the panel's session titles", .serialized)
+@Suite("Burners use the panel's session titles", .serialized, .renderProofAppearance)
 @MainActor
 struct BurnerTitleTests {
     static let stamp = 1_800_000_000.0

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import JRBarCore
 /// after (it arrives from the right, in focus), the same under Reduce
 /// Motion, and the edge nudge. Off by default; set `JRBAR_RENDER_PROOF=1`
 /// to write `notch-pageturn-*.png` into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Notch page turn render proof")
+@Suite("Notch page turn render proof", .renderProofAppearance)
 @MainActor
 struct NotchPageTurnRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("History clear and Undo recovery", .serialized, .timeLimit(.minutes(2)))
+@Suite("History clear and Undo recovery", .serialized, .timeLimit(.minutes(2)), .renderProofAppearance)
 struct HistoryClearRecoveryTests {
     @Test("Clear reports a refusal without refreshing it away")
     func clearRefusalIsVisible() async throws {

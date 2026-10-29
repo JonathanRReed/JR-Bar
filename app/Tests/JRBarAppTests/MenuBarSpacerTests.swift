@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
@@ -18,7 +19,7 @@ private final class GeometryReportingButtonCell: NSButtonCell {
 /// the boundary's spacer growing from the fit edge to pack the items
 /// left of it off the row, and the section map is overrides only. All
 /// pure inputs — no screen, no status items.
-@Suite("Menu Bar — spacers")
+@Suite("Menu Bar — spacers", .renderProofAppearance)
 struct MenuBarSpacerTests {
     private func item(_ id: String, owner: String = "App", x: Double, y: Double = 0,
                       w: Double = 24, overflow: Bool = false, pid: pid_t = 500) -> MenuBarItem {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -8,7 +9,7 @@ import Testing
 /// Lane 2 (plain words): the states whose words changed, drawn so a person
 /// can read them. Synthetic data only.
 @MainActor
-@Suite("Plain words render proof")
+@Suite("Plain words render proof", .renderProofAppearance)
 struct PlainWordsRenderProofTests {
     static let now: Double = 1_800_000_000
 

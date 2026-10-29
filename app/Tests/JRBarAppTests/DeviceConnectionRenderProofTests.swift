@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import SwiftUI
 import Testing
 @testable import JRBarCore
 @testable import JRBarApp
 
-@Suite("Device connection render proof")
+@Suite("Device connection render proof", .renderProofAppearance)
 @MainActor
 struct DeviceConnectionRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

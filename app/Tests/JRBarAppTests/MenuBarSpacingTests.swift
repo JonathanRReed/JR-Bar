@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import CoreFoundation
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import JRBarCore
 @testable import JRBarApp
 
 @MainActor
-@Suite("Menu Bar spacing writes")
+@Suite("Menu Bar spacing writes", .renderProofAppearance)
 struct MenuBarSpacingTests {
     private final class MemoryPreferences {
         var values: [String: CFPropertyList] = [:]

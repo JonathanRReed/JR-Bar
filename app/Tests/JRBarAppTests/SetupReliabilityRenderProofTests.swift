@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup reliability render proof")
+@Suite("Setup reliability render proof", .renderProofAppearance)
 struct SetupReliabilityRenderProofTests {
     init() throws {
         if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }

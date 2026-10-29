@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Utility state truthfulness")
+@Suite("Utility state truthfulness", .renderProofAppearance)
 struct UtilityTruthfulnessTests {
     @Test("folder summaries distinguish blocked and failed reads from ready counts")
     func folderSummaries() {

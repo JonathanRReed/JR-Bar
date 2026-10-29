@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import JRBarLEDS
 /// hardware's own radius and the marks centre inside the bezel — the
 /// thing screenshots keep judging. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write /tmp/notch-proof PNGs.
-@Suite("Notch wrap render proof")
+@Suite("Notch wrap render proof", .renderProofAppearance)
 @MainActor
 struct NotchRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

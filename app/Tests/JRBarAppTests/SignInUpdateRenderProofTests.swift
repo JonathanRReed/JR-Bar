@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import Testing
 /// Settings › Agents & Usage' rows with their version, "available" note, Update button and
 /// the daemon's one-line result. Off by default; set `JRBAR_RENDER_PROOF=1` to write
 /// `signin-update-*.png` into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Fix sign-in and Update render proof", .serialized)
+@Suite("Fix sign-in and Update render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct SignInUpdateRenderProofTests {
     private static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {

@@ -8,7 +8,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Toy polish render proof", .temporaryDirectory)
+@Suite("Toy polish render proof", .temporaryDirectory, .renderProofAppearance)
 struct ToyPolishRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func reopenAndStatus() throws {

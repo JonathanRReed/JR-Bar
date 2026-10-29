@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -11,7 +12,7 @@ import Testing
 /// card (`CardEscapeWatch`): an Esc the peek's own window or no window owns
 /// is taken, and any other JR-Bar window keeps its own. The keyboard is a
 /// fake and nothing is shown.
-@Suite("Screen Bar peek Esc")
+@Suite("Screen Bar peek Esc", .renderProofAppearance)
 @MainActor
 struct ScreenBarPeekEscapeTests {
     @Test(.enabled(if: NotchSurfaceRenderProofTests.enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))

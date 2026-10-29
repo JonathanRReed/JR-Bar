@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Panel, notch and Usage Center design fixes", .serialized)
+@Suite("Panel, notch and Usage Center design fixes", .serialized, .renderProofAppearance)
 @MainActor
 struct DesignFixARenderProofTests {
     private let stamp = PanelCompositionTests.time

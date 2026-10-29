@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import Testing
 @testable import JRBarUI
 
-@Suite("Quota notice render proof")
+@Suite("Quota notice render proof", .renderProofAppearance)
 @MainActor
 struct QuotaNoticeRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

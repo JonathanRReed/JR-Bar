@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Studio request render proof")
+@Suite("Studio request render proof", .renderProofAppearance)
 struct EffectStudioRequestRenderProofTests {
     private static func makeStore() -> EffectStudioStore {
         EffectStudioStore(core: CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-effects-" + UUID().uuidString + ".sock"))

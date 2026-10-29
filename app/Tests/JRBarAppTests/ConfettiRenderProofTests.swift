@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -16,7 +17,7 @@ import JRBarCore
 /// many pieces are on the far layer — numbers, not
 /// goldens. Written to `JRBAR_RENDER_PROOF_DIR` (default
 /// `/tmp/confetti-proof`) only when `JRBAR_RENDER_PROOF=1`.
-@Suite("Confetti render proof")
+@Suite("Confetti render proof", .renderProofAppearance)
 @MainActor
 struct ConfettiRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

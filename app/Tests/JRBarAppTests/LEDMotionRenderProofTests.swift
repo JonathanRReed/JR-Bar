@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarLEDS
@@ -18,7 +19,7 @@ import Testing
 /// and three quarters of its cycle, on a dark and a light stage, and the
 /// Moments room's Lid and Finish sections and the device rows, into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/led-motion-proof`).
-@Suite("LED motion render proof")
+@Suite("LED motion render proof", .renderProofAppearance)
 @MainActor
 struct LEDMotionRenderProofTests {
     struct MotionFixture: Decodable {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// publishes it `answerable: false`, keeps its command preview and
 /// destructive mark, and the panel draws no Approve or Deny for it: it
 /// says the agent is being waited for. Nothing here answers anything.
-@Suite("Panel decided ask")
+@Suite("Panel decided ask", .renderProofAppearance)
 @MainActor
 struct PanelDecidedAskTests {
     private static let decidedSession = "claude:session:decided"
@@ -108,7 +109,7 @@ struct PanelDecidedAskTests {
 /// A picture of the panel with a decided ask beside an open one. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Panel decided ask render proof", .serialized)
+@Suite("Panel decided ask render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct PanelDecidedAskRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

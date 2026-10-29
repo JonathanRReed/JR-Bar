@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -7,7 +8,7 @@ import JRBarUI
 @testable import JRBarApp
 
 @MainActor
-@Suite("Compact Notch shoulders")
+@Suite("Compact Notch shoulders", .renderProofAppearance)
 struct ScreenBarCompactWingsTests {
     nonisolated static let renderEnabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import CoreVideo
 import Foundation
@@ -20,7 +21,7 @@ import Testing
 /// The drift check always runs; the strips (`fold-duo-strip.png`,
 /// `fold-room-strip.png`) are written only with `JRBAR_RENDER_PROOF=1`,
 /// into `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Fold render proof")
+@Suite("Fold render proof", .renderProofAppearance)
 @MainActor
 struct FoldRenderProofTests {
     /// The shaders compile off the main thread and a main-actor renderer

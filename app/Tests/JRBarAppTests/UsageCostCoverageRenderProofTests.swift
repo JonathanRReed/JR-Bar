@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Cost coverage render proof", .serialized)
+@Suite("Cost coverage render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageCostCoverageRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

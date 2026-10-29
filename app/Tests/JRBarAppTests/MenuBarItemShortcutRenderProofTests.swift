@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Menu bar item shortcut render proof", .serialized)
+@Suite("Menu bar item shortcut render proof", .serialized, .renderProofAppearance)
 @MainActor struct MenuBarItemShortcutRenderProofTests {
     @Test(.enabled(if: SettingsRenderProofTests.enabled))
     func savedRows() throws {

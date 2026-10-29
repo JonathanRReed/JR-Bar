@@ -6,7 +6,7 @@ import JRBarCore
 @testable import JRBarApp
 
 @MainActor
-@Suite("Shelf keyboard focus", .temporaryDirectory)
+@Suite("Shelf keyboard focus", .temporaryDirectory, .renderProofAppearance)
 struct ShelfKeyboardFocusTests {
     @Test("Paste has a visible keyboard focus ring", .enabled(if: renderEnabled))
     func pasteFocusRender() throws {

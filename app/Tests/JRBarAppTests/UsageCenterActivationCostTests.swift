@@ -8,7 +8,7 @@ import Testing
 
 @MainActor
 @Suite("Synthetic Usage Center activation cost", .temporaryDirectory, .serialized,
-       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_USAGE_ACTIVATION_PROBE"] == "1"))
+       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_USAGE_ACTIVATION_PROBE"] == "1"), .renderProofAppearance)
 struct UsageCenterActivationCostTests {
     private struct Sample: Encodable {
         let days: Int

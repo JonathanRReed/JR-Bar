@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 @testable import JRBarUI
 
-@Suite("Provider alias wings render proof", .serialized)
+@Suite("Provider alias wings render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct ProviderAliasWingRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

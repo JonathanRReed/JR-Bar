@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 @testable import JRBarCore
 @testable import JRBarApp
 
-@Suite("Deck control render proof")
+@Suite("Deck control render proof", .renderProofAppearance)
 @MainActor
 struct DeckControlRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

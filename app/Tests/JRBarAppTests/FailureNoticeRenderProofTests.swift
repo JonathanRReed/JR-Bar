@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
 
-@Suite("Failure notice render proof")
+@Suite("Failure notice render proof", .renderProofAppearance)
 @MainActor
 struct FailureNoticeRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

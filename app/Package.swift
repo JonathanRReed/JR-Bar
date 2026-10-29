@@ -123,7 +123,7 @@ let package = Package(
         ),
         .testTarget(
             name: "JRBarUITests",
-            dependencies: ["JRBarUI"],
+            dependencies: ["JRBarUI", "JRBarTestSupport"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

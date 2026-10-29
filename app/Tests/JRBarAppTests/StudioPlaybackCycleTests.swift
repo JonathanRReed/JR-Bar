@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite struct StudioPlaybackCycleTests {
+@Suite(.renderProofAppearance) struct StudioPlaybackCycleTests {
     @Test func showsFirmwareSeedFrameInLoopDuration() {
         let program = "0:#804020 0ms\n0:#000000 1100ms cosine\n0:#804020 1100ms cosine\nrepeat"
         #expect(StudioFleetPreview.playbackCycle(program: program, ledCount: 8) == "2.217 s / loop")

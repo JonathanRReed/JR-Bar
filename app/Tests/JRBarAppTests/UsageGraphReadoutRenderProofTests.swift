@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
 
-@Suite("Usage hover readout render proof", .serialized)
+@Suite("Usage hover readout render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageGraphReadoutRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

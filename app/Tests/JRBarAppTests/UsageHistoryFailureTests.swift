@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Usage history failed refresh", .serialized)
+@Suite("Usage history failed refresh", .serialized, .renderProofAppearance)
 struct UsageHistoryFailureTests {
     static let message = "Local history could not be refreshed. Try again."
 

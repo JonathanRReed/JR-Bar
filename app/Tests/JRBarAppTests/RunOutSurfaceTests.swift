@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Run-out display preference", .serialized)
+@Suite("Run-out display preference", .serialized, .renderProofAppearance)
 @MainActor
 struct RunOutSurfaceTests {
     static func configure(_ style: UsageRunOutStyle, core: CoreModel) {

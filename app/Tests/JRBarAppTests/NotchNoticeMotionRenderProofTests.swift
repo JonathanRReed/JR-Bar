@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import JRBarCore
 /// out once at their own width and uncovered by the shape, never
 /// re-wrapping or truncating differently as it grows. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write `notch-notice-motion-*.png`.
-@Suite("Notch notice motion render proof")
+@Suite("Notch notice motion render proof", .renderProofAppearance)
 @MainActor
 struct NotchNoticeMotionRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

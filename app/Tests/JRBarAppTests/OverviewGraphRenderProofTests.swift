@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -13,7 +14,7 @@ import Testing
 /// can eyeball the map the way a screenshot would show it. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `overview-graph-*.png`
 /// into `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Overview graph render proof")
+@Suite("Overview graph render proof", .renderProofAppearance)
 @MainActor
 struct OverviewGraphRenderProofTests {
     private static func session(_ id: String, _ provider: String, _ label: String, cwd: String?,

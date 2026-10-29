@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import Observation
 import SwiftUI
@@ -7,7 +8,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Studio scene and removal ownership", .serialized, .timeLimit(.minutes(2)))
+@Suite("Studio scene and removal ownership", .serialized, .timeLimit(.minutes(2)), .renderProofAppearance)
 struct EffectStudioSceneRemovalTests {
     @Test("automatic scene facts change the displayed scene without changing its saved selection")
     func automaticSceneFactIsDisplayed() async throws {

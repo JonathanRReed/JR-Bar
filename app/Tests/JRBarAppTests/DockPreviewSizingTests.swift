@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import Testing
 import SwiftUI
 @testable import JRBarApp
 
-@Suite("Dock preview target display sizing")
+@Suite("Dock preview target display sizing", .renderProofAppearance)
 @MainActor
 struct DockPreviewSizingTests {
     @Test func narrowSecondaryDisplayContainsPreviewAtEveryDockEdge() {

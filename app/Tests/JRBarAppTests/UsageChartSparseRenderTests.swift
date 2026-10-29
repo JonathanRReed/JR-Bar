@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -7,7 +8,7 @@ import JRBarCore
 
 @MainActor
 @Suite("Sparse usage chart render proof", .serialized,
-       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
+       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"), .renderProofAppearance)
 struct UsageChartSparseRenderTests {
     @Test(arguments: ["tokens", "cost", "zero-tokens", "zero-cost"], [false, true])
     func boundaryMarkerIsComplete(_ fixture: String, dark: Bool) throws {

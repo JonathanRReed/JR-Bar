@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Darwin
 import Foundation
@@ -8,7 +9,7 @@ import Testing
 
 @MainActor
 @Suite("Usage chart render cost diagnostic", .serialized,
-       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_COST_PROBE"] == "1"))
+       .enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_COST_PROBE"] == "1"), .renderProofAppearance)
 struct UsageChartRenderCostTests {
     @MainActor private struct Fixture {
         let name: String

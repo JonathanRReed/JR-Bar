@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -8,7 +9,7 @@ import Testing
 /// the daemon marks stale is drawn faint, and a window whose reset has
 /// passed is drawn unread.
 @MainActor
-@Suite("Menu bar meter staleness")
+@Suite("Menu bar meter staleness", .renderProofAppearance)
 struct StatusMeterStalenessTests {
     static let now: Double = 1_800_000_000
 

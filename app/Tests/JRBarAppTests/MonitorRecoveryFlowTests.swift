@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Foundation
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 @testable import JRBarApp
 
-@Suite @MainActor
+@Suite(.renderProofAppearance) @MainActor
 struct MonitorRecoveryFlowTests {
     @Test func connectionStatesAndExistingInspectorNavigation() {
         let core = CoreModel()

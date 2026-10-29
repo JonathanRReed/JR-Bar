@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Provider credential render proof")
+@Suite("Provider credential render proof", .renderProofAppearance)
 struct ProviderCredentialRenderProofTests {
     init() throws {
         if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }

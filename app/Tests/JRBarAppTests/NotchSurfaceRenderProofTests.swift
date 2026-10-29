@@ -17,7 +17,7 @@ import JRBarUI
 /// judge it the way it sits under the real notch. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write `notch-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Notch surfaces render proof", .temporaryDirectory)
+@Suite("Notch surfaces render proof", .temporaryDirectory, .renderProofAppearance)
 @MainActor
 struct NotchSurfaceRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -677,6 +677,7 @@ enum ProofRender {
     static func render<V: View>(_ view: V, size: CGSize, dark: Bool = true,
                                 scale: CGFloat = 2, settle: TimeInterval = 0.45,
                                 overlay: NSView? = nil) throws -> NSBitmapImageRep {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try RenderProofAppearance.pinDefaultAccent() }
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .frame(width: size.width)

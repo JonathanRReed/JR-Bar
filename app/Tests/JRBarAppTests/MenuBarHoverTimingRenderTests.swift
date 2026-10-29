@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
 
 @MainActor
-@Suite("Menu Bar hover timing controls")
+@Suite("Menu Bar hover timing controls", .renderProofAppearance)
 struct MenuBarHoverTimingRenderTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarLEDS
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Studio repair render proof")
+@Suite("Studio repair render proof", .renderProofAppearance)
 @MainActor
 struct StudioRepairRenderProofTests {
     @Test("swing width only renames Pendulum's glow control")

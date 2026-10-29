@@ -14,7 +14,7 @@ import JRBarCore
 /// human can eyeball the art the way the review screenshots do. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `aquarium-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Aquarium render proof", .temporaryDirectory)
+@Suite("Aquarium render proof", .temporaryDirectory, .renderProofAppearance)
 @MainActor
 struct AquariumRenderProofTests {
     init() throws {

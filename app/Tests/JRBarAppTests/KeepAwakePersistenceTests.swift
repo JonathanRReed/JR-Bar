@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Keep Awake saved hold cleanup", .serialized)
+@Suite("Keep Awake saved hold cleanup", .serialized, .renderProofAppearance)
 struct KeepAwakePersistenceTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 

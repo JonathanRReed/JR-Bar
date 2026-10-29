@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,7 +9,7 @@ import Testing
 /// Render proof for the "room left elsewhere" line on a nearly spent usage card, and
 /// for Settings › Alerts & Sounds › Phone alert. Off by default; set `JRBAR_RENDER_PROOF=1` to
 /// write `room-elsewhere-*.png` into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Room elsewhere and phone alert render proof", .serialized)
+@Suite("Room elsewhere and phone alert render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct RoomElsewhereRenderProofTests {
     private static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {

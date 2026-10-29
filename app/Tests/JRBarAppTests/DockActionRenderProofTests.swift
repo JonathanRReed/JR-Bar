@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Dock action render proof", .serialized)
+@Suite("Dock action render proof", .serialized, .renderProofAppearance)
 struct DockActionRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
 
 @MainActor
-@Suite("Provider update controls render proof")
+@Suite("Provider update controls render proof", .renderProofAppearance)
 struct ProviderUpdateRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func updateStates() throws {

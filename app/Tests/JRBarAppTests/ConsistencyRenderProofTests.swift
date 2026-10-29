@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Consistency render proofs", .serialized)
+@Suite("Consistency render proofs", .serialized, .renderProofAppearance)
 @MainActor
 struct ConsistencyRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

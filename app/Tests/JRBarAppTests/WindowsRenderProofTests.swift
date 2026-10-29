@@ -14,7 +14,7 @@ import JRBarUI
 /// 2×, so a human can eyeball the whole set side by side. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR` (default /tmp/windows-proof).
-@Suite("Windows render proof", .serialized)
+@Suite("Windows render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct WindowsRenderProofTests {
     nonisolated static var enabled: Bool { ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" }

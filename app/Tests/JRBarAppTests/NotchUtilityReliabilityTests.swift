@@ -4,7 +4,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch utility reliability", .temporaryDirectory, .serialized, .timeLimit(.minutes(2)))
+@Suite("Notch utility reliability", .temporaryDirectory, .serialized, .timeLimit(.minutes(2)), .renderProofAppearance)
 @MainActor
 struct NotchUtilityReliabilityTests {
     private func storeURL() -> URL {
@@ -232,7 +232,7 @@ struct NotchUtilityReliabilityTests {
     }
 }
 
-@Suite("Notch timer row render proof", .temporaryDirectory, .serialized)
+@Suite("Notch timer row render proof", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct NotchTimerRowRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))

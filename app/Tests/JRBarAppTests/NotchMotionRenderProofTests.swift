@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -15,7 +16,7 @@ import JRBarCore
 /// the rows cascading, the edge light arriving last, and the fold taking
 /// it all back. Off by default; set `JRBAR_RENDER_PROOF=1` to write
 /// `notch-motion-*.png` into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Notch motion render proof")
+@Suite("Notch motion render proof", .renderProofAppearance)
 @MainActor
 struct NotchMotionRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

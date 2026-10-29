@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Hooks doctor render proof")
+@Suite("Hooks doctor render proof", .renderProofAppearance)
 struct HooksDoctorRenderProofTests {
     enum State: String, CaseIterable { case unavailable, recovered, failed, offline }
 

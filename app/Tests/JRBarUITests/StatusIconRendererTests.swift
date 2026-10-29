@@ -1,8 +1,9 @@
+import JRBarTestSupport
 import AppKit
 import Testing
 @testable import JRBarUI
 
-@Suite("Status item icon renderer")
+@Suite("Status item icon renderer", .renderProofAppearance)
 struct StatusIconRendererTests {
     static func pixels(_ image: NSImage) -> [UInt8] {
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 36, pixelsHigh: 36, bitsPerSample: 8, samplesPerPixel: 4,
@@ -127,7 +128,7 @@ struct StatusIconRendererTests {
     }
 }
 
-@Suite("Orbit menu bar icon")
+@Suite("Orbit menu bar icon", .renderProofAppearance)
 struct StatusOrbitTests {
     static func pixels(_ image: NSImage) -> [UInt8] {
         StatusMetersTests.pixels(image)
@@ -247,7 +248,7 @@ struct StatusOrbitTests {
     }
 }
 
-@Suite("Session dots menu bar icon")
+@Suite("Session dots menu bar icon", .renderProofAppearance)
 struct StatusSessionDotsTests {
     static func pixels(_ image: NSImage) -> [UInt8] {
         StatusMetersTests.pixels(image)
@@ -335,7 +336,7 @@ struct StatusSessionDotsTests {
     }
 }
 
-@Suite("Menu bar meters")
+@Suite("Menu bar meters", .renderProofAppearance)
 struct StatusMetersTests {
     static func meter(_ id: String, _ fraction: Double, approximate: Bool = false) -> StatusMeter {
         StatusMeter(id: id, name: id.capitalized, glyph: .symbol("circle"), fraction: fraction, approximate: approximate)
@@ -680,7 +681,7 @@ struct StatusMetersTests {
     }
 }
 
-@Suite("Compact percent menu bar icon")
+@Suite("Compact percent menu bar icon", .renderProofAppearance)
 struct StatusCompactPercentTests {
     static func meter(_ id: String, _ fraction: Double?, resetsAt: Double? = nil,
                       verdict: StatusMeter.PaceVerdict = .unknown, accent: String? = nil) -> StatusMeter {
@@ -867,7 +868,7 @@ struct StatusCompactPercentTests {
     }
 }
 
-@Suite("Hex colours")
+@Suite("Hex colours", .renderProofAppearance)
 struct HexColorTests {
     @Test("#RRGGBB parses with or without the hash and round-trips; anything else is nil")
     func parses() throws {
@@ -880,7 +881,7 @@ struct HexColorTests {
     }
 }
 
-@Suite("Status dots told apart by shape")
+@Suite("Status dots told apart by shape", .renderProofAppearance)
 struct StatusDotShapeTests {
     /// One state's dot drawn in plain ink, so any difference is the outline.
     static func shape(_ state: StatusDotState, phase: Double = 0.5) -> [UInt8] {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Buddy open recovery", .timeLimit(.minutes(2)))
+@Suite("Buddy open recovery", .timeLimit(.minutes(2)), .renderProofAppearance)
 struct BuddyOpenRecoveryTests {
     @MainActor
     private final class Replies {

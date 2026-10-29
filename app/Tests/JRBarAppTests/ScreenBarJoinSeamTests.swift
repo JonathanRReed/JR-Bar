@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -7,7 +8,7 @@ import JRBarUI
 @testable import JRBarApp
 
 @MainActor
-@Suite("Notch panel join")
+@Suite("Notch panel join", .renderProofAppearance)
 struct ScreenBarJoinSeamTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 

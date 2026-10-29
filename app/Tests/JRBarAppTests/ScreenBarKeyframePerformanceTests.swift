@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Darwin
 import Foundation
@@ -7,7 +8,7 @@ import QuartzCore
 import Testing
 @testable import JRBarApp
 
-@Suite("Screen Bar precomputed light", .serialized)
+@Suite("Screen Bar precomputed light", .serialized, .renderProofAppearance)
 struct ScreenBarKeyframePerformanceTests {
     @Test("linked keyframes follow raw PWM light at every sampled instant")
     func transferredCurve() throws {

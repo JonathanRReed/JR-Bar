@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarUI
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Mix effect render proofs", .serialized)
+@Suite("Mix effect render proofs", .serialized, .renderProofAppearance)
 struct MixEffectRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func mixAndAssignmentAsKeyWindows() async throws {

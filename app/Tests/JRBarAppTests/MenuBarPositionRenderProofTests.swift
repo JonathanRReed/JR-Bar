@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -9,7 +10,7 @@ import JRBarCore
 /// icon as the divider, Shown), the suggestions panel, and every banner
 /// the divider can show. Off by default; `JRBAR_RENDER_PROOF=1` writes
 /// PNGs into `JRBAR_RENDER_PROOF_DIR` (default /tmp/jrbar-audit/menubar).
-@Suite("Menu Bar position render proof")
+@Suite("Menu Bar position render proof", .renderProofAppearance)
 @MainActor
 struct MenuBarPositionRenderProofTests {
     nonisolated static var enabled: Bool {

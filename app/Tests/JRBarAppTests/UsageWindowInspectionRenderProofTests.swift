@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Usage window inspection render proof", .serialized)
+@Suite("Usage window inspection render proof", .serialized, .renderProofAppearance)
 struct UsageWindowInspectionRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func liveWindowEvidence() throws {

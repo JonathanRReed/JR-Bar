@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Provider-wide local history", .serialized)
+@Suite("Provider-wide local history", .serialized, .renderProofAppearance)
 struct UsageHistoryScopeTests {
     private func provider(_ instance: String? = nil) -> CoreProviderUsage {
         var row = CoreProviderUsage(id: "claude", state: "ready")

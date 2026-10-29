@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Provider settings discovery", .serialized)
+@Suite("Provider settings discovery", .serialized, .renderProofAppearance)
 struct SettingsProviderSearchTests {
     private func connectedCore() -> CoreModel {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-provider-search-\(UUID().uuidString).sock")

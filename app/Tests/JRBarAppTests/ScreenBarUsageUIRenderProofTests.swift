@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import Testing
 /// draws nothing under `ImageRenderer`, so the Quota chart's change is
 /// held by `UsageGraphViewTests` instead.) Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Screen bar, usage and history render proof", .serialized)
+@Suite("Screen bar, usage and history render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct ScreenBarUsageUIRenderProofTests {
     private static let t = WindowsRenderProofTests.t

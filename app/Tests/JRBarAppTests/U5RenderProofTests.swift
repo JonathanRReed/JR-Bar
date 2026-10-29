@@ -3,12 +3,11 @@ import AppKit
 @testable import JRBarCore
 import JRBarUI
 import QuartzCore
-import ObjectiveC
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("U5 key-window render proofs", .temporaryDirectory, .serialized)
+@Suite("U5 key-window render proofs", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct U5RenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
@@ -257,19 +256,8 @@ struct U5RenderProofTests {
 
 @MainActor
 enum U5Proof {
-    private static var accentPinned = false
-
     static func pinDefaultAccent() throws {
-        guard !accentPinned else { return }
-        let defaults = UserDefaults.standard
-        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
-        arguments["AppleAccentColor"] = 4
-        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
-        let accentMethod = try #require(class_getClassMethod(NSColor.self, #selector(getter: NSColor.controlAccentColor)))
-        let blueMethod = try #require(class_getClassMethod(NSColor.self, #selector(NSColor.u5ProofBlueAccent)))
-        // Pin the test process before fixtures initialize semantic colours. No preferences are saved.
-        method_exchangeImplementations(accentMethod, blueMethod)
-        accentPinned = true
+        try RenderProofAppearance.pinDefaultAccent()
     }
 
     static func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool, title: String? = nil) async throws {
@@ -323,8 +311,4 @@ private final class U5ProofWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
-}
-
-private extension NSColor {
-    @objc class func u5ProofBlueAccent() -> NSColor { .systemBlue }
 }

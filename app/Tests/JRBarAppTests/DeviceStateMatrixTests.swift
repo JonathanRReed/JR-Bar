@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import Testing
 import SwiftUI
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Device state across views")
+@Suite("Device state across views", .renderProofAppearance)
 @MainActor
 struct DeviceStateMatrixTests {
     enum Hardware: String, CaseIterable {
@@ -115,7 +116,7 @@ struct DeviceStateMatrixTests {
     }
 }
 
-@Suite("Disabled device render proofs")
+@Suite("Disabled device render proofs", .renderProofAppearance)
 @MainActor
 struct DisabledDeviceRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

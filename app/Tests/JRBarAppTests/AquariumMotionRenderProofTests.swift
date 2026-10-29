@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-@Suite("Aquarium motion render proof")
+@Suite("Aquarium motion render proof", .renderProofAppearance)
 @MainActor
 struct AquariumMotionRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

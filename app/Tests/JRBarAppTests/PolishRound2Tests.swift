@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .renderProofAppearance)
 struct PolishRound2Tests {
     nonisolated static let providerIDs = Array(Set(ProviderUsageRoadmap.entries.map(\.registeredProviderID) + SettingsKey.providers + ["kimi", "kilo", "openai-api", "t3code", "mystery"])).sorted()
     nonisolated static let windowNames = ["5h", "7d", "7d Fable", "Daily", "Credits", "Gemini Weekly", "Gemini 5-Pro (High)", "Claude + Fable (Thinking)", "Gemini 4 Argon"]

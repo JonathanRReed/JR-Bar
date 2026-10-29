@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch caption fit proofs", .serialized)
+@Suite("Notch caption fit proofs", .serialized, .renderProofAppearance)
 @MainActor
 struct NotchMeterCaptionRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled),

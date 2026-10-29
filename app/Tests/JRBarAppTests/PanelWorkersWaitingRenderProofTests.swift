@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import Testing
 /// parent with an activity fact and none waiting, and, with sub-agent asks
 /// on, the worker's ask as a row of its own. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Workers waiting render proof", .serialized)
+@Suite("Workers waiting render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct PanelWorkersWaitingRenderProofTests {
     private static let t = WindowsRenderProofTests.t

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 
 /// ImageRenderer produces bitmaps without creating or ordering a window.
 @MainActor
-@Suite("Reliability render proof")
+@Suite("Reliability render proof", .renderProofAppearance)
 struct ReliabilityRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func streamDeckConsentAndResetSaveFailure() async throws {

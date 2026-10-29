@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Palette action refresh render proof")
+@Suite("Palette action refresh render proof", .renderProofAppearance)
 @MainActor
 struct PaletteActionRefreshRenderProofTests {
     private func row(_ verbs: [String]) -> PaletteItem {

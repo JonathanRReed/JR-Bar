@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Panel presentation", .serialized)
+@Suite("Panel presentation", .serialized, .renderProofAppearance)
 struct PanelPresentationTests {
     @Test("closed panel Quiet countdown uses the current time")
     func closedQuietCountdown() {

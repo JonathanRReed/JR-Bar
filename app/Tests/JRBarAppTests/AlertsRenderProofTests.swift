@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,7 +9,7 @@ import Testing
 /// Render proof for the panel's session rows: the bell on a working row (shown while
 /// the row is selected, filled once it is on), and a quiet row's amber label. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` and `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Alerts render proof")
+@Suite("Alerts render proof", .renderProofAppearance)
 @MainActor
 struct AlertsRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

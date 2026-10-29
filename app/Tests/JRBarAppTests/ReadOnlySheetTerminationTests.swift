@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Read-only sheet termination", .serialized)
+@Suite("Read-only sheet termination", .serialized, .renderProofAppearance)
 struct ReadOnlySheetTerminationTests {
     static func comparison() throws -> CoreRunComparison {
         let json = #"{"a":{"id":"synthetic-a","label":"First run","provider":"codex","lifecycle":"ended"},"b":{"id":"synthetic-b","label":"Second run","provider":"claude","lifecycle":"ended"},"shared":{"provider":false,"workspace":false},"warnings":["not_a_controlled_benchmark"]}"#

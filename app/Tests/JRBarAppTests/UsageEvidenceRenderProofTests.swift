@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Usage evidence render proof", .serialized)
+@Suite("Usage evidence render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageEvidenceRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarUI
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Workers spend their own provider quota", .serialized)
+@Suite("Workers spend their own provider quota", .serialized, .renderProofAppearance)
 @MainActor
 struct WorkerQuotaActivityTests {
     static let stamp = UsageForecastSurfaceTests.stamp

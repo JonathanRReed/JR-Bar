@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Overview reply render proof")
+@Suite("Overview reply render proof", .renderProofAppearance)
 @MainActor
 struct OverviewReplyRenderProofTests {
     private static let draft = "Use the main branch. Keep the local changes."

@@ -14,7 +14,7 @@ import Testing
 /// plus the Settings section and the tank resting on battery. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `seasonal-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR`. Synthetic sessions, calendars and people only.
-@Suite("Seasonal render proof", .serialized, .temporaryDirectory)
+@Suite("Seasonal render proof", .serialized, .temporaryDirectory, .renderProofAppearance)
 @MainActor
 struct SeasonalRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

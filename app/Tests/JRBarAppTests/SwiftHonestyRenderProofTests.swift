@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import JRBarCore
 /// an open ask, an answered one and one that cannot be answered from here
 /// side by side. Off by default; set `JRBAR_RENDER_PROOF=1` to write
 /// `honesty-*.png` into `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Swift honesty render proof", .serialized)
+@Suite("Swift honesty render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct SwiftHonestyRenderProofTests {
     private typealias Fixture = DecidedAskFixture

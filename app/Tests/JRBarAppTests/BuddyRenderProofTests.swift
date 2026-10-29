@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -15,7 +16,7 @@ import JRBarCore
 /// exists so a human can look at them. It only runs when
 /// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite
 /// never writes files.
-@Suite("Buddy render proof")
+@Suite("Buddy render proof", .renderProofAppearance)
 @MainActor
 struct BuddyRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

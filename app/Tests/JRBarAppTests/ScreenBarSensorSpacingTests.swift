@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -7,7 +8,7 @@ import JRBarCore
 private let sensorSpacingRenderEnabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
 @MainActor
-@Suite("Screen Bar sensor spacing")
+@Suite("Screen Bar sensor spacing", .renderProofAppearance)
 struct ScreenBarSensorSpacingTests {
     private let microphone = NotchSensorState(microphoneInUse: true, cameraInUse: false)
     private let both = NotchSensorState(microphoneInUse: true, cameraInUse: true)

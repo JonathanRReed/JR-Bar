@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -15,7 +16,7 @@ import Testing
 /// set `JRBAR_RENDER_PROOF=1` to write `provider-marks-*.png` and the
 /// menu-bar styles into `JRBAR_RENDER_PROOF_DIR` (default
 /// `/tmp/jrbar-audit`).
-@Suite("Provider mark render proof")
+@Suite("Provider mark render proof", .renderProofAppearance)
 @MainActor
 struct ProviderMarkRenderProofTests {
     static let providers = SettingsKey.providers + ["openai-api", "t3code", "jrbar", "mystery"]

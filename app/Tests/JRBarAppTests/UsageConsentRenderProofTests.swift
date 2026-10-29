@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// Usage's per-provider switches, and Setup's per-provider question. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR`, using the mock daemon's `consent` usage scenario.
-@Suite("Usage consent render proof", .serialized)
+@Suite("Usage consent render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageConsentRenderProofTests {
     private func write(_ name: String, size: CGSize, _ view: some View) throws {

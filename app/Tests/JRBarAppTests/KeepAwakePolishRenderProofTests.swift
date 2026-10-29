@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import JRBarUI
 import AppKit
 import Foundation
@@ -12,7 +13,7 @@ import Testing
 /// line and the honest chips. Fixed fixtures: no power assertion is taken,
 /// no notification is posted, no app of this Mac reaches a PNG. Off by
 /// default; `JRBAR_RENDER_PROOF=1` writes into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Keep Awake polish render proof", .serialized)
+@Suite("Keep Awake polish render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct KeepAwakePolishRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

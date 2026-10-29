@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// counted from `read_at`), not how long ago the last failed attempt was.
 /// Off by default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR`, using the mock daemon's `stale` usage scenario.
-@Suite("Usage stale reading render proof", .serialized)
+@Suite("Usage stale reading render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageStaleRenderProofTests {
     init() throws { try U5Proof.pinDefaultAccent() }

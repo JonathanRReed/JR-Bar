@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 @testable import JRBarCore
@@ -11,7 +12,7 @@ import Testing
 /// daemon link, not painted by hand. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` and `JRBAR_RENDER_PROOF_DIR=<a scratch folder>`
 /// to write the PNGs (default `/tmp/jrbar-audit/firmware`).
-@Suite("Firmware render proof")
+@Suite("Firmware render proof", .renderProofAppearance)
 @MainActor
 struct FirmwareRenderProofTests {
     nonisolated static var enabled: Bool {

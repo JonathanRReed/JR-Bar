@@ -17,7 +17,7 @@ import Testing
 /// PNG; only the card's battery line reads this Mac's own charge. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write PNGs into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Utility parity render proof", .temporaryDirectory, .serialized)
+@Suite("Utility parity render proof", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct UtilityParityRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

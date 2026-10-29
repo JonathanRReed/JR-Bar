@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 @testable import JRBarCore
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch provider carousel render proof", .serialized)
+@Suite("Notch provider carousel render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct NotchProviderCarouselRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

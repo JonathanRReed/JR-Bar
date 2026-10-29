@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Screen Bar peek anchor lifetime")
+@Suite("Screen Bar peek anchor lifetime", .renderProofAppearance)
 struct ScreenBarPeekAnchorTests {
     @Test("moving an unchanged menu reuses its measured content, and content changes refit it")
     func anchorMovesReuseContentSize() throws {

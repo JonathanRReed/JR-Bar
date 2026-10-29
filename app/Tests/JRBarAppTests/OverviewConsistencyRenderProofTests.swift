@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Overview consistency proofs", .serialized)
+@Suite("Overview consistency proofs", .serialized, .renderProofAppearance)
 @MainActor
 struct OverviewConsistencyRenderProofTests {
     static let now = 1_800_000_000.0

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,7 +9,7 @@ import Testing
 /// An ask the person can expand: the command, an edit's size or a plan.
 /// It is shut until a click, the window grows by one fixed well when it
 /// opens, and opening it never answers anything.
-@Suite("Ask detail surfaces", .serialized)
+@Suite("Ask detail surfaces", .serialized, .renderProofAppearance)
 @MainActor
 struct AskDetailSurfaceTests {
     static let t = WindowsRenderProofTests.t
@@ -110,7 +111,7 @@ struct AskDetailSurfaceTests {
 /// Pictures of the expanded ask in the panel, the notch card and the
 /// Overview inspector. Off by default; `JRBAR_RENDER_PROOF=1` writes
 /// `ask-detail-*.png` into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Ask detail render proof", .serialized)
+@Suite("Ask detail render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct AskDetailRenderProofTests {
     private typealias Surface = AskDetailSurfaceTests

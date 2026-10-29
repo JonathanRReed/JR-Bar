@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Quiet command acknowledgements", .serialized, .timeLimit(.minutes(2)))
+@Suite("Quiet command acknowledgements", .serialized, .timeLimit(.minutes(2)), .renderProofAppearance)
 struct QuietAcknowledgementTests {
     @Test("a refused Quiet or End never announces success", arguments: [false, true])
     func refusalIsVisible(_ ending: Bool) async throws {

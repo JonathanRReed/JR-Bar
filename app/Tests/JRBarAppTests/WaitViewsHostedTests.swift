@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// With `JRBAR_RENDER_PROOF=1`, also a proof of the placements through
 /// `NSHostingView` and `cacheDisplay`, so the buttons and the system
 /// spinner draw as themselves.
-@Suite("Wait views, hosted", .serialized)
+@Suite("Wait views, hosted", .serialized, .renderProofAppearance)
 @MainActor
 struct WaitViewsHostedTests {
     static let start = Date(timeIntervalSince1970: 1_800_000_000)

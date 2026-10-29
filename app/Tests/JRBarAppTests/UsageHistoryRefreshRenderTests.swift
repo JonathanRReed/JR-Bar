@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Usage history refresh presentation", .serialized)
+@Suite("Usage history refresh presentation", .serialized, .renderProofAppearance)
 struct UsageHistoryRefreshRenderTests {
     enum Fixture: String, CaseIterable {
         case refreshing, empty, paddedEmpty, offline, offlineEmpty

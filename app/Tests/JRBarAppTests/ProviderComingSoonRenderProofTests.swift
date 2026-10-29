@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Coming soon provider render proof")
+@Suite("Coming soon provider render proof", .renderProofAppearance)
 struct ProviderComingSoonRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
     private let available: Set<String> = ["codex", "claude", "cursor", "devin", "grok", "gemini",

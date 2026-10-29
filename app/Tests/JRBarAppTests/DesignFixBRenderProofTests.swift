@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Design fix B render proofs", .serialized)
+@Suite("Design fix B render proofs", .serialized, .renderProofAppearance)
 struct DesignFixBRenderProofTests {
     init() throws {
         if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }

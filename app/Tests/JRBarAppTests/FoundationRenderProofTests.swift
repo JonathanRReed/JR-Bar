@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import QuartzCore
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarUI
 @testable import JRBarApp
 
-@Suite("UI foundation render proofs", .serialized)
+@Suite("UI foundation render proofs", .serialized, .renderProofAppearance)
 @MainActor
 struct FoundationRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

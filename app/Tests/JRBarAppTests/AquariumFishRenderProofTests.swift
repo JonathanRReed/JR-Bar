@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -13,7 +14,7 @@ import JRBarCore
 /// tank's own fish pass with labels and the hover tag. Off by
 /// default; set `JRBAR_RENDER_PROOF=1` to write `fish-*.png` into
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Aquarium fish render proof")
+@Suite("Aquarium fish render proof", .renderProofAppearance)
 @MainActor
 struct AquariumFishRenderProofTests {
     private static var outputDir: URL {

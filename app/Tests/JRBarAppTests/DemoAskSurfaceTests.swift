@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -8,7 +9,7 @@ import Testing
 /// "Try it": a made-up ask in the real ask card. It answers nothing, goes
 /// to no agent, is not in the daemon's state, and goes away when answered
 /// or put away.
-@Suite("Demo ask surfaces", .serialized)
+@Suite("Demo ask surfaces", .serialized, .renderProofAppearance)
 @MainActor
 struct DemoAskSurfaceTests {
     private static let t = WindowsRenderProofTests.t
@@ -147,7 +148,7 @@ struct DemoAskSurfaceTests {
 
 /// Pictures of the demo in the panel (alone, and beside a real ask) and on
 /// the notch card. `JRBAR_RENDER_PROOF=1` writes `demo-ask-*.png`.
-@Suite("Demo ask render proof", .serialized)
+@Suite("Demo ask render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct DemoAskRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

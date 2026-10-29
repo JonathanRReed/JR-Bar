@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Studio assignment replies", .serialized, .timeLimit(.minutes(2)))
+@Suite("Studio assignment replies", .serialized, .timeLimit(.minutes(2)), .renderProofAppearance)
 struct EffectStudioAssignmentReplyTests {
     @Test("an old task cannot clear a newer submission's pending state")
     func oldCleanupLeavesNewSubmissionAlone() async throws {

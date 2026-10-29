@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 @testable import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Forecasts stay connected to usage views", .serialized)
+@Suite("Forecasts stay connected to usage views", .serialized, .renderProofAppearance)
 @MainActor
 struct UsageForecastSurfaceTests {
     static let stamp = 1_800_000_000.0

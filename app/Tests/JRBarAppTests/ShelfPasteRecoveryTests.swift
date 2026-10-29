@@ -5,7 +5,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf paste recovery", .temporaryDirectory)
+@Suite("Shelf paste recovery", .temporaryDirectory, .renderProofAppearance)
 @MainActor
 struct ShelfPasteRecoveryTests {
     @MainActor

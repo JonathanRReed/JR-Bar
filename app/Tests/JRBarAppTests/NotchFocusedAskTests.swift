@@ -6,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch focused asks", .temporaryDirectory, .serialized)
+@Suite("Notch focused asks", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct NotchFocusedAskTests {
     @Test("the focused waiting ask keeps its controls and incoming priority")
@@ -94,7 +94,7 @@ struct NotchFocusedAskTests {
     }
 }
 
-@Suite("Notch focused ask render proof", .temporaryDirectory, .serialized)
+@Suite("Notch focused ask render proof", .temporaryDirectory, .serialized, .renderProofAppearance)
 @MainActor
 struct NotchFocusedAskRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -11,7 +12,7 @@ import JRBarCore
 /// waited for. Off by default; set `JRBAR_RENDER_PROOF=1` to write
 /// `decided-*.png` into `JRBAR_RENDER_PROOF_DIR` (default
 /// `/tmp/jrbar-audit`).
-@Suite("Decided asks render proof", .serialized)
+@Suite("Decided asks render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct DecidedVerbsRenderProofTests {
     private typealias Fixture = DecidedAskFixture

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 @testable import JRBarCore
 @testable import JRBarApp
 
-@Suite("Calibration constrained layout", .serialized)
+@Suite("Calibration constrained layout", .serialized, .renderProofAppearance)
 @MainActor
 struct CalibrationLayoutTests {
     @Test(arguments: [CGSize(width: 380, height: 460), CGSize(width: 540, height: 640)])

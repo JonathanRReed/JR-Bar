@@ -5,7 +5,7 @@ import SwiftUI
 @testable import JRBarApp
 
 @MainActor
-@Suite("Fresh external file actions", .temporaryDirectory, .serialized, .timeLimit(.minutes(1)))
+@Suite("Fresh external file actions", .temporaryDirectory, .serialized, .timeLimit(.minutes(1)), .renderProofAppearance)
 struct ExternalFileActionTests {
     @Test("loaded files deleted before an action are refused")
     func deletedShelfAction() async throws {

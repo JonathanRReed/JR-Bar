@@ -1,8 +1,9 @@
+import JRBarTestSupport
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite struct MenuBarInventoryStateTests {
+@Suite(.renderProofAppearance) struct MenuBarInventoryStateTests {
     @Test func permissionAndScanEvidenceStayDistinct() {
         #expect(MenuBarInventoryState.assess(granted: false, generation: 5, complete: true) == .unavailable)
         #expect(MenuBarInventoryState.assess(granted: true, generation: 0, complete: false) == .checking)

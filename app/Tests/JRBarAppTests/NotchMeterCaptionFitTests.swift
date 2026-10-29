@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Notch meter captions fit", .serialized)
+@Suite("Notch meter captions fit", .serialized, .renderProofAppearance)
 @MainActor
 struct NotchMeterCaptionFitTests {
     nonisolated static let states = ["runs out", "imminent", "used up", "comfortable", "no pace yet",

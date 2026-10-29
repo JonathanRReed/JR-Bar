@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup usage read ownership", .serialized)
+@Suite("Setup usage read ownership", .serialized, .renderProofAppearance)
 struct SetupUsageReadOwnershipTests {
     @MainActor
     private final class Gate<Value: Sendable> {

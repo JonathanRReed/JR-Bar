@@ -1,9 +1,10 @@
+import JRBarTestSupport
 import JRBarCore
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Login item render proof", .serialized)
+@Suite("Login item render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct LoginItemRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

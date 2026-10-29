@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import QuartzCore
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Settings navigation release", .serialized)
+@Suite("Settings navigation release", .serialized, .renderProofAppearance)
 struct SettingsNavigationReleaseTests {
     private final class WeakView {
         weak var value: NSView?

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import Foundation
 import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Usage and Network render proof", .serialized)
+@Suite("Usage and Network render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct VisualizationRenderProofTests {
     private func connectedCore() throws -> CoreModel {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarCore
@@ -8,7 +9,7 @@ import Testing
 /// Render proof for the 0.10.1 toy features: the buddy's eyes on the
 /// pointer, and the little schools flocking. Off by default; set
 /// `JRBAR_RENDER_PROOF=1` to write PNGs into `JRBAR_RENDER_PROOF_DIR`.
-@Suite("Toy features render proof", .serialized)
+@Suite("Toy features render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct ToyFeaturesRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

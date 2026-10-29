@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Usage polish", .serialized)
+@Suite("Usage polish", .serialized, .renderProofAppearance)
 @MainActor
 struct UsagePolishTests {
     static let now = 1_800_000_000.0

@@ -1,10 +1,11 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Menu-row wings", .serialized)
+@Suite("Menu-row wings", .serialized, .renderProofAppearance)
 @MainActor
 struct ScreenBarBelowRowTests {
     @Test func restoredHeaderIncludesTheTwoPointWingDrop() {

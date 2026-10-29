@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import JRBarUI
@@ -6,7 +7,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Panel render matrix", .serialized)
+@Suite("Panel render matrix", .serialized, .renderProofAppearance)
 @MainActor
 struct PanelRenderProofTests {
     private typealias Fixture = PanelCompositionTests

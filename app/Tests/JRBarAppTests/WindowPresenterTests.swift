@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Test window safety", .timeLimit(.minutes(2)))
+@Suite("Test window safety", .timeLimit(.minutes(2)), .renderProofAppearance)
 struct WindowPresenterTests {
     @Test("Swift Testing is detected without an environment flag")
     func detectsRunner() {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// panel and the Overview offer one Dismiss that sends the agent nothing.
 /// Set `JRBAR_RENDER_PROOF=1` to write the pictures into
 /// `JRBAR_RENDER_PROOF_DIR` (default /tmp/windows-proof).
-@Suite("A stale ask on the surfaces", .serialized)
+@Suite("A stale ask on the surfaces", .serialized, .renderProofAppearance)
 @MainActor
 struct AskMayBeStaleSurfacesTests {
     private static let t = WindowsRenderProofTests.t

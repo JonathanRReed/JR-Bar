@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import JRBarCore
 import JRBarUI
@@ -5,7 +6,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Compact panel usage", .serialized)
+@Suite("Compact panel usage", .serialized, .renderProofAppearance)
 @MainActor
 struct PanelCompactUsageRenderProofTests {
     private typealias Fixture = PanelCompositionTests

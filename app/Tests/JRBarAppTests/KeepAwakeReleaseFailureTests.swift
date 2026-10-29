@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import JRBarUI
 import Foundation
 import IOKit.pwr_mgt
@@ -7,7 +8,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite struct KeepAwakeReleaseFailureTests {
+@Suite(.renderProofAppearance) struct KeepAwakeReleaseFailureTests {
     private func state() throws -> (SystemTogglesStore.State, UserDefaults, String) {
         let suite = ScratchDefaults.suiteName("KeepAwakeReleaseFailureTests")
         let defaults = try #require(UserDefaults(suiteName: suite))

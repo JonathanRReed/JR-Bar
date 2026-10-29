@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import Foundation
 import JRBarCore
 import SwiftUI
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup render proof")
+@Suite("Setup render proof", .renderProofAppearance)
 struct SetupRenderProofTests {
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
     func followFocusShowsBothUsedPermissions() throws {

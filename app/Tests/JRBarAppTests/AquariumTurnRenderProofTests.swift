@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -13,7 +14,7 @@ import JRBarCore
 /// orbit and a pellet chase, and thirty seconds of paths at each pace.
 /// Off by default; set `JRBAR_RENDER_PROOF=1` to write `fish-turn-*.png`
 /// into `JRBAR_RENDER_PROOF_DIR` (default `/tmp/jrbar-audit`).
-@Suite("Aquarium turn render proof")
+@Suite("Aquarium turn render proof", .renderProofAppearance)
 @MainActor
 struct AquariumTurnRenderProofTests {
     private static var outputDir: URL {

@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Testing
 import JRBarCore
@@ -8,7 +9,7 @@ import JRBarUI
 /// The panel row's pure text helpers: the cwd tail, the bounded "fact"
 /// snippets, the hook's last word about a working session, the snooze
 /// clock, and the composed tooltip.
-@Suite struct SessionRowTests {
+@Suite(.renderProofAppearance) struct SessionRowTests {
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     static func row(_ session: CoreSession) -> SessionRow {
@@ -98,7 +99,7 @@ import JRBarUI
 
 /// The status item's pure redraw plan: which spec each style draws,
 /// which style may carry a label, and who owns the item's width.
-@Suite struct StatusItemPlanTests {
+@Suite(.renderProofAppearance) struct StatusItemPlanTests {
     static let meters = [StatusMeter(id: "claude", name: "Claude", glyph: .logo("claude"), fraction: 0.8)]
     static let dots = [SessionDot(id: "a", state: .working), SessionDot(id: "b", state: .ask)]
 
@@ -204,7 +205,7 @@ import JRBarUI
 
 /// The Screen Bar's program acceptance: a safe program is installed, a
 /// refused one keeps the previous program and explains itself.
-@Suite struct ScreenBarProgramTests {
+@Suite(.renderProofAppearance) struct ScreenBarProgramTests {
     @Test func aValidProgramIsAccepted() {
         let decision = ScreenBarController.programDecision("off", fallback: "off")
         #expect(decision.program != nil)
@@ -261,7 +262,7 @@ import JRBarUI
 /// white blink typed in, on a dark and a light stage, so the compiler note
 /// and the "What plays" text read as the person reads them. The PNGs go to
 /// `JRBAR_RENDER_PROOF_DIR` (default `/tmp/studio-flash-note-proof`).
-@Suite @MainActor struct StudioFlashNoteRenderProof {
+@Suite(.renderProofAppearance) @MainActor struct StudioFlashNoteRenderProof {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the Studio flash-note PNGs"))
     func aFlashSlowedLoopIsNamedInTheStudio() throws {
@@ -289,7 +290,7 @@ import JRBarUI
 
 /// The Apply sheet's layer planning and the aux bindings' full-replacement
 /// payload, including the analog sectors while `analog_enabled` is on.
-@Suite struct DeckStorePlanningTests {
+@Suite(.renderProofAppearance) struct DeckStorePlanningTests {
     @Test func applyTargetsAreTheSelectedProfileLayers() {
         let layers = [DeckKeymapLayer(profile: 0, layer: 0), DeckKeymapLayer(profile: 0, layer: 1),
                       DeckKeymapLayer(profile: 1, layer: 0)]
@@ -369,7 +370,7 @@ import JRBarUI
 /// applicable measured lanes), the same rule computed locally when it
 /// does not, else the 5h convention (S6.4). An exhausted weekly outranks
 /// a 5h window with headroom.
-@Suite @MainActor struct FeaturedWindowTests {
+@Suite(.renderProofAppearance) @MainActor struct FeaturedWindowTests {
     static func provider(_ constrained: CoreConstrainedLane?, fiveHour: Double? = 42,
                          sevenDay: Double? = 61) -> CoreProviderUsage {
         CoreProviderUsage(id: "claude", windows: [
@@ -429,7 +430,7 @@ import JRBarUI
 /// The pricing sentence under the Usage Center's totals: a table-priced
 /// quote is a list price, an estimated one names its stand-in, and an
 /// absent table keeps the old "no table" line.
-@Suite @MainActor struct PricingDisclosureTests {
+@Suite(.renderProofAppearance) @MainActor struct PricingDisclosureTests {
     static func history(pricing: UsagePricing?, unpriced: Int = 0, models: [String] = []) -> UsageHistory {
         UsageHistory(provider: "codex", range: "7d",
                      days: [UsageHistoryDay(date: "2026-09-20")],
@@ -480,7 +481,7 @@ import JRBarUI
     }
 }
 
-@Suite struct MeteredProvidersTests {
+@Suite(.renderProofAppearance) struct MeteredProvidersTests {
     private func usage(_ id: String, instance: String? = nil,
                        windows: [CoreUsageWindow] = [CoreUsageWindow(name: "5h", usedPct: 40)]) -> CoreProviderUsage {
         CoreProviderUsage(id: id, windows: windows, instance: instance)

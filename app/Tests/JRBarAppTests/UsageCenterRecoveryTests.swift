@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import SwiftUI
 import Testing
@@ -5,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Usage Center recovery and shortcuts")
+@Suite("Usage Center recovery and shortcuts", .renderProofAppearance)
 struct UsageCenterRecoveryTests {
     private func store(live: Bool = true) -> UsageCenterStore {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-usage-recovery-\(UUID().uuidString).sock")

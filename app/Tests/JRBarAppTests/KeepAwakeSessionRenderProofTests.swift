@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import JRBarUI
 import AppKit
 import Foundation
@@ -6,7 +7,7 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-@Suite("Keep Awake custom session render proof", .serialized)
+@Suite("Keep Awake custom session render proof", .serialized, .renderProofAppearance)
 @MainActor
 struct KeepAwakeSessionRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"

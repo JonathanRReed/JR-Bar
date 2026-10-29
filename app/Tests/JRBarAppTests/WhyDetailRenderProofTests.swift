@@ -1,3 +1,4 @@
+import JRBarTestSupport
 import AppKit
 import Foundation
 import SwiftUI
@@ -10,7 +11,7 @@ import Testing
 /// popover, light and dark, into `JRBAR_RENDER_PROOF_DIR` (default
 /// /tmp/why-proof): the row as the daemon's frozen number left it, and the
 /// row counted from the session's `since`.
-@Suite("Why this light, drawn", .serialized)
+@Suite("Why this light, drawn", .serialized, .renderProofAppearance)
 @MainActor
 struct WhyDetailRenderProofTests {
     static let now = Date(timeIntervalSince1970: 1_789_046_900)
