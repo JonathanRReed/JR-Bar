@@ -60,7 +60,8 @@ def import_session(args, credentials):
         try:
             message = _import_browser_session("devin", key.value[1], credential_store=credentials)
         except BrowserImportError as error:
-            raise CommandError(error.reason or "browser_import_failed", str(error)) from None
+            code = "browser_token_unavailable" if error.reason == "browser_token_unavailable" else "browser_import_failed"
+            raise CommandError(code, str(error)) from None
         except Exception:
             raise CommandError("browser_import_failed", "Devin browser import failed. Choose the profile again, then Import again.") from None
     return {"provider": "devin", "instance": key.value[1], "message": message}

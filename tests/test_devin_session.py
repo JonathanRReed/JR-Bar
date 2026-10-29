@@ -99,6 +99,7 @@ def test_reader_failures_name_the_fix_without_secret_values(context, monkeypatch
     monkeypatch.setattr("jrbar.browser_session_import.import_devin_session_from_profile", fail)
     with pytest.raises(CommandError) as caught:
         devin_session.import_session(args(), store)
+    assert caught.value.code == "browser_import_failed"
     assert fix in str(caught.value)
     assert TOKEN not in str(caught.value)
     assert store.values == {}
