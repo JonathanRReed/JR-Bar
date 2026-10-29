@@ -1,13 +1,14 @@
 import Foundation
 import AppKit
 @testable import JRBarCore
+import JRBarTestSupport
 import JRBarUI
 import SwiftUI
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Provider sign-in recovery")
+@Suite("Provider sign-in recovery", .renderProofAppearance)
 struct ProviderSignInRecoveryTests {
     static func reading(_ id: String) -> CoreProviderUsage {
         var value = CoreProviderUsage(id: id, windows: [], state: "needs_sign_in",
