@@ -113,7 +113,7 @@ def test_off_or_unconsented_never_reads_credentials_or_http(enabled, consented, 
 def test_missing_key_is_actionable_without_http():
     result = collect_factory(preference(), observed_at=1000, credentials=Store(None),
                              http_json=lambda *_a, **_k: pytest.fail("no key"))
-    assert result.action_label == "Connect Factory browser session"
+    assert result.action_label == "Add Factory API key"
     assert result.lanes == ()
 
 
@@ -126,7 +126,7 @@ def test_collection_uses_fixed_endpoints_and_only_connected_key():
     store = Store()
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
     assert result.state is ProviderSourceState.READY
-    assert store.calls == [("factory", "web-session"), ("factory", "api-key")]
+    assert store.calls == [("factory", "api-key")]
     assert [url for url, _ in calls] == ["https://api.factory.ai/api/app/auth/me",
                                         "https://api.factory.ai/api/billing/limits"]
     assert all(headers["Authorization"] == "Bearer synthetic-key" for _, headers in calls)
@@ -156,8 +156,9 @@ def test_errors_do_not_fall_back_or_expose_messages(status, state, reason):
 
 def test_explicit_legacy_fallback_preserves_organization_scope():
     calls = []
-    def http(method, url, **_kwargs):
+    def http(method, url, **kwargs):
         assert method == "GET"
+        assert kwargs["headers"]["Authorization"] == "Bearer synthetic-key"
         calls.append(url)
         if url.endswith("/auth/me"):
             return auth()
@@ -166,7 +167,9 @@ def test_explicit_legacy_fallback_preserves_organization_scope():
         return {"usage": {"endDate": 2000, "standard": {
             "userTokens": 1, "orgTotalTokensUsed": 40, "totalAllowance": 100}}}
     result = collect_factory(preference(), observed_at=1000, credentials=Store(), http_json=http)
-    assert len(calls) == 3
+    assert calls == ["https://api.factory.ai/api/app/auth/me",
+                     "https://api.factory.ai/api/billing/limits",
+                     "https://api.factory.ai/api/organization/subscription/usage?useCache=true&userId=synthetic-user"]
     assert result.lanes[0].remaining_percent == 60
     assert result.lanes[0].scope == "organization-standard"
     assert result.lanes[0].reset_at == 2000

@@ -34,7 +34,7 @@ def test_person_actions_never_refresh_or_disappear(provider, state, reason, monk
     kind = row["action_kind"]
     if provider == "claude" and reason == "claude_keychain_access_lost":
         assert kind == "resign_in"
-    elif provider == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported"}:
+    elif provider == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported", "browser_token_unavailable"}:
         assert kind == "sign_in"
     elif reason.startswith("cliproxy_") or provider in {"devin", "factory", "kilo", "kimi"} or state is ProviderSourceState.NEEDS_CONSENT or reason == "usage_consent_required":
         assert kind == "manage"
@@ -115,3 +115,17 @@ def test_cursor_browser_actions_keep_the_existing_staged_flow(reason, action, mo
     reply = core_runtime._cmd_provider_action(controller, {"provider": "cursor"})
     assert calls == [{"provider": "cursor", "instance": "default"}]
     assert reply["message"] == "Staged flow started."
+
+
+@pytest.mark.parametrize("provider,action,kind", [
+    ("factory", "Add Factory API key", "manage"),
+    ("devin", "Add Devin API key", "manage"),
+    ("cursor", "Import Cursor browser session", "sign_in"),
+])
+def test_incomplete_browser_token_has_a_working_alternative(provider, action, kind):
+    snapshot = failure_snapshot(provider, observed_at=10, state=ProviderSourceState.NEEDS_SIGN_IN,
+                                reason="browser_token_unavailable", action="Retry")
+    row = availability_document(snapshot, now=10, installed=False)
+    assert row["action"] == action and row["action_kind"] == kind
+    assert "expired" not in row["status_text"].lower()
+    assert row["panel_visible"]

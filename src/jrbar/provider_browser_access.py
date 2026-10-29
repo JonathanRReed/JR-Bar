@@ -106,6 +106,10 @@ def _consented_devin_session(
 class BrowserImportError(Exception):
     """A fixed, safe explanation for a failed explicit import."""
 
+    def __init__(self, message, *, reason=None):
+        super().__init__(message)
+        self.reason = reason
+
 
 def _load_consented_devin_session(
     *,
@@ -130,12 +134,13 @@ def _load_consented_devin_session(
                 session = import_devin_session_from_profile(**kwargs, strict=strict)
             except BrowserSessionReadError as error:
                 fixes = {
+                    "browser_token_unavailable": "Devin sign-in data was found, but its access token is unavailable. Add a Devin API key in Settings > Providers instead.",
                     "profile_not_found": "The selected browser profile was not found. Reload profiles in Settings > Providers and choose it again.",
                     "reader_unavailable": "This build cannot read Chromium storage. Update JR-Bar or choose Firefox or Zen, then Import again.",
                     "storage_changed": "Browser storage changed during import. Wait for the browser to finish saving, then Import again.",
                     "storage_invalid": "The browser session database could not be read. Open app.devin.ai in the selected profile, then Import again.",
                 }
-                raise BrowserImportError(fixes.get(str(error), "Browser storage could not be opened. Check JR-Bar's browser access, then Import again.")) from None
+                raise BrowserImportError(fixes.get(str(error), "Browser storage could not be opened. Check JR-Bar's browser access, then Import again."), reason=str(error)) from None
             if session is None and strict:
                 raise BrowserImportError(f"Sign in at app.devin.ai in {browser} using the selected profile, then Import again.")
             return session

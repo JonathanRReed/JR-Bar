@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .browser_session_import import (
     FIREFOX_FAMILY_PROFILE_ROOTS,
+    BrowserSessionReadError,
     _copy_storage_file,
     _decoded,
     _storage_stamp,
@@ -228,6 +229,7 @@ def read_browser_session(browser, profile, *, home=None):
     except OSError:
         return None
     found = []
+    incomplete = False
     for origin in ORIGINS:
         if chromium:
             _owned_path(root, ("Local Storage", "leveldb"))
@@ -236,6 +238,7 @@ def read_browser_session(browser, profile, *, home=None):
             values = _firefox_values(root, origin)
         refresh, access = values.get(FIELDS[0]), values.get(FIELDS[1])
         if not _text(refresh):
+            incomplete |= access is not None
             continue
         row = {"refresh_token": refresh, "browser": browser, "profile": profile, "consent_version": 1}
         if access is not None:
@@ -246,9 +249,11 @@ def read_browser_session(browser, profile, *, home=None):
             if organization is not None:
                 row["organization_id"] = organization
         found.append(row)
+    if not found and incomplete:
+        raise BrowserSessionReadError("browser_token_unavailable")
     if not found or len({row["refresh_token"] for row in found}) != 1:
         return None
-    return found[0]
+    return next((row for row in found if row.get("access_token")), found[0])
 
 
 def _instance(args):
@@ -306,10 +311,14 @@ def import_session(args, credentials):
             generation = _IMPORT_GENERATIONS.get(key.value, 0) + 1
             _IMPORT_GENERATIONS[key.value] = generation
         value = read_browser_session(browser, profile)
+    except BrowserSessionReadError:
+        raise CommandError("browser_token_unavailable", "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage.") from None
     except Exception:
         raise CommandError("unavailable", "Factory browser storage could not be read. " + _LOGIN) from None
     if value is None:
         raise CommandError("browser_session_not_found", _LOGIN)
+    if not value.get("access_token"):
+        raise CommandError("browser_token_unavailable", "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage.")
     encoded = json.dumps(value, separators=(",", ":"), sort_keys=True)
     decode_session(encoded)
     try:

@@ -258,7 +258,7 @@ def _cursor_db_path(home: Path) -> Path:
     return home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
 
 
-def _read_cursor_token(path: Path) -> str | None:
+def _read_cursor_token(path: Path, *, strict: bool = False) -> str | None:
     try:
         info = path.lstat()
     except OSError:
@@ -273,6 +273,14 @@ def _read_cursor_token(path: Path) -> str | None:
                 "SELECT value FROM ItemTable WHERE key = ? LIMIT 1",
                 ("cursorAuth/accessToken",),
             ).fetchone()
+            if strict and not row:
+                evidence = connection.execute(
+                    "SELECT key FROM ItemTable WHERE key LIKE 'cursorAuth/%' LIMIT 1"
+                ).fetchone()
+                if evidence:
+                    from .browser_session_import import BrowserSessionReadError
+
+                    raise BrowserSessionReadError("browser_token_unavailable")
     except (OSError, sqlite3.Error):
         return None
     if not row:
@@ -291,7 +299,12 @@ def _read_cursor_token(path: Path) -> str | None:
         decoded = raw
     if isinstance(decoded, dict):
         decoded = decoded.get("accessToken") or decoded.get("token")
-    return _valid_secret(decoded)
+    token = _valid_secret(decoded)
+    if token is None and strict:
+        from .browser_session_import import BrowserSessionReadError
+
+        raise BrowserSessionReadError("browser_token_unavailable")
+    return token
 
 
 def collect_cursor(
@@ -302,13 +315,23 @@ def collect_cursor(
     credentials=None,
     http_json: Callable[..., object] = _default_http_json,
 ) -> ProviderUsageSnapshot:
-    token = _read_cursor_token(_cursor_db_path(Path(home)))
+    from .browser_session_import import BrowserSessionReadError
+
+    incomplete = False
+    try:
+        token = _read_cursor_token(_cursor_db_path(Path(home)), strict=True)
+    except BrowserSessionReadError:
+        token = None
+        incomplete = True
     if token is None and credentials is not None:
         # The staged Import flow stores a pasted session here; without
         # this read the import claimed success and changed nothing.
         stored = _credential(credentials, "cursor", "token")
         if stored.available and stored.secret:
             token = stored.secret
+    if token is None and incomplete:
+        return _failure("cursor", observed_at=observed_at, state=ProviderSourceState.NEEDS_SIGN_IN,
+                        reason="browser_token_unavailable", action="Import Cursor browser session")
     if token is None:
         return _failure(
             "cursor",
@@ -418,12 +441,18 @@ def collect_devin(
     secret = token.secret if token.available else None
 
     if secret is None and (organization_id or organization) and preference.browser_sources:
-        from .provider_browser_access import _load_consented_devin_session
+        from .provider_browser_access import BrowserImportError, _load_consented_devin_session
 
-        session = _load_consented_devin_session(
-            source_instance_id=preference.source_instance_id,
-            require_background_repair=True,
-        )
+        try:
+            session = _load_consented_devin_session(
+                source_instance_id=preference.source_instance_id,
+                require_background_repair=True, strict=True,
+            )
+        except BrowserImportError as error:
+            if error.reason == "browser_token_unavailable":
+                return _failure("devin", observed_at=observed_at, state=ProviderSourceState.NEEDS_SIGN_IN,
+                                reason="browser_token_unavailable", action="Add Devin API key")
+            session = None
         if session is not None and session.token:
             secret = session.token
 

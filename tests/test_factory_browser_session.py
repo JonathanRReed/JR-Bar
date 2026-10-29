@@ -121,17 +121,15 @@ def test_an_expired_browser_session_never_consumes_its_refresh_token(context, mo
     else:
         value["access_token"] = access
     store.set("factory", "web-session", json.dumps(value))
-    store.set("factory", "api-key", "synthetic-other-account")
     monkeypatch.setattr(module, "read_browser_session", lambda *_: pytest.fail("No background browser grant"))
 
     def rejected(method, url, **kwargs):
         assert method == "GET" and "workos.com" not in url
-        assert kwargs["headers"]["Authorization"] != "Bearer synthetic-other-account"
         raise ProviderHttpError(401, "http_error")
 
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=rejected)
-    assert result.state is ProviderSourceState.NEEDS_CONSENT
-    assert result.reason_code == "browser_refresh_consent_required"
+    assert result.state is ProviderSourceState.NEEDS_SIGN_IN
+    assert result.reason_code == ("browser_token_unavailable" if access is None else "browser_session_expired")
     assert json.loads(store.get("factory", "web-session").secret) == value
 
 
@@ -298,24 +296,6 @@ def test_missing_or_ambiguous_session_leaves_no_grant(context):
         assert "https://app.factory.ai" in str(caught.value)
         assert not load_browser_consents().store.consents
         assert not store._backend.values
-
-
-def test_invalid_web_session_cannot_fall_back_to_api_key(context):
-    _, store = context
-    store.set("factory", "web-session", "invalid-json")
-    store.set("factory", "api-key", "synthetic-api-key")
-    result = collect_factory(
-        preference(),
-        observed_at=1000,
-        credentials=store,
-        http_json=lambda *_a, **_k: pytest.fail("invalid session network"),
-    )
-    assert result.state is ProviderSourceState.NEEDS_SIGN_IN
-    assert result.action_label == "Reconnect Factory browser session"
-
-
-
-
 
 
 @pytest.mark.parametrize("enabled,consented", [(False, True), (True, False)])
@@ -488,7 +468,8 @@ def test_jwt_org_routing_hint_is_imported_and_verified(context):
         return auth(org="synthetic-other-org")
 
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
-    assert result.state is ProviderSourceState.NEEDS_CONSENT
+    assert result.state is ProviderSourceState.NEEDS_SIGN_IN
+    assert result.reason_code == "browser_session_expired"
     assert len(calls) == 1
     assert "identity" not in json.loads(store.get("factory", "web-session").secret)
 
@@ -600,20 +581,6 @@ def test_import_rollback_preserves_concurrent_other_provider_grant(context, monk
     assert len(grants) == 1 and grants[0].provider_id == "devin"
 
 
-def test_invalid_nonempty_web_credential_does_not_fall_back(context):
-    _, store = context
-    # A raw backend can contain malformed data even though public setters forbid it.
-    store._backend.set_password("com.jonathanreed.jrbar.provider.factory", "web-session", "invalid\x00json")
-    store.set("factory", "api-key", "synthetic-api-key")
-    result = collect_factory(
-        preference(),
-        observed_at=1000,
-        credentials=store,
-        http_json=lambda *_a, **_k: pytest.fail("invalid web credential fell back"),
-    )
-    assert result.state is ProviderSourceState.NEEDS_SIGN_IN
-
-
 def test_chromium_snapshot_decodes_only_live_selected_factory_fields(context, monkeypatch):
     from jrbar import factory_session as module
     from jrbar import provider_browser_import as chromium
@@ -680,7 +647,9 @@ def test_sqlite_snapshot_rejects_oversized_and_compressed_tokens(context, monkey
     db.execute("UPDATE data SET compression_type=1 WHERE key='workos:refresh-token'")
     db.commit()
     db.close()
-    assert module.read_browser_session("zen", profile.name) is None
+    from jrbar.browser_session_import import BrowserSessionReadError
+    with pytest.raises(BrowserSessionReadError, match="browser_token_unavailable"):
+        module.read_browser_session("zen", profile.name)
 
 
 def test_factory_commands_use_socket_action_worker_lane():
@@ -736,8 +705,8 @@ def test_valid_bearer_subject_cannot_bypass_auth_rejection(context):
         raise ProviderHttpError(401, "http_error")
 
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
-    assert result.state is ProviderSourceState.NEEDS_CONSENT
-    assert result.reason_code == "browser_refresh_consent_required"
+    assert result.state is ProviderSourceState.NEEDS_SIGN_IN
+    assert result.reason_code == "browser_session_expired"
     assert result.account_discriminator is None and not result.lanes
     assert calls == ["https://api.factory.ai/api/app/auth/me"]
     assert "identity" not in json.loads(store.get("factory", "web-session").secret)
@@ -865,3 +834,90 @@ def test_legacy_usage_query_contains_authenticated_user_id(context, browser_sess
     assert urlencode({"userId": user}) in parsed.query
     assert result.state is ProviderSourceState.READY
     assert result.lanes[0].remaining_percent == 75
+
+
+@pytest.mark.parametrize("kind", ["valid", "refresh-only", "invalid"])
+def test_saved_key_wins_over_any_browser_session(context, monkeypatch, kind):
+    from jrbar import factory_session as module
+
+    _, store = context
+    value = session()
+    if kind == "refresh-only":
+        value.pop("access_token")
+    raw = "invalid" if kind == "invalid" else json.dumps(value)
+    store.set("factory", "web-session", raw)
+    store.set("factory", "api-key", "synthetic-key")
+    monkeypatch.setattr(module, "read_browser_session", lambda *_: pytest.fail("key must not read browser"))
+    def http(method, url, **kwargs):
+        assert method == "GET" and "workos.com" not in url
+        assert kwargs["headers"]["Authorization"] == "Bearer synthetic-key"
+        return auth() if url.endswith("/auth/me") else billing()
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.state is ProviderSourceState.READY
+    assert store.get("factory", "web-session").secret == raw
+
+
+@pytest.mark.parametrize("endpoint", ["/auth/me", "/billing/limits"])
+def test_key_saved_during_browser_401_is_used_once(context, endpoint):
+    from jrbar.provider_usage_collectors import ProviderHttpError
+
+    _, store = context
+    store.set("factory", "web-session", json.dumps(session()))
+    calls = []
+    def http(method, url, **kwargs):
+        assert method == "GET" and "workos.com" not in url
+        bearer = kwargs["headers"]["Authorization"]
+        calls.append(url)
+        if bearer == "Bearer synthetic-access-token" and url.endswith(endpoint):
+            store.set("factory", "api-key", "synthetic-key")
+            raise ProviderHttpError(401, "http_error")
+        if bearer == "Bearer synthetic-key":
+            return auth(org="synthetic-key-org") if url.endswith("/auth/me") else billing()
+        return auth()
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.state is ProviderSourceState.READY
+    assert result.account_discriminator is not None
+    assert len(calls) <= 4
+
+
+@pytest.mark.parametrize("shape", ["refresh-only", "renamed-access", "renamed-refresh"])
+def test_incomplete_browser_import_never_saves_or_grants(context, shape):
+    from jrbar import factory_session as module
+    from jrbar.provider_browser_consent import load_browser_consents
+
+    home, store = context
+    root = browser_database(home)
+    database = root / "storage/default/https+++app.factory.ai/ls/data.sqlite"
+    with sqlite3.connect(database) as connection:
+        if shape == "refresh-only":
+            connection.execute("DELETE FROM data WHERE key='workos:access-token'")
+        else:
+            old = "workos:access-token" if shape == "renamed-access" else "workos:refresh-token"
+            connection.execute("UPDATE data SET key=? WHERE key=?", (old + "-v2", old))
+    with pytest.raises(CommandError) as caught:
+        module.import_session({"browser": "zen", "profile": root.name, "confirm": True}, store)
+    assert caught.value.code == "browser_token_unavailable"
+    assert "API key" in str(caught.value)
+    assert not store.get("factory", "web-session").available
+    assert not load_browser_consents().store.consents
+
+
+@pytest.mark.parametrize("shape", ["refresh-only", "renamed-access"])
+def test_chromium_incomplete_factory_import_preserves_previous_session(context, monkeypatch, shape):
+    from jrbar import factory_session as module
+    from jrbar.provider_browser_consent import load_browser_consents
+
+    home, store = context
+    root = home / "Library/Application Support/Google/Chrome/Default/Local Storage/leveldb"
+    root.mkdir(parents=True)
+    entries = {"workos:refresh-token": "synthetic-refresh"}
+    if shape == "renamed-access":
+        entries["workos:access-token-v2"] = "synthetic-access"
+    monkeypatch.setattr(module, "read_chromium_local_storage", lambda *_a, **_k: entries)
+    previous = json.dumps(session())
+    store.set("factory", "web-session", previous)
+    with pytest.raises(CommandError) as caught:
+        module.import_session({"browser": "chrome", "profile": "Default", "confirm": True}, store)
+    assert caught.value.code == "browser_token_unavailable"
+    assert store.get("factory", "web-session").secret == previous
+    assert not load_browser_consents().store.consents

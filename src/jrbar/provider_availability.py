@@ -15,6 +15,7 @@ _CAUSES = {
     "browser_session_not_imported": "Import a {label} browser session in Settings > Providers.",
     "browser_consent_required": "Choose a {label} browser profile in Settings > Providers and allow access.",
     "browser_refresh_consent_required": "Reconnect {label} in Settings > Providers to allow browser updates.",
+    "browser_token_unavailable": "{label} sign-in data was found, but its access token is unavailable. Add a {label} API key to read usage.",
     "browser_session_expired": "The {label} browser session expired. Reconnect it in Settings > Providers.",
     "claude_keychain_access_lost": "Keychain access lost after Claude renewed its sign-in. Allow it again.",
     "cleartext_refused": "{label}'s usage address is not secure, so JR-Bar did not ask it.",
@@ -87,7 +88,7 @@ _NEEDS_PERSON_REASONS = {
     "usage_consent_required", "usage_connection_required", "usage_permission_missing",
     "web_session_unavailable", "invalid_web_session", "web_session_changed", "web_session_account_changed",
     "browser_session_expired", "browser_session_not_imported", "browser_consent_required",
-    "browser_refresh_consent_required", "token_refresh_failed", "claude_keychain_access_lost",
+    "browser_refresh_consent_required", "browser_token_unavailable", "token_refresh_failed", "claude_keychain_access_lost",
     "cliproxy_account_signed_out", "cliproxy_key_missing", "cliproxy_key_rejected",
 }
 
@@ -102,6 +103,10 @@ NO_QUOTA_REASONS = frozenset({
 def status_sentence(reason: str | None, label: str) -> str:
     """The plain sentence for a reason code; never the code itself."""
     template = _CAUSES.get(reason or "")
+    if reason == "browser_token_unavailable" and label == "Factory":
+        return "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
+    if reason == "browser_token_unavailable" and label == "Cursor":
+        return "Cursor sign-in data was found, but its access token is unavailable. Import a current session token in Settings > Providers."
     return template.format(label=label) if template else ATTENTION
 
 
@@ -121,6 +126,13 @@ def sign_in_action(provider_id: str, state: str, reason: str | None) -> tuple[st
     if provider_id == "cursor" and reason in {"browser_consent_required", "browser_session_not_imported"}:
         action = "Enable Cursor browser access" if reason == "browser_consent_required" else "Import Cursor browser session"
         return action, "sign_in"
+    if reason == "browser_token_unavailable":
+        if provider_id in {"factory", "devin"}:
+            return f"Add {label} API key", "manage"
+        if provider_id == "cursor":
+            return "Import Cursor browser session", "sign_in"
+    if provider_id == "factory" and reason == "authentication_required":
+        return "Add Factory API key", "manage"
     if provider_id in {"devin", "factory"}:
         verb = "Import" if reason in {"browser_consent_required", "browser_session_not_imported"} else "Reconnect"
         return f"{verb} {label} browser session", "manage"

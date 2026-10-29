@@ -21,6 +21,15 @@ window with no reading (`used_pct: null`) is there for exactly that reason
 -- so the agreement is by construction rather than by two independently
 hand-written examples.
 
+A usage reason of `browser_token_unavailable` means recognizable sign-in data
+exists but has no access token JR-Bar can use. It never means a server rejected
+a token. Factory's `manage` action is "Add Factory API key" and opens that
+instance's key editor. Devin offers its API-key editor; Cursor offers its
+existing explicit pasted-token import. Factory imports refuse this condition
+with the same error code and never save a refresh-only session. A saved Factory
+API key takes priority over its browser session. JR-Bar never spends a
+browser-owned WorkOS refresh token.
+
 ## Transport
 
 - Socket: `$XDG_STATE_HOME/jrbar/core.sock` (default

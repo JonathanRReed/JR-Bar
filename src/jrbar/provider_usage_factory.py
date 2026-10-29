@@ -145,7 +145,7 @@ def parse_factory_usage(payload, *, observed_at: float, auth: object | None = No
                      account_plan=plan, account_discriminator=discriminator)
 
 
-def collect_factory(preference, *, observed_at, credentials, http_json=_default_http_json) -> ProviderUsageSnapshot:
+def collect_factory(preference, *, observed_at, credentials, http_json=_default_http_json, _fallback_attempted=False) -> ProviderUsageSnapshot:
     """Read only the connected profile after its usage consent is enabled."""
     def failure(state, reason, action):
         result = failure_snapshot("factory", observed_at=observed_at, state=state,
@@ -168,22 +168,27 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
     )
     session = None
     session_fingerprint = None
-    try:
-        with SESSION_LOCK:
-            web = credentials.get("factory", "web-session")
-    except Exception:
-        return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Reconnect Factory browser session")
-    if web.available:
+    key = _credential(credentials, "factory", "api-key")
+    if key.available and any(ord(char) < 32 or ord(char) == 127 for char in key.secret):
+        return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
+    if not key.available:
         try:
-            session = decode_session(web.secret)
-            session_fingerprint = fingerprint(web.secret)
-        except ValueError:
-            return failure(ProviderSourceState.NEEDS_SIGN_IN, "invalid_web_session", "Reconnect Factory browser session")
-    elif getattr(web, "reason", None) not in {None, "credential_not_found"}:
-        return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Reconnect Factory browser session")
-    key = _credential(credentials, "factory", "api-key") if session is None else None
-    if session is None and (not key.available or any(ord(char) < 32 or ord(char) == 127 for char in key.secret or "")):
-        return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Connect Factory browser session")
+            with SESSION_LOCK:
+                web = credentials.get("factory", "web-session")
+        except Exception:
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Reconnect Factory browser session")
+        if web.available:
+            try:
+                session = decode_session(web.secret)
+                session_fingerprint = fingerprint(web.secret)
+            except ValueError:
+                return failure(ProviderSourceState.NEEDS_SIGN_IN, "invalid_web_session", "Reconnect Factory browser session")
+        elif getattr(web, "reason", None) not in {None, "credential_not_found"}:
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Reconnect Factory browser session")
+        if session is None:
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
+        if not session.get("access_token"):
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "browser_token_unavailable", "Add Factory API key")
     headers = {"Authorization": f"Bearer {session.get('access_token', '') if session is not None else key.secret}", "Accept": "application/json",
                "Content-Type": "application/json", "Origin": "https://app.factory.ai",
                "Referer": "https://app.factory.ai/", "x-factory-client": "web-app"}
@@ -208,8 +213,6 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                 return changed
 
             sync_browser_access()
-            if not session.get("access_token"):
-                raise ProviderHttpError(401, "browser_session_expired")
             try:
                 auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             except ProviderHttpError as error:
@@ -257,14 +260,11 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
         return replace(result, source_instance_id=getattr(preference, "source_instance_id", "default"))
     except ProviderHttpError as error:
         if error.status == 401 and session is not None:
-            allowed = background_repair_allowed(
-                session, source_instance_id=getattr(preference, "source_instance_id", "default")
-            )
-            return failure(
-                ProviderSourceState.NEEDS_SIGN_IN if allowed else ProviderSourceState.NEEDS_CONSENT,
-                "browser_session_expired" if allowed else "browser_refresh_consent_required",
-                "Refresh Factory in the selected browser" if allowed else "Allow Factory browser updates",
-            )
+            # A key may have been saved while this browser request was in flight.
+            if not _fallback_attempted and _credential(credentials, "factory", "api-key").available:
+                return collect_factory(preference, observed_at=observed_at, credentials=credentials,
+                                       http_json=http_json, _fallback_attempted=True)
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "browser_session_expired", "Reconnect Factory browser session")
         if error.status == 401:
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
         if error.status == 400:

@@ -338,10 +338,15 @@ def _organization_from_entries(
 
 
 def devin_session_from_entries(
-    entries: dict[str, str], *, source_label: str
+    entries: dict[str, str], *, source_label: str, strict: bool = False
 ) -> BrowserSession | None:
     token = _auth1_token(entries) or _auth0_token(entries)
     if token is None:
+        evidence = any(key.endswith(_AUTH1_SUFFIX) or _AUTH0_MARKER in key
+                       or key.startswith((_EXTERNAL_ORG_PREFIX, _FEATURE_FLAG_ORG_PREFIX))
+                       or _ORG_NAME_MARKER in key for key in entries)
+        if strict and evidence:
+            raise BrowserSessionReadError("browser_token_unavailable")
         return None
     organization, internal_id = _organization_from_entries(entries)
     return BrowserSession(
@@ -383,7 +388,7 @@ def import_devin_session_from_profile(
                 category = "reader_unavailable" if isinstance(error, ModuleNotFoundError) else "storage_unreadable"
                 raise BrowserSessionReadError(category) from None
             return None
-        return devin_session_from_entries(storage, source_label=f"{browser.title()} {profile}")
+        return devin_session_from_entries(storage, source_label=f"{browser.title()} {profile}", strict=strict)
 
     profile_root = firefox_profile_directory(
         Path(home),
@@ -408,7 +413,7 @@ def import_devin_session_from_profile(
         ),
         str(browser).title(),
     )
-    return devin_session_from_entries(entries, source_label=f"{label} {profile}")
+    return devin_session_from_entries(entries, source_label=f"{label} {profile}", strict=strict)
 
 
 __all__ = [
