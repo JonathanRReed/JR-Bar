@@ -302,12 +302,13 @@ def import_devin_browser_session(
         )
     from .browser_session_import import BrowserSessionReadError, devin_session_from_entries
 
-    try:
-        devin_session_from_entries(storage, source_label=f"{browser} {profile}", strict=True)
-    except BrowserSessionReadError:
-        return BrowserImportResult("devin", BrowserImportState.UNAVAILABLE, None,
-                                   "browser_token_unavailable", f"{browser} {profile}")
     token, organization = extract_devin_session(storage)
+    if token is None:
+        try:
+            devin_session_from_entries(storage, source_label=f"{browser} {profile}", strict=True)
+        except BrowserSessionReadError:
+            return BrowserImportResult("devin", BrowserImportState.UNAVAILABLE, None,
+                                       "browser_token_unavailable", f"{browser} {profile}")
     if token is None:
         return BrowserImportResult(
             "devin",
