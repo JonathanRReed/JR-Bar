@@ -103,6 +103,12 @@ NO_QUOTA_REASONS = frozenset({
 def status_sentence(reason: str | None, label: str) -> str:
     """The plain sentence for a reason code; never the code itself."""
     template = _CAUSES.get(reason or "")
+    if label == "Factory" and reason in {
+        "authentication_required", "browser_session_not_imported", "browser_consent_required",
+        "browser_refresh_consent_required", "browser_session_expired", "invalid_web_session",
+        "web_session_account_changed", "web_session_changed", "web_session_unavailable",
+    }:
+        return "Add a Factory API key in Settings > Providers to read usage."
     if reason == "browser_token_unavailable" and label == "Factory":
         return "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
     if reason == "browser_token_unavailable" and label == "Cursor":
@@ -131,9 +137,9 @@ def sign_in_action(provider_id: str, state: str, reason: str | None) -> tuple[st
             return f"Add {label} API key", "manage"
         if provider_id == "cursor":
             return "Import Cursor browser session", "sign_in"
-    if provider_id == "factory" and reason == "authentication_required":
+    if provider_id == "factory":
         return "Add Factory API key", "manage"
-    if provider_id in {"devin", "factory"}:
+    if provider_id == "devin":
         verb = "Import" if reason in {"browser_consent_required", "browser_session_not_imported"} else "Reconnect"
         return f"{verb} {label} browser session", "manage"
     if state == "needs_consent" or provider_id in {"kimi", "kilo", "cliproxy"}:

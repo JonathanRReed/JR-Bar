@@ -18,6 +18,21 @@ from jrbar.provider_usage_platform import (
 PROVIDERS = [row.provider_id for row in provider_descriptors()]
 
 
+@pytest.mark.parametrize("reason", [
+    "authentication_required", "browser_session_not_imported", "browser_consent_required",
+    "browser_refresh_consent_required", "browser_token_unavailable", "browser_session_expired",
+    "invalid_web_session", "web_session_account_changed", "web_session_changed", "web_session_unavailable",
+])
+def test_factory_recovery_always_offers_a_key(reason):
+    snapshot = failure_snapshot("factory", observed_at=10, state=ProviderSourceState.NEEDS_SIGN_IN,
+                                reason=reason, action="Reconnect Factory browser session")
+    row = availability_document(snapshot, now=10, installed=True)
+    assert row["action"] == "Add Factory API key"
+    assert row["action_kind"] == "manage"
+    assert "API key" in row["status_text"]
+    assert "Reconnect" not in row["status_text"]
+
+
 @pytest.mark.parametrize("provider", PROVIDERS)
 @pytest.mark.parametrize("state", [ProviderSourceState.NEEDS_SIGN_IN, ProviderSourceState.NEEDS_CONSENT, ProviderSourceState.STALE])
 @pytest.mark.parametrize("reason", sorted(_NEEDS_PERSON_REASONS))
