@@ -136,21 +136,21 @@ struct KeepAwakeUtilityControls: View {
     private var toggles: SystemTogglesStore { utility.toggles }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            CardSectionHeader("Right now")
-            nowLine
-            Text(KeepAwakeReading.manualSessionHelp)
-                .jrbarType(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            presets
-            Toggle(isOn: Binding(get: { headsUpOn }, set: { on in
-                headsUpOn = on
-                toggles.state.headsUp.enabled = on
-                toggles.state.syncAwakeChip()
-            })) {
-                SettingLabel(title: "Heads-up before it ends",
-                             subtitle: "Five minutes before a timed session lets go, one notice with +30 min. Focus and quiet hours hold it.")
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingGroup("Session") {
+                nowLine
+                Text(KeepAwakeReading.manualSessionHelp)
+                    .jrbarType(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                presets
+                Toggle(isOn: Binding(get: { headsUpOn }, set: { on in
+                    headsUpOn = on
+                    toggles.state.headsUp.enabled = on
+                    toggles.state.syncAwakeChip()
+                })) {
+                    SettingLabel(title: "Heads-up before it ends",
+                                 subtitle: "A notice five minutes before the session ends offers 30 more minutes. Respects Focus and quiet hours.")
+                }
             }
             if let settings {
                 SettingGroup("Display") {
@@ -160,10 +160,11 @@ struct KeepAwakeUtilityControls: View {
                 }
                 agentRows(settings)
             }
-            durationRows
-            othersRows
+            SettingsFeatureMoreOptions(id: utility.id, subtitle: "Custom durations, saved presets and other apps holding the Mac awake.") {
+                SettingGroup("Durations") { durationRows }
+                SettingGroup("Other apps") { othersRows }
+            }
         }
-        .task { await refreshHolders() }
         .onAppear { headsUpOn = toggles.state.headsUp.enabled }
     }
 
@@ -268,9 +269,8 @@ struct KeepAwakeUtilityControls: View {
         let applying = toggles.state.applying.contains(.keepAwake)
         let canSave = seconds.map { !durations.contains($0) } == true
             && durations.count < KeepAwakeMenu.maxDurations
-        CardSectionHeader("Durations")
         LabeledContent {
-            HStack(spacing: SettingsMetrics.s) {
+            FlowLayout(spacing: SettingsMetrics.s) {
                 HStack(spacing: 4) {
                     TextField("Minutes", text: $newMinutes)
                         .textFieldStyle(.roundedBorder)
@@ -300,7 +300,7 @@ struct KeepAwakeUtilityControls: View {
             }
         } label: {
             SettingLabel(title: "Custom duration",
-                         subtitle: "1 to 1,440 minutes. Start a one-time session or save one of eight presets for every Awake menu.")
+                         subtitle: "Start a session or save its duration as a preset. Choose 1 to 1,440 minutes.")
         }
         if durations != KeepAwakeMenu.defaultDurations {
             Button("Reset presets") { setDurations(KeepAwakeMenu.defaultDurations) }
@@ -319,15 +319,15 @@ struct KeepAwakeUtilityControls: View {
     private var othersRows: some View {
         let shown = holders ?? readHolders
         let failed = holdersFailed ?? holdersReadFailed
-        CardSectionHeader("Other apps")
         LabeledContent {
             Button("Refresh") { _ = Task { await refreshHolders() } }
                 .controlSize(.small)
                 .disabled(holders != nil || readingHolders)
         } label: {
             SettingLabel(title: "Other apps holding this Mac awake",
-                         subtitle: "Read from macOS's power assertions, never changed. Holds stack: the Mac sleeps once every one lets go.")
+                         subtitle: "The Mac can sleep once every app listed here lets it. Refresh checks the list without changing any hold.")
         }
+        .task { await refreshHolders() }
         if failed {
             CardNote("Could not read macOS's power assertions. Refresh to try again.",
                      symbol: "exclamationmark.triangle", tint: Tone.neutral.color)
@@ -341,7 +341,8 @@ struct KeepAwakeUtilityControls: View {
                      symbol: "cup.and.saucer", tint: .secondary)
         }
         // A keep-awake app running with no hold of its own yet.
-        RivalGuardView(role: .keepAwake, rivals: idleRivals(besides: shown))
+        let rivals = idleRivals(besides: shown)
+        if !rivals.isEmpty { RivalGuardView(role: .keepAwake, rivals: rivals) }
     }
 
     /// Keep-awake apps that are running but hold nothing right now — the
