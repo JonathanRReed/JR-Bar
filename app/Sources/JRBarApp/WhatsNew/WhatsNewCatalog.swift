@@ -50,7 +50,7 @@ enum WhatsNewCatalog {
             detail: "Choose the browser profile where you're signed in, allow it, and JR-Bar reads your subscription.",
             tryIt: .settings(page: "providers"), opens: "Opens Providers"),
         WhatsNewEntry(id: "dock-cards", symbol: "dock.rectangle", title: "Dock widgets in three sizes",
-            detail: "Hover Mail, Music, Reminders, Shortcuts, Messages or Calendar for a widget, Small, Medium or Large.",
+            detail: "Hover Music, Calendar, Reminders or Shortcuts for a widget, Small, Medium or Large.",
             tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
         WhatsNewEntry(id: "t3-open", symbol: "arrow.up.forward.app", title: "Open lands in T3 Code",
             detail: "Open on an agent running in T3 Code goes straight to its thread."),
