@@ -39,6 +39,10 @@ final class DockEnhancePreferences {
         get { read().calendarView }
         set { write?({ var s = read(); s.calendarView = newValue; return s }()) }
     }
+    var mailPreview: Bool {
+        get { read().mailPreview }
+        set { write?({ var s = read(); s.mailPreview = newValue; return s }()) }
+    }
     var mediaPreview: Bool {
         get { read().mediaPreview }
         set { write?({ var s = read(); s.mediaPreview = newValue; return s }()) }
