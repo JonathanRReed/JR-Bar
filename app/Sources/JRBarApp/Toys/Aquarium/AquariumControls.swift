@@ -21,52 +21,52 @@ struct AquariumControlsView: View {
     static let fineTuneTitles: Set<String> = [
         "Fish at once", "Raised fish stay", "Plankton", "Bubbles", "Scenery", "Visitors",
         "Swim pace", "Fish size", "Swimming speed",
+        "Fill screen", "Live wallpaper", "Screensaver", "Clock on the screensaver",
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            LabeledContent {
-                TankSwatch(themeID: toy.game.themeID, substrateID: toy.game.substrateID)
-            } label: {
-                SettingLabel(title: "In the tank", subtitle: toy.fact)
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingGroup("Tank") {
+                LabeledContent {
+                    TankSwatch(themeID: toy.game.themeID, substrateID: toy.game.substrateID)
+                } label: {
+                    SettingLabel(title: "In the tank", subtitle: toy.fact)
+                }
+
+                Text(toy.activitySummary)
+                    .jrbarType(.callout)
+                    .accessibilityLabel(toy.activitySummary)
+                Text(AquariumActivityPresentation.rewardHelp)
+                    .jrbarType(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
             }
-
-            Text(toy.activitySummary)
-                .jrbarType(.callout)
-                .accessibilityLabel(toy.activitySummary)
-            Text(AquariumActivityPresentation.rewardHelp)
-                .jrbarType(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-                .padding(.vertical, 4)
-
-            lookRow
-            motionRow
-            Toggle(isOn: bind(\.restOnBattery)) {
-                SettingLabel(title: "Rest on battery",
-                             subtitle: "On battery, the plants, light, bubbles and the wallpaper or screensaver hold still. The fish keep swimming. Plugging in starts them again.")
+            SettingGroup("Appearance") {
+                lookRow
+                motionRow
+                Toggle(isOn: bind(\.restOnBattery)) {
+                    SettingLabel(title: "Rest on battery",
+                        subtitle: "Keep the scenery still on battery while fish continue swimming.")
+                }
+                labelsRow
+                dayNightRow
+                Toggle(isOn: bind(\.sound)) {
+                    SettingLabel(title: "Sound",
+                        subtitle: "Play tank sounds at the volume set in Alerts & Sounds. Respects Focus, quiet hours and calls.")
+                }
             }
-            labelsRow
-            dayNightRow
-            Toggle(isOn: bind(\.sound)) {
-                SettingLabel(title: "Sound",
-                             subtitle: "A plop, a gulp, a clink — for your taps and what happens in the open window, at the Sounds page's volume. Quiet during Focus, quiet hours and calls.")
+            SettingsGroup {
+                DisclosureGroup(isExpanded: $fineTune) {
+                    SettingGroup("Fish and scenery") { fineTuneRows }
+                    SettingGroup("Outside the window") { outsideRows }
+                } label: {
+                    SettingsMoreOptionsLabel(subtitle: "Fish, scenery, wallpaper and screensaver choices.")
+                }
+                .padding(.top, 2)
             }
-
-            DisclosureGroup(isExpanded: $fineTune) {
-                fineTuneRows
-            } label: {
-                SettingLabel(title: "Fine-tune",
-                             subtitle: "Fish size and speed, how many at once, plankton, bubbles, scenery and visitors.")
-            }
-            .padding(.top, 2)
-
-            CardSectionHeader("Outside the window")
-            outsideRows
         }
-        .toggleStyle(.switch)
+        .toggleStyle(CardToggleStyle())
         .labeledContentStyle(CardLabeledContentStyle())
         .onChange(of: revealKey, initial: true) {
             if let row = toy.store?.revealRow, Self.fineTuneTitles.contains(row) {
@@ -86,7 +86,7 @@ struct AquariumControlsView: View {
             AquariumLookMenu(toy: toy)
                 .frame(maxWidth: 230, alignment: .trailing)
         } label: {
-            SettingLabel(title: "Look", subtitle: "Water, floor and back wall — Classic, or anything you've bought.")
+            SettingLabel(title: "Look", subtitle: "Choose the water, floor and back wall from your collection.")
         }
     }
 
@@ -123,7 +123,7 @@ struct AquariumControlsView: View {
         switch settings.labelStyle {
         case .always: return "The session's name rides under its fish."
         case .hover: return "A name shows over the fish under the pointer."
-        case .never: return "No names — a fish you select still says who it is."
+        case .never: return "Hide fish names until you select one."
         }
     }
 
@@ -161,11 +161,11 @@ struct AquariumControlsView: View {
                 .fixedSize()
             } label: {
                 SettingLabel(title: "Fish at once",
-                             subtitle: "Past this, raised fish rest first, then quiet sessions. An ask or a failure always shows.")
+                    subtitle: "Past this, raised fish rest first, then quiet sessions. An ask or a failure always shows.")
             }
             Toggle(isOn: bind(\.keepResidents)) {
                 SettingLabel(title: "Raised fish stay",
-                             subtitle: "A fish you grew keeps swimming after its session leaves.")
+                    subtitle: "A fish you grew keeps swimming after its session leaves.")
             }
             LabeledContent {
                 slider(bind(\.density), in: AquariumSettings.densityRange)
@@ -183,15 +183,15 @@ struct AquariumControlsView: View {
                     Text("Light").tag(AquariumScenery.light)
                     Text("Bare").tag(AquariumScenery.bare)
                 }
-                .labelsHidden()
+                .labelsHidden().pickerStyle(.segmented)
                 .fixedSize()
             } label: {
                 SettingLabel(title: "Scenery",
-                             subtitle: "The kelp, rocks and shells every tank starts with. What you bought always stays.")
+                    subtitle: "The kelp, rocks and shells every tank starts with. What you bought always stays.")
             }
             Toggle(isOn: bind(\.visitors)) {
                 SettingLabel(title: "Visitors",
-                             subtitle: "The whale, the diver, the submarine and the alien now and then.")
+                    subtitle: "The whale, the diver, the submarine and the alien now and then.")
             }
             HStack {
                 Spacer()
@@ -241,7 +241,7 @@ struct AquariumControlsView: View {
                 Button("Fill screen") { toy.fillScreen() }
             }
         } label: {
-            SettingLabel(title: "Fill screen")
+            SettingLabel(title: "Fill screen", subtitle: "Open the tank across the display. Press Escape to return.")
         }
         LabeledContent {
             wallpaperPicker
@@ -259,7 +259,8 @@ struct AquariumControlsView: View {
             .labelsHidden()
             .fixedSize()
         } label: {
-            SettingLabel(title: "Screensaver", subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
+            SettingLabel(title: "Screensaver",
+                subtitle: "Idle that long, the tank fills your screens until you're back — never over a video, a call or a fullscreen app.")
         }
         if settings.idleFillMinutes > 0 {
             Toggle(isOn: bind(\.saverClock)) {
@@ -270,8 +271,9 @@ struct AquariumControlsView: View {
 
     private var wallpaperPicker: some View {
         let connected = NSScreen.screens.map(\.localizedName)
-        let choices = AquariumWallpaper.displayChoices(connected: connected,
-                                                       saved: settings.ambientDisplay)
+        let choices = AquariumWallpaper.displayChoices(
+            connected: connected,
+            saved: settings.ambientDisplay)
         return Picker("", selection: bind(\.ambientDisplay)) {
             Text("Off").tag(String?.none)
             ForEach(choices, id: \.self) { name in
@@ -289,15 +291,17 @@ struct AquariumControlsView: View {
     /// (`AquariumSwimRows`).
     private var aquarium: Binding<AquariumSettings> {
         let toy = self.toy
-        return Binding(get: { toy.store?.state.aquarium ?? AquariumSettings() },
-                       set: { toy.store?.state.aquarium = $0 })
+        return Binding(
+            get: { toy.store?.state.aquarium ?? AquariumSettings() },
+            set: { toy.store?.state.aquarium = $0 })
     }
 
     /// A binding onto one aquarium setting in the toys' store.
     private func bind<Value>(_ key: WritableKeyPath<AquariumSettings, Value>) -> Binding<Value> {
         let toy = self.toy
-        return Binding(get: { (toy.store?.state.aquarium ?? AquariumSettings())[keyPath: key] },
-                       set: { toy.store?.state.aquarium[keyPath: key] = $0 })
+        return Binding(
+            get: { (toy.store?.state.aquarium ?? AquariumSettings())[keyPath: key] },
+            set: { toy.store?.state.aquarium[keyPath: key] = $0 })
     }
 }
 

@@ -191,7 +191,7 @@ final class NotchBuddyToy: Toy {
 
     let id = "notch-buddy"
     let name = "Notch Buddy"
-    let blurb = "An animated notch character that reflects current agent activity."
+    let blurb = "See agent activity in a small companion."
     let symbol = "face.smiling"
 
     /// On means showing: enabled and not tucked away. Flipping it back
@@ -1548,104 +1548,120 @@ private struct BuddyControlsView: View {
     @ViewState private var hovered: BuddyCharacter?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // One way to choose: the tiles. A menu beside them repeated
-            // the same choice.
-            SettingLabel(title: "Character",
-                         subtitle: toy.miniMode ? "Mini shows only the status dot. Turn Mini off to pick one."
-                                                : "Who lives in your notch.")
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingGroup("Character") {
+                // One way to choose: the tiles. A menu beside them repeated
+                // the same choice.
+                SettingLabel(title: "Character",
+                    subtitle: toy.miniMode
+                        ? "Mini shows only the status dot. Turn Mini off to pick one."
+                        : "Who lives in your notch.")
 
-            if !toy.miniMode { roster }
+                if !toy.miniMode { roster }
 
-            Toggle(isOn: toy.presentationBinding) {
-                SettingLabel(title: "Mini", subtitle: "Just the status dot — docked or floating, no body.")
-            }
-
-            Toggle(isOn: toy.wearsStripColorBinding) {
-                SettingLabel(title: "Wear the Screen Bar's colour",
-                             subtitle: "Docked under a lit band, it takes the band's colour instead of its own.")
-            }
-
-            LabeledContent {
-                TextField("", text: toy.nameBinding, prompt: Text(toy.buddyCharacter.defaultName))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
-            } label: {
-                SettingLabel(title: "Name", subtitle: "What it answers to. Blank keeps \(toy.buddyCharacter.defaultName).")
-            }
-
-            LabeledContent {
-                HStack(spacing: 10) {
-                    // Both sliders snap the same way, with no tick marks:
-                    // the readout beside each one says the exact value.
-                    Slider(value: BuddyControlsView.snapped(toy.scaleBinding, to: 0.25),
-                           in: NotchBuddySettings.scaleRange)
+                LabeledContent {
+                    TextField("", text: toy.nameBinding, prompt: Text(toy.buddyCharacter.defaultName))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
                         .frame(width: 180)
-                    ValueText(text: NotchBuddyToy.sizeWords(toy.buddyScale))
+                        .accessibilityLabel("Buddy name")
+                } label: {
+                    SettingLabel(title: "Name", subtitle: "What it answers to. Blank keeps \(toy.buddyCharacter.defaultName).")
                 }
-            } label: {
-                SettingLabel(title: "Size",
-                             subtitle: "How big the floating buddy grows — the docked slot stays its 18pt self.")
-            }
 
-            Toggle(isOn: toy.showsCaptionBinding) {
-                SettingLabel(title: "Caption on hover",
-                             subtitle: "Point at it to read what it's watching, or its name while nothing runs.")
-            }
-
-            Toggle(isOn: toy.takesWalksBinding) {
-                SettingLabel(title: "Take walks",
-                             subtitle: "Floating, it strolls along a window's top edge now and then while the agents work.")
-            }
-
-            LabeledContent {
-                HStack(spacing: 10) {
-                    // Whole minutes; the binding rounds.
-                    Slider(value: toy.walkEveryBinding, in: NotchBuddySettings.walkEveryRange)
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        // Both sliders snap the same way, with no tick marks:
+                        // the readout beside each one says the exact value.
+                        Slider(
+                            value: BuddyControlsView.snapped(toy.scaleBinding, to: 0.25),
+                            in: NotchBuddySettings.scaleRange
+                        )
                         .frame(width: 180)
-                    ValueText(text: NotchBuddyToy.walkWords(toy.walkEvery))
+                        ValueText(text: NotchBuddyToy.sizeWords(toy.buddyScale))
+                    }
+                } label: {
+                    SettingLabel(title: "Size",
+                        subtitle: "Scale the floating buddy. Its size at the notch stays fixed.")
                 }
-            } label: {
-                SettingLabel(title: "Time between walks",
-                             subtitle: "About this many minutes of work between walks.")
-            }
-            .disabled(!toy.takesWalks)
 
-            HStack(spacing: 10) {
-                Button("Give treat") { toy.giveTreat() }
-                    .overlay(alignment: .top) { treatHearts }
-                Text(toy.careLine)
-                    .jrbarType(.callout)
-                    .foregroundStyle(.secondary)
             }
-            .padding(.top, 4)
+            SettingGroup("Care and position") {
+                LabeledContent {
+                    Button("Give treat") { toy.giveTreat() }
+                        .overlay(alignment: .top) { treatHearts }
+                } label: {
+                    SettingLabel(title: "Treat", subtitle: "A snack for \(toy.buddyName). " + toy.careLine)
+                }
+                .padding(.top, 4)
 
-            // The pal card's history, the part the caption can't hold —
-            // the same lines "About…" in its menu shows.
-            let card = BuddyPalCard.make(care: toy.store?.state.notchBuddy.care ?? BuddyCare())
-            let history = [card.since, card.favourite, card.longestAsk].compactMap { $0 }
-            if !history.isEmpty {
-                Text(history.joined(separator: " · "))
-                    .jrbarType(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Roaming state at a glance: a wake-up call while tucked, a
-            // dock button while it floats, and an undock that parks it
-            // at the slot while docked (from there, drag it anywhere).
-            if toy.isTucked {
-                HStack(spacing: 10) {
-                    Button("Bring it back") { toy.isOn = true }
-                    Text("Tucked away until the next event.")
-                        .jrbarType(.callout)
+                // The pal card's history, the part the caption can't hold —
+                // the same lines "About…" in its menu shows.
+                let card = BuddyPalCard.make(care: toy.store?.state.notchBuddy.care ?? BuddyCare())
+                let history = [card.since, card.favourite, card.longestAsk].compactMap { $0 }
+                if !history.isEmpty {
+                    Text(history.joined(separator: " · "))
+                        .jrbarType(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            } else {
-                Button(toy.isFree ? "Dock at the notch" : "Float free") {
-                    toy.isFree ? toy.dock() : toy.floatFree()
+
+                // Roaming state at a glance: a wake-up call while tucked, a
+                // dock button while it floats, and an undock that parks it
+                // at the slot while docked (from there, drag it anywhere).
+                if toy.isTucked {
+                    HStack(spacing: 10) {
+                        Button("Bring it back") { toy.isOn = true }
+                        Text("Tucked away until the next event.")
+                            .jrbarType(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    LabeledContent {
+                        Button(toy.isFree ? "Dock at the notch" : "Float free") {
+                            toy.isFree ? toy.dock() : toy.floatFree()
+                        }
+                    } label: {
+                        SettingLabel(title: "Position",
+                            subtitle: toy.isFree
+                                ? "Drag the buddy anywhere on screen, or return it to the notch."
+                                : "Float the buddy so you can drag it around the screen.")
+                    }
                 }
+            }
+            SettingsFeatureMoreOptions(id: toy.id, subtitle: "Mini mode, band color, captions and walks.") {
+                Toggle(isOn: toy.presentationBinding) {
+                    SettingLabel(title: "Mini", subtitle: "Show only the status dot, docked or floating.")
+                }
+
+                Toggle(isOn: toy.wearsStripColorBinding) {
+                    SettingLabel(title: "Wear the Screen Bar's colour",
+                        subtitle: "Docked under a lit band, it takes the band's colour instead of its own.")
+                }
+
+                Toggle(isOn: toy.showsCaptionBinding) {
+                    SettingLabel(title: "Caption on hover",
+                        subtitle: "Point at it to read what it's watching, or its name while nothing runs.")
+                }
+
+                Toggle(isOn: toy.takesWalksBinding) {
+                    SettingLabel(title: "Take walks",
+                        subtitle: "Floating, it strolls along a window's top edge now and then while the agents work.")
+                }
+
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        // Whole minutes; the binding rounds.
+                        Slider(value: toy.walkEveryBinding, in: NotchBuddySettings.walkEveryRange)
+                            .frame(width: 180)
+                        ValueText(text: NotchBuddyToy.walkWords(toy.walkEvery))
+                    }
+                } label: {
+                    SettingLabel(title: "Time between walks",
+                        subtitle: "About this many minutes of work between walks.")
+                }
+                .disabled(!toy.takesWalks)
+
             }
         }
     }
@@ -1655,8 +1671,9 @@ private struct BuddyControlsView: View {
     /// walk slider with none; snapping in the binding keeps the stops
     /// and drops the marks, so the two sliders look alike.
     static func snapped(_ binding: Binding<Double>, to step: Double) -> Binding<Double> {
-        Binding(get: { binding.wrappedValue },
-                set: { binding.wrappedValue = ($0 / step).rounded() * step })
+        Binding(
+            get: { binding.wrappedValue },
+            set: { binding.wrappedValue = ($0 / step).rounded() * step })
     }
 
     /// The treat's hearts, replayed over the button — the buddy in the
@@ -1669,8 +1686,9 @@ private struct BuddyControlsView: View {
         let burstAt = toy.treatBurstAt
         let still = reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let power = PowerConditions.shared.policy
-        let schedule = BuddyBurstSchedule(end: burstAt?.addingTimeInterval(BuddyBurstSchedule.span),
-                                           reduceMotion: still, power: power)
+        let schedule = BuddyBurstSchedule(
+            end: burstAt?.addingTimeInterval(BuddyBurstSchedule.span),
+            reduceMotion: still, power: power)
         return TimelineView(schedule) { context in
             let age = burstAt.map { context.date.timeIntervalSince($0) } ?? .infinity
             ZStack {
@@ -1723,8 +1741,10 @@ private struct BuddyControlsView: View {
                 .scaleEffect(1.5)
                 .frame(width: Self.rosterTile, height: 38)
                 .background(tile.fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
-                .overlay(tile.strokeBorder(selected ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.06),
-                                           lineWidth: selected ? 1.5 : 0.5))
+                .overlay(
+                    tile.strokeBorder(
+                        selected ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.06),
+                        lineWidth: selected ? 1.5 : 0.5))
             Text(c.displayName)
                 .jrbarType(.caption)
                 .fontWeight(selected ? .semibold : .regular)
@@ -1741,7 +1761,7 @@ private struct BuddyControlsView: View {
             }
         }
         .onTapGesture { toy.characterBinding.wrappedValue = c }
-        .help("\(c.displayName) — \(c.blurb)")
+        .help("\(c.displayName). \(c.blurb)")
         // A real button to VoiceOver: named, hinted, activatable, and
         // "selected" as a trait rather than a word in the name.
         .accessibilityElement(children: .ignore)
