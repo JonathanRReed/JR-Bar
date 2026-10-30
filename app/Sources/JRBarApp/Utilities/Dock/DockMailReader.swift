@@ -200,6 +200,9 @@ struct DockMailReader: Sendable {
     """
 
     static let replyScript = """
+    on sameID(leftValue, rightValue)
+        return (id of leftValue) is (id of rightValue)
+    end sameID
     on run argv
         if not application id "com.apple.mail" is running then error number -600
         set wantedID to item 1 of argv
@@ -209,7 +212,7 @@ struct DockMailReader: Sendable {
                 if scanCount > 40 then set scanCount to 40
                 repeat with i from 1 to scanCount
                     set m to message i of inbox
-                    if message id of m is wantedID then
+                    if my sameID(message id of m, wantedID) then
                         reply m with opening window
                         activate
                         return "opened"

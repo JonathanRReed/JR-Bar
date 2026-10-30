@@ -338,6 +338,22 @@ struct DockMailTests {
         #expect(result == .failure(.failed))
     }
 
+    @Test("Reply matches character codes, including case and control characters")
+    func replyIdentity() async {
+        let helper = DockMailReader.replyScript.components(separatedBy: "on run argv")[0]
+        let script = helper + "\non run argv\nreturn my sameID(item 1 of argv, item 2 of argv)\nend run"
+        let pairs: [(String, String, Bool)] = [
+            ("Synthetic", "synthetic", false), ("synthetic\u{1f}id", "syntheticid", false),
+            ("synthetic@example.invalid", "synthetic@example.invalid", true),
+        ]
+        for pair in pairs {
+            let result = await Task.detached {
+                DockMailReader.run(script, [pair.0, pair.1], DockMailCancellation())
+            }.value
+            #expect(result == .success(String(pair.2) + "\n"))
+        }
+    }
+
     @Test("the hard deadline kills a nonresponsive synthetic script without Mail")
     func runnerTimeout() async {
         let result = await Task.detached {
