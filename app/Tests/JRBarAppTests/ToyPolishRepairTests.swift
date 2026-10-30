@@ -36,6 +36,7 @@ struct ToyPolishRepairTests {
         let owner = store()
         defer { owner.shutdown() }
         let tank = try #require(owner.aquarium)
+        tank.power = { .normal }
         #expect(tank.status == .off)
         tank.showAquarium()
         #expect(tank.isOn && tank.ownsWindow && tank.game.windowOpen)
