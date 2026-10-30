@@ -575,6 +575,9 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Media preview",
                              subtitle: "Show playback controls when you hover the app playing audio.")
             }
+            DockMailPreviewSetting(isOn: Binding(
+                get: { utility.enhance.preferences.mailPreview },
+                set: { utility.enhance.preferences.mailPreview = $0 }))
         }
     }
 

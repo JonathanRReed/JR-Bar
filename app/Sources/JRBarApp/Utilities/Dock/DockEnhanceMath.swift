@@ -379,6 +379,7 @@ enum DockEnhanceMath {
 
     /// The Calendar tile's bundle id — the only tile that earns the
     /// calendar row on its own (and offers the grant).
+    static let mailBundleID = "com.apple.mail"
     static let calendarBundleID = "com.apple.iCal"
 
     /// The Calendar tile's glance: the rest of today — what's on now

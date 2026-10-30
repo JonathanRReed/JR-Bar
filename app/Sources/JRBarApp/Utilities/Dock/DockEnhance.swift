@@ -722,6 +722,7 @@ final class DockEnhanceController {
         quickQuitMonitor = nil
         installGestureMonitors()
         hidePreview()
+        nativePreviews.discardMail()
     }
 
     /// The card's appear hook and the tick's gate: re-read TCC only
@@ -949,7 +950,7 @@ final class DockEnhanceController {
         axReadCadence.observe(pointer: axPoint, at: now)
         var hovered: DockAXItem?
         if let list = dockList(near: axPoint, at: now) {
-            if Self.listReach(of: list.frame).contains(axPoint) {
+            if Self.listReach(of: list.frame).contains(axPoint) || (inPanel && preview.mailState != nil) {
                 hovered = tiles(of: list, at: now).first { $0.frame.contains(axPoint) }
             }
         }
@@ -1038,6 +1039,9 @@ final class DockEnhanceController {
         }
         let items = AppleDockReader.items(list: list.element)
         cachedItems = (list.frame, items, now)
+        if let shown = tracker.shown, let item = items.first(where: { $0.hoverID == shown }) {
+            nativePreviews.badgeChanged(item.badge)
+        }
         return items
     }
 
@@ -1300,6 +1304,7 @@ final class DockEnhanceController {
         anchor = (item, edge, screenFrame)
 
         let panel = ensurePanel()
+        panel.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
         panel.apply(preview.metrics)
         let place = placement
         let target = targetFrame(item: itemFrame, edge: edge, screen: screenFrame,
@@ -1667,6 +1672,24 @@ final class DockEnhanceController {
                   let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.MobileSMS") else { return }
             DesktopServices.automatic.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
         }
+        panel.actions.onMailAuth = { [weak self] in
+            guard let mail = self?.nativePreviews.mail else { return }
+            _ = Task { await mail.requestAccess() }
+        }
+        panel.actions.onMailSettings = { SetupModel.openSettingsPane(AutomationPermission.settingsURL) }
+        panel.actions.onMailOpen = {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.mailBundleID) else { return }
+            DesktopServices.automatic.open(url)
+        }
+        panel.actions.onMailNew = {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.mailBundleID) else { return }
+            DesktopServices.automatic.open([URL(string: "mailto:")!], withApplicationAt: url,
+                                           configuration: NSWorkspace.OpenConfiguration())
+        }
+        panel.actions.onMailMessage = { message in
+            if let url = message.url { DesktopServices.automatic.open(url) }
+        }
+        panel.actions.onMailReply = { [weak self] in self?.nativePreviews.mail?.reply($0) }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
         panel.actions.onCalendarView = { [weak self] in self?.preferences.calendarView = $0 }
         panel.actions.onCalendarMonth = { [weak self] in self?.nativePreviews.showMonth($0) }
@@ -1725,6 +1748,7 @@ final class DockEnhanceController {
         content.folderEntries = []
         content.media = nil
         content.mediaPending = false
+        content.mailState = nil
         content.calendarState = nil
         content.remindersState = nil
         content.remindersWriteNotice = nil
@@ -2432,6 +2456,7 @@ final class DockEnhanceController {
     }
 
     private func nativePreviewChanged() {
+        panel?.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
         reframe()
         mirrorPreviewChars()
         guard !previewHasContent else { return }
@@ -2444,6 +2469,7 @@ final class DockEnhanceController {
     }
 
     func syncNativePreviews() {
+        nativePreviews.discardMailIfDisabled(preferences.read())
         guard previewUp else { return }
         nativePreviews.update(settings: preferences.read())
     }

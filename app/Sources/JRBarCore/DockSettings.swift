@@ -193,6 +193,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Native app cards borrow the shared readers only while visible.
     public var calendarPreview: Bool
     public var calendarView: DockCalendarView
+    public var mailPreview: Bool
     public var mediaPreview: Bool
     public var remindersPreview: Bool
     public var shortcutsPreview: Bool
@@ -301,6 +302,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 remindersPreview: Bool = true,
                 shortcutsPreview: Bool = true,
                 messagesPreview: Bool = true,
+                mailPreview: Bool = false,
                 largePreviews: Bool = false,
                 includeOffscreenWindows: Bool = true,
                 holdDockOpen: Bool = true,
@@ -333,6 +335,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.remindersPreview = remindersPreview
         self.shortcutsPreview = shortcutsPreview
         self.messagesPreview = messagesPreview
+        self.mailPreview = mailPreview
         self.largePreviews = largePreviews
         self.includeOffscreenWindows = includeOffscreenWindows
         self.holdDockOpen = holdDockOpen
@@ -384,6 +387,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case calendarPreview, calendarView, mediaPreview
         case remindersPreview, shortcutsPreview, messagesPreview
+        case mailPreview
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
@@ -401,6 +405,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         showThumbnails = (try? c.decodeIfPresent(Bool.self, forKey: .showThumbnails)) ?? true
         calendarPreview = (try? c.decodeIfPresent(Bool.self, forKey: .calendarPreview)) ?? true
         calendarView = (try? c.decodeIfPresent(DockCalendarView.self, forKey: .calendarView)) ?? .list
+        mailPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mailPreview)) ?? false
         mediaPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mediaPreview)) ?? true
         remindersPreview = (try? c.decodeIfPresent(Bool.self, forKey: .remindersPreview)) ?? true
         shortcutsPreview = (try? c.decodeIfPresent(Bool.self, forKey: .shortcutsPreview)) ?? true

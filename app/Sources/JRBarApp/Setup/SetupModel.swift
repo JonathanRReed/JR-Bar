@@ -117,7 +117,7 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .accessibility:
             return "Answering asks straight into the session's terminal, and following Alcove's capsule."
         case .automation:
-            return "The Dark chip, and the Dock chip's fallback — JR-Bar asks System Events to switch the appearance or the Dock's auto-hide."
+            return "System Events for appearance and Dock controls. Mail for the optional Mail preview."
         case .location:
             return "Wi-Fi rules in the Menu Bar utility — macOS only tells apps a network's name with Location on. Nothing reads where you are."
         case .fullDiskAccess:

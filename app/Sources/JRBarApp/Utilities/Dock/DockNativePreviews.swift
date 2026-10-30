@@ -14,6 +14,11 @@ final class DockNativePreviews {
     var makeReminders: () -> DockRemindersPreview = { DockRemindersPreview() }
     var makeShortcuts: () -> DockShortcutsPreview = { DockShortcutsPreview() }
     var makeMessages: () -> DockMessagesPreview = { DockMessagesPreview() }
+    private(set) var mail: DockMailPreview?
+    private(set) var mailCache: DockMailReading?
+    private var mailCacheIsStale = false
+    private var mailBadge: String?
+    var makeMail: () -> DockMailPreview = { DockMailPreview() }
     private var mediaToken: UUID?
     private weak var content: DockPreviewContent?
 
@@ -24,6 +29,9 @@ final class DockNativePreviews {
 
     /// Seed the first frame from held values without starting either reader.
     func seed(content: DockPreviewContent, settings: DockEnhanceSettings) {
+        discardMailIfDisabled(settings)
+        content.mailState = settings.mailPreview && content.bundleID == DockEnhanceMath.mailBundleID
+            ? (content.isRunning ? .loading : .notRunning) : nil
         let bundleID = content.bundleID
         content.media = settings.mediaPreview ? feed.media.flatMap {
             DockEnhanceMath.showsMediaRow(mediaBundleID: $0.bundleIdentifier, appBundleID: bundleID) ? $0 : nil
@@ -49,6 +57,7 @@ final class DockNativePreviews {
     }
 
     func update(settings: DockEnhanceSettings) {
+        discardMailIfDisabled(settings)
         guard let content, let bundleID = content.bundleID else { return }
         content.mediaPending = settings.mediaPreview && content.isRunning && !feed.hasSnapshot
         if settings.mediaPreview, mediaToken == nil {
@@ -93,6 +102,25 @@ final class DockNativePreviews {
         } else if !wantsCalendar {
             calendar.stop()
             content.calendarState = nil
+        }
+        let wantsMail = settings.mailPreview && bundleID == DockEnhanceMath.mailBundleID
+        if wantsMail {
+            if mail == nil {
+                mail = makeMail()
+                mail?.restore(mailCache, badge: mailBadge, stale: mailCacheIsStale)
+            }
+            mail?.onChange = { [weak self, weak content] state in
+                guard let self, let content else { return }
+                self.mailCache = self.mail?.cached
+                self.mailCacheIsStale = self.mail?.cacheIsStale ?? false
+                content.mailNow = self.mail?.clock() ?? Date()
+                content.mailState = state
+                self.onChange()
+            }
+            if mail?.visible == false { mail?.show(badge: content.badge) }
+        } else {
+            mail?.hide()
+            content.mailState = nil
         }
         updateReminders(content: content, settings: settings)
         updateShortcuts(content: content, settings: settings)
@@ -177,6 +205,26 @@ final class DockNativePreviews {
         onChange()
     }
 
+    func discardMailIfDisabled(_ settings: DockEnhanceSettings) {
+        guard !settings.mailPreview else { return }
+        discardMail()
+    }
+
+    func discardMail() {
+        mail?.discard()
+        mail = nil
+        mailCache = nil
+        mailCacheIsStale = false
+        mailBadge = nil
+        content?.mailState = nil
+    }
+
+    func badgeChanged(_ badge: String?) {
+        guard let content, content.bundleID == DockEnhanceMath.mailBundleID else { return }
+        content.badge = badge
+        mail?.badgeChanged(badge)
+    }
+
     func showMonth(_ month: Date) {
         guard let content, calendar.running else { return }
         content.calendarMonth = month
@@ -195,6 +243,14 @@ final class DockNativePreviews {
         content?.shortcutsState = nil
         content?.shortcutRuns = [:]
         content?.messagesState = nil
+        if let mail {
+            mailCache = mail.cached
+            mailCacheIsStale = mail.cacheIsStale
+            mailBadge = content?.badge
+        }
+        mail?.discard()
+        mail = nil
+        content?.mailState = nil
         content?.media = nil
         content?.mediaPending = false
         content?.calendarState = nil

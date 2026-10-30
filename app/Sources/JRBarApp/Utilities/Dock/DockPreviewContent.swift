@@ -183,6 +183,8 @@ final class DockPreviewContent {
     /// that app is playing. nil until a track lands.
     var media: AlcoveMedia?
     var mediaPending = false
+    var mailState: DockMailPreview.State?
+    var mailNow = Date()
     var calendarState: DockCalendarPreview.State?
     var calendarNow = Date()
     var calendarView: DockCalendarView = .list
@@ -196,7 +198,7 @@ final class DockPreviewContent {
     var messagesState: DockMessagesPreview.State?
     var nativeWindowsExpanded = false
     var hasNativeCard: Bool {
-        media != nil || calendarState != nil || remindersState != nil
+        media != nil || calendarState != nil || mailState != nil || remindersState != nil
             || shortcutsState != nil || messagesState != nil
     }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }

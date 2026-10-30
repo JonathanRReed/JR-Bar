@@ -909,6 +909,11 @@ The Reminders, Shortcuts and quiet Messages cards added on 2026-10-29 follow
 the approved native-app memo. They reuse the independent-switch behavior
 credited above. No additional DockDoor source or assets were studied.
 
+The Mail card added on 2026-10-29 follows the approved JR-Bar mockup and Mail's
+scripting dictionary. Its permission button, rows and independent switch reuse
+JR-Bar's existing Dock patterns. DockDoor's public preview behavior informed
+those patterns; no GPL implementation source or assets were read or copied.
+
 ## macOS Calendar event links, 2026-10-29
 
 Studied the event-link protocol in Raycast's menubar-calendar extension at
