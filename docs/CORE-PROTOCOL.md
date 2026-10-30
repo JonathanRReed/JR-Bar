@@ -1844,7 +1844,10 @@ never costs the rest of the file):
   display awake too, except with the lid shut on no external display.
   Settings offers this once as "Keep the display on", for automatic
   agent holds and manual sessions. The app caches this value for its
-  offline assertion. When upgrading from separate app and daemon display
+  offline assertion. New app leases send `display: false` and follow this
+  preference, so a later change still applies after the app closes.
+  Retry and extension preserve an existing explicit lease override.
+  When upgrading from separate app and daemon display
   choices, either choice being on keeps the shared choice on; both off
   stay off. The app marks that migration complete only after the daemon
   accepts the merged value, or already has it. Later daemon changes

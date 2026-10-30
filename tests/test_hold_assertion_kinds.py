@@ -122,8 +122,10 @@ def test_the_shared_display_setting_covers_manual_and_process_leases(lease) -> N
     controller.start_lease(lease)
     assert controller.update(AgentMode.IDLE_READY)
     assert factory.processes[-1].command[1] == COMPUTER_AND_DISPLAY
+    before = controller.hold_document()["lease"]
     controller.set_keep_display_awake(False)
     assert factory.processes[-1].command[1] == COMPUTER
+    assert controller.hold_document()["lease"] == before
 
 
 @pytest.mark.parametrize("lease", _leases(), ids=lambda lease: lease.kind)

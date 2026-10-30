@@ -81,7 +81,7 @@ struct KeepAwakeHandoverTests {
         await handover?.value
     }
 
-    @Test("the latest manual hold and display choice replace the pending request")
+    @Test("the latest manual deadline survives a display change during handover")
     func latestHoldAndDisplay() async throws {
         let replies = Replies()
         let (state, defaults, suite) = state(replies)
@@ -97,7 +97,8 @@ struct KeepAwakeHandoverTests {
         let nextArrived = await replies.waitForRequest(2)
         try #require(nextArrived, "reconciliation request did not arrive")
         let newest = replies.requests[1]
-        #expect(newest?.display == true)
+        #expect(newest?.display == false)
+        #expect(state.awakeKeepsDisplay)
         if let newest, case .until(let end) = newest.shape {
             #expect(end == expectedDeadline.timeIntervalSince1970)
         } else { Issue.record("the newer timed hold was lost") }
@@ -122,7 +123,8 @@ struct KeepAwakeHandoverTests {
         replies.take()
         let nextArrived = await replies.waitForRequest(2)
         try #require(nextArrived, "reconciliation request did not arrive")
-        #expect(replies.requests[1] == CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: true))
+        #expect(replies.requests[1] == CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: false))
+        #expect(state.awakeKeepsDisplay)
         replies.take()
         await handover?.value
         #expect(!state.awake.held)

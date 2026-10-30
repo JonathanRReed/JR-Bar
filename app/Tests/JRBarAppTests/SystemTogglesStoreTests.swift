@@ -178,11 +178,13 @@ import Testing
         #expect(fake.sent.isEmpty, "the agents' hold is not the chip's to re-shape")
         store.apply(.keepAwake)
         await settle(state)
-        #expect(fake.sent == [CoreAwakeRequest(.indefinite, display: true)])
+        #expect(fake.sent == [CoreAwakeRequest(.indefinite, display: false)])
+        #expect(state.awakeKeepsDisplay)
         // A link's off cannot end the agents' hold; it says whose it is.
         store.set(.keepAwake, on: false)
         #expect(fake.sent.count == 1)
         #expect(store.caption?.contains("agents hold it") == true)
+        #expect(store.caption?.contains("Utilities & Toys › Keep Awake") == true)
     }
 
     @Test func aTimedHoldIsACountdownLease() async throws {
@@ -197,10 +199,11 @@ import Testing
             #"{"state":"manual","lease":{"kind":"duration","until":\#(end)}}"#.utf8)), live: true)
         #expect(store.title(for: .keepAwake) == "43m")
         #expect(store.awakeUntil.map { abs($0.timeIntervalSince1970 - end) < 0.001 } == true)
-        // The display option re-sends the same lease, its end kept.
+        // The shared display choice leaves the lease and its deadline alone.
         state.setAwakeKeepsDisplay(true)
         await settle(state)
-        #expect(fake.sent.last == .some(CoreAwakeRequest(.until(end), display: true)))
+        #expect(fake.sent.count == 1)
+        #expect(store.awakeUntil == Date(timeIntervalSince1970: end))
     }
 
     @Test func aRefusalIsSaidOnTheStrip() async throws {
