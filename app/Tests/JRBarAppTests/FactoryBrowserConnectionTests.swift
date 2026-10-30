@@ -239,6 +239,7 @@ struct FactoryBrowserConnectionTests {
         gate.finish()
         #expect(await pending.value == !retired)
         #expect(!connection.available)
+        #expect(connection.factoryStatus == "Not connected")
         #expect(!connection.busy)
         #expect(changes == (retired ? 0 : 1))
         if retired {
@@ -406,7 +407,7 @@ struct FactoryBrowserConnectionTests {
         connection.approved = true
         #expect(await connection.connect())
         #expect(connection.available)
-        #expect(connection.message?.contains("Refresh") == true)
+        #expect(connection.message?.contains("Connect Factory") == true)
     }
 
     @Test("a failed browser import never requests usage")
@@ -443,5 +444,104 @@ struct FactoryBrowserConnectionTests {
         #expect(!(await pending.value))
         #expect(connection.message == "Factory sign-in saved.")
         #expect(changes == 0)
+    }
+}
+
+@MainActor
+@Suite("Factory renewal connection state")
+struct FactoryRenewalConnectionTests {
+    private func savedProfile() -> FactorySessionProfile {
+        var profile = FactorySessionProfile(browser: "zen", profile: "synthetic.default", label: "Zen · synthetic.default")
+        profile.connected = true
+        profile.consented = true
+        return profile
+    }
+
+    @Test("the connected Factory profile is selected and profiles without keys stay out of the picker")
+    func picker() async {
+        let connected = savedProfile()
+        var absent = FactorySessionProfile(browser: "zen", profile: "synthetic.absent", label: "Zen · synthetic.absent")
+        absent.hasSignIn = false
+        absent.consented = true
+        let connection = FactoryBrowserConnectionModel(available: true,
+            load: { [absent, connected] }, importSession: { _ in "unused" }, disconnect: { "unused" })
+        await connection.load()
+        #expect(connection.signInProfiles == [connected])
+        #expect(connection.savedProfiles.count == 2)
+        #expect(connection.selected == connected)
+        #expect(connection.selected?.pickerLabel == "Zen · synthetic.default · Connected")
+    }
+
+    @Test("a newer read replaces the saved message with one current status")
+    func oneStatus() async {
+        let profile = savedProfile()
+        var refreshes = 0
+        let connection = FactoryBrowserConnectionModel(available: false,
+            load: { [profile] }, importSession: { _ in "Saved." }, disconnect: { "unused" },
+            refreshUsage: { refreshes += 1; return "Waiting for the first usage read." })
+        await connection.load()
+        var old = CoreProviderUsage(id: "factory", state: "needs_sign_in", reason: "browser_session_expired")
+        old.observedAt = 1000
+        old.statusText = "Factory sign-in expired. Choose Connect Factory."
+        connection.updateReading(old)
+        connection.approved = true
+        #expect(await connection.connect())
+        #expect(refreshes == 1)
+        #expect(connection.factoryStatus == "Saved. Waiting for the first usage read.")
+        connection.updateReading(old)
+        #expect(connection.factoryStatus == "Saved. Waiting for the first usage read.")
+        var refused = old
+        refused.observedAt = 1001
+        refused.reason = "factory_refresh_invalid_grant"
+        refused.statusText = "Factory refused the saved sign-in (invalid_grant). Choose Connect Factory."
+        connection.updateReading(refused)
+        #expect(connection.message == nil)
+        #expect(connection.factoryStatus == refused.statusText)
+        var ready = refused
+        ready.state = "ready"
+        ready.reason = nil
+        ready.observedAt = 1002
+        connection.updateReading(ready)
+        #expect(connection.factoryStatus == "Connected and reading Factory usage.")
+    }
+
+    @Test("Connect uses the current usage switch and stays local while usage is off")
+    func currentUsageSwitch() async {
+        let profile = savedProfile()
+        var refreshes = 0
+        let connection = FactoryBrowserConnectionModel(available: false,
+            load: { [profile] }, importSession: { _ in "Saved." }, disconnect: { "unused" },
+            refreshUsage: { refreshes += 1; return "Requested." })
+        await connection.load()
+        connection.usageEnabled = false
+        connection.approved = true
+        #expect(await connection.connect())
+        #expect(refreshes == 0)
+        #expect(connection.factoryStatus == "Saved. Turn on Show Factory usage.")
+        connection.usageEnabled = true
+        connection.approved = true
+        #expect(await connection.connect())
+        #expect(refreshes == 1)
+    }
+
+    @Test("Disconnect and Forget clear saved rows and show Not connected", arguments: [false, true])
+    func remove(forget: Bool) async {
+        let profile = savedProfile()
+        var removals = 0
+        let connection = FactoryBrowserConnectionModel(available: true,
+            load: { [profile] }, importSession: { _ in "unused" },
+            disconnect: { removals += 1; return "Disconnected." },
+            forgetProfile: { _ in removals += 1 })
+        await connection.load()
+        connection.cancel()
+        await connection.resumeSavedProfiles()
+        if forget { await connection.forget(profile) } else { await connection.disconnect() }
+        #expect(removals == 1)
+        #expect(!connection.available)
+        #expect(connection.savedProfiles.isEmpty)
+        #expect(connection.factoryStatus == "Not connected")
+        #expect(connection.signInProfiles.count == 1)
+        #expect(connection.signInProfiles[0].connected != true)
+        #expect(!connection.approved)
     }
 }

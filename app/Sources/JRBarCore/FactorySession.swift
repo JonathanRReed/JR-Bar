@@ -4,7 +4,16 @@ public struct FactorySessionProfile: Codable, Hashable, Identifiable, Sendable {
     public var browser: String
     public var profile: String
     public var label: String
-    public var id: Self { self }
+    public var hasSignIn: Bool? = nil
+    public var connected: Bool? = nil
+    public var consented: Bool? = nil
+    public var id: String { "\(browser)|\(profile)" }
+    public var pickerLabel: String { connected == true ? "\(label) · Connected" : label }
+
+    enum CodingKeys: String, CodingKey {
+        case browser, profile, label, connected, consented
+        case hasSignIn = "has_sign_in"
+    }
 
     public init(browser: String, profile: String, label: String) {
         self.browser = browser
@@ -35,8 +44,8 @@ extension CoreModel {
         return message
     }
 
-    public func factorySessionProfiles() async throws -> [FactorySessionProfile] {
-        let reply = try await send("factory_session_profiles", timeout: 8)
+    public func factorySessionProfiles(instance: String = "default") async throws -> [FactorySessionProfile] {
+        let reply = try await send("factory_session_profiles", args: ["instance": .string(instance)], timeout: 8)
         guard reply.ok else {
             throw reply.error ?? CoreReplyError(code: "error", message: "Could not list browser profiles")
         }
@@ -55,6 +64,22 @@ extension CoreModel {
     public func disconnectFactorySession(instance: String) async throws -> String {
         let reply = try await send("factory_session_disconnect", args: ["instance": .string(instance)], timeout: 15)
         return try factorySessionMessage(reply, instance: instance)
+    }
+
+    public func forgetFactoryProfile(_ profile: FactorySessionProfile, instance: String) async throws {
+        let reply = try await send("provider_consent", args: [
+            "action": .string("revoke"), "provider": .string("factory"),
+            "browser": .string(profile.browser), "profile": .string(profile.profile),
+            "instance": .string(instance),
+        ])
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "unavailable") }
+    }
+
+    public func refreshFactoryUsage(instance: String) async throws {
+        let reply = try await send("refresh_usage", args: [
+            "providers": .array([.string("factory")]), "instance": .string(instance),
+        ])
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "unavailable") }
     }
 
     private func factorySessionMessage(_ reply: CoreReply, instance: String) throws -> String {

@@ -3306,7 +3306,7 @@ class World:
             result = {"provider": "devin", "instance": confirmed,
                       "message": f"Imported Devin browser sign-in for {instance}."}
         elif name == "factory_session_profiles":
-            if args:
+            if set(args) - {"instance"}:
                 return self._error(cid, "invalid_args", "factory_session_profiles takes no arguments")
             result = {"profiles": [{"browser": "zen", "profile": "synthetic.default", "label": "Zen · synthetic.default"}]}
         elif name == "factory_session_import":

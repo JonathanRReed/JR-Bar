@@ -23,10 +23,19 @@ never writes them back to browser files. Existing imports need this new
 approval before JR-Bar can renew them. A browser sign-in containing only a
 refresh token can connect this way.
 
-Turn on Show Factory usage and Metering when you want readings, then choose
-Refresh. Connecting alone sends no request and leaves usage settings unchanged.
-Usage goes to api.factory.ai; approved token renewal goes to api.workos.com.
-A rejected or expired refresh token requires a new browser sign-in and Connect.
+The profile picker shows profiles with Factory sign-in keys and marks the
+connected one. Other saved profile permissions have a Forget this profile
+button. Forget removes that permission and its connected JR-Bar session;
+it leaves browser data alone. Disconnect browser sign-in clears the account's
+session and browser permissions. The sheet then says Not connected.
+
+Turn on Show Factory usage and Metering when you want readings. Connect reads
+usage once when both switches are on; otherwise it only saves the sign-in.
+Connecting leaves those switches unchanged. Usage goes to api.factory.ai;
+approved token renewal goes to api.workos.com. After a rejected refresh,
+JR-Bar checks the connected profile once for a newer token. Repeated failures
+back off and show the refusal class. If recovery fails, sign in in the browser,
+then choose Connect Factory again.
 
 Use API key in the connection sheet is the fallback. Create a key at
 [Factory's API-key settings](https://app.factory.ai/settings/api-keys), paste it
