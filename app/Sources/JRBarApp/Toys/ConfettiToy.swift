@@ -191,7 +191,7 @@ final class ConfettiToy: Toy {
 
     let id = "confetti"
     let name = "Confetti"
-    let blurb = "Confetti for quota resets and agent events."
+    let blurb = "Celebrate quota resets and finished runs."
     let symbol = "party.popper"
 
     var isOn: Bool {
