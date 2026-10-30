@@ -4,7 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.10.2
 
-JR-Bar 0.10.2 fixes permissions a signed build could never get, reads Devin and Factory subscriptions again, shows every provider's usage the way its plan is shaped, and adds Dock previews for Mail, Music, Reminders, Shortcuts and Messages.
+JR-Bar 0.10.2 fixes permissions a signed build could never get, reads Devin and Factory subscriptions again, shows every provider's usage the way its plan is shaped, and turns the Dock's previews into widgets in three sizes, with new ones for Mail, Music, Reminders, Shortcuts and Messages.
 
 - Calendar, Reminders, the camera and system audio work in the signed app. 0.10.1 lacked the entitlements macOS needs before it will ask, so Allow Access in the Dock's Calendar preview did nothing. Every permission button now shows the prompt, opens the right pane of System Settings, or explains that Calendar needs full access, and the Dock, notch, reminders, seasonal touches and Mirror refresh once access changes.
 - Privacy prompts keep their apostrophes and quotes.
@@ -13,9 +13,11 @@ JR-Bar 0.10.2 fixes permissions a signed build could never get, reads Devin and 
 - Connect Devin by choosing the browser profile where you signed in and allowing access, then Import. A failed import says what to do and keeps the sign-in you had, and Devin's account no longer shows a made-up organization name.
 - A provider that needs you offers the action that fixes it: Sign in, Reconnect, Connect or Allow usage, and Retry remains only where a refresh can help. Factory stays in the status menu while it needs you, and Devin and Cursor say when a sign-in is missing the part JR-Bar needs.
 - Open on an agent running inside T3 Code goes to that agent's T3 Code thread, whichever provider runs it, and launches T3 Code onto the thread if it isn't open.
-- The Dock's Calendar preview has a Month view beside the list: a month grid with today, coloured event dots and the selected day's events.
-- New Dock previews: Mail shows your unread count and newest unread messages (off until you turn it on; it asks Mail through Automation and never reads message bodies); Music is a player with artwork, a progress bar you can drag, and playback controls, with shuffle, repeat, volume and Love once you allow full controls; Reminders shows what's due with check-off; Shortcuts runs your shortcuts; Messages shows its unread count. Each has its own switch, and none launches an app just to look.
+- Dock previews are widgets in three sizes, like iPhone widgets: Small, Medium and Large, each showing more as it grows. Preview size in Settings sets the default (Medium, or Large if you used larger previews), and each app can have its own size, from Settings or by right-clicking its card.
+- New Dock widgets: Mail shows your unread count and newest unread messages across every account (off until you turn it on; it asks Mail through Automation, never reads message bodies, and trusts Mail's own badge over a zero it can't explain); Music is a player with artwork, a progress bar you can drag and playback controls, with shuffle, repeat, volume and Love once you allow full controls; Reminders shows what's due with check-off; Shortcuts runs your shortcuts; Messages shows its unread count. Each has its own switch, and none launches an app just to look.
+- The Calendar widget has a Month view: just the month grid, with today and coloured event dots. Click a day to list its events; double-click to open it in Calendar.
 - Settings no longer shows the same control twice. Keep Awake has one "Keep the display on" switch for every hold JR-Bar makes, "Keep the Mac awake for agents" is named for what it does, and settings that lived on two pages now live on one with a link from the other.
+- Every Utilities & Toys page, the Dock included, opens with what the feature does, whether it's on, and its main switch, followed by grouped settings that each say what they do, with previews where they help.
 - Usage Center names each account instead of repeating its action, and descriptions match what JR-Bar actually does. A long recovery message on a usage row keeps two lines and shows the rest in its tooltip.
 - Usage Center and other views show plain words instead of internal codes such as "transcript_not_found".
 - History's Events list runs newest first by when each event happened, names every event in plain words, and shows times in your own clock.
