@@ -198,6 +198,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var remindersPreview: Bool
     public var shortcutsPreview: Bool
     public var messagesPreview: Bool
+    public var musicPlayer: Bool
+    public var musicFullControls: Bool
     /// Bigger cards — 208×130 instead of 144×90 — for people who read
     /// the thumbnail rather than the title.
     public var largePreviews: Bool
@@ -303,6 +305,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 shortcutsPreview: Bool = true,
                 messagesPreview: Bool = true,
                 mailPreview: Bool = false,
+                musicPlayer: Bool = true,
+                musicFullControls: Bool = false,
                 largePreviews: Bool = false,
                 includeOffscreenWindows: Bool = true,
                 holdDockOpen: Bool = true,
@@ -336,6 +340,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.shortcutsPreview = shortcutsPreview
         self.messagesPreview = messagesPreview
         self.mailPreview = mailPreview
+        self.musicPlayer = musicPlayer
+        self.musicFullControls = musicFullControls
         self.largePreviews = largePreviews
         self.includeOffscreenWindows = includeOffscreenWindows
         self.holdDockOpen = holdDockOpen
@@ -388,6 +394,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         case calendarPreview, calendarView, mediaPreview
         case remindersPreview, shortcutsPreview, messagesPreview
         case mailPreview
+        case musicPlayer, musicFullControls
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
@@ -410,6 +417,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         remindersPreview = (try? c.decodeIfPresent(Bool.self, forKey: .remindersPreview)) ?? true
         shortcutsPreview = (try? c.decodeIfPresent(Bool.self, forKey: .shortcutsPreview)) ?? true
         messagesPreview = (try? c.decodeIfPresent(Bool.self, forKey: .messagesPreview)) ?? true
+        musicPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .musicPlayer)) ?? true
+        musicFullControls = (try? c.decodeIfPresent(Bool.self, forKey: .musicFullControls)) ?? false
         largePreviews = (try? c.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true
         holdDockOpen = (try? c.decodeIfPresent(Bool.self, forKey: .holdDockOpen)) ?? true

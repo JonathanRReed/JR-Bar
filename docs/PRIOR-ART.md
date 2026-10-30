@@ -914,6 +914,15 @@ scripting dictionary. Its permission button, rows and independent switch reuse
 JR-Bar's existing Dock patterns. DockDoor's public preview behavior informed
 those patterns; no GPL implementation source or assets were read or copied.
 
+The Music player added on 2026-10-29 extends that behavior with a large cover,
+album, remaining time and optional Music controls. The same DockDoor 1.41.0
+GPL-3.0 behavior credit applies. No further DockDoor source or assets were read.
+JR-Bar's existing shared now-playing feed supplies the default card. Music's
+installed `com.apple.Music.sdef` dictionary supplies the Apple Event codes for
+the optional controls and paused artwork. Events target a running process ID,
+use a three-second request deadline and suppress consent prompts. The explicit
+permission button uses JR-Bar's shared permission request.
+
 ## macOS Calendar event links, 2026-10-29
 
 Studied the event-link protocol in Raycast's menubar-calendar extension at

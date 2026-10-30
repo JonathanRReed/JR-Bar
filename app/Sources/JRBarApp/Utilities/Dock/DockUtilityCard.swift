@@ -571,9 +571,19 @@ struct DockUtilityControls: View {
             DockMessagesPreviewSetting(isOn: Binding(
                 get: { utility.enhance.preferences.messagesPreview },
                 set: { utility.enhance.preferences.messagesPreview = $0 }))
+            Toggle(isOn: musicPlayer) {
+                SettingLabel(title: "Music player",
+                             subtitle: "Artwork, progress and playback controls when you hover Music.")
+            }
+            if utility.enhance.preferences.musicPlayer {
+                Toggle(isOn: musicFullControls) {
+                    SettingLabel(title: "Full Music controls",
+                                 subtitle: "Shuffle, repeat, volume and Love. Asks Music through Automation. Off until you turn it on.")
+                }
+            }
             Toggle(isOn: mediaPreview) {
-                SettingLabel(title: "Media preview",
-                             subtitle: "Show playback controls when you hover the app playing audio.")
+                SettingLabel(title: "Other media previews",
+                             subtitle: "Playback controls when you hover another app playing audio.")
             }
             DockMailPreviewSetting(isOn: Binding(
                 get: { utility.enhance.preferences.mailPreview },
@@ -588,6 +598,14 @@ struct DockUtilityControls: View {
     private var calendarView: Binding<DockCalendarView> {
         Binding(get: { utility.enhance.preferences.calendarView },
                 set: { utility.enhance.preferences.calendarView = $0 })
+    }
+    private var musicPlayer: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.musicPlayer },
+                set: { utility.enhance.preferences.musicPlayer = $0 })
+    }
+    private var musicFullControls: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.musicFullControls },
+                set: { utility.enhance.preferences.musicFullControls = $0 })
     }
     private var mediaPreview: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.mediaPreview },

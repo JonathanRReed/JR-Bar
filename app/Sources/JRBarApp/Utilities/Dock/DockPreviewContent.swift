@@ -185,6 +185,8 @@ final class DockPreviewContent {
     var mediaPending = false
     var mailState: DockMailPreview.State?
     var mailNow = Date()
+    var musicPlayerEnabled = false
+    var music: DockMusicPreview?
     var calendarState: DockCalendarPreview.State?
     var calendarNow = Date()
     var calendarView: DockCalendarView = .list
@@ -198,8 +200,8 @@ final class DockPreviewContent {
     var messagesState: DockMessagesPreview.State?
     var nativeWindowsExpanded = false
     var hasNativeCard: Bool {
-        media != nil || calendarState != nil || mailState != nil || remindersState != nil
-            || shortcutsState != nil || messagesState != nil
+        musicPlayerEnabled || media != nil || calendarState != nil || mailState != nil
+            || remindersState != nil || shortcutsState != nil || messagesState != nil
     }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
     var largeCards = false

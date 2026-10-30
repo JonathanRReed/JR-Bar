@@ -56,11 +56,11 @@ def test_both_builders_preserve_the_source_privacy_strings(tmp_path, builder):
     assert "notch's" in built["NSAudioCaptureUsageDescription"]
     assert "JR-Bar's" in built["NSLocationUsageDescription"]
     assert '"AirPods connected"' in built["NSBluetoothAlwaysUsageDescription"]
-    assert built["NSAppleEventsUsageDescription"] == (
-        "JR-Bar uses Automation to open a reviewed resume command in Terminal or iTerm2 "
-        "when you choose Open, and, only if you turn on Mail preview, to ask Mail for the "
-        "sender, subject and time of your newest unread messages. Nothing is stored or sent."
-    )
+    # The exact words are pinned above against privacy_usage.plist; here the
+    # sentence must name every app JR-Bar automates.
+    automation = built["NSAppleEventsUsageDescription"]
+    for target in ("Terminal", "iTerm2", "Mail", "Music"):
+        assert target in automation, target
 
 
 def test_helper_receives_only_its_automation_description(tmp_path):

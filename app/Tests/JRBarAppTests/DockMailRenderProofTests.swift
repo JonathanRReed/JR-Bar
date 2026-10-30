@@ -61,7 +61,7 @@ struct DockMailRenderProofTests {
             for enabled in [false, true] {
                 let view = VStack(alignment: .leading, spacing: 16) {
                     Toggle("Calendar preview", isOn: .constant(true))
-                    Toggle("Media preview", isOn: .constant(true))
+                    Toggle("Other media previews", isOn: .constant(true))
                     DockMailPreviewSetting(isOn: .constant(enabled))
                 }
                 .toggleStyle(.switch)

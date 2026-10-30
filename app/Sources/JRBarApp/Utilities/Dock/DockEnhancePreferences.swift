@@ -55,6 +55,14 @@ final class DockEnhancePreferences {
         get { read().mailPreview }
         set { write?({ var s = read(); s.mailPreview = newValue; return s }()) }
     }
+    var musicPlayer: Bool {
+        get { read().musicPlayer }
+        set { write?({ var s = read(); s.musicPlayer = newValue; return s }()) }
+    }
+    var musicFullControls: Bool {
+        get { read().musicFullControls }
+        set { write?({ var s = read(); s.musicFullControls = newValue; return s }()) }
+    }
     var mediaPreview: Bool {
         get { read().mediaPreview }
         set { write?({ var s = read(); s.mediaPreview = newValue; return s }()) }

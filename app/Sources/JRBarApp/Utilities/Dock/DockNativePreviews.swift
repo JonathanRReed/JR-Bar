@@ -19,6 +19,7 @@ final class DockNativePreviews {
     private var mailCacheIsStale = false
     private var mailBadge: String?
     var makeMail: () -> DockMailPreview = { DockMailPreview() }
+    var makeMusic: (MediaFeed) -> DockMusicPreview = { DockMusicPreview(source: .live(), feed: $0) }
     private var mediaToken: UUID?
     private weak var content: DockPreviewContent?
 
@@ -33,10 +34,11 @@ final class DockNativePreviews {
         content.mailState = settings.mailPreview && content.bundleID == DockEnhanceMath.mailBundleID
             ? (content.isRunning ? .loading : .notRunning) : nil
         let bundleID = content.bundleID
-        content.media = settings.mediaPreview ? feed.media.flatMap {
+        content.musicPlayerEnabled = settings.musicPlayer && bundleID == DockMusicSource.bundleID
+        content.media = settings.mediaPreview && bundleID != DockMusicSource.bundleID ? feed.media.flatMap {
             DockEnhanceMath.showsMediaRow(mediaBundleID: $0.bundleIdentifier, appBundleID: bundleID) ? $0 : nil
         } : nil
-        content.mediaPending = settings.mediaPreview && content.isRunning && !feed.hasSnapshot
+        content.mediaPending = settings.mediaPreview && bundleID != DockMusicSource.bundleID && content.isRunning && !feed.hasSnapshot
         content.remindersState = settings.remindersPreview && bundleID == "com.apple.reminders" ? .loading : nil
         content.shortcutsState = settings.shortcutsPreview && bundleID == "com.apple.shortcuts" ? .loading : nil
         content.messagesState = settings.messagesPreview && bundleID == "com.apple.MobileSMS"
@@ -59,8 +61,24 @@ final class DockNativePreviews {
     func update(settings: DockEnhanceSettings) {
         discardMailIfDisabled(settings)
         guard let content, let bundleID = content.bundleID else { return }
-        content.mediaPending = settings.mediaPreview && content.isRunning && !feed.hasSnapshot
-        if settings.mediaPreview, mediaToken == nil {
+        content.mediaPending = settings.mediaPreview && bundleID != DockMusicSource.bundleID && content.isRunning && !feed.hasSnapshot
+        let wantsMusic = settings.musicPlayer && bundleID == DockMusicSource.bundleID
+        content.musicPlayerEnabled = wantsMusic
+        if wantsMusic {
+            if content.music == nil {
+                let player = makeMusic(feed)
+                player.onChange = { [weak self] in self?.onChange() }
+                content.music = player
+                player.start(fullControls: settings.musicFullControls)
+            } else {
+                content.music?.configure(fullControls: settings.musicFullControls)
+            }
+        } else {
+            content.music?.stop()
+            content.music = nil
+        }
+        let wantsMedia = settings.mediaPreview && bundleID != DockMusicSource.bundleID
+        if wantsMedia, mediaToken == nil {
             mediaToken = feed.subscribe { [weak self, weak content] media in
                 guard let self, let content else { return }
                 content.mediaPending = content.isRunning && !self.feed.hasSnapshot
@@ -70,7 +88,7 @@ final class DockNativePreviews {
                 }
                 self.onChange()
             }
-        } else if !settings.mediaPreview {
+        } else if !wantsMedia {
             if let mediaToken { feed.unsubscribe(mediaToken) }
             mediaToken = nil
             content.media = nil
@@ -251,6 +269,9 @@ final class DockNativePreviews {
         mail?.discard()
         mail = nil
         content?.mailState = nil
+        content?.music?.stop()
+        content?.music = nil
+        content?.musicPlayerEnabled = false
         content?.media = nil
         content?.mediaPending = false
         content?.calendarState = nil
@@ -261,6 +282,7 @@ final class DockNativePreviews {
     }
 
     func send(_ command: MediaRemoteBridge.Command) {
+        if let music = content?.music { music.send(.transport(command)); return }
         guard mediaToken != nil, content?.media != nil else { return }
         feed.send(command)
     }

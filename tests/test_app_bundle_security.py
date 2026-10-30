@@ -906,8 +906,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     ]
     assert info["NSAppleEventsUsageDescription"] == (
         "JR-Bar uses Automation to open a reviewed resume command in Terminal or iTerm2 "
-        "when you choose Open, and, only if you turn on Mail preview, to ask Mail for the "
-        "sender, subject and time of your newest unread messages. Nothing is stored or sent."
+        "when you choose Open. If you turn on Mail preview, it asks Mail for the sender, "
+        "subject and time of your newest unread messages. If you allow full Music controls, "
+        "it reads and controls Music while its Dock card is open. Nothing is stored or sent."
     )
     assert info["NSFocusStatusUsageDescription"] == (
         "JR-Bar uses Focus Status only when you choose Allow Focus Status, "
