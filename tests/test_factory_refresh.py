@@ -276,7 +276,7 @@ def test_named_rotation_changes_only_its_instance(context, remote):
 @pytest.mark.parametrize("value", [None, "true", 1, {}, []])
 def test_refresh_permission_must_be_an_explicit_boolean(context, monkeypatch, value):
     _, store = context
-    monkeypatch.setattr(factory_session, "read_browser_session", lambda *_: pytest.fail("read without valid consent"))
+    monkeypatch.setattr(factory_session, "read_browser_session", lambda *_a, **_k: pytest.fail("read without valid consent"))
     from jrbar.core_server import CommandError
     with pytest.raises(CommandError) as error:
         factory_session.import_session({"browser": "zen", "profile": "synthetic.default",

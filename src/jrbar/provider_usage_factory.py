@@ -259,7 +259,7 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
                 if not may_read_browser:
                     return False
                 try:
-                    current = read_browser_session(session["browser"], session["profile"])
+                    current = read_browser_session(session["browser"], session["profile"], include_organization=False)
                 except (OSError, ValueError, BrowserSessionReadError):
                     return False
                 if current is None or not current.get("access_token"):

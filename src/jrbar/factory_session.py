@@ -154,7 +154,7 @@ def profiles(args, *, home=None):
     return {"profiles": rows}
 
 
-def _firefox_values(profile_root, origin):
+def _firefox_values(profile_root, origin, fields=FIELDS):
     try:
         database = _owned_path(
             profile_root, ("storage", "default", "https+++" + origin, "ls", "data.sqlite"), file=True
@@ -178,11 +178,11 @@ def _firefox_values(profile_root, origin):
             connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=1)
             try:
                 rows = connection.execute(
-                    "SELECT key, value, compression_type FROM data WHERE key IN (?, ?, ?) LIMIT 4", FIELDS
+                    f"SELECT key, value, compression_type FROM data WHERE key IN ({','.join('?' for _ in fields)}) LIMIT 4", fields
                 ).fetchall()
             finally:
                 connection.close()
-        if len(rows) > 3:
+        if len(rows) > len(fields):
             return {}
         return {key: _decoded(value) for key, value, compression in rows if compression == 0}
     except (OSError, sqlite3.Error):
@@ -219,7 +219,7 @@ def _jwt_organization(access):
     return _jwt_claim(access, "org_id")
 
 
-def read_browser_session(browser, profile, *, home=None):
+def read_browser_session(browser, profile, *, home=None, include_organization=True):
     home = Path.home() if home is None else Path(home)
     chromium = browser in _CHROMIUM_PROFILE_ROOT_BY_BROWSER
     resolve = chromium_profile_directory if chromium else firefox_profile_directory
@@ -230,14 +230,15 @@ def read_browser_session(browser, profile, *, home=None):
         _owned_path(home, ("Library", "Application Support", *Path(_ROOTS[browser]).parts, profile))
     except OSError:
         return None
+    fields = FIELDS if include_organization else FIELDS[:2]
     found = []
     incomplete = False
     for origin in ORIGINS:
         if chromium:
             _owned_path(root, ("Local Storage", "leveldb"))
-            values = read_chromium_local_storage(root, origin="https://" + origin, allowed_keys=FIELDS)
+            values = read_chromium_local_storage(root, origin="https://" + origin, allowed_keys=fields)
         else:
-            values = _firefox_values(root, origin)
+            values = _firefox_values(root, origin, fields)
         refresh, access = values.get(FIELDS[0]), values.get(FIELDS[1])
         if not _text(refresh):
             incomplete |= access is not None
@@ -287,7 +288,7 @@ def background_repair_allowed(session, *, source_instance_id="default"):
     identity = ("factory", source_instance_id, session["browser"], session["profile"])
     return any(
         row.identity == identity and row.background_repair
-        and set(ORIGINS) <= set(row.domains) and set(FIELDS) <= set(row.fields)
+        and set(ORIGINS) <= set(row.domains) and set(FIELDS[:2]) <= set(row.fields)
         for row in load_browser_consents().store.consents
     )
 
@@ -316,7 +317,7 @@ def import_session(args, credentials):
             expected = fingerprint(before.secret)
             generation = _IMPORT_GENERATIONS.get(key.value, 0) + 1
             _IMPORT_GENERATIONS[key.value] = generation
-        value = read_browser_session(browser, profile)
+        value = read_browser_session(browser, profile, include_organization=args.get("allow_refresh", False))
     except BrowserSessionReadError:
         raise CommandError("browser_token_unavailable", "Connect Factory with refresh permission, or add a Factory API key.") from None
     except Exception:
@@ -344,7 +345,7 @@ def import_session(args, credentials):
                 browser=browser,
                 profile=profile,
                 domains=ORIGINS,
-                fields=FIELDS,
+                fields=FIELDS if args.get("allow_refresh", False) else FIELDS[:2],
                 background_repair=args.get("background_repair", False),
                 granted_at=time.time(),
                 source_instance_id=key.value[1],
