@@ -37,6 +37,9 @@ struct DockMailCard: View {
                     .foregroundStyle(.secondary)
             case .timeout:
                 Text("Mail is slow to answer. Try opening the card again.").foregroundStyle(.secondary)
+            case .unread(let count):
+                if let count { Text("\(count) unread").fontWeight(.semibold) }
+                Text("Couldn't read the newest messages").foregroundStyle(.secondary)
             case .messages(let reading):
                 messages(reading, stale: false)
             case .stale(let reading):
@@ -77,10 +80,10 @@ struct DockMailCard: View {
                 .foregroundStyle(.secondary)
             }
             if reading.unread == 0 {
-                Text("No unread messages").foregroundStyle(.secondary)
+                Text(stale ? "Last reading had no unread messages" : "No unread messages").foregroundStyle(.secondary)
             } else {
                 if reading.messages.isEmpty {
-                    Text("No unread messages among the newest 40 in Inbox.").foregroundStyle(.secondary)
+                    Text("Couldn't read the newest messages").foregroundStyle(.secondary)
                 }
                 ForEach(reading.messages) { message in
                     DockMailRow(message: message, now: now, actions: actions,

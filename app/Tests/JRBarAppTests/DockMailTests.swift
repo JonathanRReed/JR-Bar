@@ -9,7 +9,7 @@ import Testing
 @Suite("Dock Mail preview", .serialized, .timeLimit(.minutes(2)))
 struct DockMailTests {
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
-    nonisolated static let output = "9\u{1e}synthetic-1@example.invalid\u{1f}Morgan Lee\u{1f}Synthetic review\u{1f}-120\u{1f}true"
+    nonisolated static let output = "9\u{1f}0\u{1e}synthetic-1@example.invalid\u{1f}Morgan Lee\u{1f}Synthetic review\u{1f}-120\u{1f}true"
 
     private func settle(_ preview: DockMailPreview) async {
         await withCheckedContinuation { continuation in
@@ -159,7 +159,7 @@ struct DockMailTests {
 
     @Test("empty, messages, timeout and stale preserve only the last good reading")
     func readingStates() async {
-        let result = OSAllocatedUnfairLock(initialState: Result<String, DockMailError>.success("0"))
+        let result = OSAllocatedUnfairLock(initialState: Result<String, DockMailError>.success("0\u{1f}0"))
         let reader = DockMailReader(isRunning: { true }, permission: { _ in .granted },
             runner: { _, _, _ in result.withLock { $0 } })
         let mail = DockMailPreview(reader: reader)
@@ -295,7 +295,7 @@ struct DockMailTests {
     func parser() throws {
         let name = String(repeating: "名", count: 100) + "\u{0}\n\u{202e}"
         let subject = String(repeating: "مرحبا 世界", count: 80) + "\u{7}\t"
-        let raw = "1\u{1e}synthetic@example.invalid\u{1f}\(name)\u{1f}\(subject)\u{1f}-120\u{1f}true"
+        let raw = "1\u{1f}0\u{1e}synthetic@example.invalid\u{1f}\(name)\u{1f}\(subject)\u{1f}-120\u{1f}true"
         let parsed = try DockMailReader.parse(raw, now: Self.now)
         let message = try #require(parsed.messages.first)
         #expect(message.sender.count == 60 && message.subject.count == 120)
@@ -307,19 +307,150 @@ struct DockMailTests {
         #expect(DockMailReader.clean("a\u{1f}b\u{1e}c\u{0}\u{202e}d", limit: 120) == "abcd")
         let hostile = Self.output.replacingOccurrences(of: "Synthetic review", with: "Subject\u{1f}false")
         #expect(throws: DockMailError.malformed) { try DockMailReader.parse(hostile, now: Self.now) }
-        for output in ["-1", "1\u{1e}bad", "1\u{1e}bad\u{1f}Name\u{1f}Subject\u{1f}nan\u{1f}false", String(repeating: "x", count: 65_537)] {
+        for output in ["-1", "1\u{1f}0\u{1e}bad", "1\u{1f}0\u{1e}bad\u{1f}Name\u{1f}Subject\u{1f}nan\u{1f}false", String(repeating: "x", count: 65_537)] {
             #expect(throws: DockMailError.malformed) { try DockMailReader.parse(output, now: Self.now) }
         }
-        let emptyFields = "1\u{1e}synthetic@example.invalid\u{1f}sender@example.invalid\u{1f}\u{1f}0\u{1f}false"
+        let emptyFields = "1\u{1f}0\u{1e}synthetic@example.invalid\u{1f}sender@example.invalid\u{1f}\u{1f}0\u{1f}false"
         let fallback = try DockMailReader.parse(emptyFields, now: Self.now)
         #expect(fallback.messages.first?.sender == "Unknown sender")
         #expect(fallback.messages.first?.subject == "No subject")
         let rows = (0..<5).map { "id-\($0)\u{1f}Name\u{1f}Subject\u{1f}\(-$0)\u{1f}false" }
-        let many = try DockMailReader.parse((["5"] + rows.reversed()).joined(separator: "\u{1e}"), now: Self.now)
+        let many = try DockMailReader.parse((["5\u{1f}0"] + rows.reversed()).joined(separator: "\u{1e}"), now: Self.now)
         #expect(many.messages.map(\.id) == ["id-0", "id-1", "id-2", "id-3", "id-4"])
-        let duplicate = "2\u{1e}" + Self.output.components(separatedBy: "\u{1e}")[1]
+        let duplicate = "2\u{1f}0\u{1e}" + Self.output.components(separatedBy: "\u{1e}")[1]
             + "\u{1e}" + Self.output.components(separatedBy: "\u{1e}")[1]
         #expect(try DockMailReader.parse(duplicate, now: Self.now).messages.count == 1)
+    }
+
+    @Test("account counts sum without overflow and partial accounts never become all read")
+    func accountCounts() throws {
+        let row = Self.output.components(separatedBy: "\u{1e}")[1]
+        let summed = try DockMailReader.parse("2,13,0,8\u{1f}0\u{1e}" + row, now: Self.now)
+        #expect(summed.unread == 23 && summed.complete)
+        let partial = try DockMailReader.parse("0\u{1f}1", now: Self.now)
+        #expect(partial.unread == 0 && !partial.complete)
+        for header in ["", "0", "1,-1\u{1f}0", "1,\u{1f}0", "0\u{1f}-1", "\(Int.max),1\u{1f}0"] {
+            #expect(throws: DockMailError.malformed) { try DockMailReader.parse(header, now: Self.now) }
+        }
+        #expect(throws: DockMailError.malformed) {
+            try DockMailReader.parse("0\u{1f}0\u{1e}" + row, now: Self.now)
+        }
+    }
+
+    @Test("badge disagreement cannot replace a good cache with zero", arguments: ["23", "1,023"])
+    func badgeMismatch(_ badge: String) async {
+        let result = OSAllocatedUnfairLock(initialState: Result<String, DockMailError>.success(Self.output))
+        let reader = DockMailReader(isRunning: { true }, permission: { _ in .granted },
+            runner: { _, _, _ in result.withLock { $0 } })
+        let mail = DockMailPreview(reader: reader)
+        var state: DockMailPreview.State?
+        var issues: [String] = []
+        mail.onChange = { state = $0 }
+        mail.logIssue = { issues.append($0) }
+        mail.show(badge: badge)
+        await settle(mail)
+        let good = mail.cached
+        result.withLock { $0 = .success("0\u{1f}0") }
+        mail.refresh(force: true)
+        await settle(mail)
+        let expectedCount = badge == "23" ? 23 : 1023
+        #expect(state == .unread(expectedCount))
+        #expect(mail.cached == good && mail.cacheIsStale)
+        #expect(issues == ["badge_positive_script_zero"])
+        result.withLock { $0 = .success("0\u{1f}1") }
+        mail.refresh(force: true)
+        await settle(mail)
+        #expect(state == .unread(expectedCount))
+        #expect(mail.cached == good && mail.cacheIsStale)
+        #expect(Array(issues.suffix(2)) == ["account_inbox_unavailable", "badge_positive_script_zero"])
+        result.withLock { $0 = .failure(.timeout) }
+        mail.refresh(force: true)
+        await settle(mail)
+        #expect(state == good.map { .stale($0) })
+        mail.hide()
+    }
+
+    @Test("cold failures and cached zero respect a positive badge")
+    func coldBadgeMismatch() async {
+        for response in [Result<String, DockMailError>.success("0\u{1f}0"), .failure(.timeout), .success("0\u{1f}1")] {
+            let mail = preview(result: response)
+            let zero = DockMailReading(unread: 0, messages: [], date: Self.now)
+            mail.restore(zero, badge: "9", stale: true)
+            var states: [DockMailPreview.State] = []
+            mail.onChange = { states.append($0) }
+            mail.show(badge: "9")
+            await settle(mail)
+            #expect(states == [.unread(9), .unread(9)])
+            #expect(mail.cached == zero && mail.cacheIsStale)
+            mail.hide()
+        }
+        let mail = preview(result: .success("0\u{1f}0"))
+        var state: DockMailPreview.State?
+        mail.onChange = { state = $0 }
+        mail.show(badge: "9")
+        await settle(mail)
+        #expect(state == .unread(9) && mail.cached == nil)
+        mail.hide()
+    }
+
+    @Test("failed accounts retain the last good reading, including on timeout")
+    func failedAccounts() async {
+        let result = OSAllocatedUnfairLock(initialState: Result<String, DockMailError>.success(Self.output))
+        let reader = DockMailReader(isRunning: { true }, permission: { _ in .granted },
+            runner: { _, _, _ in result.withLock { $0 } })
+        let mail = DockMailPreview(reader: reader)
+        var state: DockMailPreview.State?
+        mail.onChange = { state = $0 }
+        mail.show(badge: nil)
+        await settle(mail)
+        let good = mail.cached
+        for response in [Result<String, DockMailError>.success("0\u{1f}1"), .failure(.timeout), .success("0\u{1f}0\u{1e}truncated")] {
+            result.withLock { $0 = response }
+            mail.refresh(force: true)
+            await settle(mail)
+            #expect(state == good.map { .stale($0) })
+            #expect(mail.cached == good && mail.cacheIsStale)
+        }
+        mail.hide()
+        let cold = preview(result: .success("0\u{1f}1"))
+        cold.onChange = { state = $0 }
+        cold.show(badge: nil)
+        await settle(cold)
+        #expect(state == .unread(nil) && cold.cached == nil)
+        cold.hide()
+    }
+
+    @Test("production selection merges all unread dates before taking five, without Mail")
+    func syntheticNewestFive() async {
+        let helper = DockMailReader.script.components(separatedBy: "if not application id")[0]
+        let script = helper + """
+        \non run argv
+            set best to my newestFive({}, {1, 2, 3, 4, 5, 6}, {10, 90, 20, 80, 30, 70})
+            set best to my newestFive(best, {7, 8, 9}, {100, 60, 110})
+            set selected to {}
+            repeat with candidate in best
+                set end of selected to item 1 of candidate
+            end repeat
+            return my joined(selected, ",")
+        end run
+        """
+        let result = await Task.detached { DockMailReader.run(script, [], DockMailCancellation()) }.value
+        #expect(result == .success("9,7,2,4,6\n"))
+    }
+
+    @Test("Mail scripts filter each account, never walk characters or the first forty messages")
+    func scriptContract() {
+        #expect(DockMailReader.script.contains("date received of messages of accountInbox whose read status is false"))
+        #expect(DockMailReader.script.contains("set best to my newestFive"))
+        #expect(DockMailReader.script.contains("text items of resultText"))
+        for script in [DockMailReader.script, DockMailReader.replyScript] {
+            #expect(script.contains("accounts whose enabled is true"))
+            #expect(script.contains("mailbox \"INBOX\" of a"))
+            #expect(!script.contains("characters of"))
+            #expect(!script.contains("messages of inbox"))
+            #expect(!script.contains("scanCount"))
+        }
+        #expect(DockMailReader.replyScript.contains("whose message id is wantedID"))
     }
 
     @Test("Reply passes the opaque identifier as argv, opens a window, and never sends")
@@ -384,7 +515,7 @@ struct DockMailTests {
     @Test("the production field encoder removes separators before joining, using synthetic text only")
     func scriptFieldEncoder() async {
         let helper = DockMailReader.script.components(separatedBy: "if not application id")[0]
-        let script = helper + "\non run argv\nreturn my safeText(item 1 of argv, 120)\nend run"
+        let script = helper + "\non run argv\nreturn my safeText(item 1 of argv)\nend run"
         let result = await Task.detached {
             DockMailReader.run(script, ["世界\u{1e} مرحبا\u{1f} 👍"], DockMailCancellation())
         }.value

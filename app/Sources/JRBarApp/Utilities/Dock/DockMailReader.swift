@@ -20,6 +20,7 @@ struct DockMailReading: Equatable, Sendable {
     let unread: Int
     let messages: [DockMailMessage]
     let date: Date
+    var complete: Bool = true
 }
 
 enum DockMailError: Error, Equatable { case unavailable, denied, timeout, failed, malformed }
@@ -75,7 +76,19 @@ struct DockMailReader: Sendable {
     static func parse(_ output: String, now: Date) throws -> DockMailReading {
         guard output.utf8.count <= 65_536 else { throw DockMailError.malformed }
         let rows = output.trimmingCharacters(in: .newlines).components(separatedBy: "\u{1e}")
-        guard let first = rows.first, let unread = Int(first), unread >= 0, rows.count <= 6 else {
+        guard let first = rows.first, rows.count <= 6 else { throw DockMailError.malformed }
+        let header = first.components(separatedBy: "\u{1f}")
+        guard header.count == 2, let failures = Int(header[1]), failures >= 0 else {
+            throw DockMailError.malformed
+        }
+        var unread = 0
+        for count in header[0].components(separatedBy: ",") {
+            guard let value = Int(count), value >= 0 else { throw DockMailError.malformed }
+            let sum = unread.addingReportingOverflow(value)
+            guard !sum.overflow else { throw DockMailError.malformed }
+            unread = sum.partialValue
+        }
+        guard unread > 0 || rows.count == 1 else {
             throw DockMailError.malformed
         }
         var messages: [DockMailMessage] = []
@@ -97,7 +110,7 @@ struct DockMailReader: Sendable {
         }
         var seen = Set<String>()
         let newest = messages.sorted { $0.received > $1.received }.filter { seen.insert($0.id).inserted }
-        return DockMailReading(unread: unread, messages: Array(newest.prefix(5)), date: now)
+        return DockMailReading(unread: unread, messages: Array(newest.prefix(5)), date: now, complete: failures == 0)
     }
 
     static func clean(_ text: String, limit: Int) -> String {
@@ -151,48 +164,86 @@ struct DockMailReader: Sendable {
         }
     }
 
-    /// Bounded mailbox walk. No bodies, headers, recipients, attachments or source.
-    /// Mail's ordering and large-inbox speed require an owner-run installed check.
+    /// Read only unread references and dates across enabled accounts. Fetch display
+    /// fields only after selecting the five newest dates, independent of Mail's order.
     static let script = """
-    on safeText(value, cap)
-        set resultText to ""
-        repeat with c in characters of (value as text)
-            set n to id of (c as text)
-            if n > 31 and n is not 127 then set resultText to resultText & c
-            if (count characters of resultText) >= cap then exit repeat
+    on joined(values, separatorText)
+        set oldDelimiters to AppleScript's text item delimiters
+        set AppleScript's text item delimiters to separatorText
+        set resultText to values as text
+        set AppleScript's text item delimiters to oldDelimiters
+        return resultText
+    end joined
+    on safeText(value)
+        set resultText to value as text
+        repeat with separatorText in {ASCII character 30, ASCII character 31}
+            set oldDelimiters to AppleScript's text item delimiters
+            set AppleScript's text item delimiters to contents of separatorText
+            set pieces to text items of resultText
+            set AppleScript's text item delimiters to oldDelimiters
+            set resultText to my joined(pieces, "")
         end repeat
         return resultText
     end safeText
     on safeID(value)
-        set keyText to my safeText(value, 512)
-        if (id of keyText) is not (id of (value as text)) then error number -1700
+        set keyText to value as text
+        if (count keyText) > 512 then error number -1700
+        if (id of keyText) is not (id of (my safeText(keyText))) then error number -1700
         return keyText
     end safeID
+    on newestFive(best, candidates, receivedDates)
+        if (count candidates) is not (count receivedDates) then error number -1700
+        repeat with i from 1 to count candidates
+            set candidate to {item i of candidates, item i of receivedDates}
+            set ordered to {}
+            set inserted to false
+            repeat with previous in best
+                if not inserted and (item 2 of candidate) > (item 2 of previous) then
+                    set end of ordered to candidate
+                    set inserted to true
+                end if
+                set end of ordered to contents of previous
+            end repeat
+            if not inserted then set end of ordered to candidate
+            if (count ordered) > 5 then set ordered to items 1 thru 5 of ordered
+            set best to ordered
+        end repeat
+        return best
+    end newestFive
     if not application id "com.apple.mail" is running then error number -600
     set rowSeparator to ASCII character 30
     set fieldSeparator to ASCII character 31
     set sampledAt to current date
+    set unreadCounts to {}
+    set failures to 0
+    set best to {}
     tell application id "com.apple.mail"
         with timeout of 3 seconds
-            set resultText to (unread count of inbox) as text
-            set messageCount to count messages of inbox
-            set scanCount to 40
-            if messageCount < scanCount then set scanCount to messageCount
-            set foundCount to 0
-            repeat with i from 1 to scanCount
-                set m to message i of inbox
-                if read status of m is false then
-                    set senderName to extract name from (sender of m)
-                    if senderName contains "@" then set senderName to "Unknown sender"
-                    set keyText to my safeID(message id of m)
-                    set nameText to my safeText(senderName, 60)
-                    set subjectText to my safeText(subject of m, 120)
-                    set receivedSeconds to ((date received of m) - sampledAt) as integer
-                    set flagText to (flagged status of m) as text
-                    set resultText to resultText & rowSeparator & keyText & fieldSeparator & nameText & fieldSeparator & subjectText & fieldSeparator & receivedSeconds & fieldSeparator & flagText
-                    set foundCount to foundCount + 1
-                    if foundCount = 5 then exit repeat
-                end if
+            repeat with a in (get accounts whose enabled is true)
+                try
+                    set accountInbox to mailbox "INBOX" of a
+                    set accountUnread to unread count of accountInbox
+                    set candidates to (get messages of accountInbox whose read status is false)
+                    set receivedDates to (get date received of messages of accountInbox whose read status is false)
+                    set best to my newestFive(best, candidates, receivedDates)
+                    set end of unreadCounts to accountUnread
+                on error errorText number errorNumber
+                    if errorNumber is -1712 then error number -1712
+                    set failures to failures + 1
+                end try
+            end repeat
+            if unreadCounts is {} then set unreadCounts to {0}
+            set resultText to (my joined(unreadCounts, ",")) & fieldSeparator & failures
+            repeat with candidate in best
+                set m to item 1 of candidate
+                set senderName to extract name from (sender of m)
+                if senderName contains "@" then set senderName to "Unknown sender"
+                set keyText to my safeID(message id of m)
+                set nameText to my safeText(senderName)
+                set subjectText to my safeText(subject of m)
+                set receivedSeconds to ((date received of m) - sampledAt) as integer
+                set flagText to (flagged status of m) as text
+                set resultText to resultText & rowSeparator & keyText & fieldSeparator & nameText & fieldSeparator & subjectText & fieldSeparator & receivedSeconds & fieldSeparator & flagText
             end repeat
             return resultText
         end timeout
@@ -208,15 +259,20 @@ struct DockMailReader: Sendable {
         set wantedID to item 1 of argv
         tell application id "com.apple.mail"
             with timeout of 3 seconds
-                set scanCount to count messages of inbox
-                if scanCount > 40 then set scanCount to 40
-                repeat with i from 1 to scanCount
-                    set m to message i of inbox
-                    if my sameID(message id of m, wantedID) then
-                        reply m with opening window
-                        activate
-                        return "opened"
-                    end if
+                repeat with a in (get accounts whose enabled is true)
+                    set matches to {}
+                    try
+                        set matches to (get messages of mailbox "INBOX" of a whose message id is wantedID)
+                    on error errorText number errorNumber
+                        if errorNumber is -1712 then error number -1712
+                    end try
+                    repeat with m in matches
+                        if my sameID(message id of m, wantedID) then
+                            reply m with opening window
+                            activate
+                            return "opened"
+                        end if
+                    end repeat
                 end repeat
                 error number -1728
             end timeout

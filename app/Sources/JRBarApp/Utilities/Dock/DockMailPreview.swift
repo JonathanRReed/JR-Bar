@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import os
 
 @MainActor
 final class DockMailPreview {
@@ -7,6 +8,7 @@ final class DockMailPreview {
         case loading, notRunning, noAccess, denied, timeout
         case messages(DockMailReading)
         case stale(DockMailReading)
+        case unread(Int?)
 
         var reading: DockMailReading? {
             switch self {
@@ -22,6 +24,8 @@ final class DockMailPreview {
             case .noAccess: return "Preview is off until you allow it"
             case .denied: return "Automation is turned off"
             case .timeout: return "Mail is slow to answer"
+            case .unread(let count):
+                return count.map { "\($0) unread" } ?? "Mail preview unavailable"
             case .messages(let reading):
                 return reading.unread == 0 ? "All read" : "\(reading.unread) unread in Inbox"
             case .stale(let reading):
@@ -31,6 +35,9 @@ final class DockMailPreview {
         }
     }
 
+    var logIssue: (String) -> Void = { issue in
+        Logger(subsystem: "devin.jrbar", category: "dock-mail").notice("Mail preview: \(issue, privacy: .public)")
+    }
     let reader: DockMailReader
     var clock: () -> Date = { Date() }
     var onChange: (State) -> Void = { _ in }
@@ -103,12 +110,12 @@ final class DockMailPreview {
         if work != nil { dirty = dirty || force; return }
         let now = clock()
         if !force, !cacheIsStale, let cached, now.timeIntervalSince(cached.date) < 30 {
-            onChange(.messages(cached))
+            publish(cached, stale: false)
             return
         }
         if let cached {
             cacheIsStale = true
-            onChange(.stale(cached))
+            publish(cached, stale: true)
         } else { onChange(.loading) }
         let reader = self.reader
         let generation = self.generation
@@ -125,18 +132,50 @@ final class DockMailPreview {
                 }
                 switch result {
                 case .success(let reading):
-                    self.cached = reading
-                    self.cacheIsStale = false
-                    self.onChange(.messages(reading))
+                    if !reading.complete { self.logIssue("account_inbox_unavailable") }
+                    if reading.unread == 0, let count = self.badgeCount {
+                        self.logIssue("badge_positive_script_zero")
+                        self.cacheIsStale = true
+                        self.onChange(.unread(count))
+                    } else if !reading.complete {
+                        self.cacheIsStale = true
+                        if let cached = self.cached { self.publish(cached, stale: true) }
+                        else { self.onChange(.unread(self.badgeCount)) }
+                    } else {
+                        self.cached = reading
+                        self.cacheIsStale = false
+                        self.publish(reading, stale: false)
+                    }
                 case .failure(.unavailable): self.cached = nil; self.onChange(.notRunning)
                 case .failure(.denied): self.cached = nil; self.onChange(.denied)
                 case .failure:
                     self.cacheIsStale = true
-                    self.onChange(self.cached.map { .stale($0) } ?? .timeout)
+                    self.publishFailure()
                 }
                 if self.dirty { self.dirty = false; self.refresh(force: true) }
             }
         }
+    }
+
+    private var badgeCount: Int? {
+        guard let badge else { return nil }
+        let digits = badge.filter { $0.isNumber }
+        // Accept grouping separators, but never reinterpret labels such as "99+".
+        let allowed = CharacterSet.decimalDigits.union(CharacterSet(charactersIn: ",. \u{a0}\u{202f}"))
+        guard badge.unicodeScalars.allSatisfy({ allowed.contains($0) }),
+              let count = Int(digits), count > 0 else { return nil }
+        return count
+    }
+
+    private func publish(_ reading: DockMailReading, stale: Bool) {
+        if reading.unread == 0, let count = badgeCount { onChange(.unread(count)) }
+        else { onChange(stale ? .stale(reading) : .messages(reading)) }
+    }
+
+    private func publishFailure() {
+        if let cached { publish(cached, stale: true) }
+        else if let count = badgeCount { onChange(.unread(count)) }
+        else { onChange(.timeout) }
     }
 
     func requestAccess() async {
@@ -173,7 +212,7 @@ final class DockMailPreview {
                 guard let self, self.visible, self.generation == generation else { return }
                 self.work = nil
                 self.replying = false
-                if case .failure = result { self.onChange(self.cached.map { .stale($0) } ?? .timeout) }
+                if case .failure = result { self.publishFailure() }
                 if self.dirty { self.dirty = false; self.refresh(force: true) }
             }
         }

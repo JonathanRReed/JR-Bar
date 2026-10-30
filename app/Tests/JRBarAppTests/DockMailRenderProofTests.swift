@@ -32,6 +32,8 @@ struct DockMailRenderProofTests {
             ("messages", .messages(good)), ("no-access", .noAccess), ("denied", .denied),
             ("empty", .messages(DockMailReading(unread: 0, messages: [], date: Self.now))),
             ("not-running", .notRunning), ("stale", .stale(Self.reading(stale: true))),
+            ("badge-mismatch", .unread(23)), ("account-unavailable", .unread(nil)),
+            ("missing-messages", .messages(DockMailReading(unread: 9, messages: [], date: Self.now))),
             ("loading", .loading), ("timeout", .timeout),
             ("stale-empty", .stale(DockMailReading(unread: 0, messages: [], date: Self.now.addingTimeInterval(-360)))),
         ]
