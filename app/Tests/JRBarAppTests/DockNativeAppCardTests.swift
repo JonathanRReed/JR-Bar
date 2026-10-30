@@ -158,6 +158,7 @@ struct DockNativeAppCardTests {
     @Test("a synchronous store signal waits for the write and coalesces its refresh")
     func notificationDuringWrite() async {
         let store = SyntheticShelfEventStore()
+        defer { store.onComplete = nil }
         let model = reminders(store)
         let entry = ShelfRemindersModel.Entry(id: "one", title: "Synthetic reminder", due: Self.now)
         model.start()
