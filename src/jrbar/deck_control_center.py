@@ -48,13 +48,15 @@ def refresh_deck_board(target, *, statuses=None):
         else:
             statuses = tuple(getattr(getattr(target, "last_snapshot", None), "statuses", ()))
     from .deck_session_board import session_identity
-    from .navigation_policy import NavigationResolutionKind, resolve_navigation
-    candidates = getattr(target, "navigation_candidates_by_work_key", {})
+    from .navigation_policy import NavigationResolutionKind
+    from .session_navigation import controller_t3_targets_by_work, resolve_open_navigation
+
+    targets_by_work = controller_t3_targets_by_work(target)
     navigable = set()
     for status in statuses[:520]:
         if getattr(status, "work_key", None) is None:
             continue
-        resolution = resolve_navigation(status.work_key, "open:primary", candidates.get(status.work_key, ()))
+        resolution = resolve_open_navigation(target, status.work_key, targets_by_work=targets_by_work)
         if resolution.kind is NavigationResolutionKind.READY:
             navigable.add(session_identity(status))
     board.update(statuses, navigation_keys=navigable)

@@ -464,6 +464,7 @@ def activate_navigation_resolution(
     *,
     open_url: Callable[[str], None],
     open_terminal_command: Callable[[str], None],
+    open_application: Callable[[str], None] | None = None,
 ) -> bool:
     """Activate only a ready resolution whose target still passes its allowlist."""
     if not (
@@ -478,6 +479,11 @@ def activate_navigation_resolution(
         )
     ):
         return False
+    if resolution.target_kind == "app":
+        if open_application is None:
+            return False
+        open_application(resolution.target_value)
+        return True
     if resolution.target_kind == "url":
         open_url(resolution.target_value)
         return True

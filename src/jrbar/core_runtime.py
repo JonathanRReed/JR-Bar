@@ -630,6 +630,28 @@ def _find_status(self, session: object):
     raise CommandError("not_found", "no such session")
 
 
+def _find_open_status(self, session: object):
+    try:
+        return _find_status(self, session)
+    except CommandError as error:
+        if error.code != "not_found":
+            raise
+        from .models import AgentStatus
+
+        lookup = getattr(getattr(self, "monitor", None), "cached_open_status", None)
+        cached = lookup(session) if callable(lookup) else None
+        if isinstance(cached, AgentStatus) and cached.t3_thread_id:
+            return cached
+        service = getattr(self, "_t3_snapshot_service", None)
+        if service is not None:
+            observation = service.observation()
+            if observation.available and observation.reason is None:
+                for status in observation.statuses:
+                    if status.agent_id == session and status.t3_thread_id:
+                        return status
+        raise
+
+
 def _command_journal(self):
     """The durable command ledger, lazily loaded from the state dir.
 
@@ -706,15 +728,17 @@ def _cmd_open_session(self, args):
     main-thread state and hop over through ``_core_on_main``.
     """
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
-    status = on_main(lambda: _find_status(self, args.get("session")))
+    status = on_main(lambda: _find_open_status(self, args.get("session")))
     # A live CLI session already has a window: raise that tab, pane or
     # Ghostty terminal instead of starting a second ``--resume`` process;
     # an ended one resumes in the terminal it ran in (answer_surfaces.py).
     # ``None`` is a remote or app-hosted session, an explicit app/VS Code
     # choice, or no record of its terminal: the ladder below.
     from .answer_surfaces import open_session_surface
+    from .session_navigation import controller_t3_target
 
-    raised = open_session_surface(self, status, args, on_main=on_main)
+    hosted = on_main(lambda: controller_t3_target(self, status))
+    raised = None if hosted is not None else open_session_surface(self, status, args, on_main=on_main)
     if raised is not None:
         return raised
 
@@ -725,7 +749,8 @@ def _cmd_open_session(self, args):
         extras = self._core_extras_for(status)
         return {
             "session": status.agent_id,
-            "activated": (extras.terminal or {}).get("app") if extras is not None else None,
+            **({"open_target": hosted.to_dict()} if hosted else {}),
+            "activated": "T3 Code" if hosted else (extras.terminal or {}).get("app") if extras is not None else None,
             "origin": extras.origin if extras is not None else None,
         }
 
@@ -4502,7 +4527,7 @@ def _cmd_resume_session(self, args):
 
     def listed():
         try:
-            return _find_status(self, session)
+            return _find_open_status(self, session)
         except CommandError:
             return None
 

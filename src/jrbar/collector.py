@@ -650,7 +650,7 @@ def _snapshot_from_operator_state(
                     )
                 )
             ),
-            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links or status.session_title),
+            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links or status.session_title or status.t3_thread_id),
         )
     )
     merged = _reconcile_delegating_parents(merged, collected_at)
@@ -1872,7 +1872,11 @@ class LiveAgentMonitor(LiveSessionMemory):
                 len(self._external_statuses_by_source) >= MAX_EXTERNAL_STATUS_SOURCES
             ):
                 raise ValueError("too many external status sources")
-            previous_count = len(self._external_statuses_by_source.get(source_id, ()))
+            previous = self._external_statuses_by_source.get(source_id, ())
+            if source_id == "t3code" and not normalized:
+                normalized = tuple(replace(status, event_name="LineageObserved", stale=True)
+                                   for status in previous if status.t3_thread_id)
+            previous_count = len(previous)
             current_total = sum(
                 len(rows) for rows in self._external_statuses_by_source.values()
             )
@@ -1881,13 +1885,18 @@ class LiveAgentMonitor(LiveSessionMemory):
                 > MAX_EXTERNAL_STATUSES_TOTAL
             ):
                 raise ValueError("too many external statuses")
-            previous = self._external_statuses_by_source.get(source_id, ())
             if normalized:
                 self._external_statuses_by_source[source_id] = normalized
             else:
                 self._external_statuses_by_source.pop(source_id, None)
             if normalized != previous:
                 self.revision += 1
+
+    def cached_open_status(self, agent_id: str) -> AgentStatus | None:
+        """A known T3 binding can open its app after the host stops."""
+        with self.lock:
+            return next((status for status in self._external_statuses_by_source.get("t3code", ())
+                         if status.agent_id == agent_id and status.t3_thread_id), None)
 
     def _external_statuses_locked(self) -> tuple[AgentStatus, ...]:
         return tuple(
@@ -1916,9 +1925,10 @@ class LiveAgentMonitor(LiveSessionMemory):
         return (
             *compatibility,
             *(
-                status
+                replace(status, event_name="LineageObserved")
+                if status.stale and status.t3_thread_id and status.agent_id in protected_agent_ids else status
                 for status in external
-                if status.parent_links or not (status.stale and status.agent_id in protected_agent_ids)
+                if status.parent_links or status.t3_thread_id or not (status.stale and status.agent_id in protected_agent_ids)
             ),
         )
 
@@ -3920,6 +3930,7 @@ def _merged_status_candidates(
     merged: dict[str, AgentStatus] = {}
     links_by_id: dict[str, set] = {}
     titles_by_id = {}
+    t3_bindings_by_id = {}
     from .lineage_adapters import resolve_hermes_key, resolve_openclaw_key
 
     statuses = tuple(statuses)
@@ -3936,6 +3947,8 @@ def _merged_status_candidates(
                              parent_links=tuple(replace(link, child=resolver(link.child) or link.child,
                                                         parent=resolver(link.parent)) for link in status.parent_links))
         links_by_id.setdefault(status.agent_id, set()).update(status.parent_links)
+        if status.t3_thread_id:
+            t3_bindings_by_id.setdefault(status.agent_id, set()).add((status.t3_thread_id, status.t3_open_url))
         if status.session_title:
             previous_title = titles_by_id.get(status.agent_id)
             if previous_title is None or (status.origin or "").startswith("T3 Code"):
@@ -3962,9 +3975,12 @@ def _merged_status_candidates(
     for agent_id in sorted(merged):
         status = merged[agent_id]
         titled = titles_by_id.get(agent_id, status)
+        bindings = t3_bindings_by_id.get(agent_id, set())
+        t3_thread, t3_url = next(iter(bindings)) if len(bindings) == 1 else (None, None)
         result.append(replace(status, session_title=titled.session_title, started_at=titled.started_at or status.started_at,
                               project=titled.project or status.project,
                               cwd=status.cwd or titled.cwd,
+                              t3_thread_id=t3_thread, t3_open_url=t3_url,
                               parent_links=tuple(sorted(links_by_id[agent_id],
                                   key=lambda link: (link.harness, link.parent or "", link.observed_at)))))
     # Facts retain their provider title separately so future refreshes never

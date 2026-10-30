@@ -136,7 +136,7 @@ class NavigationResolution:
             raise ValueError("invalid navigation resolution")
         if self.kind is NavigationResolutionKind.READY:
             if not (
-                self.target_kind in {"url", "terminal"}
+                self.target_kind in {"url", "terminal", "app"}
                 and _valid_bounded_text(
                     self.target_value,
                     maximum=MAX_EXECUTABLE_TARGET_LENGTH,
@@ -322,15 +322,19 @@ def navigation_target_allowed(
     """Return whether an executable target is exact, bounded, and allowlisted."""
     if not (
         type(work_key) is WorkKey
-        and target_kind in {"url", "terminal"}
+        and target_kind in {"url", "terminal", "app"}
         and _valid_bounded_text(
             target_value,
             maximum=MAX_EXECUTABLE_TARGET_LENGTH,
         )
     ):
         return False
+    from .session_navigation import T3_BUNDLE_ID, valid_t3_url
+
+    if target_kind == "app":
+        return target_value == T3_BUNDLE_ID
     if target_kind == "url":
-        return _valid_url_target(work_key, target_value)
+        return valid_t3_url(target_value) or _valid_url_target(work_key, target_value)
     return _valid_terminal_target(work_key, target_value)
 
 

@@ -1037,3 +1037,13 @@ browser. The import stays local; enabled, consented usage is also required
 before exchange. Rotations are stored only in JR-Bar Keychain. Existing
 imports never gain renewal permission automatically. The API key remains a
 fallback. This supersedes the API-key-only guidance above.
+
+### T3 Code thread links, 2026-10-29
+
+Read the installed T3 Code Nightly bundle at commit `dc84b0962efa`,
+version `0.1.4-nightly.20261027.3783`, MIT, T3 Tools Inc.
+Its `apps/desktop/dist-electron/main.cjs` contains the bundled
+`packages/shared/src/promptLinks.ts`, `DesktopClerk.ts` and `DesktopWebLinks.ts`.
+These establish the environment/thread URL shape, registration before app
+readiness, and queued delivery to the renderer. JR-Bar constructs that URL
+from its own read-only thread binding. No upstream code was copied.
