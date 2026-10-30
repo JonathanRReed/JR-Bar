@@ -19,9 +19,9 @@ extension EffectStudioStore {
                          "Off after": "idle_auto_off_after_minutes"]
             target = (.colours, paths[entry.title] ?? "idle_dim_enabled")
         case "Auto-dim":
-            let paths = ["Between": "auto_dim.schedule.start_minutes", "Dim to": "auto_dim.schedule.fraction",
-                         "Never below": settings.values.string("auto_dim.mode") == "ambient"
-                            ? "auto_dim.ambient.min_fraction" : "auto_dim.display.min_fraction",
+            let paths = ["Between": "auto_dim.schedule.start_minutes", "Scheduled brightness": "auto_dim.schedule.fraction",
+                         "Display brightness floor": "auto_dim.display.min_fraction",
+                         "Room brightness floor": "auto_dim.ambient.min_fraction",
                          "Dark below": "auto_dim.ambient.lux_floor", "Bright above": "auto_dim.ambient.lux_ceiling",
                          "Marks from room": "studio.roomMarks", "Learned from you": "auto_dim.ambient.min_fraction",
                          "Right now": "auto_dim.mode"]

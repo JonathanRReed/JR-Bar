@@ -33,15 +33,13 @@ struct SettingsFeatureRow: View {
                 HStack(spacing: JRBarTokens.Space.md) {
                     VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                         HStack(spacing: JRBarTokens.Space.sm) {
-                            Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
+                            Text(toy.name)
                                 .lineLimit(1).layoutPriority(1)
                             if toy.status.showsChip && (store.isLive || toy.status.text != MonitorWords.label) {
                                 Text(toy.status.text).foregroundStyle(Self.chipTint(toy.status)).jrbarType(.caption)
                                     .lineLimit(1).help(toy.status.text)
                             }
                         }
-                        Text(toy.blurb).foregroundStyle(.secondary).jrbarType(.caption)
-                            .lineLimit(1).help(toy.blurb)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
@@ -49,8 +47,6 @@ struct SettingsFeatureRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
-                .labelsHidden().toggleStyle(.switch)
         }
         .settingsRowInsets()
     }

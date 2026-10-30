@@ -140,9 +140,7 @@ struct NotchControlsView: View {
             sensorRows
         case .alcove:
             if let settings = toy.store?.settings {
-                SettingToggle(settings, "Follow Alcove's capsule",
-                              subtitle: "The Screen Bar matches the capsule's width while Alcove draws the notch. It never runs while JR-Bar draws it.",
-                              path: "screen_bar_follow_alcove", default: true)
+                SettingsNavigationRow(SettingsHome.followAlcove.linkTitle) { settings.revealHome(.followAlcove) }
             }
             LabeledContent {
                 Text(toy.capsuleFact)

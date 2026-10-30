@@ -161,6 +161,7 @@ enum SettingsCatalogueHomes {
     ]
 
     static func normalized(_ path: String) -> String {
+        if path.hasPrefix("focus_dim_rules[") { return "focus_dim_rules" }
         guard path.hasPrefix("devices.") else { return path }
         let parts = path.split(separator: ".")
         guard parts.count == 3, Int(parts[1]) != nil else { return path }

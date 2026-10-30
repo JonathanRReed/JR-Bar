@@ -12,6 +12,9 @@ enum SettingsHome: String, CaseIterable, Sendable {
     case meters
     /// The brightness cap over every light.
     case brightness
+    case localTools
+    case keepAwakeDisplay
+    case followAlcove
 
     /// The chapter the control lives in.
     var chapter: SettingsStore.Chapter {
@@ -19,6 +22,9 @@ enum SettingsHome: String, CaseIterable, Sendable {
         case .hotkeys: return .shortcuts
         case .meters: return .agents
         case .brightness: return .devices
+        case .localTools: return .remote
+        case .keepAwakeDisplay: return .utilities
+        case .followAlcove: return .devices
         }
     }
 
@@ -31,6 +37,9 @@ enum SettingsHome: String, CaseIterable, Sendable {
         case .hotkeys: return "Show the panel"
         case .meters: return "Menu bar"
         case .brightness: return "Maximum brightness"
+        case .localTools: return "Share status with local tools"
+        case .keepAwakeDisplay: return "Keep the display on"
+        case .followAlcove: return "Follow Alcove"
         }
     }
 
@@ -40,6 +49,9 @@ enum SettingsHome: String, CaseIterable, Sendable {
         case .hotkeys: return "Hotkeys are on Shortcuts."
         case .meters: return "Choose providers on Providers."
         case .brightness: return "Maximum brightness is on Devices."
+        case .localTools: return "Local status sharing is on Remote."
+        case .keepAwakeDisplay: return "Display sleep is on Keep Awake."
+        case .followAlcove: return "Capsule following is on Devices."
         }
     }
 
@@ -49,6 +61,9 @@ enum SettingsHome: String, CaseIterable, Sendable {
         case .hotkeys: return "Open Shortcuts"
         case .meters: return "Open Providers"
         case .brightness: return "Open Devices"
+        case .localTools: return "Local status sharing on Remote"
+        case .keepAwakeDisplay: return "Display sleep in Keep Awake"
+        case .followAlcove: return "Follow Alcove on Devices"
         }
     }
 

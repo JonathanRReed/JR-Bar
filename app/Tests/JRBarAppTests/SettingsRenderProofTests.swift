@@ -1011,7 +1011,9 @@ extension SettingsRenderProofTests {
         fixture.core.apply(.settings(CoreSettings(generation: 2, schema: CoreProtocol.knownSettingsSchema, document: customShape.root)))
         var homes: [String: Set<String>] = [:]
         let renderedOwners = expected.merging(["calibration_profiles": "studio.profiles"]) { current, _ in current }
-        let routes = Set(expected.values.filter { !$0.hasPrefix("studio.") })
+        let catalogueRoutes = Set(expected.values.filter { !$0.hasPrefix("studio.") })
+        var routes = catalogueRoutes.union(SettingsStore.Page.allCases.map(\.rawValue))
+        routes.formUnion(cardIDs(fixture).filter { $0 != "notch" }.map { "utilities/" + $0 })
         for route in routes.sorted() {
             let parts = route.split(separator: "/").map(String.init)
             fixture.settings.page = try #require(SettingsStore.Page(rawValue: parts[0]))
@@ -1025,7 +1027,7 @@ extension SettingsRenderProofTests {
             } else {
                 paths = try await controlPaths(SettingsPageContainer(store: fixture.settings, page: fixture.settings.page))
             }
-            #expect(!paths.isEmpty, "No controls rendered for \(route)")
+            if catalogueRoutes.contains(route) { #expect(!paths.isEmpty, "No controls rendered for \(route)") }
             if route == "devices" {
                 #expect(!paths.contains(ScreenBarController.stillOnCameraDefaultsKey))
             }
@@ -1087,7 +1089,9 @@ extension SettingsRenderProofTests {
 
     private static func controlPaths<V: View>(_ view: V) async throws -> Set<String> {
         var rendered: Set<String> = []
+        var occurrences: [String] = []
         let root = view.onPreferenceChange(SettingsControlPaths.self) { rendered.formUnion($0) }
+            .onPreferenceChange(SettingsControlOccurrences.self) { occurrences = $0 }
             .environment(\.ledPreviewsHeld, true).environment(\.renderSnapshot, true)
         let host = NSHostingView(rootView: root)
         let size = NSSize(width: 720, height: 10000)
@@ -1103,6 +1107,8 @@ extension SettingsRenderProofTests {
             CATransaction.flush()
             await drainMainQueue()
         }
+        let counts = Dictionary(grouping: occurrences, by: { $0 }).mapValues(\.count)
+        #expect(counts.values.allSatisfy { $0 == 1 }, "Repeated rendered bindings: \(counts.filter { $0.value > 1 })")
         return rendered
     }
 }

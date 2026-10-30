@@ -162,7 +162,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public static let displaySleepHelp = "Prevents idle display sleep. Manual locking and system security policies still apply."
     /// Under a "keep the display on" switch: what off means, since off is
     /// the default.
-    public static let displayChoiceHelp = "Off, the Mac stays awake and the display sleeps as usual; with the lid closed the screen goes off. On also prevents idle display sleep, except with the lid closed and no external display."
+    public static let displayChoiceHelp = "Applies to every JR-Bar hold. Off lets the display sleep. A closed lid without an external display always lets it sleep."
     public static let agentSleepHelp = "Prevents idle system sleep while agents run. Power and thermal safeguards can pause the hold."
     public static let manualSessionHelp = "Turning this off ends only your manual session. Automatic agent holds and other apps may still keep the Mac awake."
 

@@ -87,9 +87,19 @@ final class SystemTogglesStore {
         /// The five-minute heads-up before a timed session ends: one
         /// scheduled event, re-planned only when the hold moves.
         @ObservationIgnored let headsUp: KeepAwakeHeadsUpScheduler
-        /// "Awake" holds the display on too (no screen saver, no lock)
-        /// rather than only the Mac. App-local, remembered.
+        /// The shared display preference, cached for offline assertions.
         var awakeKeepsDisplay: Bool
+        var displayChoiceError: String?
+        @ObservationIgnored var writeDisplayChoice: (@MainActor (Bool) async -> Bool)?
+        @ObservationIgnored var readDisplayChoice: (@MainActor () -> Bool?)?
+        @ObservationIgnored private(set) var displayChoiceTask: Task<Void, Never>?
+        @ObservationIgnored private var displayChoiceRevision = 0
+        struct DisplayChoiceReceipt: Sendable {
+            let connection: UInt64
+            let generation: Int
+            let value: Bool
+        }
+        @ObservationIgnored private var displayReceipt: DisplayChoiceReceipt?
         @ObservationIgnored var awakeTimer: Task<Void, Never>?
         /// Mount paths the daemon lists as connected LED strips — Eject
         /// leaves them. Wired by the delegate to the core's devices.
@@ -260,10 +270,12 @@ final class SystemTogglesStore {
                 return
             }
             let request: CoreAwakeRequest?
+            // The daemon preference controls app leases. A copied display
+            // flag would outlive a later preference change.
             switch seconds {
             case 0?: request = nil
-            case let seconds?: request = CoreAwakeRequest(.seconds(Double(seconds)), display: awakeKeepsDisplay)
-            case nil: request = CoreAwakeRequest(.indefinite, display: awakeKeepsDisplay)
+            case let seconds?: request = CoreAwakeRequest(.seconds(Double(seconds)), display: false)
+            case nil: request = CoreAwakeRequest(.indefinite, display: false)
             }
             lease(request) { [weak self] in self?.holdLocally(seconds: seconds) }
         }
@@ -280,7 +292,7 @@ final class SystemTogglesStore {
                 syncAwakeChip()
                 return
             }
-            let request = CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: awakeKeepsDisplay)
+            let request = CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: false)
             if handingOver {
                 handoverRevision += 1
                 handoverRequest = request
@@ -351,6 +363,71 @@ final class SystemTogglesStore {
         /// daemon's lease re-sent in the same shape, or the app's own
         /// assertion re-made.
         func setAwakeKeepsDisplay(_ on: Bool) {
+            applyAwakeKeepsDisplay(on)
+            guard awakeKeepsDisplay == on else { return }
+            defaults.set(on, forKey: SystemTogglesStore.awakeDisplayPendingKey)
+            saveDisplayChoice(on)
+        }
+
+        /// Merge the former manual choice once. After that, the daemon
+        /// owns the value; the app keeps only an offline cache and any
+        /// explicit choice waiting to save.
+        func receiveDisplayChoice(_ on: Bool) {
+            guard displayChoiceTask == nil else { return }
+            let pending = defaults.object(forKey: SystemTogglesStore.awakeDisplayPendingKey) as? Bool
+            let migrated = defaults.bool(forKey: SystemTogglesStore.awakeDisplayUnifiedKey)
+            let wanted = pending ?? (migrated ? on : awakeKeepsDisplay || on)
+            if wanted == on {
+                if !migrated { defaults.set(true, forKey: SystemTogglesStore.awakeDisplayUnifiedKey) }
+                if pending != nil { defaults.removeObject(forKey: SystemTogglesStore.awakeDisplayPendingKey) }
+                if displayChoiceError != nil { displayChoiceError = nil }
+                applyAwakeKeepsDisplay(on)
+                if daemonLive, awake.held { handOver() }
+            } else {
+                applyAwakeKeepsDisplay(wanted)
+                defaults.set(wanted, forKey: SystemTogglesStore.awakeDisplayPendingKey)
+                saveDisplayChoice(wanted)
+            }
+        }
+
+        private func saveDisplayChoice(_ on: Bool) {
+            guard daemonLive, let writeDisplayChoice else { return }
+            displayChoiceRevision += 1
+            let revision = displayChoiceRevision
+            let previous = displayChoiceTask
+            displayChoiceError = nil
+            displayChoiceTask = Task { @MainActor [weak self] in
+                await previous?.value
+                guard let self, self.displayChoiceRevision == revision else { return }
+                let saved = await writeDisplayChoice(on)
+                guard self.displayChoiceRevision == revision else { return }
+                self.displayChoiceTask = nil
+                if saved {
+                    self.displayChoiceError = nil
+                    self.defaults.set(true, forKey: SystemTogglesStore.awakeDisplayUnifiedKey)
+                    self.defaults.removeObject(forKey: SystemTogglesStore.awakeDisplayPendingKey)
+                    if let latest = self.readDisplayChoice?() { self.applyAwakeKeepsDisplay(latest) }
+                    if self.daemonLive, self.awake.held { self.handOver() }
+                } else {
+                    self.displayChoiceError = "Couldn't save the display setting."
+                }
+            }
+            if daemonLive, awake.held { handOver() }
+        }
+
+        nonisolated static func latestDisplayChoice(frame: CoreSettingsFrame?, connection: UInt64,
+                                                    stream: String?, receipt: DisplayChoiceReceipt?) -> Bool? {
+            let currentReceipt = receipt?.connection == connection ? receipt : nil
+            guard let frame, frame.connectionRevision == connection, frame.stream == stream else {
+                return currentReceipt?.value
+            }
+            if let currentReceipt, currentReceipt.generation > frame.settings.generation {
+                return currentReceipt.value
+            }
+            return frame.settings.document["keep_display_awake"]?.boolValue
+        }
+
+        private func applyAwakeKeepsDisplay(_ on: Bool) {
             guard on != awakeKeepsDisplay else { return }
             let wasHeld = awake.held
             if wasHeld && !releaseLocalAwake() {
@@ -362,10 +439,14 @@ final class SystemTogglesStore {
             defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
             if handingOver, let request = handoverRequest {
                 handoverRevision += 1
-                handoverRequest = CoreAwakeRequest(request.shape, display: on)
+                handoverRequest = CoreAwakeRequest(request.shape, display: false)
             }
-            if !handingOver, daemonLive, sendLease != nil, !wasHeld, let hold = daemonHold, hold.isManual, let current = hold.lease {
-                lease(CoreAwakeRequest(Self.sameShape(current), display: on), fallback: nil)
+            if !handingOver, daemonLive, sendLease != nil, !wasHeld,
+               let hold = daemonHold, hold.isManual, let current = hold.lease,
+               current.display == true, !current.waitsOnProcess,
+               ["app", "heads_up", "retry"].contains(current.source ?? "app") {
+                let source = current.source ?? "app"
+                lease(CoreAwakeRequest(Self.sameShape(current), display: false, source: source), fallback: nil)
                 return
             }
             guard wasHeld && awakeRequested else {
@@ -384,7 +465,7 @@ final class SystemTogglesStore {
             }
             if handingOver, let pendingShape {
                 handoverRevision += 1
-                handoverRequest = CoreAwakeRequest(pendingShape, display: on)
+                handoverRequest = CoreAwakeRequest(pendingShape, display: false)
             }
             syncAwakeChip()
         }
@@ -417,7 +498,7 @@ final class SystemTogglesStore {
             // new end from it, so the session ends where the notice said.
             let seconds = max(60, Int(newEnd.timeIntervalSinceNow.rounded()))
             if !handingOver, daemonLive, sendLease != nil, !leaseUnsupported, !awake.held {
-                let display = daemonHold?.lease?.display ?? awakeKeepsDisplay
+                let display = daemonHold?.lease?.display ?? false
                 lease(CoreAwakeRequest(.until(newEnd.timeIntervalSince1970), display: display, source: "heads_up"),
                       fallback: { [weak self] in self?.holdLocally(seconds: seconds) })
                 return
@@ -439,7 +520,7 @@ final class SystemTogglesStore {
         func retryAwake() {
             guard canRetryAwake else { return }
             if awakeReading.holdFailed, let current = daemonHold?.lease {
-                lease(CoreAwakeRequest(Self.sameShape(current), display: current.display ?? awakeKeepsDisplay,
+                lease(CoreAwakeRequest(Self.sameShape(current), display: current.display ?? false,
                                        source: "retry"), fallback: nil)
                 return
             }
@@ -454,6 +535,22 @@ final class SystemTogglesStore {
         /// `hold_awake`/`release_awake`, and `state.power.hold` comes back
         /// as the chip's truth on every change.
         func attachLease(to core: CoreModel) {
+            displayReceipt = nil
+            readDisplayChoice = { [weak self, weak core] in
+                guard let self, let core, core.isLive else { return nil }
+                return Self.latestDisplayChoice(frame: core.settingsFrame, connection: core.settingsConnectionRevision,
+                                                stream: core.hello?.stream, receipt: self.displayReceipt)
+            }
+            writeDisplayChoice = { [weak self, weak core] on in
+                guard let self, let core, core.isLive else { return false }
+                let connection = core.settingsConnectionRevision
+                guard let reply = try? await core.setSetting("keep_display_awake", value: .bool(on)), reply.ok,
+                      let generation = reply.result?["generation"]?.intValue,
+                      core.isLive, core.settingsConnectionRevision == connection else { return false }
+                if let echoed = reply.result?["value"], echoed.boolValue != on { return false }
+                self.displayReceipt = DisplayChoiceReceipt(connection: connection, generation: generation, value: on)
+                return true
+            }
             sendLease = { [weak core] request in
                 guard let core else { return .unavailable }
                 do {
@@ -469,6 +566,7 @@ final class SystemTogglesStore {
                 }
             }
             observeLease(core)
+            observeDisplayChoice(core)
         }
 
         private func observeLease(_ core: CoreModel) {
@@ -479,9 +577,26 @@ final class SystemTogglesStore {
                 _ = core.power?.hold
                 _ = core.hello
             } onChange: { [weak self, weak core] in
-                Task { @MainActor [weak self, weak core] in
+                _ = Task { @MainActor [weak self, weak core] in
                     guard let self, let core else { return }
                     self.observeLease(core)
+                }
+            }
+        }
+
+        private func observeDisplayChoice(_ core: CoreModel) {
+            if core.isLive, let on = readDisplayChoice?() {
+                receiveDisplayChoice(on)
+            }
+            withObservationTracking {
+                _ = core.isLive
+                _ = core.settingsFrame
+                _ = core.settingsConnectionRevision
+                _ = core.hello
+            } onChange: { [weak self, weak core] in
+                _ = Task { @MainActor [weak self, weak core] in
+                    guard let self, let core else { return }
+                    self.observeDisplayChoice(core)
                 }
             }
         }
@@ -533,17 +648,21 @@ final class SystemTogglesStore {
         /// assertion simply lets go. A daemon that cannot take a lease
         /// is not asked again on every frame; the assertion stays.
         private func handOver() {
-            guard !handingOver, !leaseUnsupported, let sendLease else { return }
+            guard daemonLive, !handingOver, !leaseUnsupported, let sendLease else { return }
+            if let readDisplayChoice {
+                guard let display = readDisplayChoice() else { return }
+                guard display == awakeKeepsDisplay || displayChoiceTask != nil else { return }
+            }
             guard awakeRequested else {
                 setAwake(false)
                 return
             }
-            if daemonHold?.isManual == true {
+            if daemonHold?.isManual == true, displayChoiceTask == nil {
                 setAwake(false)
                 return
             }
             let shape: CoreAwakeRequest.Shape = awakeUntil.map { .until($0.timeIntervalSince1970) } ?? .indefinite
-            let request = CoreAwakeRequest(shape, display: awakeKeepsDisplay)
+            let request = CoreAwakeRequest(shape, display: false)
             handingOver = true
             handoverRequest = request
             handoverTask = Task { [weak self] in
@@ -553,8 +672,18 @@ final class SystemTogglesStore {
                     self.handoverTask = nil
                     self.syncAwakeChip()
                 }
+                var sentRequest = false
                 while true {
+                    while let saving = self.displayChoiceTask { await saving.value }
+                    guard self.daemonLive else { return }
+                    if !sentRequest, self.awakeRequested, self.daemonHold?.isManual == true,
+                       self.handoverRequest == request {
+                        self.handingOver = false
+                        self.setAwake(false)
+                        return
+                    }
                     let revision = self.handoverRevision
+                    sentRequest = true
                     let answer = await sendLease(self.handoverRequest)
                     if revision != self.handoverRevision {
                         guard self.daemonLive else { return }
@@ -582,7 +711,7 @@ final class SystemTogglesStore {
             guard handingOver else { return }
             handoverRevision += 1
             let shape: CoreAwakeRequest.Shape = awakeUntil.map { .until($0.timeIntervalSince1970) } ?? .indefinite
-            handoverRequest = awakeRequested && awake.held ? CoreAwakeRequest(shape, display: awakeKeepsDisplay) : nil
+            handoverRequest = awakeRequested && awake.held ? CoreAwakeRequest(shape, display: false) : nil
         }
 
         /// The chip's lit state and its countdown clock, from the one
@@ -633,11 +762,11 @@ final class SystemTogglesStore {
 
     var isOn: [SystemToggle: Bool] { state.isOn }
     var applying: Set<SystemToggle> { state.applying }
-    var lastError: String? { state.lastError }
+    var lastError: String? { state.lastError ?? state.displayChoiceError }
     var strip: [SystemToggle] { state.strip }
     /// The line under the strip: a refusal first, else the last verb's
     /// report.
-    var caption: String? { state.lastError ?? state.lastNote }
+    var caption: String? { state.lastError ?? state.displayChoiceError ?? state.lastNote }
     /// When the keep-awake countdown ends — the daemon's lease or the
     /// app's own; nil while it is not a countdown.
     var awakeUntil: Date? {
@@ -670,6 +799,8 @@ final class SystemTogglesStore {
     }
 
     nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
+    nonisolated static let awakeDisplayUnifiedKey = "keepAwakeDisplayUnified"
+    nonisolated static let awakeDisplayPendingKey = "keepAwakeDisplayPending"
     /// 1: a manual session holds the computer, not the display, until the
     /// person turns "Keep the display on" on again.
     nonisolated static let awakeDisplayMigrationKey = "keepAwakeDisplayMigration"
@@ -704,7 +835,7 @@ final class SystemTogglesStore {
         if on != reading.leaseInForce || retryCleanup {
             state.holdAwake(seconds: on ? nil : 0)
         } else if !on, case .agents = reading.state {
-            state.lastNote = "Awake: the agents hold it until they stop — their switch is under Settings › General › Power."
+            state.lastNote = "Awake: the agents hold it until they stop. Change their hold in Settings › Utilities & Toys › Keep Awake."
         }
     }
 

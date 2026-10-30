@@ -10,8 +10,7 @@ import SwiftUI
 /// holds and other applications are independent. It is the same hold as the notch
 /// card's Awake chip and the footer's cup (`SystemTogglesStore`), so a
 /// change anywhere shows everywhere. The agents' own hold is a daemon
-/// setting; its four rows sit here too, and Settings › Alerts & Sounds ›
-/// Power keeps them as well.
+/// setting, alongside the shared display choice and lid safeguards here.
 @MainActor
 @Observable
 final class KeepAwakeUtility: Toy {
@@ -145,11 +144,6 @@ struct KeepAwakeUtilityControls: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             presets
-            Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
-                                 set: { toggles.setAwakeKeepsDisplay($0) })) {
-                SettingLabel(title: "Keep the display on",
-                             subtitle: KeepAwakeReading.displayChoiceHelp)
-            }
             Toggle(isOn: Binding(get: { headsUpOn }, set: { on in
                 headsUpOn = on
                 toggles.state.headsUp.enabled = on
@@ -159,6 +153,11 @@ struct KeepAwakeUtilityControls: View {
                              subtitle: "Five minutes before a timed session lets go, one notice with +30 min. Focus and quiet hours hold it.")
             }
             if let settings {
+                SettingGroup("Display") {
+                    Provided(settings, "keep_display_awake") {
+                        displayChoice
+                    }
+                }
                 agentRows(settings)
             }
             durationRows
@@ -166,6 +165,21 @@ struct KeepAwakeUtilityControls: View {
         }
         .task { await refreshHolders() }
         .onAppear { headsUpOn = toggles.state.headsUp.enabled }
+    }
+
+    private var displayChoice: some View {
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
+            Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
+                                 set: { toggles.setAwakeKeepsDisplay($0) })) {
+                SettingLabel(title: "Keep the display on", subtitle: KeepAwakeReading.displayChoiceHelp)
+            }
+            if let error = toggles.state.displayChoiceError {
+                HStack {
+                    Text(error).foregroundStyle(Tone.failure.color)
+                    Button("Try again") { toggles.setAwakeKeepsDisplay(toggles.awakeKeepsDisplay) }
+                }
+            }
+        }
     }
 
     // MARK: Right now

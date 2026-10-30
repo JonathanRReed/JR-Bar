@@ -1839,6 +1839,17 @@ never costs the rest of the file):
   suspended with reason `low_power` while macOS Low Power Mode is on.
 - `keep_display_awake` (default false since 0.10.1): every hold keeps the
   display awake too, except with the lid shut on no external display.
+  Settings offers this once as "Keep the display on", for automatic
+  agent holds and manual sessions. The app caches this value for its
+  offline assertion. New app leases send `display: false` and follow this
+  preference, so a later change still applies after the app closes.
+  Retry and extension preserve an existing explicit lease override.
+  When upgrading from separate app and daemon display
+  choices, either choice being on keeps the shared choice on; both off
+  stay off. The app marks that migration complete only after the daemon
+  accepts the merged value, or already has it. Later daemon changes
+  replace the cache. An explicit `hold_awake` request can still ask for
+  `display: true` for that lease while the shared preference is off.
   `keep_display_awake_default_version` (written as 1) records the one-time
   move from the old default: a file without it was written while the
   default was on, so it reads `keep_display_awake` as false once, and the

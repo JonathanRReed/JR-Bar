@@ -218,7 +218,8 @@ import Testing
         state.setAwakeKeepsDisplay(true)
         KeepAwakeMenu.startCustomDuration(minutes: 47, on: store)
         await settle(state)
-        #expect(fake.sent == [CoreAwakeRequest(.seconds(2820), display: true)])
+        #expect(fake.sent == [CoreAwakeRequest(.seconds(2820), display: false)])
+        #expect(state.awakeKeepsDisplay)
         #expect(KeepAwakeMenu.durations(defaults) == presets)
     }
 

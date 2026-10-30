@@ -408,12 +408,7 @@ private struct QuickTogglesGroup: View {
                             subtitle: stripSummary) {
                 chipRows
             }
-            Toggle(isOn: Binding(get: { toggles.awakeKeepsDisplay },
-                                 set: { toggles.setAwakeKeepsDisplay($0) })) {
-                SettingLabel(title: "Keep awake holds the display too",
-                             subtitle: "No screen saver and no lock while held — for a talk or a long build log. Off keeps only the Mac awake.")
-            }
-            .settingRowStyle()
+            SettingsNavigationRow(SettingsHome.keepAwakeDisplay.linkTitle) { store.revealHome(.keepAwakeDisplay) }
         }
     }
 
