@@ -341,16 +341,16 @@ import Testing
     }
 
     @Test func aCardThatHugsItsWindowTakesItsShapeWithinBounds() {
-        let small = DockEnhanceMath.cardSize(large: false)
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: nil) == small, "no aspect keeps the 16:10 box")
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: .nan) == small)
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: 1.6) == CGSize(width: 144, height: 90))
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: 300.0 / 520) == CGSize(width: 54, height: 90),
+        let small = DockEnhanceMath.cardSize(size: .small)
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: nil) == small, "no aspect keeps the 16:10 box")
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: .nan) == small)
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: 1.6) == CGSize(width: 144, height: 90))
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: 300.0 / 520) == CGSize(width: 54, height: 90),
                 "a phone-tall window: a narrow card at 0.6 of the height")
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: 4) == CGSize(width: 171, height: 90),
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: 4) == CGSize(width: 171, height: 90),
                 "a ribbon-wide window stops at 1.9 of the height")
-        #expect(DockEnhanceMath.cardSize(large: false, aspect: 1) == CGSize(width: 90, height: 90))
-        #expect(DockEnhanceMath.cardSize(large: true, aspect: 0.75) == CGSize(width: 98, height: 130))
+        #expect(DockEnhanceMath.cardSize(size: .small, aspect: 1) == CGSize(width: 90, height: 90))
+        #expect(DockEnhanceMath.cardSize(size: .large, aspect: 0.75) == CGSize(width: 98, height: 130))
         let framed = DockPreviewWindow(id: 1, title: "", minimized: false, fullScreen: nil,
                                        frame: CGRect(x: 0, y: 0, width: 400, height: 800), thumbnail: nil,
                                        element: nil)
@@ -731,8 +731,8 @@ import Testing
     }
 
     @Test func cardSizesAreSixteenByTen() {
-        let small = DockEnhanceMath.cardSize(large: false)
-        let large = DockEnhanceMath.cardSize(large: true)
+        let small = DockEnhanceMath.cardSize(size: .small)
+        let large = DockEnhanceMath.cardSize(size: .large)
         #expect(small.width / small.height == 1.6)
         #expect(large.width / large.height == 1.6)
         #expect(large.width > small.width)

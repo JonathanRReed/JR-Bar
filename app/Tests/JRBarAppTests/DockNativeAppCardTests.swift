@@ -363,9 +363,9 @@ struct DockMusicHeaderTests {
         #expect(DockPreviewContent.musicSubtitle(.notRunning) == "Not running")
     }
 
-    @Test @MainActor func nativeCardsGetTheirRoomAndNeverShrinkTheStrip() {
-        #expect(DockPreviewView.stripWidth(cards: 144, nativeCard: true) == DockPreviewView.nativeCardWidth)
-        #expect(DockPreviewView.stripWidth(cards: 600, nativeCard: true) == 600)
+    @Test @MainActor func nativeCardsKeepTheirSizeBesideWindowStrips() {
+        #expect(DockPreviewView.stripWidth(cards: 144, nativeCard: true) == DockPreviewSize.medium.contentWidth)
+        #expect(DockPreviewView.stripWidth(cards: 600, nativeCard: true) == DockPreviewSize.medium.contentWidth)
         #expect(DockPreviewView.stripWidth(cards: 144, nativeCard: false) == 144)
     }
 }

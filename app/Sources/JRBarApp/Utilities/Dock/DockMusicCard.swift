@@ -4,6 +4,7 @@ import JRBarUI
 import SwiftUI
 
 struct DockMusicCard: View {
+    @Environment(\.dockPreviewSize) private var previewSize
     let player: DockMusicPreview
     let actions: DockPreviewActions
     @ViewState private var seekDraft: Double?
@@ -15,52 +16,102 @@ struct DockMusicCard: View {
     private var artwork: NSImage? { decoded?.image }
 
     var body: some View {
-        VStack(spacing: 12) {
-            cover
+        DockWidget(title: "Music", symbol: "music.note", open: actions.onMusicOpen, fillsSize: previewSize == .small) {
+            switch previewSize {
+            case .small: smallPlayer
+            case .medium: mediumPlayer
+            case .large: largePlayer
+            }
+        }
+    }
+
+    private var smallPlayer: some View {
+        GeometryReader { geometry in
+            coverImage
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
+                .overlay {
+                    LinearGradient(colors: [.clear, .black.opacity(0.9)], startPoint: .top, endPoint: .bottom)
+                }
+                .overlay(alignment: .bottom) {
+                    HStack(alignment: .bottom, spacing: JRBarTokens.Space.sm) {
+                        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+                            Text(player.media?.title ?? emptyMessage).font(JRBarTokens.TypeStyle.headline.font)
+                                .foregroundStyle(Color.white).lineLimit(2)
+                            if player.stale {
+                                Text("Stale").font(JRBarTokens.TypeStyle.caption.font).foregroundStyle(Color.white)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        playControl
+                            .padding(4).background(.black.opacity(0.6), in: Circle())
+                    }
+                    .padding(JRBarTokens.Space.sm)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+        }
+    }
+
+    private var mediumPlayer: some View {
+        HStack(spacing: JRBarTokens.Space.md) {
+            cover.frame(width: previewSize.artwork, height: previewSize.artwork)
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+                trackText
+                if let media = player.media {
+                    if let duration = media.duration, duration > 0, media.elapsed != nil {
+                        progress(duration: duration)
+                    }
+                    transport
+                }
+                status
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var largePlayer: some View {
+        VStack(spacing: JRBarTokens.Space.xs) {
+            cover.frame(width: previewSize.artwork, height: previewSize.artwork)
+            trackText
             if let media = player.media {
-                VStack(spacing: 3) {
-                    Text(media.title).jrbarType(.title3).lineLimit(2)
-                    if let artist = media.artist, !artist.isEmpty {
-                        Text(artist).jrbarType(.callout).lineLimit(1)
-                    }
-                    if let album = media.album, !album.isEmpty {
-                        Text(album).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-                .multilineTextAlignment(.center)
-                if let duration = media.duration, duration.isFinite, duration > 0, media.elapsed != nil {
-                    progress(duration: duration)
-                }
+                if let duration = media.duration, duration > 0, media.elapsed != nil { progress(duration: duration) }
                 transport
-                if player.fullControls, player.permission == .granted, let level = player.soundVolume {
-                    volume(level: level)
-                }
-            } else {
-                Text(emptyMessage)
-                    .jrbarType(.callout).foregroundStyle(.secondary)
+                if player.canUseFullControls, let level = player.soundVolume { volume(level: level) }
             }
-            if player.stale {
-                HStack {
-                    Text("Stale").jrbarType(.caption).foregroundStyle(.secondary)
-                    Button("Retry") { player.refresh() }.buttonStyle(DockCapsuleButtonStyle())
-                }
+            status
+            if player.state != .notRunning, player.permission != .granted || !player.fullControls {
+                Button(player.permission == .denied ? "Open Settings" : "Allow full controls") { actions.onMusicAllow?() }
+                    .buttonStyle(DockCapsuleButtonStyle()).disabled(player.requestingPermission)
             }
-            if player.fullControls, player.permission == .denied {
-                Text("Full controls denied").jrbarType(.caption).foregroundStyle(.secondary)
-            }
-            footer
         }
-        .padding(14)
         .frame(maxWidth: .infinity)
-        .background {
-            let tint = decoded?.tint ?? .primary
-            LinearGradient(colors: [tint.opacity(0.18), tint.opacity(0.035)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    @ViewBuilder private var status: some View {
+        if player.stale {
+            HStack(spacing: JRBarTokens.Space.sm) {
+                Text("Stale").jrbarType(.caption).foregroundStyle(.secondary)
+                Button("Retry") { player.refresh() }.buttonStyle(DockCapsuleButtonStyle())
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: DockChrome.stillRadius))
-        .overlay(RoundedRectangle(cornerRadius: DockChrome.stillRadius).strokeBorder(DockChrome.hairline, lineWidth: 0.5))
-        // Artwork and playhead changes are immediate, including with Reduce Motion.
-        .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder private var trackText: some View {
+        if let media = player.media {
+            VStack(alignment: previewSize == .large ? .center : .leading, spacing: 0) {
+                Text(media.title).jrbarType(.title3).lineLimit(2)
+                if let artist = media.artist, !artist.isEmpty {
+                    Text(artist).jrbarType(.callout).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if previewSize == .large, let album = media.album, !album.isEmpty {
+                    Text(album).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .multilineTextAlignment(previewSize == .large ? .center : .leading)
+        } else {
+            Text(emptyMessage).jrbarType(.callout).foregroundStyle(.secondary)
+        }
     }
 
     private var emptyMessage: String {
@@ -70,20 +121,20 @@ struct DockMusicCard: View {
     }
 
     private var cover: some View {
+        coverImage
+            .clipShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+            .accessibilityHidden(true)
+    }
+
+    private var coverImage: some View {
         Group {
             if let artwork {
                 Image(nsImage: artwork).resizable().scaledToFill()
             } else {
-                ZStack {
-                    Color.primary.opacity(0.06)
-                    Image(systemName: "music.note").resizable().scaledToFit()
-                        .frame(width: 44, height: 44).foregroundStyle(.secondary)
-                }
+                Rectangle().fill(Color.primary.opacity(0.06))
+                    .overlay { Image(systemName: "music.note").jrbarType(.title).foregroundStyle(.secondary) }
             }
         }
-        .frame(width: 172, height: 172)
-        .clipShape(RoundedRectangle(cornerRadius: DockChrome.stillRadius))
-        .accessibilityHidden(true)
     }
 
     private func progress(duration: Double) -> some View {
@@ -96,45 +147,57 @@ struct DockMusicCard: View {
                     seekDraft = nil
                 }
             })
-            .controlSize(.small)
+            .controlSize(.small).frame(height: 16)
             .disabled(!player.canControl || player.busy)
             .accessibilityLabel("Playback position")
-            HStack {
-                Text(DockEnhanceMath.clock(elapsed))
-                Spacer()
-                Text("-" + DockEnhanceMath.clock(max(0, duration - elapsed)))
+            if previewSize == .large {
+                HStack {
+                    Text(DockEnhanceMath.clock(elapsed))
+                    Spacer()
+                    Text("-" + DockEnhanceMath.clock(max(0, duration - elapsed)))
+                }
+                .jrbarType(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
-            .jrbarType(.caption).monospacedDigit().foregroundStyle(.secondary)
+        }
+    }
+
+    private var playControl: some View {
+        control(player.state == .playing ? "pause.fill" : "play.fill",
+                label: player.state == .playing ? "Pause" : "Play",
+                enabled: player.canControl && !player.busy) {
+            player.send(.transport(.togglePlayPause))
         }
     }
 
     private var transport: some View {
-        HStack(spacing: 14) {
-            control("shuffle", label: player.shuffle ? "Turn shuffle off" : "Turn shuffle on",
-                    selected: player.shuffle, enabled: player.canUseFullControls) {
-                player.send(.shuffle(!player.shuffle))
+        HStack(spacing: JRBarTokens.Space.sm) {
+            if previewSize == .large, player.canUseFullControls {
+                control("shuffle", label: "Shuffle", selected: player.shuffle, enabled: true) {
+                    player.send(.shuffle(!player.shuffle))
+                }
             }
             control("backward.fill", label: "Previous track", enabled: player.canControl && !player.busy) {
                 player.send(.transport(.previousTrack))
             }
-            control(player.state == .playing ? "pause.fill" : "play.fill",
-                    label: player.state == .playing ? "Pause" : "Play", size: 23,
-                    enabled: player.canControl && !player.busy) {
-                player.send(.transport(.togglePlayPause))
-            }
+            playControl
             control("forward.fill", label: "Next track", enabled: player.canControl && !player.busy) {
                 player.send(.transport(.nextTrack))
             }
-            control(player.repeatMode == .one ? "repeat.1" : "repeat",
-                    label: "Repeat: \(player.repeatMode.rawValue)", selected: player.repeatMode != .off,
-                    enabled: player.canUseFullControls) {
-                player.send(.repeatMode(player.repeatMode.next))
+            if previewSize == .large, player.canUseFullControls {
+                control(player.repeatMode == .one ? "repeat.1" : "repeat", label: "Repeat: \(player.repeatMode.rawValue)",
+                        selected: player.repeatMode != .off, enabled: true) {
+                    player.send(.repeatMode(player.repeatMode.next))
+                }
+                if let favorite = player.favorite {
+                    control(favorite ? "heart.fill" : "heart", label: favorite ? "Remove Favorite" : "Love",
+                            selected: favorite, enabled: true) { player.send(.favorite(!favorite)) }
+                }
             }
         }
     }
 
     private func volume(level: Double) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: previewSize.spacing) {
             Image(systemName: "speaker.fill").accessibilityHidden(true)
             Slider(value: Binding(get: { volumeDraft ?? level }, set: { volumeDraft = $0 }),
                    in: 0...100, onEditingChanged: { editing in
@@ -143,7 +206,7 @@ struct DockMusicCard: View {
                     volumeDraft = nil
                 }
             })
-            .controlSize(.small).accessibilityLabel("Music volume")
+            .controlSize(.small).frame(height: 18).accessibilityLabel("Music volume")
             Text("\(Int(volumeDraft ?? level))%")
                 .jrbarType(.caption).monospacedDigit().frame(width: 34, alignment: .trailing)
         }
@@ -151,31 +214,12 @@ struct DockMusicCard: View {
         .disabled(!player.canUseFullControls)
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            if player.state != .notRunning, player.permission != .granted || !player.fullControls {
-                Button(player.permission == .denied ? "Open Settings" : "Allow full controls") { actions.onMusicAllow?() }
-                    .buttonStyle(DockCapsuleButtonStyle())
-                    .disabled(player.requestingPermission)
-                    .help(player.permission == .denied ? "Music access denied. Allow JR-Bar in Privacy & Security > Automation." : "Allow Automation to read and control Music.")
-            }
-            if let favorite = player.favorite, player.fullControls, player.media != nil {
-                control(favorite ? "heart.fill" : "heart", label: favorite ? "Remove Favorite" : "Love",
-                        selected: favorite, enabled: player.canUseFullControls) {
-                    player.send(.favorite(!favorite))
-                }
-            }
-            Spacer(minLength: 0)
-            Button("Open Music") { actions.onMusicOpen?() }.buttonStyle(DockCapsuleButtonStyle())
-        }
-    }
-
-    private func control(_ symbol: String, label: String, size: CGFloat = 14,
+    private func control(_ symbol: String, label: String, size: CGFloat = JRBarTokens.TypeStyle.headline.size,
                          selected: Bool = false, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: size, weight: .semibold))
-                .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                .frame(width: 28, height: 32).contentShape(Rectangle())
+                .foregroundStyle(selected ? Color.accentColor : previewSize == .small ? Color.white : Color.primary)
+                .frame(width: 28, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(!enabled).help(label).accessibilityLabel(label)
     }

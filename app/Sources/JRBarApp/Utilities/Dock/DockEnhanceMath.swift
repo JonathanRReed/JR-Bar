@@ -228,20 +228,13 @@ enum DockEnhanceMath {
         edge == .bottom ? tile.height : tile.width
     }
 
-    /// A window card's thumbnail box — 16:10, two sizes.
-    static func cardSize(large: Bool) -> CGSize {
-        large ? CGSize(width: 208, height: 130) : CGSize(width: 144, height: 90)
-    }
-
-    /// A card that takes its window's shape: the box's height, and a
-    /// width that follows the window's aspect, held between 0.6 and 1.9
-    /// of the height so a phone-tall window or a ribbon-wide one still
-    /// reads as a card. No aspect to go on keeps the 16:10 box.
-    static func cardSize(large: Bool, aspect: CGFloat?) -> CGSize {
-        let box = cardSize(large: large)
+    /// A window thumbnail uses the shared size table, with an optional window aspect.
+    static func cardSize(size: DockPreviewSize, aspect: CGFloat? = nil) -> CGSize {
+        let box = size.thumbnail
         guard let aspect, aspect.isFinite, aspect > 0 else { return box }
-        let h = box.height
-        return CGSize(width: min(max(h * aspect, h * 0.6), h * 1.9).rounded(), height: h)
+        let height = box.height
+        let width = min(max(height * aspect, height * 0.6), height * 1.9).rounded()
+        return CGSize(width: width, height: height)
     }
 
     /// A card's window aspect: its frame's while AX reports one (known
@@ -750,16 +743,7 @@ struct DockPlacement: Equatable {
 
 // MARK: - Spacing (pure, tested)
 
-/// Every inset the preview panel draws, from one spacing scale (the
-/// card's Spacing: Tight 0.6, Standard 1.0, Roomy 1.4). Each token is
-/// its Standard value times the scale, rounded to a point and held at a
-/// floor, so the tightest stop still clears the agent ring (it reaches
-/// 3 pt past a still), keeps a verb disc a fair target, and leaves the
-/// still's shadow room inside the glass. The header's icon and verb
-/// discs are controls, not air, so they stop growing at Standard. The
-/// corners are derived, not scaled: the card plate is the still's
-/// corner plus its pad, and the glass is the plate's corner plus the
-/// panel's inset, so every curve shares one centre.
+/// Geometry selected by DockPreviewSize. Window plates and panel corners stay concentric.
 struct DockPreviewMetrics: Equatable {
     /// Glass edge to content.
     let panelInset: CGFloat
@@ -776,14 +760,11 @@ struct DockPreviewMetrics: Equatable {
     let rowPadV: CGFloat
     /// A compact-list row's padding across.
     let listPadH: CGFloat
-    /// The header's app icon. Spacing is air, not size: the icon
-    /// shrinks toward Tight but never grows past Standard's 30.
+    /// The window-preview header's icon.
     let headerIcon: CGFloat
-    /// The header's verb discs — never under 20, a fair target, and
-    /// never past Standard's 22.
+    /// The header's verb discs, at least 20 points.
     let verbDisc: CGFloat
-    /// The hairline between sections. Below 0.8 the air alone
-    /// separates them.
+    /// Whether window-preview sections use a hairline.
     let showsRule: Bool
 
     /// The card plate's corner: concentric with the still inside it.
@@ -791,27 +772,10 @@ struct DockPreviewMetrics: Equatable {
     /// The glass's corner: concentric with the plates inside it.
     var panelRadius: CGFloat { plateRadius + panelInset }
 
-    static func scaled(_ scale: Double) -> DockPreviewMetrics {
-        let s = CGFloat(scale.isFinite ? scale : 1)
-        func token(_ base: CGFloat, floor: CGFloat) -> CGFloat { max(floor, (base * s).rounded()) }
-        return DockPreviewMetrics(panelInset: token(10, floor: 6),
-                                  sectionSpacing: token(10, floor: 6),
-                                  cardPad: token(6, floor: 4),
-                                  cardSpacing: token(4, floor: 2),
-                                  captionGap: token(6, floor: 3),
-                                  rowPadH: token(10, floor: 8),
-                                  rowPadV: token(8, floor: 6),
-                                  listPadH: token(8, floor: 6),
-                                  headerIcon: min(30, token(30, floor: 24)),
-                                  verbDisc: min(22, token(22, floor: 20)),
-                                  showsRule: s >= 0.8)
-    }
-
-    /// Standard: the look before the spacing knob, glass corner aside.
-    static let standard = scaled(1)
+    static let standard = DockPreviewSize.medium.metrics
 }
 
-/// The ⌥⇥ switcher's air from the same spacing scale as the preview:
+/// The ⌥⇥ switcher's independently adjustable spacing:
 /// the pane's inset, the rows' inset, the strip's inset and the gap
 /// between cards, each its Standard value times the scale held at a
 /// floor, and the zoom pane narrowing with the scale down to 80 %.

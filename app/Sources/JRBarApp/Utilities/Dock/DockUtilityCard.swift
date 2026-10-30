@@ -141,7 +141,7 @@ struct DockUtilityControls: View {
                 previewOptions
             } label: {
                 SettingLabel(title: "More preview options",
-                             subtitle: "Fine spacing, card size and captures, which windows list, the icon gestures, ⌥` and the auto-hiding Dock.")
+                             subtitle: "Switcher spacing, captures, which windows list, icon gestures, ⌥` and the auto-hiding Dock.")
             }
 
             DisclosureGroup(isExpanded: $showExclusions) {
@@ -280,12 +280,11 @@ struct DockUtilityControls: View {
     @ViewBuilder
     private var appearance: some View {
         let prefs = utility.enhance.preferences
-        DockPreviewSample(spacing: prefs.previewSpacing, dockGap: prefs.dockGap,
+        DockPreviewSample(previewSize: prefs.previewSize, dockGap: prefs.dockGap,
                           coversLabel: prefs.coverDockLabel)
             .frame(maxWidth: .infinity)
             .padding(.vertical, SettingsMetrics.s)
-        // Between the stops no segment is lit and the subtitle names the
-        // value, so the control keeps its place beside the title.
+        DockPreviewSizePicker(selection: previewSize)
         LabeledContent {
             Picker(selection: spacingStop) {
                 ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
@@ -296,7 +295,7 @@ struct DockUtilityControls: View {
                 .pickerStyle(.segmented)
                 .fixedSize()
         } label: {
-            SettingLabel(title: "Spacing", subtitle: Self.spacingSubtitle(prefs.previewSpacing))
+            SettingLabel(title: "Switcher spacing")
         }
         LabeledContent {
             HStack(spacing: 10) {
@@ -325,18 +324,13 @@ struct DockUtilityControls: View {
                     ValueText(text: Self.percent(utility.enhance.preferences.previewSpacing))
                 }
             } label: {
-                SettingLabel(title: "Fine spacing",
-                             subtitle: "The spacing between the stops: 60% is Tight, 100% Standard, 140% Roomy. The ⌥⇥ switcher follows it too.")
+                SettingLabel(title: "Fine switcher spacing")
             }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
                              subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
             }
             .disabled(!utility.enhance.preferences.showThumbnails)
-            Toggle(isOn: largePreviews) {
-                SettingLabel(title: "Large cards",
-                             subtitle: "Bigger thumbnails for reading the window, not just the title.")
-            }
             Toggle(isOn: cardsHugWindows) {
                 SettingLabel(title: "Cards take each window's shape",
                              subtitle: "A tall window gets a narrow card and a wide one a wide card, its still filling it — no bars beside a portrait window.")
@@ -487,16 +481,6 @@ struct DockUtilityControls: View {
         "\(Int((scale * 100).rounded()))%"
     }
 
-    /// The Spacing row's subtitle: what the knob does, and — between the
-    /// stops, where no segment is lit — the value Fine spacing set.
-    static func spacingSubtitle(_ scale: Double) -> String {
-        let lead = "The air around the cards inside the preview."
-        guard DockPreviewSpacing.stop(for: scale) == nil else {
-            return "\(lead) Standard is the roomier look it had before."
-        }
-        return "\(lead) Custom: \(percent(scale)), set with Fine spacing."
-    }
-
     /// The stop the spacing sits on; nil between stops (Custom). Picking
     /// a stop stores its scale.
     private var spacingStop: Binding<DockPreviewSpacing?> {
@@ -549,45 +533,58 @@ struct DockUtilityControls: View {
     }
     private var nativePreviews: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Toggle(isOn: calendarPreview) {
-                Text("Calendar preview")
-            }
+            nativePreviewRow("Calendar", bundleID: "com.apple.iCal") { Toggle("Calendar preview", isOn: calendarPreview) }
             if utility.enhance.preferences.calendarPreview {
                 Picker("Calendar view", selection: calendarView) {
-                    ForEach(DockCalendarView.allCases, id: \.self) { view in
-                        Text(view.title).tag(view)
-                    }
+                    ForEach(DockCalendarView.allCases, id: \.self) { view in Text(view.title).tag(view) }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.vertical, 8)
+                .pickerStyle(.segmented).padding(.vertical, JRBarTokens.Space.sm)
             }
-            DockRemindersPreviewSetting(isOn: Binding(
-                get: { utility.enhance.preferences.remindersPreview },
-                set: { utility.enhance.preferences.remindersPreview = $0 }))
-            DockShortcutsPreviewSetting(isOn: Binding(
-                get: { utility.enhance.preferences.shortcutsPreview },
-                set: { utility.enhance.preferences.shortcutsPreview = $0 }))
-            DockMessagesPreviewSetting(isOn: Binding(
-                get: { utility.enhance.preferences.messagesPreview },
-                set: { utility.enhance.preferences.messagesPreview = $0 }))
-            Toggle(isOn: musicPlayer) {
-                SettingLabel(title: "Music player",
-                             subtitle: "Artwork, progress and playback controls when you hover Music.")
+            nativePreviewRow("Reminders", bundleID: "com.apple.reminders") {
+                DockRemindersPreviewSetting(isOn: Binding(
+                    get: { utility.enhance.preferences.remindersPreview },
+                    set: { utility.enhance.preferences.remindersPreview = $0 }))
             }
+            nativePreviewRow("Shortcuts", bundleID: "com.apple.shortcuts") {
+                DockShortcutsPreviewSetting(isOn: Binding(
+                    get: { utility.enhance.preferences.shortcutsPreview },
+                    set: { utility.enhance.preferences.shortcutsPreview = $0 }))
+            }
+            nativePreviewRow("Messages", bundleID: "com.apple.MobileSMS") {
+                DockMessagesPreviewSetting(isOn: Binding(
+                    get: { utility.enhance.preferences.messagesPreview },
+                    set: { utility.enhance.preferences.messagesPreview = $0 }))
+            }
+            nativePreviewRow("Music", bundleID: "com.apple.Music") { Toggle("Music player", isOn: musicPlayer) }
             if utility.enhance.preferences.musicPlayer {
                 Toggle(isOn: musicFullControls) {
                     SettingLabel(title: "Full Music controls",
                                  subtitle: "Shuffle, repeat, volume and Love. Asks Music through Automation. Off until you turn it on.")
                 }
             }
-            Toggle(isOn: mediaPreview) {
-                SettingLabel(title: "Other media previews",
-                             subtitle: "Playback controls when you hover another app playing audio.")
+            nativePreviewRow("Other media", bundleID: DockEnhanceSettings.otherMediaSizeKey) {
+                Toggle("Other media previews", isOn: mediaPreview)
             }
-            DockMailPreviewSetting(isOn: Binding(
-                get: { utility.enhance.preferences.mailPreview },
-                set: { utility.enhance.preferences.mailPreview = $0 }))
+            nativePreviewRow("Mail", bundleID: "com.apple.mail") {
+                DockMailPreviewSetting(isOn: Binding(
+                    get: { utility.enhance.preferences.mailPreview },
+                    set: { utility.enhance.preferences.mailPreview = $0 }))
+            }
+            let known = Set(["com.apple.iCal", "com.apple.reminders", "com.apple.shortcuts",
+                             "com.apple.MobileSMS", "com.apple.Music", "com.apple.mail", DockEnhanceSettings.otherMediaSizeKey])
+            ForEach(utility.settings().enhance.previewSizeOverrides.keys.sorted().filter { !known.contains($0) }, id: \.self) { bundleID in
+                nativePreviewRow(appName(for: bundleID), bundleID: bundleID) { Text(appName(for: bundleID)) }
+            }
+        }
+    }
+
+    private func nativePreviewRow<Content: View>(_ name: String, bundleID: String,
+                                                 @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: JRBarTokens.Space.sm) {
+            content().frame(maxWidth: .infinity, alignment: .leading)
+            DockPreviewSizeOverridePicker(name: name, selection: Binding(
+                get: { utility.settings().enhance.previewSizeOverrides[bundleID] },
+                set: { utility.enhance.preferences.setPreviewSize($0, for: bundleID) }))
         }
     }
 
@@ -611,9 +608,9 @@ struct DockUtilityControls: View {
         Binding(get: { utility.enhance.preferences.mediaPreview },
                 set: { utility.enhance.preferences.mediaPreview = $0 })
     }
-    private var largePreviews: Binding<Bool> {
-        Binding(get: { utility.enhance.preferences.largePreviews },
-                set: { utility.enhance.preferences.largePreviews = $0 })
+    private var previewSize: Binding<DockPreviewSize> {
+        Binding(get: { utility.enhance.preferences.previewSize },
+                set: { utility.enhance.preferences.previewSize = $0 })
     }
     private var offscreen: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.includeOffscreenWindows },

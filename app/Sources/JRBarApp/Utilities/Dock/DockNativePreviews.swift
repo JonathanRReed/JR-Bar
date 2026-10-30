@@ -45,6 +45,7 @@ final class DockNativePreviews {
             ? (content.isRunning ? DockMessagesPreview.read(content.badge) : .notRunning) : nil
         content.calendarNow = calendar.clock()
         content.calendarView = settings.calendarView
+        content.calendarListDay = nil
         content.calendarMonth = calendar.calendar.dateInterval(of: .month, for: content.calendarNow)?.start
             ?? content.calendarNow
         content.calendarSelectedDay = calendar.calendar.startOfDay(for: content.calendarNow)
@@ -97,7 +98,7 @@ final class DockNativePreviews {
             (bundleID == DockEnhanceMath.calendarBundleID || DockEnhanceMath.isMeetingApp(bundleID))
         if wantsCalendar {
             content.calendarView = settings.calendarView
-            let month = bundleID == DockEnhanceMath.calendarBundleID && settings.calendarView == .month
+            let month = bundleID == DockEnhanceMath.calendarBundleID && (settings.calendarView == .month || content.calendarListDay != nil)
                 ? content.calendarMonth : nil
             calendar.show(month: month)
         }

@@ -269,25 +269,111 @@ struct DockCalendarMonthTests {
         #expect(!deliveries.contains(.events([old])))
     }
 
-    @Test("switching views keeps the Calendar card size and meeting cards stay compact")
+    @Test("Month hugs six grid rows, with no event-list or empty-state reservation")
     @MainActor func layout() {
         let cal = Self.calendar("en_GB")
         let now = Self.date(2024, 2, 14, calendar: cal)
-        let sample = Self.event(now, now.addingTimeInterval(3600))
         let actions = DockPreviewActions(content: DockPreviewContent())
-        let list = DockCalendarCard(state: .events([sample]), now: now, calendar: cal, actions: actions)
-        let host = NSHostingView(rootView: list)
-        host.layoutSubtreeIfNeeded()
-        let listSize = host.fittingSize
-        host.rootView = DockCalendarCard(state: .events([sample]), now: now, calendar: cal,
-            actions: actions, view: .month, month: now, selectedDay: .constant(now))
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize == listSize)
-        #expect(listSize == CGSize(width: 320, height: 480))
-        host.rootView = DockCalendarCard(state: .events([sample]), now: now, calendar: cal,
-            actions: actions, isCalendarApp: false)
-        host.layoutSubtreeIfNeeded()
-        #expect(host.fittingSize.height < 200)
+        for size in DockPreviewSize.allCases {
+            var heights: [CGFloat] = []
+            for month in [now, Self.date(2020, 8, 15, calendar: cal)] {
+                for count in [0, 1, 20] {
+                    let events = (0..<count).map { _ in Self.event(month, month.addingTimeInterval(3600)) }
+                    let card = DockCalendarCard(state: .events(events), now: now, calendar: cal,
+                        actions: actions, view: .month, month: month, selectedDay: .constant(month))
+                        .environment(\.dockPreviewSize, size)
+                    let host = NSHostingView(rootView: card)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.width == size.widgetSize.width)
+                    #expect(host.fittingSize.height < size.monthHeightLimit)
+                    heights.append(host.fittingSize.height)
+                }
+            }
+            let loading = DockCalendarCard(state: .loading, now: now, calendar: cal,
+                actions: actions, view: .month, month: now).environment(\.dockPreviewSize, size)
+            let loadingHost = NSHostingView(rootView: loading)
+            loadingHost.layoutSubtreeIfNeeded()
+            heights.append(loadingHost.fittingSize.height)
+            #expect(Set(heights).count == 1)
+            let empty = DockCalendarCard(state: .events([]), now: now, calendar: cal, actions: actions)
+                .environment(\.dockPreviewSize, size)
+            let host = NSHostingView(rootView: empty)
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.height < size.widgetSize.height)
+        }
+    }
+
+    @Test("day clicks select the date's List; double clicks only open Calendar")
+    @MainActor func dayClicks() async {
+        var settings = DockEnhanceSettings(calendarView: .month)
+        let preferences = DockEnhancePreferences()
+        preferences.read = { settings }
+        preferences.write = { settings = $0 }
+        let controller = DockEnhanceController(preferences: preferences)
+        let day = Self.date(2024, 2, 2, calendar: Self.calendar("en_GB"))
+        controller.preview.calendarState = .events([])
+        let panel = controller.ensurePanel()
+        defer { panel.close() }
+        var opened: [Date] = []
+        controller.openCalendarDate = { opened.append($0) }
+        panel.actions.calendarDay(day, clickCount: 1)
+        #expect(controller.preview.calendarView == .list)
+        #expect(controller.preview.calendarListDay == day)
+        #expect(settings.calendarView == .list)
+        #expect(opened.isEmpty)
+        panel.actions.onCalendarView?(.month)
+        #expect(controller.preview.calendarListDay == nil)
+        #expect(settings.calendarView == .month)
+        await controller.showCalendarDate(day)
+        #expect(opened == [day])
+        #expect(settings.calendarView == .month)
+        let actions = DockPreviewActions(content: DockPreviewContent())
+        var singles = 0
+        var doubles = 0
+        actions.onCalendarDay = { _ in singles += 1 }
+        actions.onCalendarDateOpen = { _ in doubles += 1 }
+        actions.calendarDay(day, clickCount: 2)
+        #expect(singles == 0 && doubles == 1)
+    }
+
+    @Test("selected-day List keeps the month read, including dates before today")
+    @MainActor func selectedDayReader() async {
+        let cal = Self.calendar("en_GB")
+        let now = Self.date(2024, 2, 14, calendar: cal)
+        let past = Self.date(2024, 2, 2, calendar: cal)
+        let selectedEvent = Self.event(past, past.addingTimeInterval(3600))
+        let listReads = OSAllocatedUnfairLock(initialState: 0)
+        let reader = ShelfCalendarReader(fetch: { _ in listReads.withLock { $0 += 1 }; return [] },
+                                        fetchMonth: { _ in [selectedEvent] })
+        let calendarPreview = DockCalendarPreview(reader: reader)
+        calendarPreview.authorization = { .fullAccess }
+        calendarPreview.calendar = cal
+        calendarPreview.clock = { now }
+        let readers = DockNativePreviews(calendar: calendarPreview)
+        let content = DockPreviewContent()
+        content.bundleID = DockEnhanceMath.calendarBundleID
+        content.calendarMonth = past
+        content.calendarListDay = past
+        readers.start(content: content, settings: DockEnhanceSettings(mediaPreview: false))
+        defer { readers.stop() }
+        await settle(calendarPreview)
+        #expect(listReads.withLock { $0 } == 0)
+        #expect(calendarPreview.month == past)
+        #expect(content.calendarState == .events([selectedEvent]))
+    }
+
+    @Test("Calendar date navigation sends the documented date event to the chosen PID")
+    func dateEvent() throws {
+        let day = Date(timeIntervalSince1970: 1_800_000_000)
+        var delivered = 0
+        try DockCalendarDateOpener.send(day, pid: 4242) { packet in
+            delivered += 1
+            #expect(packet.eventClass == 0x77726274)
+            #expect(packet.eventID == 0x61656339)
+            #expect(packet.paramDescriptor(forKeyword: 0x77746474)?.dateValue == day)
+            return .null()
+        }
+        #expect(delivered == 1)
     }
 
     @Test("macOS event links encode item identifiers and recurring occurrences")
