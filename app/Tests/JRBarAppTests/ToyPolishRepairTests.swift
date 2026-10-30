@@ -36,6 +36,8 @@ struct ToyPolishRepairTests {
         let owner = store()
         defer { owner.shutdown() }
         let tank = try #require(owner.aquarium)
+        // The window lifecycle is under test, not this Mac's power source.
+        tank.power = { .normal }
         #expect(tank.status == .off)
         tank.showAquarium()
         #expect(tank.isOn && tank.ownsWindow && tank.game.windowOpen)
