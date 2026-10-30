@@ -9,11 +9,20 @@ struct SettingsControlPaths: PreferenceKey {
     }
 }
 
+/// Records every binding for the Settings audit.
+struct SettingsControlOccurrences: PreferenceKey {
+    static let defaultValue: [String] = []
+    static func reduce(value: inout [String], nextValue: () -> [String]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
 extension View {
     func settingControl(_ paths: String...) -> some View { settingControl(paths) }
 
     func settingControl(_ paths: [String]) -> some View {
         transformPreference(SettingsControlPaths.self) { $0.formUnion(paths) }
+            .transformPreference(SettingsControlOccurrences.self) { $0.append(contentsOf: paths) }
             .accessibilityIdentifier("settings:" + paths.joined(separator: ","))
             .modifier(SettingsControlAnchor(paths: paths))
     }
