@@ -16,8 +16,8 @@ final class DockMessagesPreview {
 
     nonisolated static func read(_ badge: String?) -> State {
         guard let badge, !badge.isEmpty else { return .noBadge }
-        guard badge.utf8.count <= 12, badge.allSatisfy({ $0.isASCII && $0.isNumber }),
-              badge.contains(where: { $0 != "0" }) else { return .badgeOnly }
+        guard badge.utf8.count <= 12,
+              badge.allSatisfy({ $0.isASCII && $0.isNumber }) else { return .badgeOnly }
         return .unread(badge)
     }
 }

@@ -336,7 +336,7 @@ struct DockNativeAppCardTests {
         #expect(model.update(running: true, badge: "3") == .unread("3"))
         #expect(model.update(running: true, badge: nil) == .noBadge)
         #expect(model.update(running: true, badge: "•") == .badgeOnly)
-        #expect(model.update(running: true, badge: "0") == .badgeOnly)
+        #expect(model.update(running: true, badge: "0") == .unread("0"))
         let native = DockNativePreviews()
         native.makeMessages = { model }
         let content = DockPreviewContent()
