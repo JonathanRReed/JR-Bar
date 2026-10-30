@@ -12,7 +12,7 @@ import Testing
 struct ProviderSignInRecoveryTests {
     static func reading(_ id: String) -> CoreProviderUsage {
         var value = CoreProviderUsage(id: id, windows: [], state: "needs_sign_in",
-                                      action: id == "factory" ? "Add Factory API key" : "Reconnect Devin browser session", reason: "browser_session_expired")
+                                      action: id == "factory" ? "Connect Factory" : "Reconnect Devin browser session", reason: "browser_session_expired")
         value.actionKind = "manage"
         value.availability = "available"
         value.quotaSource = false
@@ -34,17 +34,12 @@ struct ProviderSignInRecoveryTests {
         #expect(opened == providerReading.identity)
         let lines = StatusMenuLines.usage([providerReading], live: true, now: PanelCompositionTests.time)
         #expect(lines.count == 1)
-        #expect(lines[0].contains(provider == "factory" ? "Add Factory API key" : "Reconnect"))
+        #expect(lines[0].contains(provider == "factory" ? "Connect Factory" : "Reconnect"))
         let usageStore = UsageCenterStore(core: store.core)
         usageStore.runProviderAction(providerReading)
-        if provider == "factory" {
-            #expect(usageStore.credentialConnectRequests[providerReading.identity] == 1)
-            #expect(usageStore.browserConnectRequests.isEmpty)
-            usageStore.didPresentCredentialConnection(providerReading.identity)
-        } else {
-            #expect(usageStore.browserConnectRequests[providerReading.identity] == 1)
-            usageStore.didPresentBrowserConnection(providerReading.identity)
-        }
+        #expect(usageStore.browserConnectRequests[providerReading.identity] == 1)
+        #expect(usageStore.credentialConnectRequests.isEmpty)
+        usageStore.didPresentBrowserConnection(providerReading.identity)
         var consentReading = providerReading
         consentReading.reason = "usage_consent_required"
         usageStore.runProviderAction(consentReading)
@@ -118,13 +113,18 @@ struct ProviderSignInRecoveryTests {
         let core = CoreModel(socketPath: "/tmp/jrbar-key-recovery-unused.sock")
         let store = UsageCenterStore(core: core)
         store.runProviderAction(reading)
-        #expect(store.credentialConnectRequests[reading.identity] == 1)
-        #expect(store.browserConnectRequests.isEmpty)
-        #expect(store.credentialConnectRequests[provider] == nil)
-        store.didPresentCredentialConnection(reading.identity)
-        #expect(store.credentialConnectRequests.isEmpty)
-        #expect(store.presentKeyRecovery(reading))
-        #expect(store.credentialConnectRequests[reading.identity] == 1)
+        if provider == "factory" {
+            #expect(store.browserConnectRequests[reading.identity] == 1)
+            #expect(store.credentialConnectRequests.isEmpty)
+            #expect(!store.presentKeyRecovery(reading))
+        } else {
+            #expect(store.credentialConnectRequests[reading.identity] == 1)
+            #expect(store.browserConnectRequests.isEmpty)
+            #expect(store.credentialConnectRequests[provider] == nil)
+            store.didPresentCredentialConnection(reading.identity)
+            #expect(store.credentialConnectRequests.isEmpty)
+            #expect(store.presentKeyRecovery(reading))
+        }
         var consent = reading
         consent.reason = "usage_consent_required"
         #expect(!store.presentKeyRecovery(consent))
@@ -210,8 +210,8 @@ struct ProviderSignInRecoveryTests {
                 name: "factory-key-editor", width: 420, dark: dark)
             var reading = Self.reading("factory")
             reading.reason = "browser_token_unavailable"
-            reading.action = "Add Factory API key"
-            reading.statusText = "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
+            reading.action = "Connect Factory"
+            reading.statusText = "Connect Factory to allow browser sign-in renewal, or add an API key."
             let row = UsageGaugeRow(provider: reading, name: "Factory", now: PanelCompositionTests.time,
                                     connected: true, style: .compact, windowNames: [], onAction: {})
                 .padding(16).frame(width: 380, height: 170).background(Color(nsColor: .windowBackgroundColor))
@@ -226,9 +226,9 @@ struct ProviderSignInRecoveryTests {
             {"id":"factory","instance":"work","label":"Factory","enabled":true,
              "credentials":[{"account":"web-session","available":true}],
              "usage_consent":{"granted":true,"question":"Show Factory usage?",
-              "summary":"JR-Bar will ask Factory for your subscription usage limits with the API key or browser access token you connect. JR-Bar never uses a browser refresh token. Nothing else is sent.",
-              "detail":"Asks api.factory.ai for Standard and Core usage windows with your saved API key first. An older imported access token can still be used while valid; a previously approved browser profile may repair it. JR-Bar never uses browser refresh tokens or Droid credentials. Save API key checks the key once; this switch controls ongoing usage requests.",
-              "hosts":["api.factory.ai"],"credential":"your Factory API key or explicitly imported browser access token in JR-Bar Keychain"}}
+              "summary":"JR-Bar will ask Factory for your subscription usage limits with your saved API key first, or your connected browser sign-in. WorkOS renewal needs separate browser consent. Nothing else is sent.",
+              "detail":"Asks api.factory.ai for Standard and Core usage windows with your saved API key first, or your connected browser sign-in. If you approve renewal in Connect Factory, JR-Bar sends its refresh token to api.workos.com and saves rotated tokens only in Keychain. Factory may ask you to sign in again in your browser. Connecting does not turn on usage. Save API key checks a key once; this switch controls ongoing requests.",
+              "hosts":["api.factory.ai","api.workos.com"],"credential":"your connected Factory browser sign-in or API key in JR-Bar Keychain"}}
             """#.utf8))
             let connection = UsageProviderConnection(provider: reading, store: store, row: providerRow)
                 .padding(16).frame(width: 560, height: 330).background(Color(nsColor: .windowBackgroundColor))

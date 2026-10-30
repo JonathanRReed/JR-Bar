@@ -3310,8 +3310,9 @@ class World:
                 return self._error(cid, "invalid_args", "factory_session_profiles takes no arguments")
             result = {"profiles": [{"browser": "zen", "profile": "synthetic.default", "label": "Zen · synthetic.default"}]}
         elif name == "factory_session_import":
-            if (set(args) - {"browser", "profile", "instance", "confirm", "background_repair"}
+            if (set(args) - {"browser", "profile", "instance", "confirm", "background_repair", "allow_refresh"}
                     or type(args.get("background_repair", False)) is not bool
+                    or args.get("allow_refresh") is not True
                     or args.get("confirm") is not True
                     or args.get("browser") != "zen" or args.get("profile") != "synthetic.default"):
                 return self._error(cid, "invalid_args", "Select a profile and confirm its import")

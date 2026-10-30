@@ -65,10 +65,10 @@ struct FactoryConnectionCleanupTests {
         let data: [String: Any] = ["id": providerID, "instance": "default", "enabled": true,
             "credentials": [["account": "api-key", "available": key]],
             "usage_consent": ["granted": consent, "version": 1,
-                "detail": "Asks api.factory.ai for Standard and Core usage windows with your saved API key first. An older imported access token can still be used while valid; a previously approved browser profile may repair it. JR-Bar never uses browser refresh tokens or Droid credentials. Save API key checks the key once; this switch controls ongoing usage requests."]]
+                "detail": "Asks api.factory.ai for Standard and Core usage windows with your saved API key first, or your connected browser sign-in. If you approve renewal in Connect Factory, JR-Bar sends its refresh token to api.workos.com and saves rotated tokens only in Keychain. Factory may ask you to sign in again in your browser. Connecting does not turn on usage. Save API key checks a key once; this switch controls ongoing requests."]]
         let row = try JSONDecoder().decode(ProviderRow.self, from: JSONSerialization.data(withJSONObject: data))
         var reading = CoreProviderUsage(id: providerID, state: "needs_sign_in",
-            action: providerID == "factory" ? "Add Factory API key" : "Connect synthetic account", reason: reason)
+            action: providerID == "factory" ? "Connect Factory" : "Connect synthetic account", reason: reason)
         reading.actionKind = "manage"
         reading.readAt = 1_800_000_000 - 120
         reading.statusText = reason == "browser_token_unavailable" ? "Add a Factory API key to read usage." : "Sign-in required"
@@ -90,7 +90,7 @@ struct FactoryConnectionCleanupTests {
         return (store, row, reading)
     }
 
-    @Test("a managed Factory detail offers the key action once")
+    @Test("a managed Factory detail offers connection once")
     func oneAction() async throws {
         let (store, _, reading) = try await fixture()
         let detail = UsageProviderDetail(provider: reading, store: store, showCost: false)
@@ -99,7 +99,7 @@ struct FactoryConnectionCleanupTests {
         host.frame.size = host.fittingSize
         host.layoutSubtreeIfNeeded()
         let labels = PolishRound2Tests.buttonLabels(host)
-        #expect(labels.filter { $0 == "Add Factory API key" }.count == 1)
+        #expect(labels.filter { $0 == "Connect Factory" }.count == 1)
         #expect(!labels.contains("Fix sign-in"))
     }
 

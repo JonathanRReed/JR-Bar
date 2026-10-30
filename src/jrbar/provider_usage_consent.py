@@ -222,7 +222,7 @@ _DISCLOSURES: dict[str, UsageDisclosure] = {
             credential="your connected Factory browser sign-in or API key in JR-Bar Keychain",
             summary=(
                 "JR-Bar will ask Factory for your subscription usage limits "
-                "with your saved API key first, or your connected browser sign-in. WorkOS renewal needs separate browser consent."
+                "with your saved API key first, or your connected browser sign-in. WorkOS renewal needs separate browser consent. Nothing else is sent."
             ),
             detail=(
                 "Asks api.factory.ai for Standard and Core usage windows "

@@ -1160,8 +1160,7 @@ final class UsageCenterStore {
 
     @discardableResult
     func presentKeyRecovery(_ provider: CoreProviderUsage) -> Bool {
-        let keyRecovery = provider.reason == "browser_token_unavailable"
-            || (provider.id == "factory" && provider.reason != "usage_consent_required")
+        let keyRecovery = provider.id == "devin" && provider.reason == "browser_token_unavailable"
         if provider.actionKind == "manage", ["factory", "devin"].contains(provider.id), keyRecovery {
             credentialConnectRequests[provider.identity, default: 0] += 1
             return true
