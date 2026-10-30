@@ -82,7 +82,7 @@ def decode_session(raw):
         or type(value.get("consent_version")) is not int
         or value["consent_version"] not in {1, 2}
         or ("refresh_rejected" in value and type(value["refresh_rejected"]) is not bool)
-        or ("refresh_error" in value and (not isinstance(value["refresh_error"], str) or value["refresh_error"] not in _renewal_error_codes()))
+        or ("refresh_error" in value and not _renewal_error_code(value["refresh_error"]))
         or any(key in value and (type(value[key]) is not int or not 0 <= value[key] <= maximum)
                for key, maximum in (("refresh_status", 599), ("refresh_failures", 20)))
         or ("refresh_retry_at" in value and (type(value["refresh_retry_at"]) not in {int, float}
@@ -105,10 +105,10 @@ def decode_session(raw):
     return value
 
 
-def _renewal_error_codes():
-    from .provider_usage_collectors import WORKOS_ERROR_CODES
+def _renewal_error_code(value):
+    from .provider_usage_collectors import _safe_error_code
 
-    return WORKOS_ERROR_CODES
+    return _safe_error_code(value)
 
 
 def _organization_id(value):

@@ -55,12 +55,22 @@ WORKOS_ERROR_CODES = frozenset({
 })
 
 
+_ERROR_CODE_SHAPE = re.compile(r"[a-z][a-z0-9_]{2,47}")
+
+
+def _safe_error_code(value: object) -> bool:
+    """A sign-in service's error code, shown and logged as it is. Only short
+    lowercase snake_case words pass, a shape that cannot carry a token, an
+    address or a message, so an unexpected code is still visible."""
+    return isinstance(value, str) and (value in WORKOS_ERROR_CODES or _ERROR_CODE_SHAPE.fullmatch(value) is not None)
+
+
 class ProviderHttpError(RuntimeError):
     def __init__(self, status: int, reason: str, *, error_code: str | None = None) -> None:
         super().__init__(reason)
         self.status = int(status)
         self.reason = str(reason)
-        self.error_code = error_code if isinstance(error_code, str) and error_code in WORKOS_ERROR_CODES else "unknown_error"
+        self.error_code = error_code if _safe_error_code(error_code) else "unknown_error"
 
 
 _SENSITIVE_PROVIDER_HEADERS = frozenset(
@@ -169,8 +179,11 @@ def _default_http_json(
             try:
                 data = error.read(64 * 1024 + 1)
                 payload = json.loads(data) if len(data) <= 64 * 1024 else None
-                candidate = payload.get("error") if isinstance(payload, dict) else None
-                error_code = candidate if isinstance(candidate, str) and candidate in WORKOS_ERROR_CODES else "unknown_error"
+                candidate = None
+                if isinstance(payload, dict):
+                    # OAuth-style replies say "error"; WorkOS API replies say "code".
+                    candidate = payload.get("error") if _safe_error_code(payload.get("error")) else payload.get("code")
+                error_code = candidate if _safe_error_code(candidate) else "unknown_error"
             except (OSError, ValueError):
                 error_code = "unknown_error"
         elif error.code == 403:

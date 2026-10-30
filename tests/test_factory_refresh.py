@@ -58,7 +58,8 @@ def remote():
                         payload = replay[1]
                     else:
                         status = 400
-            self.reply(status, payload if status == 200 else {"error": code, "message": "synthetic-secret", "refresh_token": "synthetic-private-value"})
+            field = state.get("error_field", "error")
+            self.reply(status, payload if status == 200 else {field: code, "message": "synthetic-secret", "refresh_token": "synthetic-private-value"})
 
         def do_GET(self):
             state["requests"].append((self.path, self.headers.get("Authorization")))
@@ -480,8 +481,10 @@ def test_jwt_organization_takes_priority_over_active_storage_hint(context):
     assert imported["organization_id"] == "synthetic-jwt-org"
 
 
-@pytest.mark.parametrize("code", ["invalid_grant", "invalid_client", "invalid_request", "synthetic-private-value", {"secret": "synthetic-private-value"}])
-def test_workos_errors_keep_only_allowlisted_codes(context, remote, caplog, code):
+@pytest.mark.parametrize("code", ["invalid_grant", "invalid_client", "invalid_request", "session_ended",
+                                  "synthetic-private-value", "Synthetic Private Value", "x" * 60,
+                                  {"secret": "synthetic-private-value"}])
+def test_workos_errors_keep_only_safe_codes(context, remote, caplog, code):
     from jrbar.provider_availability import availability_document
 
     home, store = context
@@ -489,7 +492,8 @@ def test_workos_errors_keep_only_allowlisted_codes(context, remote, caplog, code
     connect_refresh_only(home, store)
     state.update(refresh_status=400, refresh_error=code)
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
-    expected = code if isinstance(code, str) and code in {"invalid_grant", "invalid_client", "invalid_request"} else "unknown_error"
+    safe = {"invalid_grant", "invalid_client", "invalid_request", "session_ended"}
+    expected = code if isinstance(code, str) and code in safe else "unknown_error"
     assert result.reason_code == "factory_refresh_" + expected
     document = availability_document(result, now=1000, installed=True)
     assert expected in document["status_text"] and "Connect Factory" in document["status_text"]
@@ -509,3 +513,19 @@ def test_recovery_requires_current_v2_profile_and_instance_consent(context, remo
     state["refresh_status"] = 400
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
     assert result.reason_code == "factory_refresh_invalid_grant"
+
+
+def test_workos_code_field_is_read_when_error_is_absent():
+    from jrbar.provider_usage_collectors import _safe_error_code
+    assert _safe_error_code("organization_selection_required")
+    assert not _safe_error_code("eyJhbGciOi.synthetic")
+    assert not _safe_error_code("")
+
+
+def test_workos_reasons_sent_as_code_are_shown(context, remote):
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    state.update(refresh_status=400, refresh_error="session_ended", error_field="code")
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.reason_code == "factory_refresh_session_ended"

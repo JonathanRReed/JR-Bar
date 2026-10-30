@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .provider_usage_collectors import WORKOS_ERROR_CODES
+from .provider_usage_collectors import WORKOS_ERROR_CODES, _safe_error_code
 from .provider_usage_platform import provider_descriptor
 
 GONE_READING_SECONDS = 7 * 24 * 60 * 60
@@ -113,6 +113,14 @@ NO_QUOTA_REASONS = frozenset({
 def status_sentence(reason: str | None, label: str) -> str:
     """The plain sentence for a reason code; never the code itself."""
     template = _CAUSES.get(reason or "")
+    if template is None and reason:
+        # A sign-in service code outside the known list still reads plainly;
+        # the code passed the same safe-shape check before it was stored.
+        for prefix, words in (("factory_refresh_", "Factory refused the saved sign-in ({code}). Choose Connect Factory."),
+                              ("factory_renewal_", "Factory sign-in renewal failed ({code}). Choose Refresh.")):
+            code = reason[len(prefix):] if reason.startswith(prefix) else None
+            if code and _safe_error_code(code):
+                return words.format(code=code)
     if label == "Factory" and reason == "browser_session_expired":
         return "Factory sign-in expired. Choose Connect Factory."
     if label == "Factory" and reason == "browser_token_unavailable":
