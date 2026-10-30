@@ -141,30 +141,23 @@ struct SettingsFeatureDetail: View {
 
     @ViewBuilder
     var body: some View {
-        if toy.id == "dock" {
-            SettingsGroup {
-                SettingsRow(toy.switchLabel) { enabledControl }
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingsFeatureHeading(
+                title: toy.id == "notch" ? "Notch & Shelf" : toy.name,
+                symbol: toy.symbol, purpose: toy.blurb, status: statusText,
+                tint: ToyCard.tint(for: toy.id, page: JRBarTokens.Ink.accent)
+            ) {
+                featureSwitch
             }
-            .id(SettingsStore.cardAnchor(toy.id))
-            toy.controls.cardBodyStyle(flattenDisclosures: true).padding(JRBarTokens.Space.md)
-        } else {
-            VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
-                SettingsFeatureHeading(
-                    title: toy.id == "notch" ? "Notch & Shelf" : toy.name,
-                    symbol: toy.symbol, purpose: toy.blurb, status: statusText,
-                    tint: ToyCard.tint(for: toy.id, page: JRBarTokens.Ink.accent)
-                ) {
-                    featureSwitch
-                }
-                if let settings { SettingsPageNotice(store: settings, page: settings.page) }
-                toy.controls.cardBodyStyle(flattenDisclosures: expandDisclosures)
-            }
-            .environment(\.adaptiveSettingsRows, true)
-            .id(SettingsStore.cardAnchor(toy.id))
+            if let settings { SettingsPageNotice(store: settings, page: settings.page) }
+            toy.controls.cardBodyStyle(flattenDisclosures: expandDisclosures)
         }
+        .environment(\.adaptiveSettingsRows, true)
+        .id(SettingsStore.cardAnchor(toy.id))
     }
 
     private var statusText: String {
+        if let dock = toy as? DockUtility { return dock.settingsStatus }
         let status = toy.status
         guard let awake = toy as? KeepAwakeUtility else { return status.text }
         switch status {

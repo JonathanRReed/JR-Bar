@@ -9,7 +9,7 @@ extension DockUtility: Toy {
     var id: String { "dock" }
     var name: String { "Dock" }
     var blurb: String {
-        "Dock window previews, folder browsing, and app switching."
+        "Previews and widgets when you hover the Dock"
     }
     var symbol: String { "dock.rectangle" }
 
@@ -57,27 +57,78 @@ extension DockUtility: Toy {
     }
 
     var controls: AnyView { AnyView(DockUtilityControls(utility: self)) }
+
+    var settingsStatus: String {
+        Self.settingsStatus(settings: settings(), status: status)
+    }
+
+    nonisolated static func settingsStatus(settings current: DockSettings, status state: ToyStatus) -> String {
+        let text: String
+        if state == .on {
+            text = current.previewsWanted ? "Previews on" : "Previews off"
+        } else {
+            text = state.text
+        }
+        return "\(text) · \(current.enhance.previewSize.title) widgets"
+    }
 }
 
-/// The Dock card's disclosure body, in the Menu Bar card's shape: what
-/// needs you first (a missing permission, a recovered hold), the rows
-/// most people set, then the rest of the previews and the exclusion
-/// list behind disclosures, and the switcher last. The knobs persist
-/// through `DockSettings.enhance` — the facade's `write` lands in
-/// `app-state.json` via `DockUtility.update`.
+/// Dock settings use the existing app-state bindings and shared feature groups.
 struct DockUtilityControls: View {
     let utility: DockUtility
     /// Installed apps the exclusion menu can name when they aren't
     /// running — scanned off the main thread when the card appears.
     @ViewState private var installed: [DockInstalledApps.App] = []
-    @ViewState private var showPreviewOptions = false
-    @ViewState private var showExclusions = false
-    @ViewState private var showSwitcherExclusions = false
+    @Environment(\.renderSnapshot) private var renderSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
             notices
+            SettingGroup("Previews") {
+                previewControls
+                DockPreviewSizePicker(selection: previewSize)
+                DockSettingsWidgetSample(size: utility.enhance.preferences.previewSize)
+            }
+            SettingGroup("App widgets") { nativePreviews }
+            SettingGroup("Switchers") { switcherControls }
+            SettingGroup("Folders") {
+                SettingLabel(title: "Folder pops",
+                             subtitle: "Uses Hover previews. Hover a Dock folder to browse its files. Click a subfolder to browse inside, or Command-click to open it in Finder.")
+            }
+            SettingGroup("Exclusions") {
+                SettingLabel(title: "Never preview",
+                             subtitle: Self.exclusionSummary(exclusions.wrappedValue.map(appName(for:))))
+                exclusionList
+                SettingLabel(title: "Never switch to",
+                             subtitle: "Hide these apps from both switchers. Their Dock previews stay available.")
+                exclusionList(switcherExclusions, restore: "Show in the switcher again")
+                    .disabled(!ownSwitcher)
+            }
+            SettingsFeatureMoreOptions(id: "dock", subtitle: "Providers, gestures, capture limits, display filters and Dock placement.") {
+                VStack(alignment: .leading, spacing: 0) {
+                    CardSectionHeader("Preview provider")
+                    previewProvider
+                    CardSectionHeader("Preview behavior")
+                    previewOptions
+                    CardSectionHeader("Placement")
+                    appearance
+                    CardSectionHeader("Switcher options")
+                    switcherOptions
+                }
+            }
+        }
+        .onAppear {
+            guard !renderSnapshot else { return }
+            utility.enhance.refreshPermissions(force: true)
+        }
+        .task {
+            guard !renderSnapshot else { return }
+            installed = await DockInstalledApps.load()
+        }
+    }
 
+    private var previewProvider: some View {
+        VStack(alignment: .leading, spacing: 0) {
             LabeledContent {
                 Picker(selection: utility.providerBinding) {
                     Text("JR-Bar").tag(DockProvider.jrbar)
@@ -98,10 +149,14 @@ struct DockUtilityControls: View {
             RivalGuardView(role: .dockPreviews, active: utility.isOn && utility.settings().provider == .jrbar,
                            handOver: { utility.handOver(to: $0) })
 
-            CardSectionHeader("Previews")
+        }
+    }
+
+    private var previewControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
             Toggle(isOn: hoverPreviews) {
                 SettingLabel(title: "Hover previews",
-                             subtitle: "App previews show windows; folder previews show files. Selecting a window raises it. Option-click keeps the preview open.")
+                             subtitle: "Hover a Dock icon to see its windows or widget. Click a window to bring it forward.")
             }
             .help("Browse folders in place. If a read fails, Retry reads the same folder again without closing the preview.")
             LabeledContent {
@@ -132,29 +187,14 @@ struct DockUtilityControls: View {
 
             Toggle(isOn: thumbnails) {
                 SettingLabel(title: "Window thumbnails",
-                             subtitle: "A capture of each window, kept for half a minute. Needs Screen Recording, and a fresh capture flashes macOS's recording dot; off shows icon and title cards.")
+                             subtitle: "Show window images with Screen Recording access. Captures flash the recording dot. Off shows icons and titles.")
             }
 
-            nativePreviews
+        }
+    }
 
-            DisclosureGroup(isExpanded: $showPreviewOptions) {
-                previewOptions
-            } label: {
-                SettingLabel(title: "More preview options",
-                             subtitle: "Switcher spacing, captures, which windows list, icon gestures, ⌥` and the auto-hiding Dock.")
-            }
-
-            DisclosureGroup(isExpanded: $showExclusions) {
-                exclusionList
-            } label: {
-                SettingLabel(title: "Never preview",
-                             subtitle: Self.exclusionSummary(exclusions.wrappedValue.map(appName(for:))))
-            }
-
-            CardSectionHeader("Appearance")
-            appearance
-
-            CardSectionHeader("Switching")
+    private var switcherControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
             LabeledContent {
                 Picker(selection: utility.switcherProviderBinding) {
                     ForEach(DockSwitcherProvider.allCases, id: \.self) { provider in
@@ -167,7 +207,7 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Switcher",
-                             subtitle: "Who answers ⌥⇥ and ⌘⇥ — so DockDoor can draw the previews while JR-Bar keeps the switcher.")
+                             subtitle: "Choose who handles Option-Tab and Command-Tab, independently of previews.")
             }
             if let note = utility.switcherNote {
                 providerNote(note, symbol: "exclamationmark.arrow.triangle.2.circlepath",
@@ -175,14 +215,31 @@ struct DockUtilityControls: View {
             }
             Toggle(isOn: switcher) {
                 SettingLabel(title: "⌥⇥ window switcher",
-                             subtitle: "Option-Tab raises every app's windows in recency order, a window whose agent waits on you first. Type to search windows and their sessions — ! for waiting agents, ` for one app.")
+                             subtitle: "Option-Tab switches windows, with waiting agents first. Type to search; ! finds waiting agents and ` filters by app.")
             }
             .disabled(!ownSwitcher)
             Toggle(isOn: appSwitcher) {
                 SettingLabel(title: "⌘⇥ app switcher",
-                             subtitle: "Replaces Command-Tab with a centred app strip. Off leaves the system's chord alone.")
+                             subtitle: "Command-Tab opens JR-Bar's app strip. Off keeps the system app switcher.")
             }
             .disabled(!ownSwitcher)
+        }
+    }
+
+    private var switcherOptions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LabeledContent {
+                Picker(selection: spacingStop) {
+                    ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
+                        Text(stop.title).tag(Optional(stop))
+                    }
+                } label: { EmptyView() }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+            } label: {
+                SettingLabel(title: "Switcher spacing", subtitle: "Set the space between switcher cards.")
+            }
             Toggle(isOn: switcherThisDisplay) {
                 SettingLabel(title: "⌥⇥ lists this display only",
                              subtitle: "The strip shows the windows on the pointer's screen; minimized ones always list.")
@@ -216,30 +273,18 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Card faces",
-                             subtitle: "Each window's still, or its app's icon — icons never capture, so the recording dot stays off.")
-            }
-            .disabled(!ownSwitcher)
-            DisclosureGroup(isExpanded: $showSwitcherExclusions) {
-                exclusionList(switcherExclusions, restore: "Show in the switcher again")
-            } label: {
-                SettingLabel(title: "Never switch to",
-                             subtitle: "Exclude apps from both ⌥⇥ and ⌘⇥. Their Dock previews stay available.")
+                             subtitle: "Show window images or app icons. Icons require no screen capture.")
             }
             .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
-            if learned > 0 {
-                HStack(spacing: SettingsMetrics.s) {
-                    CardNote(learned == 1 ? "Type-ahead remembers 1 pick — a short query lands where it did last time."
-                                          : "Type-ahead remembers \(learned) picks — a short query lands where it did last time.",
-                             symbol: "sparkle.magnifyingglass")
-                    Spacer(minLength: SettingsMetrics.s)
-                    Button("Forget") { utility.update { $0.enhance.learnedPicks = [] } }
-                        .controlSize(.small)
-                }
+            LabeledContent {
+                Button("Forget") { utility.update { $0.enhance.learnedPicks = [] } }
+                    .controlSize(.small).disabled(learned == 0)
+            } label: {
+                SettingLabel(title: "Remembered picks",
+                             subtitle: "Type-ahead remembers \(learned) picks. Forget clears this history.")
             }
         }
-        .onAppear { utility.enhance.refreshPermissions(force: true) }
-        .task { installed = await DockInstalledApps.load() }
     }
 
     /// What needs you before any knob does: the permission the card's
@@ -274,29 +319,10 @@ struct DockUtilityControls: View {
         }
     }
 
-    /// How much air the preview keeps and where it sits: a live sample
-    /// over drawn stills (no capture), the spacing stops, the distance
-    /// from the Dock and the name-label cover.
+    /// Placement settings keep their existing values and bindings.
     @ViewBuilder
     private var appearance: some View {
         let prefs = utility.enhance.preferences
-        DockPreviewSample(previewSize: prefs.previewSize, dockGap: prefs.dockGap,
-                          coversLabel: prefs.coverDockLabel)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, SettingsMetrics.s)
-        DockPreviewSizePicker(selection: previewSize)
-        LabeledContent {
-            Picker(selection: spacingStop) {
-                ForEach(DockPreviewSpacing.allCases, id: \.self) { stop in
-                    Text(stop.title).tag(Optional(stop))
-                }
-            } label: { EmptyView() }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .fixedSize()
-        } label: {
-            SettingLabel(title: "Switcher spacing")
-        }
         LabeledContent {
             HStack(spacing: 10) {
                 Slider(value: dockGap, in: DockEnhancePreferences.dockGapRange)
@@ -324,16 +350,16 @@ struct DockUtilityControls: View {
                     ValueText(text: Self.percent(utility.enhance.preferences.previewSpacing))
                 }
             } label: {
-                SettingLabel(title: "Fine switcher spacing")
+                SettingLabel(title: "Fine switcher spacing", subtitle: "Adjust card spacing between the named stops.")
             }
             Toggle(isOn: liveCard) {
                 SettingLabel(title: "Live card under the pointer",
-                             subtitle: "The card you point at plays live instead of showing a still — macOS's recording dot stays on while it does.")
+                             subtitle: "Play the hovered window live. Keeps the screen-recording dot on.")
             }
             .disabled(!utility.enhance.preferences.showThumbnails)
             Toggle(isOn: cardsHugWindows) {
                 SettingLabel(title: "Cards take each window's shape",
-                             subtitle: "A tall window gets a narrow card and a wide one a wide card, its still filling it — no bars beside a portrait window.")
+                             subtitle: "Match each card to its window's shape, with no bars beside portrait windows.")
             }
             Toggle(isOn: offscreen) {
                 SettingLabel(title: "Capture every window",
@@ -348,7 +374,7 @@ struct DockUtilityControls: View {
                 }
             } label: {
                 SettingLabel(title: "List past N windows",
-                             subtitle: "An app with more windows than this gets a compact title list instead of thumbnails — and no captures at all.")
+                             subtitle: "Above this count, show a title list without captures. Never keeps thumbnail cards.")
             }
             Toggle(isOn: previewThisDisplay) {
                 SettingLabel(title: "Only windows on this display",
@@ -364,19 +390,19 @@ struct DockUtilityControls: View {
             .disabled(!ownPreviews)
             Toggle(isOn: clickToMinimize) {
                 SettingLabel(title: "Click the front app's icon to minimize",
-                             subtitle: "Clicking the Dock icon of the app you're in minimizes its windows, like a Windows taskbar; click again and the Dock brings one back.")
+                             subtitle: "Minimize the active app's windows from its Dock icon. Click again to bring one back.")
             }
             .disabled(!ownPreviews)
             Toggle(isOn: frontAppChord) {
                 SettingLabel(title: "⌥` previews the front app",
-                             subtitle: "Option-backtick opens the front app's windows on its Dock tile with the next one picked — arrows walk, Return raises, W, M and F act. Takes the accent key ⌥` types on US layouts.")
+                             subtitle: "Option-backtick opens the front app's windows. Arrows select; Return opens. Replaces the accent key on US layouts.")
             }
             .disabled(!ownPreviews)
             Toggle(isOn: holdOpen) {
                 SettingLabel(title: "Hold the Dock out",
                              subtitle: utility.enhance.autohideHold.available
-                                ? "While a preview is up an auto-hiding Dock stays out so the pointer can step onto the cards; it hides again when the panel closes."
-                                : "Not available on this macOS — an auto-hiding Dock slides away when the pointer steps onto the cards.")
+                                ? "Keep an auto-hiding Dock visible until its preview closes."
+                                : "Unavailable on this macOS. The Dock can hide while you move onto a preview.")
             }
             .disabled(!utility.enhance.autohideHold.available)
         }
@@ -439,7 +465,7 @@ struct DockUtilityControls: View {
     /// empty, the names it holds once it isn't.
     static func exclusionSummary(_ names: [String]) -> String {
         switch names.count {
-        case 0: return "Apps on this list can rest in the Dock all they like — no preview opens."
+        case 0: return "Add an app here so no preview opens for it."
         case 1: return "\(names[0]) never opens a preview."
         case 2: return "\(names[0]) and \(names[1]) never open a preview."
         default: return "\(names[0]), \(names[1]) and \(names.count - 2) more never open a preview."
@@ -532,60 +558,76 @@ struct DockUtilityControls: View {
                 set: { utility.enhance.preferences.showThumbnails = $0 })
     }
     private var nativePreviews: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            nativePreviewRow("Calendar", bundleID: "com.apple.iCal") { Toggle("Calendar preview", isOn: calendarPreview) }
-            if utility.enhance.preferences.calendarPreview {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+            nativePreviewRow("Calendar", bundleID: "com.apple.iCal") {
+                SettingLabel(title: "Calendar preview", subtitle: "Show upcoming events or a month grid when you hover Calendar.")
+            } control: { Toggle("Calendar preview", isOn: calendarPreview).labelsHidden() }
+            if calendarPreview.wrappedValue { DockWidgetPermission(access: .calendar) }
+            LabeledContent {
                 Picker("Calendar view", selection: calendarView) {
                     ForEach(DockCalendarView.allCases, id: \.self) { view in Text(view.title).tag(view) }
-                }
-                .pickerStyle(.segmented).padding(.vertical, JRBarTokens.Space.sm)
+                }.pickerStyle(.segmented).labelsHidden()
+            } label: {
+                SettingLabel(title: "Calendar view", subtitle: "Choose an event list or a month grid.")
             }
-            nativePreviewRow("Reminders", bundleID: "com.apple.reminders") {
-                DockRemindersPreviewSetting(isOn: Binding(
-                    get: { utility.enhance.preferences.remindersPreview },
-                    set: { utility.enhance.preferences.remindersPreview = $0 }))
-            }
-            nativePreviewRow("Shortcuts", bundleID: "com.apple.shortcuts") {
-                DockShortcutsPreviewSetting(isOn: Binding(
-                    get: { utility.enhance.preferences.shortcutsPreview },
-                    set: { utility.enhance.preferences.shortcutsPreview = $0 }))
-            }
-            nativePreviewRow("Messages", bundleID: "com.apple.MobileSMS") {
-                DockMessagesPreviewSetting(isOn: Binding(
-                    get: { utility.enhance.preferences.messagesPreview },
-                    set: { utility.enhance.preferences.messagesPreview = $0 }))
-            }
-            nativePreviewRow("Music", bundleID: "com.apple.Music") { Toggle("Music player", isOn: musicPlayer) }
-            if utility.enhance.preferences.musicPlayer {
-                Toggle(isOn: musicFullControls) {
-                    SettingLabel(title: "Full Music controls",
-                                 subtitle: "Shuffle, repeat, volume and Love. Asks Music through Automation. Off until you turn it on.")
-                }
-            }
-            nativePreviewRow("Other media", bundleID: DockEnhanceSettings.otherMediaSizeKey) {
-                Toggle("Other media previews", isOn: mediaPreview)
-            }
+            .disabled(!calendarPreview.wrappedValue)
             nativePreviewRow("Mail", bundleID: "com.apple.mail") {
-                DockMailPreviewSetting(isOn: Binding(
-                    get: { utility.enhance.preferences.mailPreview },
-                    set: { utility.enhance.preferences.mailPreview = $0 }))
+                SettingLabel(title: "Mail preview", subtitle: "Show unread Mail messages. Stays off until you choose it.")
+            } control: { Toggle("Mail preview", isOn: Binding(
+                get: { utility.enhance.preferences.mailPreview },
+                set: { utility.enhance.preferences.mailPreview = $0 })).labelsHidden() }
+            if utility.enhance.preferences.mailPreview { DockWidgetPermission(access: .mail) }
+            nativePreviewRow("Music", bundleID: "com.apple.Music") {
+                SettingLabel(title: "Music player", subtitle: "Show the current track and playback controls when you hover Music.")
+            } control: { Toggle("Music player", isOn: musicPlayer).labelsHidden() }
+            Toggle(isOn: musicFullControls) {
+                SettingLabel(title: "Full Music controls", subtitle: "Add shuffle, repeat, volume and Love through Automation. Stays off until you choose it.")
             }
+            .disabled(!musicPlayer.wrappedValue)
+            if musicFullControls.wrappedValue { DockWidgetPermission(access: .music) }
+            nativePreviewRow("Reminders", bundleID: "com.apple.reminders") {
+                SettingLabel(title: "Reminders preview", subtitle: "Show due reminders and mark them complete from the Dock.")
+            } control: { Toggle("Reminders preview", isOn: Binding(
+                get: { utility.enhance.preferences.remindersPreview },
+                set: { utility.enhance.preferences.remindersPreview = $0 })).labelsHidden() }
+            if utility.enhance.preferences.remindersPreview { DockWidgetPermission(access: .reminders) }
+            nativePreviewRow("Shortcuts", bundleID: "com.apple.shortcuts") {
+                SettingLabel(title: "Shortcuts preview", subtitle: "List your shortcuts and run one from its preview.")
+            } control: { Toggle("Shortcuts preview", isOn: Binding(
+                get: { utility.enhance.preferences.shortcutsPreview },
+                set: { utility.enhance.preferences.shortcutsPreview = $0 })).labelsHidden() }
+            nativePreviewRow("Messages", bundleID: "com.apple.MobileSMS") {
+                SettingLabel(title: "Messages preview", subtitle: "Show the unread badge and actions to open Messages. Conversation text stays private.")
+            } control: { Toggle("Messages preview", isOn: Binding(
+                get: { utility.enhance.preferences.messagesPreview },
+                set: { utility.enhance.preferences.messagesPreview = $0 })).labelsHidden() }
+            nativePreviewRow("Other media", bundleID: DockEnhanceSettings.otherMediaSizeKey) {
+                SettingLabel(title: "Other media previews", subtitle: "Show the playing track for other media apps, with windows when no track is available.")
+            } control: { Toggle("Other media previews", isOn: mediaPreview).labelsHidden() }
             let known = Set(["com.apple.iCal", "com.apple.reminders", "com.apple.shortcuts",
                              "com.apple.MobileSMS", "com.apple.Music", "com.apple.mail", DockEnhanceSettings.otherMediaSizeKey])
             ForEach(utility.settings().enhance.previewSizeOverrides.keys.sorted().filter { !known.contains($0) }, id: \.self) { bundleID in
-                nativePreviewRow(appName(for: bundleID), bundleID: bundleID) { Text(appName(for: bundleID)) }
+                nativePreviewRow(appName(for: bundleID), bundleID: bundleID) {
+                    SettingLabel(title: appName(for: bundleID), subtitle: "An individual preview size for this app.")
+                } control: { EmptyView() }
             }
         }
     }
 
-    private func nativePreviewRow<Content: View>(_ name: String, bundleID: String,
-                                                 @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: JRBarTokens.Space.sm) {
-            content().frame(maxWidth: .infinity, alignment: .leading)
-            DockPreviewSizeOverridePicker(name: name, selection: Binding(
-                get: { utility.settings().enhance.previewSizeOverrides[bundleID] },
-                set: { utility.enhance.preferences.setPreviewSize($0, for: bundleID) }))
+    private func nativePreviewRow<Label: View, Control: View>(
+        _ name: String, bundleID: String,
+        @ViewBuilder label: () -> Label, @ViewBuilder control: () -> Control
+    ) -> some View {
+        SettingsControlLayout {
+            label().frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: JRBarTokens.Space.sm) {
+                DockPreviewSizeOverridePicker(name: name, selection: Binding(
+                    get: { utility.settings().enhance.previewSizeOverrides[bundleID] },
+                    set: { utility.enhance.preferences.setPreviewSize($0, for: bundleID) }))
+                control().toggleStyle(.switch)
+            }
         }
+        .padding(.vertical, SettingsMetrics.rowPadding)
     }
 
     private var calendarPreview: Binding<Bool> {

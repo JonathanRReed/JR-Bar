@@ -56,6 +56,14 @@ enum SettingsFeatureOptions {
     static func agentProvider(_ id: String) -> String { "feature:agents:provider:\(id)" }
 
     static let titles: [String: Set<String>] = [
+        "dock": [
+            "Render with", "Fine switcher spacing", "Live card under the pointer",
+            "Cards take each window's shape", "Capture every window", "List past N windows",
+            "Only windows on this display", "Scroll on an icon", "Click the front app's icon to minimize",
+            "⌥` previews the front app", "Hold the Dock out", "Distance from the Dock",
+            "Cover the Dock's name label", "Switcher spacing", "⌥⇥ lists this display only",
+            "Window order", "Apps with no windows", "Card faces", "Remembered picks",
+        ],
         "keepAwake": ["Durations", "Custom duration", "Other apps holding this Mac awake"],
         "fold": [
             "Release when parked", "Jitter", "Perspective", "Shade", "Blur", "Frost",

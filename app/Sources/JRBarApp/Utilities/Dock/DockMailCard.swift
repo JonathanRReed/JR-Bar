@@ -4,9 +4,7 @@ import SwiftUI
 struct DockMailPreviewSetting: View {
     @Binding var isOn: Bool
     var body: some View {
-        Toggle(isOn: $isOn) {
-            SettingLabel(title: "Mail preview", subtitle: "Newest unread messages when you hover Mail. Asks Mail through Automation. Off until you turn it on.")
-        }
+        Toggle("Mail preview", isOn: $isOn)
     }
 }
 

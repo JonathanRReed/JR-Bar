@@ -212,7 +212,7 @@ struct SettingsPageContainer: View {
 
     private var featureHasHeading: Bool {
         if page == .notch { return store.toys?.notch != nil }
-        guard let id = store.subpage, id != "dock" else { return false }
+        guard let id = store.subpage else { return false }
         return store.cardToy(id) != nil
     }
 

@@ -76,7 +76,7 @@ struct DockPreviewSizePicker: View {
             }
             .pickerStyle(.segmented).labelsHidden()
         } label: {
-            SettingLabel(title: "Preview size")
+            SettingLabel(title: "Preview size", subtitle: "The default widget size. Each app can use its own size below.")
         }
     }
 }
