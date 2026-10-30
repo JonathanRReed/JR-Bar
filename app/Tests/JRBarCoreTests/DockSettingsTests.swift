@@ -31,13 +31,13 @@ struct DockSettingsTests {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
-    @Test("defaults: off, quarter-second hover, thumbnails on, small cards, every window")
+    @Test("defaults: off, quarter-second hover, thumbnails on, medium cards, every window")
     func defaults() {
         let s = DockSettings()
         #expect(s.enabled == false)
         #expect(s.enhance.previewDelay == 0.25)
         #expect(s.enhance.showThumbnails == true)
-        #expect(s.enhance.largePreviews == false)
+        #expect(s.enhance.previewSize == .medium)
         #expect(s.enhance.includeOffscreenWindows == true)
     }
 
@@ -46,7 +46,7 @@ struct DockSettingsTests {
         var s = DockSettings()
         s.enabled = true
         s.enhance = DockEnhanceSettings(previewDelay: 0.6, showThumbnails: false,
-                                        largePreviews: true, includeOffscreenWindows: false)
+                                        previewSize: .large, includeOffscreenWindows: false)
         #expect(try decode(DockSettings.self, encode(s)) == s)
     }
 
@@ -62,7 +62,7 @@ struct DockSettingsTests {
         #expect(s.enabled == true)
         #expect(s.enhance.previewDelay == DockEnhanceSettings.defaultDelay, "a string is not a delay")
         #expect(s.enhance.showThumbnails == true)
-        #expect(s.enhance.largePreviews == false)
+        #expect(s.enhance.previewSize == .medium)
     }
 
     @Test("the hover delay is clamped to the card's range")

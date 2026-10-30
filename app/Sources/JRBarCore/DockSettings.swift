@@ -170,6 +170,12 @@ public enum DockPreviewSpacing: String, CaseIterable, Sendable {
     }
 }
 
+public enum DockPreviewSize: String, Codable, CaseIterable, Sendable {
+    case small, medium, large
+
+    public var title: String { rawValue.capitalized }
+}
+
 public enum DockCalendarView: String, Codable, CaseIterable, Sendable {
     case list, month
 
@@ -200,9 +206,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var messagesPreview: Bool
     public var musicPlayer: Bool
     public var musicFullControls: Bool
-    /// Bigger cards — 208×130 instead of 144×90 — for people who read
-    /// the thumbnail rather than the title.
-    public var largePreviews: Bool
+    /// The size of window previews and native app cards.
+    public var previewSize: DockPreviewSize
+    public var previewSizeOverrides: [String: DockPreviewSize]
     /// Thumbnails for windows on other Spaces and minimized windows
     /// too; the cards list every window either way.
     public var includeOffscreenWindows: Bool
@@ -257,9 +263,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// card walked — the keyboard walk with no pointer at all. Off by
     /// default: it takes the accent key ⌥` types on US layouts.
     public var frontAppChord: Bool
-    /// How much air the preview keeps inside its glass: one scale for
-    /// every inset, gap and corner (`DockPreviewMetrics`), and the ⌥⇥
-    /// switcher's too. 0.6 is Tight, the default; 1.0 is Standard.
+    /// The switcher's spacing. Hover previews use previewSize.
+    /// 0.6 is Tight, the default; 1.0 is Standard.
     public var previewSpacing: Double {
         didSet { previewSpacing = Self.clampedSpacing(previewSpacing) }
     }
@@ -307,7 +312,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 mailPreview: Bool = false,
                 musicPlayer: Bool = true,
                 musicFullControls: Bool = false,
-                largePreviews: Bool = false,
+                previewSize: DockPreviewSize = .medium,
+                previewSizeOverrides: [String: DockPreviewSize] = [:],
                 includeOffscreenWindows: Bool = true,
                 holdDockOpen: Bool = true,
                 compactListLimit: Int = DockEnhanceSettings.defaultCompactLimit,
@@ -342,7 +348,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.mailPreview = mailPreview
         self.musicPlayer = musicPlayer
         self.musicFullControls = musicFullControls
-        self.largePreviews = largePreviews
+        self.previewSize = previewSize
+        self.previewSizeOverrides = previewSizeOverrides
         self.includeOffscreenWindows = includeOffscreenWindows
         self.holdDockOpen = holdDockOpen
         self.compactListLimit = Self.clampedCompactLimit(compactListLimit)
@@ -368,6 +375,15 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.switcherStyle = switcherStyle
     }
 
+    public static let otherMediaSizeKey = "jrbar.other-media"
+
+    public func previewSize(for bundleID: String?, isMedia: Bool = false) -> DockPreviewSize {
+        let fallback = isMedia ? previewSizeOverrides[Self.otherMediaSizeKey] ?? previewSize : previewSize
+        return bundleID.flatMap { previewSizeOverrides[$0] } ?? fallback
+    }
+
+    private enum LegacyKeys: String, CodingKey { case largePreviews }
+
     static func clampedCompactLimit(_ value: Int) -> Int {
         min(compactLimitRange.upperBound, max(compactLimitRange.lowerBound, value))
     }
@@ -390,7 +406,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
+        case previewDelay, showThumbnails, previewSize, previewSizeOverrides, includeOffscreenWindows
         case calendarPreview, calendarView, mediaPreview
         case remindersPreview, shortcutsPreview, messagesPreview
         case mailPreview
@@ -419,7 +435,11 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         messagesPreview = (try? c.decodeIfPresent(Bool.self, forKey: .messagesPreview)) ?? true
         musicPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .musicPlayer)) ?? true
         musicFullControls = (try? c.decodeIfPresent(Bool.self, forKey: .musicFullControls)) ?? false
-        largePreviews = (try? c.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        let wasLarge = (try? legacy.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
+        previewSize = (try? c.decodeIfPresent(DockPreviewSize.self, forKey: .previewSize))
+            ?? (wasLarge ? .large : .medium)
+        previewSizeOverrides = (try? c.decodeIfPresent([String: DockPreviewSize].self, forKey: .previewSizeOverrides)) ?? [:]
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true
         holdDockOpen = (try? c.decodeIfPresent(Bool.self, forKey: .holdDockOpen)) ?? true
         compactListLimit = Self.clampedCompactLimit(
