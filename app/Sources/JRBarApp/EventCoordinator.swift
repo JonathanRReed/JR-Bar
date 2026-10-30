@@ -171,9 +171,12 @@ final class EventCoordinator {
     /// A banner's click opens its session through `SessionOpener`, so a
     /// live session the daemon cannot find still comes up through the
     /// Dock's window locator, and a refusal is said rather than dropped.
+    var sessionOpener: @MainActor (String) async -> String? = { await SessionOpener.open($0) }
+
     private func openFromBanner(_ session: String) {
+        let open = sessionOpener
         Task { [weak self] in
-            guard let refusal = await SessionOpener.open(session), let self else { return }
+            guard let refusal = await open(session), let self else { return }
             self.core.appendLocalLog("open_session refused: \(refusal)")
             self.onOpenRefused?(refusal)
         }

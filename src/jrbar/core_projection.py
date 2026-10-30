@@ -1752,8 +1752,16 @@ def project_session_rows(
     resolution = group_resolution or _agent_group_resolution(snapshot, now=now)
     _apply_agent_group_rows(rows, statuses, resolution, ask_ids, quiet_worker_ids)
     names = session_names(statuses, extras_by_id=extras_by_id, group_resolution=resolution, now=now)
+    from .session_navigation import t3_open_targets
+
+    open_targets = t3_open_targets(statuses, now=now, resolution=resolution)
     for row in rows:
         row["label"] = names[row["id"]]
+        target = open_targets.get(row["id"])
+        row["open_target"] = target.to_dict() if target is not None else None
+        row["open_target_reason"] = target.reason if target else (
+            "unproven_worker_provider_route" if row.get("unlinked_worker") else "provider_route"
+        )
     return rows, ask_ids
 
 

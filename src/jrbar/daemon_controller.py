@@ -335,7 +335,6 @@ from .navigation_policy import (
     OperatorActionKind,
     OperatorLocalActionState,
     build_operator_actions,
-    resolve_navigation,
 )
 from .notification_arbitration import (
     plan_semantic_notification,
@@ -6556,18 +6555,14 @@ class StatusBarController(NSObject):
         if not any(item.kind is payload.kind and item.enabled for item in descriptors):
             return False
         if payload.kind is OperatorActionKind.OPEN:
-            resolution = resolve_navigation(
-                work.key,
-                "open:primary",
-                getattr(self, "navigation_candidates_by_work_key", {}).get(
-                    work.key,
-                    (),
-                ),
-            )
+            from .session_navigation import resolve_open_navigation
+
+            resolution = resolve_open_navigation(self, work.key)
             return activate_navigation_resolution(
                 resolution,
                 open_url=open_url,
                 open_terminal_command=open_terminal_command,
+                open_application=open_application,
             )
         if payload.kind in {
             OperatorActionKind.ACKNOWLEDGE,
@@ -7172,6 +7167,15 @@ class StatusBarController(NSObject):
                 f"{status.display_name} is running on "
                 f"{status.origin or 'another Mac'} — open it there."
             )
+            return
+        from .session_navigation import controller_t3_target
+
+        hosted = controller_t3_target(self, status)
+        if hosted is not None:
+            if hosted.kind == "url":
+                open_url(hosted.value)
+            else:
+                open_application(hosted.value)
             return
         provider = status.provider.lower()
         requested_action = (
@@ -10951,7 +10955,9 @@ def _canonical_operator_actions(state, target):
             LocalTriageState(()),
         ).acknowledgements
     }
-    candidates_by_work = getattr(target, "navigation_candidates_by_work_key", {})
+    from .session_navigation import controller_t3_targets_by_work, resolve_open_navigation
+
+    targets_by_work = controller_t3_targets_by_work(target)
     # Build shared indexes once. The former helpers rebuilt/scanned the whole
     # canonical catalog for every row, turning a busy 795-work state into an
     # O(n^2) half-second menu operation on each refresh.
@@ -10985,11 +10991,7 @@ def _canonical_operator_actions(state, target):
             continue
         request = request_for(work)
         preference = preferences.get(family_key)
-        navigation = resolve_navigation(
-            work.key,
-            "open:primary",
-            candidates_by_work.get(work.key, ()),
-        )
+        navigation = resolve_open_navigation(target, work.key, targets_by_work=targets_by_work)
         result[work.key] = build_operator_actions(
             work=work,
             request=request,
@@ -11301,6 +11303,10 @@ def log_status_bar(message: str) -> None:
     except OSError:
         # Logging is best effort during interpreter and test-runner teardown.
         return
+
+
+def open_application(bundle_id: str) -> None:
+    subprocess.Popen(["/usr/bin/open", "-b", bundle_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def open_url(url: str) -> None:

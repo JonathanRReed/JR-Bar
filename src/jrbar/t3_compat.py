@@ -320,6 +320,8 @@ class T3ThreadView:
             stale=stale,
             work_key=work_key,
             parent_links=self.parent_links,
+            t3_thread_id=self.thread_id,
+            t3_open_url=self.deep_link,
         )
         if not stale:
             object.__setattr__(self, "_agent_status", status)

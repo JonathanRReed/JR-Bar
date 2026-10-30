@@ -170,6 +170,8 @@ class AgentStatus:
     request_key: RequestKey | None = None
 
     parent_links: tuple[ParentLink, ...] = ()
+    t3_thread_id: str | None = None
+    t3_open_url: str | None = None
 
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
     quota_working: bool | None = None
