@@ -1087,11 +1087,15 @@ def test_the_disclosed_hosts_are_the_hosts_the_collectors_use() -> None:
 def test_factory_disclosure_distinguishes_explicit_key_check_from_ongoing_usage() -> None:
     detail = usage_disclosure("factory").detail
     assert "saved API key first" in detail
-    assert "older imported access token" in detail
-    assert "previously approved browser profile" in detail
-    assert "never uses browser refresh tokens or Droid credentials" in detail
-    assert "Save API key checks the key once" in detail
-    assert "this switch controls ongoing usage requests" in detail
+    assert "your connected browser sign-in" in detail
+    assert "If you approve renewal in Connect Factory" in detail
+    assert "refresh token to api.workos.com" in detail
+    assert "saves rotated tokens only in Keychain" in detail
+    assert "Factory may ask you to sign in again in your browser" in detail
+    assert "Connecting does not turn on usage" in detail
+    assert "Save API key checks a key once" in detail
+    assert "this switch controls ongoing requests" in detail
+    assert usage_disclosure("factory").hosts == ("api.factory.ai", "api.workos.com")
     assert "leaves token renewal to the browser" not in detail
 
 

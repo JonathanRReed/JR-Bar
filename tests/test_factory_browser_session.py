@@ -63,10 +63,10 @@ def test_background_browser_grant_uses_current_access_without_rotating(context, 
     from jrbar import factory_session as module
 
     _home, store = context
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: session())
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session())
     module.import_session({"browser": "zen", "profile": "synthetic.default",
                            "confirm": True, "background_repair": True}, store)
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: session(access_token="synthetic-current-access"))
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session(access_token="synthetic-current-access"))
 
     def http(method, url, **kwargs):
         assert method == "GET", "A browser-owned refresh token must never be consumed"
@@ -83,7 +83,7 @@ def test_background_browser_grant_is_scoped_to_profile_and_instance(context, mon
 
     _home, store = context
     original = session()
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: original)
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: original)
     module.import_session({"browser": "zen", "profile": "synthetic.default",
                            "confirm": True, "background_repair": True}, store)
     assert module.background_repair_allowed(original)
@@ -121,7 +121,7 @@ def test_an_expired_browser_session_never_consumes_its_refresh_token(context, mo
     else:
         value["access_token"] = access
     store.set("factory", "web-session", json.dumps(value))
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: pytest.fail("No background browser grant"))
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: pytest.fail("No background browser grant"))
 
     def rejected(method, url, **kwargs):
         assert method == "GET" and "workos.com" not in url
@@ -138,7 +138,7 @@ def test_browser_adoption_cannot_overwrite_a_concurrent_connection(context, monk
     from jrbar import factory_session as module
 
     _home, store = context
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: session())
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session())
     args = {"browser": "zen", "profile": "synthetic.default", "confirm": True, "background_repair": True}
     module.import_session(args, store)
     expected = []
@@ -148,7 +148,7 @@ def test_browser_adoption_cannot_overwrite_a_concurrent_connection(context, monk
         if change == "disconnect":
             module.disconnect({}, store)
         else:
-            monkeypatch.setattr(module, "read_browser_session", lambda *_: session(access_token="synthetic-reimport"))
+            monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session(access_token="synthetic-reimport"))
             module.import_session(args, store)
         expected.append(store.get("factory", "web-session").secret)
         return auth()
@@ -164,7 +164,7 @@ def test_a_failed_auth_probe_preserves_browser_credentials(context, monkeypatch)
     from jrbar.provider_usage_collectors import ProviderHttpError
 
     _home, store = context
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: session())
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session())
     module.import_session({"browser": "zen", "profile": "synthetic.default",
                            "confirm": True, "background_repair": True}, store)
     original = store.get("factory", "web-session").secret
@@ -384,7 +384,7 @@ def test_chromium_reader_keeps_origin_and_key_allowlists(context, monkeypatch):
 
     def read(path, **kwargs):
         assert path == root
-        assert kwargs["allowed_keys"] == ("workos:refresh-token", "workos:access-token")
+        assert kwargs["allowed_keys"] == ("workos:refresh-token", "workos:access-token", "factory:active-organization-id")
         calls.append(kwargs["origin"])
         return {"workos:refresh-token": "synthetic-refresh-token", "workos:access-token": "synthetic-access-token"}
 
@@ -847,7 +847,7 @@ def test_saved_key_wins_over_any_browser_session(context, monkeypatch, kind):
     raw = "invalid" if kind == "invalid" else json.dumps(value)
     store.set("factory", "web-session", raw)
     store.set("factory", "api-key", "synthetic-key")
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: pytest.fail("key must not read browser"))
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: pytest.fail("key must not read browser"))
     def http(method, url, **kwargs):
         assert method == "GET" and "workos.com" not in url
         assert kwargs["headers"]["Authorization"] == "Bearer synthetic-key"
@@ -929,10 +929,10 @@ def test_incomplete_background_browser_storage_keeps_saved_access(context, monke
     from jrbar.browser_session_import import BrowserSessionReadError
 
     _, store = context
-    monkeypatch.setattr(module, "read_browser_session", lambda *_: session())
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session())
     module.import_session({"browser": "zen", "profile": "synthetic.default", "confirm": True,
                            "background_repair": True}, store)
-    def incomplete(*_):
+    def incomplete(*_a, **_k):
         raise BrowserSessionReadError("browser_token_unavailable")
     monkeypatch.setattr(module, "read_browser_session", incomplete)
     def http(_method, url, **kwargs):
@@ -940,3 +940,28 @@ def test_incomplete_background_browser_storage_keeps_saved_access(context, monke
         return auth() if url.endswith("/auth/me") else billing()
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
     assert result.state is ProviderSourceState.READY
+
+
+def test_legacy_two_field_grant_repairs_access_without_reading_organization(context):
+    from jrbar import factory_session as module
+    from jrbar.provider_browser_consent import BrowserConsentStore, save_browser_consents
+
+    home, store = context
+    root = browser_database(home)
+    database = root / "storage/default/https+++app.factory.ai/ls/data.sqlite"
+    with sqlite3.connect(database) as db:
+        db.execute("UPDATE data SET value='synthetic-current-access' WHERE key='workos:access-token'")
+        db.execute("INSERT INTO data VALUES ('factory:active-organization-id', 'synthetic-other-org', 0)")
+    grant = BrowserConsentStore(()).grant(provider_id="factory", browser="zen", profile=root.name,
+        domains=module.ORIGINS, fields=module.FIELDS[:2], background_repair=True,
+        granted_at=1000, source_instance_id="default")
+    save_browser_consents(grant)
+    store.set("factory", "web-session", json.dumps(session()))
+    def http(method, url, **kwargs):
+        assert method == "GET" and kwargs["headers"]["Authorization"] == "Bearer synthetic-current-access"
+        return auth() if url.endswith("/auth/me") else billing()
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.state is ProviderSourceState.READY
+    saved = json.loads(store.get("factory", "web-session").secret)
+    assert saved["organization_id"] == "synthetic-org"
+    assert saved["consent_version"] == 1

@@ -195,7 +195,17 @@ def validate_factory_api_key(secret, *, http_json=None):
 
 
 def collect_factory(preference, *, observed_at, credentials, http_json=_default_http_json, _fallback_attempted=False) -> ProviderUsageSnapshot:
-    """Read only the connected profile after its usage consent is enabled."""
+    """Serialize one instance's token rotation and account reading."""
+    from .factory_refresh import collection_lock
+
+    instance = getattr(preference, "source_instance_id", "default")
+    with collection_lock(instance):
+        return _collect_factory(preference, observed_at=observed_at, credentials=credentials,
+                                http_json=http_json, _fallback_attempted=_fallback_attempted)
+
+
+def _collect_factory(preference, *, observed_at, credentials, http_json, _fallback_attempted):
+    from .factory_refresh import FactoryCredentialUnavailable, FactorySessionChanged, access_expired, renew
     def failure(state, reason, action):
         result = failure_snapshot("factory", observed_at=observed_at, state=state,
                                   reason=reason, action=action)
@@ -236,12 +246,12 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Reconnect Factory browser session")
         if session is None:
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
-        if not session.get("access_token"):
+        if not session.get("access_token") and session["consent_version"] != 2:
             return failure(ProviderSourceState.NEEDS_SIGN_IN, "browser_token_unavailable", "Add Factory API key")
     headers = _factory_headers(session.get("access_token", "") if session is not None else key.secret)
     try:
         if session is not None:
-            may_read_browser = background_repair_allowed(
+            may_read_browser = session["consent_version"] == 1 and background_repair_allowed(
                 session, source_instance_id=getattr(preference, "source_instance_id", "default")
             )
 
@@ -249,7 +259,7 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                 if not may_read_browser:
                     return False
                 try:
-                    current = read_browser_session(session["browser"], session["profile"])
+                    current = read_browser_session(session["browser"], session["profile"], include_organization=False)
                 except (OSError, ValueError, BrowserSessionReadError):
                     return False
                 if current is None or not current.get("access_token"):
@@ -259,11 +269,23 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                 headers["Authorization"] = "Bearer " + session["access_token"]
                 return changed
 
-            sync_browser_access()
+            renewed = _fallback_attempted
+            if not renewed and session["consent_version"] == 2 and access_expired(session.get("access_token"), observed_at):
+                session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json)
+                headers["Authorization"] = "Bearer " + session["access_token"]
+                renewed = True
+            else:
+                sync_browser_access()
             try:
                 auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             except ProviderHttpError as error:
-                if error.status != 401 or not sync_browser_access():
+                if error.status != 401:
+                    raise
+                if session["consent_version"] == 2 and not renewed:
+                    session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json)
+                    headers["Authorization"] = "Bearer " + session["access_token"]
+                    renewed = True
+                elif not sync_browser_access():
                     raise
                 auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             auth = _authenticated_identity(auth, session.get("access_token"))
@@ -283,7 +305,16 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
         else:
             auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             auth = _authenticated_identity(auth, key.secret)
-        result = _billing_usage(auth, headers, observed_at=observed_at, http_json=http_json)
+        try:
+            result = _billing_usage(auth, headers, observed_at=observed_at, http_json=http_json)
+        except ProviderHttpError as error:
+            if error.status != 401 or session is None or session["consent_version"] != 2 or renewed or _fallback_attempted:
+                raise
+            # Start again with auth/me after renewal, never reuse another account's identity.
+            encoded = json.dumps(session, separators=(",", ":"), sort_keys=True)
+            renew(session, fingerprint(encoded), credentials, http_json)
+            return _collect_factory(preference, observed_at=observed_at, credentials=credentials,
+                                    http_json=http_json, _fallback_attempted=True)
         if session is not None:
             with SESSION_LOCK:
                 current = _credential(credentials, "factory", "web-session")
@@ -292,6 +323,12 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                 auth = None
                 return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_changed", "Reconnect Factory browser session")
         return replace(result, source_instance_id=getattr(preference, "source_instance_id", "default"))
+    except FactoryCredentialUnavailable:
+        auth = None
+        return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Connect Factory")
+    except FactorySessionChanged:
+        auth = None
+        return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_changed", "Connect Factory")
     except ProviderHttpError as error:
         if error.status == 401 and session is not None:
             # A key may have been saved while this browser request was in flight.

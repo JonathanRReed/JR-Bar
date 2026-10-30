@@ -165,12 +165,12 @@ struct ProviderCredentialEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(model.isFactoryKey ? "Connect Factory" : "\(model.providerName) \(model.credentialName)")
+            Text(model.isFactoryKey ? "Factory API key" : "\(model.providerName) \(model.credentialName)")
                 .jrbarType(.headline)
             Text(model.instance == "default" ? "Default account" : "Account: \(model.instance)")
                 .jrbarType(.caption).foregroundStyle(.secondary)
             if model.isFactoryKey {
-                Text("Connect JR-Bar with a Factory API key. Browser sign-in is unavailable.")
+                Text("Use an API key instead of your browser sign-in.")
                     .jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
                 if model.available {
                     Text("Factory API key saved.").jrbarType(.callout)
@@ -274,10 +274,8 @@ struct ProviderCredentialControls: View {
                 }
                 .id("source-\(row.identity)")
             }
-            if row.id == "factory" {
-                keyControls
-            } else if row.id == "devin" {
-                DevinBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
+            if ["factory", "devin"].contains(row.id) {
+                ProviderBrowserConnectionControls(row: row, core: core, connectRequest: connectRequest,
                     onConnectPresented: onConnectPresented, onAddAPIKey: {
                         keyExpanded = true
                         localKeyRequest += 1
@@ -310,11 +308,6 @@ struct ProviderCredentialControls: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        }
-        .onChange(of: connectRequest, initial: true) { _, request in
-            guard row.id == "factory", request > 0 else { return }
-            localKeyRequest += 1
-            onConnectPresented()
         }
         .onChange(of: keyConnectRequest, initial: true) { _, request in
             guard request > 0 else { return }

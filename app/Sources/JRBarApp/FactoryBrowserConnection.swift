@@ -177,7 +177,7 @@ final class FactoryBrowserConnectionModel {
         switch (error as? CoreReplyError)?.code {
         case "browser_token_unavailable":
             return provider == "factory"
-                ? "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage."
+                ? "Connect Factory with refresh permission, or add a Factory API key."
                 : "Devin sign-in data was found, but its access token is unavailable. Add a Devin API key to read usage."
         case "browser_import_failed":
             return (error as? CoreReplyError)?.message ?? "Browser import failed. Choose the profile again and retry."
@@ -266,7 +266,7 @@ struct DevinBrowserConnectionSheet: View {
 }
 
 @MainActor
-struct DevinBrowserConnectionControls: View {
+struct ProviderBrowserConnectionControls: View {
     let row: ProviderRow
     let core: CoreModel
     let connectRequest: Int
@@ -287,10 +287,17 @@ struct DevinBrowserConnectionControls: View {
         _model = ViewState(initialValue: FactoryBrowserConnectionModel(
             provider: row.id,
             available: row.credentials.contains { $0.account == (row.id == "devin" ? "token" : "web-session") && $0.available },
-            load: { try await core.devinSessionProfiles() },
-            importSession: { profile in try await core.importDevinSession(profile, instance: row.instance) },
+            load: {
+                if row.id == "factory" { return try await core.factorySessionProfiles() }
+                return try await core.devinSessionProfiles()
+            },
+            importSession: { profile in
+                if row.id == "factory" { return try await core.importFactorySession(profile, instance: row.instance) }
+                return try await core.importDevinSession(profile, instance: row.instance)
+            },
             disconnect: { try await core.disconnectFactorySession(instance: row.instance) },
             refreshUsage: {
+                if row.id == "factory" { return "Open Usage Center and choose Refresh to check usage." }
                 let reply = try await core.refreshUsage(providers: [row.id])
                 guard reply.ok else { throw reply.error ?? CoreReplyError(code: "unavailable") }
                 return "Usage refresh requested."
@@ -307,7 +314,7 @@ struct DevinBrowserConnectionControls: View {
             }
             .controlSize(.small)
             .disabled(!core.isLive || model.busy)
-            if model.available {
+            if model.available && row.id != "factory" {
                 Text("Browser sign-in saved. The usage switch controls requests.")
                     .jrbarType(.caption).foregroundStyle(.secondary)
             }
@@ -332,18 +339,82 @@ struct DevinBrowserConnectionControls: View {
                 onAddAPIKey()
             }
         }) {
-            DevinBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
-                onAddAPIKey: { keyAfterDismiss = true; editing = false })
+            if row.id == "factory" {
+                FactoryConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
+                    onAddAPIKey: { keyAfterDismiss = true; editing = false })
+            } else {
+                DevinBrowserConnectionSheet(model: model, instance: row.instance, dismiss: { editing = false },
+                    onAddAPIKey: { keyAfterDismiss = true; editing = false })
+            }
         }
         .onDisappear { model.cancel() }
     }
 
     @ViewBuilder
     private var buttons: some View {
-        Button(model.available ? "Reconnect browser session…" : "Connect browser session…") {
+        Button(row.id == "factory" ? "Connect Factory" : (model.available ? "Reconnect browser session…" : "Connect browser session…")) {
             model.beginEditing()
             editing = true
         }
         .fixedSize()
+    }
+}
+
+
+@MainActor
+struct FactoryConnectionSheet: View {
+    @Bindable var model: FactoryBrowserConnectionModel
+    var instance: String = "default"
+    let dismiss: () -> Void
+    let onAddAPIKey: () -> Void
+
+    private var browserName: String { model.selected?.browser.capitalized ?? "your browser" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(instance == "default" ? "Connect Factory" : "Connect Factory · \(instance)")
+                .jrbarType(.heading).fontWeight(.semibold)
+            Link("Sign in to Factory", destination: URL(string: "https://app.factory.ai")!)
+            if model.profiles.isEmpty {
+                Text(model.busy ? "Loading profiles…" : "No supported browser profiles found.")
+            } else {
+                Picker("Browser profile", selection: $model.selected) {
+                    ForEach(model.profiles) { profile in
+                        Text(profile.label).tag(Optional(profile))
+                    }
+                }
+                .disabled(model.busy)
+            }
+            Button("Reload profiles") { _ = Task { await model.load() } }
+                .disabled(model.busy)
+            Toggle("Use this browser's Factory sign-in", isOn: $model.approved)
+                .toggleStyle(.checkbox)
+                .disabled(model.busy)
+            Text("Factory may ask you to sign in again in \(browserName).")
+                .fixedSize(horizontal: false, vertical: true)
+            Text("JR-Bar reads this profile's Factory sign-in and saves it in Keychain. When usage is on, JR-Bar renews it through api.workos.com and reads usage from api.factory.ai. Browser files stay unchanged. Connecting does not turn on usage. A saved API key is used first.")
+                .jrbarType(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let message = model.message {
+                Text(message).jrbarType(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            if model.available {
+                Button("Disconnect browser sign-in", role: .destructive) { _ = Task { await model.disconnect() } }
+                    .disabled(model.busy)
+            }
+            HStack {
+                Button("Use API key…", action: onAddAPIKey).disabled(model.busy)
+                Spacer()
+                Button("Done") { model.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button(model.busy ? "Connecting…" : "Connect") { _ = Task { await model.connect() } }
+                    .keyboardShortcut(.defaultAction).disabled(!model.canConnect)
+            }
+        }
+        .padding(24)
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(NonblockingSheetWindow().frame(width: 0, height: 0).allowsHitTesting(false))
+        .task { if model.profiles.isEmpty { await model.load() } }
+        .onDisappear { model.cancel() }
     }
 }

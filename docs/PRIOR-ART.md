@@ -753,7 +753,8 @@ rejected account and stops background reads after access is lost.
 CodexBar tries the current browser access token before renewing Factory.
 JR-Bar uses an explicit exact-profile permission for continued local reads
 and never consumes the browser's refresh token. This replaces the WorkOS
-refresh path described in the earlier Factory review above. WorkOS documents
+refresh path described in the earlier Factory review above. The explicit
+browser-renewal consent below supersedes that restriction. WorkOS documents
 rotation and the retirement of the old token in its
 [session resilience guide](https://workos.com/docs/authkit/session-resilience).
 No upstream code was copied.
@@ -955,7 +956,7 @@ for legacy billing, `/api/organization/subscription/usage` on `api.factory.ai`.
 The public documentation does not guarantee these dashboard endpoints or their
 response shapes for API keys. Synthetic tests verify request construction and
 parsing; a real key must still confirm account access and reported allowances.
-JR-Bar does not consume browser-owned WorkOS refresh tokens.
+This API-key-only decision was superseded by the explicit browser-renewal consent below.
 
 ## Factory sign-in feasibility and key validation, 0.10.2
 
@@ -984,9 +985,55 @@ and [third-party WorkOS Connect clients](https://workos.com/docs/reference/worko
 These are provider documentation with no source revision or licence. They do
 not establish permission to reuse Factory's Droid client ID for JR-Bar.
 No supported Factory client registration for JR-Bar was found, so JR-Bar does
-not implement that device flow or consume another application's refresh token.
+not implement that device flow. The separate browser-renewal choice below uses
+Factory's web-session client IDs after explicit consent.
 
 JR-Bar independently reuses its existing Factory account and billing reader to
 validate an explicitly pasted API key before saving it. The dashboard endpoint
 and live-key limitations recorded above still apply. Browser opening and Save
 are separate user actions; neither enables ongoing collection.
+
+
+## Factory browser renewal consent, 0.10.2
+
+Studied [steipete/CodexBar at 5f93dc3068b3bee3f8753f3772614cc2949c335d](https://github.com/steipete/CodexBar/tree/5f93dc3068b3bee3f8753f3772614cc2949c335d),
+MIT licence, copyright 2026 Peter Steinberger. Reviewed
+`Sources/CodexBarCore/Providers/Factory/FactoryStatusProbe.swift`,
+`FactoryLocalStorageImporter.swift`, `FactorySessionStore.swift`,
+`FactoryStatusProbe+APIKey.swift`, `docs/factory.md`, and the changelog.
+The research clone stayed outside JR-Bar. No code was copied.
+
+CodexBar first tries an imported access token, then exchanges a local-storage
+WorkOS refresh token at `api.workos.com/user_management/authenticate` with
+Factory's allowlisted web client IDs. It persists rotated tokens in its own
+private session file. It does not update browser storage or protect a browser
+that still holds the consumed refresh token. Its cookie paths also accept
+Factory session-cookie names, but tracking cookies do not supply a session.
+Its local-storage reader covers Safari and Chromium, not Firefox or Zen.
+
+Reviewed CodexBar issues [#2607](https://github.com/steipete/CodexBar/issues/2607),
+[#914](https://github.com/steipete/CodexBar/issues/914), and fixes
+[#792](https://github.com/steipete/CodexBar/pull/792),
+[#2395](https://github.com/steipete/CodexBar/pull/2395).
+They document missing Firefox local-storage support, cookie-only failures,
+stale-session fallback preservation, and private credential-file permissions.
+They do not establish that refresh-token sharing preserves browser sign-in.
+
+WorkOS [session resilience](https://workos.com/docs/authkit/session-resilience)
+documents refresh-token rotation and a 30-second replay grace period.
+After that, the old token fails with invalid_grant. The
+[session guide](https://workos.com/docs/authkit/sessions) requires replacing
+rotated tokens. Its [JavaScript SDK](https://workos.com/docs/sdks/authkit-js)
+uses client-side authentication; the
+[React Router SDK](https://workos.com/docs/sdks/authkit-react-router) documents
+`wos-session` as a configurable server-managed session-cookie name. That cookie
+is not required for a client-side local-storage sign-in. These public docs
+were checked October 29, 2026; they have no pinned source commit or licence.
+Factory's exact deployment settings and the owner's live session were not tested.
+
+JR-Bar reimplements the refresh-only mechanism behind a new, explicit checkbox
+warning that Factory may ask the person to sign in again in the selected
+browser. The import stays local; enabled, consented usage is also required
+before exchange. Rotations are stored only in JR-Bar Keychain. Existing
+imports never gain renewal permission automatically. The API key remains a
+fallback. This supersedes the API-key-only guidance above.

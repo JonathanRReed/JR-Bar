@@ -41,8 +41,8 @@ def test_factory_defaults_and_old_documents_keep_usage_off(tmp_path):
     loaded = load_provider_usage_settings(tmp_path / "missing.json").settings.preference("factory")
     assert not loaded.enabled and not loaded.usage_consented
     disclosure = usage_disclosure("factory")
-    assert disclosure.hosts == ("api.factory.ai",)
-    assert "never uses a browser refresh token" in disclosure.summary
+    assert disclosure.hosts == ("api.factory.ai", "api.workos.com")
+    assert "separate browser consent" in disclosure.summary
     assert "saved API key first" in disclosure.detail
 
 

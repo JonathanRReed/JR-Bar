@@ -14,24 +14,28 @@ there are informational and become available as tested support ships.
 
 ## Factory subscription usage
 
-In Settings > Providers or Usage Center, choose Add Factory API key for the
-intended account. JR-Bar opens [Factory's API-key settings](https://app.factory.ai/settings/api-keys)
-and the key sheet together. Create a key, paste it into the secure field and
-choose Save API key. Save checks account and usage access at `api.factory.ai`
-before storing the key in JR-Bar's Keychain. The sheet shows the result and stays
-open. A failed check preserves any previously saved key.
+In Settings > Providers or Usage Center, choose Connect Factory for the intended
+account. Sign in at app.factory.ai in Zen or another supported browser, choose
+that profile, then check Use this browser's Factory sign-in and click Connect.
+The checkbox approves WorkOS token renewal. Factory may ask you to sign in
+again in that browser. JR-Bar saves rotated tokens in its own Keychain and
+never writes them back to browser files. Existing imports need this new
+approval before JR-Bar can renew them. A browser sign-in containing only a
+refresh token can connect this way.
 
-Turn on Show Factory usage when you want ongoing readings, then choose Refresh.
-Save checks the key once without turning on usage. A saved key takes priority
-over any browser session imported by an older build.
+Turn on Show Factory usage and Metering when you want readings, then choose
+Refresh. Connecting alone sends no request and leaves usage settings unchanged.
+Usage goes to api.factory.ai; approved token renewal goes to api.workos.com.
+A rejected or expired refresh token requires a new browser sign-in and Connect.
 
-Factory's current browser storage does not expose a usable access token, so
-JR-Bar offers the API-key connection. Older imported access tokens remain usable
-while valid, and a previously approved profile can supply a newer access token.
-JR-Bar never spends browser refresh tokens or reads Droid's encrypted session.
-Factory's documented device login belongs to Droid. No supported third-party
-client registration or token export was found for JR-Bar. Signing in with
-`droid` and `/login` connects Droid, not JR-Bar's usage reader.
+Use API key in the connection sheet is the fallback. Create a key at
+[Factory's API-key settings](https://app.factory.ai/settings/api-keys), paste it
+into the secure field and choose Save API key. Save validates the key once
+before storing it, without enabling ongoing usage. A failed check preserves
+any saved key. A saved key takes priority over a browser session; remove the
+key to use the connected browser account instead.
+
+JR-Bar does not read Droid's encrypted sign-in or start its device login.
 
 Standard's five-hour, seven-day and monthly windows drive the subscription
 headline. Factory's separate Core pool stays visible as detail and does not

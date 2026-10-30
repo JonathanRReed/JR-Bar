@@ -178,12 +178,12 @@ read. Nothing runs until you click it.
   JR-Bar leaves renewal and the refresh token with Claude Code. A named Claude
   profile keeps its own credential; update that profile's credential instead of
   replacing it with the default Claude Code account.
-- **Factory.** Choose Add Factory API key on the affected account. Create a key
-  using the link in the editor, paste it and save. A saved key takes priority
-  over a browser session. Turn on Show Factory usage, then Refresh usage.
-  Factory may keep its access token in memory, leaving only a refresh token in
-  browser storage. JR-Bar reports that it cannot use this sign-in and offers
-  the key editor. It never spends a browser-owned refresh token.
+- **Factory.** Choose Connect Factory on the affected account. Select the browser
+  profile, approve Use this browser's Factory sign-in and click Connect.
+  Factory may ask you to sign in again in that browser. JR-Bar renews through
+  WorkOS and saves rotated tokens only in its own Keychain. Turn on Show
+  Factory usage and Metering, then Refresh. Use API key is the fallback; a saved
+  key takes priority until you remove it.
 - **Grok.** Opens your terminal on `grok login`. JR-Bar notices on its own when
   the CLI saves the new sign-in.
 - **Codex and OpenCode.** Opens your terminal on `codex login` or `opencode

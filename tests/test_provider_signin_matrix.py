@@ -23,14 +23,14 @@ PROVIDERS = [row.provider_id for row in provider_descriptors()]
     "browser_refresh_consent_required", "browser_token_unavailable", "browser_session_expired",
     "invalid_web_session", "web_session_account_changed", "web_session_changed", "web_session_unavailable",
 ])
-def test_factory_recovery_always_offers_a_key(reason):
+def test_factory_recovery_offers_browser_connection(reason):
     snapshot = failure_snapshot("factory", observed_at=10, state=ProviderSourceState.NEEDS_SIGN_IN,
                                 reason=reason, action="Reconnect Factory browser session")
     row = availability_document(snapshot, now=10, installed=True)
-    assert row["action"] == "Add Factory API key"
+    assert row["action"] == "Connect Factory"
     assert row["action_kind"] == "manage"
-    assert "API key" in row["status_text"]
-    assert "Reconnect" not in row["status_text"]
+    assert "Factory" in row["status_text"]
+    assert "no longer shares" not in row["status_text"]
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -133,7 +133,7 @@ def test_cursor_browser_actions_keep_the_existing_staged_flow(reason, action, mo
 
 
 @pytest.mark.parametrize("provider,action,kind", [
-    ("factory", "Add Factory API key", "manage"),
+    ("factory", "Connect Factory", "manage"),
     ("devin", "Add Devin API key", "manage"),
     ("cursor", "Import Cursor browser session", "sign_in"),
 ])
