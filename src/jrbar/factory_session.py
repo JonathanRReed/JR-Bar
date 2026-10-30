@@ -34,7 +34,7 @@ from .provider_instances import ProviderInstanceKey
 from .provider_usage_settings import load_provider_usage_settings
 
 ORIGINS = ("app.factory.ai", "auth.factory.ai")
-FIELDS = ("workos:refresh-token", "workos:access-token")
+FIELDS = ("workos:refresh-token", "workos:access-token", "factory:active-organization-id")
 WORKOS_CLIENT_IDS = ("client_01HXRMBQ9BJ3E7QSTQ9X2PHVB7", "client_01HNM792M5G5G1A2THWPXKFMXB")
 SESSION_LOCK = threading.RLock()
 _IMPORT_GENERATIONS = {}
@@ -72,10 +72,12 @@ def decode_session(raw):
             "consent_version",
             "identity",
             "client_id",
+            "refresh_rejected",
         }
         or ("client_id" in value and value["client_id"] not in WORKOS_CLIENT_IDS)
         or type(value.get("consent_version")) is not int
-        or value["consent_version"] != 1
+        or value["consent_version"] not in {1, 2}
+        or ("refresh_rejected" in value and type(value["refresh_rejected"]) is not bool)
         or not _text(value.get("refresh_token"))
         or not isinstance(value.get("browser"), str)
         or value["browser"] not in _ROOTS
@@ -176,11 +178,11 @@ def _firefox_values(profile_root, origin):
             connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=1)
             try:
                 rows = connection.execute(
-                    "SELECT key, value, compression_type FROM data WHERE key IN (?, ?) LIMIT 3", FIELDS
+                    "SELECT key, value, compression_type FROM data WHERE key IN (?, ?, ?) LIMIT 4", FIELDS
                 ).fetchall()
             finally:
                 connection.close()
-        if len(rows) > 2:
+        if len(rows) > 3:
             return {}
         return {key: _decoded(value) for key, value, compression in rows if compression == 0}
     except (OSError, sqlite3.Error):
@@ -248,6 +250,9 @@ def read_browser_session(browser, profile, *, home=None):
             organization = _jwt_organization(access)
             if organization is not None:
                 row["organization_id"] = organization
+        organization = values.get(FIELDS[2])
+        if _text(organization, 256):
+            row["organization_id"] = organization
         found.append(row)
     if not found and incomplete:
         raise BrowserSessionReadError("browser_token_unavailable")
@@ -289,8 +294,9 @@ def background_repair_allowed(session, *, source_instance_id="default"):
 
 def import_session(args, credentials):
     if (
-        set(args) - {"browser", "profile", "instance", "confirm", "background_repair"}
+        set(args) - {"browser", "profile", "instance", "confirm", "background_repair", "allow_refresh"}
         or type(args.get("background_repair", False)) is not bool
+        or type(args.get("allow_refresh", False)) is not bool
         or args.get("confirm") is not True
         or not isinstance(args.get("browser"), str)
         or args["browser"] not in _ROOTS
@@ -312,13 +318,15 @@ def import_session(args, credentials):
             _IMPORT_GENERATIONS[key.value] = generation
         value = read_browser_session(browser, profile)
     except BrowserSessionReadError:
-        raise CommandError("browser_token_unavailable", "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage.") from None
+        raise CommandError("browser_token_unavailable", "Connect Factory with refresh permission, or add a Factory API key.") from None
     except Exception:
         raise CommandError("unavailable", "Factory browser storage could not be read. " + _LOGIN) from None
     if value is None:
         raise CommandError("browser_session_not_found", _LOGIN)
-    if not value.get("access_token"):
-        raise CommandError("browser_token_unavailable", "Factory no longer shares its sign-in with other apps. Add a Factory API key to read usage.")
+    if args.get("allow_refresh", False):
+        value["consent_version"] = 2
+    if not value.get("access_token") and value["consent_version"] != 2:
+        raise CommandError("browser_token_unavailable", "Connect Factory with refresh permission, or add a Factory API key.")
     encoded = json.dumps(value, separators=(",", ":"), sort_keys=True)
     decode_session(encoded)
     try:

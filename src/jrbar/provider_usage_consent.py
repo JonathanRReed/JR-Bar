@@ -218,16 +218,17 @@ _DISCLOSURES: dict[str, UsageDisclosure] = {
         ),
         _disclosure(
             "factory",
-            hosts=("api.factory.ai",),
-            credential="your Factory API key or a previously imported browser access token in JR-Bar Keychain",
+            hosts=("api.factory.ai", "api.workos.com"),
+            credential="your connected Factory browser sign-in or API key in JR-Bar Keychain",
             summary=(
                 "JR-Bar will ask Factory for your subscription usage limits "
-                "with your saved API key first, or an older imported access token. JR-Bar never uses a browser refresh token. Nothing else is sent."
+                "with your saved API key first, or your connected browser sign-in. WorkOS renewal needs separate browser consent."
             ),
             detail=(
                 "Asks api.factory.ai for Standard and Core usage windows "
-                "with your saved API key first. An older imported access token can still be used while valid; a previously approved browser profile may repair it. "
-                "JR-Bar never uses browser refresh tokens or Droid credentials. Save API key checks the key once; this switch controls ongoing usage requests."
+                "with your saved API key first, or your connected browser sign-in. If you approve renewal in Connect Factory, "
+                "JR-Bar sends its refresh token to api.workos.com and saves rotated tokens only in Keychain. Factory may ask you to sign in again in your browser. "
+                "Connecting does not turn on usage. Save API key checks a key once; this switch controls ongoing requests."
             ),
         ),
         _disclosure(

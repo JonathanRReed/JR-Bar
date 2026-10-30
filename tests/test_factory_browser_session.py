@@ -229,7 +229,7 @@ def test_import_disconnect_and_metadata_profiles_keep_usage_off(context):
     assert saved == session()
     consent = load_browser_consents().store.consents[0]
     assert consent.domains == ("app.factory.ai", "auth.factory.ai")
-    assert consent.fields == ("workos:refresh-token", "workos:access-token")
+    assert consent.fields == ("workos:refresh-token", "workos:access-token", "factory:active-organization-id")
     assert not consent.background_repair
     store.set("factory", "api-key", "synthetic-api-key")
     module.disconnect({}, store)
@@ -384,7 +384,7 @@ def test_chromium_reader_keeps_origin_and_key_allowlists(context, monkeypatch):
 
     def read(path, **kwargs):
         assert path == root
-        assert kwargs["allowed_keys"] == ("workos:refresh-token", "workos:access-token")
+        assert kwargs["allowed_keys"] == ("workos:refresh-token", "workos:access-token", "factory:active-organization-id")
         calls.append(kwargs["origin"])
         return {"workos:refresh-token": "synthetic-refresh-token", "workos:access-token": "synthetic-access-token"}
 
