@@ -46,6 +46,8 @@ def remote():
             code = state["refresh_error"]
             if body["client_id"] == state["reject_client"]:
                 status, code = 400, "invalid_client"
+            elif body.get("organization_id") and body["organization_id"] == state.get("reject_org"):
+                status, code = 400, "organization_not_found"
             payload = {"access_token": state["access"], "refresh_token": state["refresh"]}
             if status == 200:
                 submitted = body["refresh_token"]
@@ -134,7 +136,8 @@ def test_refresh_only_browser_rotates_only_after_usage_is_enabled_and_consented(
     saved = json.loads(store.get("factory", "web-session").secret)
     assert saved["refresh_token"] == "synthetic-rotated-1"
     assert saved["consent_version"] == 2
-    assert state["refreshes"][0]["organization_id"] == "synthetic-org"
+    # Factory's own organization ID checks the account; WorkOS never sees it.
+    assert "organization_id" not in state["refreshes"][0]
     assert database.read_bytes() == original
     # The next poll uses JR-Bar's token, without importing the old browser copy.
     assert collect_factory(preference(), observed_at=1001, credentials=store, http_json=http).lanes
@@ -529,3 +532,17 @@ def test_workos_reasons_sent_as_code_are_shown(context, remote):
     state.update(refresh_status=400, refresh_error="session_ended", error_field="code")
     result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
     assert result.reason_code == "factory_refresh_session_ended"
+
+
+def test_a_workos_organization_is_sent_and_dropped_when_workos_does_not_know_it(context, remote):
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    session = json.loads(store.get("factory", "web-session").secret)
+    session["organization_id"] = "org_synthetic"
+    store.set_for_instance(factory_session._instance({}), "web-session", json.dumps(session, separators=(",", ":"), sort_keys=True))
+    state.update(reject_org="org_synthetic")
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.lanes, (result.state, result.reason_code, state["refreshes"])
+    sent = [body.get("organization_id") for body in state["refreshes"]]
+    assert sent[:2] == ["org_synthetic", None]

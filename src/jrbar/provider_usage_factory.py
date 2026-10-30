@@ -303,8 +303,12 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
             if identity is None or org is None:
                 auth = None
                 return failure(ProviderSourceState.ERROR, "account_identity_unavailable", "Retry Factory usage")
+            # A WorkOS organization (org_…) from the sign-in token is a different
+            # namespace from Factory's own; only Factory IDs are comparable here.
+            saved_org = session.get("organization_id", org)
+            comparable = not (isinstance(saved_org, str) and saved_org.startswith("org_"))
             if (session.get("identity", identity) != identity
-                    or session.get("organization_id", org) != org):
+                    or (comparable and saved_org != org)):
                 auth = None
                 return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_account_changed", "Reconnect Factory browser session")
             session.update(identity=identity, organization_id=org)

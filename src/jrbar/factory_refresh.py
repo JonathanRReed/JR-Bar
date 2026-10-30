@@ -70,15 +70,35 @@ def _check_current(credentials, expected):
             raise FactorySessionChanged
 
 
+def _workos_organization(session):
+    """The organization WorkOS knows, or None. Factory's web app also stores its
+    own organization ID; that one checks the account against Factory's API but
+    WorkOS answers organization_not_found for it, so it never goes to WorkOS."""
+    value = session.get("organization_id")
+    return value if isinstance(value, str) and value.startswith("org_") else None
+
+
+def _post_refresh(client, session, http_json, organization):
+    body = {"client_id": client, "grant_type": "refresh_token", "refresh_token": session["refresh_token"]}
+    if organization:
+        body["organization_id"] = organization
+    return http_json("POST", WORKOS_URL,
+                     headers={"Accept": "application/json", "Content-Type": "application/json"}, body=body)
+
+
 def _exchange(session, expected, credentials, http_json):
     for index, client in enumerate(WORKOS_CLIENT_IDS):
         _check_current(credentials, expected)
-        body = {"client_id": client, "grant_type": "refresh_token", "refresh_token": session["refresh_token"]}
-        if session.get("organization_id"):
-            body["organization_id"] = session["organization_id"]
+        organization = _workos_organization(session)
         try:
-            result = http_json("POST", WORKOS_URL,
-                               headers={"Accept": "application/json", "Content-Type": "application/json"}, body=body)
+            try:
+                result = _post_refresh(client, session, http_json, organization)
+            except ProviderHttpError as error:
+                if not organization or error.error_code != "organization_not_found":
+                    raise
+                # The session isn't scoped to that organization; ask without one.
+                _check_current(credentials, expected)
+                result = _post_refresh(client, session, http_json, None)
         except ProviderHttpError as error:
             _LOG.warning("Factory renewal failed status=%d error=%s", error.status, error.error_code)
             if error.status not in {400, 401}:
