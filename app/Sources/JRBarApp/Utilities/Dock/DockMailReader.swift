@@ -165,7 +165,7 @@ struct DockMailReader: Sendable {
     end safeText
     on safeID(value)
         set keyText to my safeText(value, 512)
-        if keyText is not value then error number -1700
+        if (id of keyText) is not (id of (value as text)) then error number -1700
         return keyText
     end safeID
     if not application id "com.apple.mail" is running then error number -600
