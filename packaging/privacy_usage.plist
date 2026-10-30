@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open.</string>
+	<string>JR-Bar uses Automation to open a reviewed resume command in Terminal or iTerm2 when you choose Open. If you allow full Music controls, JR-Bar reads and controls Music while its Dock card is open. Nothing is stored or sent.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>JR-Bar reads the playing app's audio levels only while the notch's Audio visualizer setting is on, to draw its six-band animation. Audio is never recorded or stored.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

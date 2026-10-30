@@ -562,10 +562,11 @@ struct DockUtilityControls: View {
                 .labelsHidden()
                 .padding(.vertical, 8)
             }
-            Toggle(isOn: mediaPreview) {
-                SettingLabel(title: "Media preview",
-                             subtitle: "Show playback controls when you hover the app playing audio.")
+            Toggle("Music player", isOn: musicPlayer)
+            if utility.enhance.preferences.musicPlayer {
+                Toggle("Full Music controls", isOn: musicFullControls)
             }
+            Toggle("Other media previews", isOn: mediaPreview)
         }
     }
 
@@ -576,6 +577,14 @@ struct DockUtilityControls: View {
     private var calendarView: Binding<DockCalendarView> {
         Binding(get: { utility.enhance.preferences.calendarView },
                 set: { utility.enhance.preferences.calendarView = $0 })
+    }
+    private var musicPlayer: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.musicPlayer },
+                set: { utility.enhance.preferences.musicPlayer = $0 })
+    }
+    private var musicFullControls: Binding<Bool> {
+        Binding(get: { utility.enhance.preferences.musicFullControls },
+                set: { utility.enhance.preferences.musicFullControls = $0 })
     }
     private var mediaPreview: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.mediaPreview },

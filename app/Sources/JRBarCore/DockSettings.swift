@@ -194,6 +194,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var calendarPreview: Bool
     public var calendarView: DockCalendarView
     public var mediaPreview: Bool
+    public var musicPlayer: Bool
+    public var musicFullControls: Bool
     /// Bigger cards — 208×130 instead of 144×90 — for people who read
     /// the thumbnail rather than the title.
     public var largePreviews: Bool
@@ -295,6 +297,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 calendarPreview: Bool = true,
                 calendarView: DockCalendarView = .list,
                 mediaPreview: Bool = true,
+                musicPlayer: Bool = true,
+                musicFullControls: Bool = false,
                 largePreviews: Bool = false,
                 includeOffscreenWindows: Bool = true,
                 holdDockOpen: Bool = true,
@@ -324,6 +328,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.calendarPreview = calendarPreview
         self.calendarView = calendarView
         self.mediaPreview = mediaPreview
+        self.musicPlayer = musicPlayer
+        self.musicFullControls = musicFullControls
         self.largePreviews = largePreviews
         self.includeOffscreenWindows = includeOffscreenWindows
         self.holdDockOpen = holdDockOpen
@@ -374,6 +380,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case calendarPreview, calendarView, mediaPreview
+        case musicPlayer, musicFullControls
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
@@ -392,6 +399,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         calendarPreview = (try? c.decodeIfPresent(Bool.self, forKey: .calendarPreview)) ?? true
         calendarView = (try? c.decodeIfPresent(DockCalendarView.self, forKey: .calendarView)) ?? .list
         mediaPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mediaPreview)) ?? true
+        musicPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .musicPlayer)) ?? true
+        musicFullControls = (try? c.decodeIfPresent(Bool.self, forKey: .musicFullControls)) ?? false
         largePreviews = (try? c.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true
         holdDockOpen = (try? c.decodeIfPresent(Bool.self, forKey: .holdDockOpen)) ?? true

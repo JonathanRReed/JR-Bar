@@ -183,13 +183,15 @@ final class DockPreviewContent {
     /// that app is playing. nil until a track lands.
     var media: AlcoveMedia?
     var mediaPending = false
+    var musicPlayerEnabled = false
+    var music: DockMusicPreview?
     var calendarState: DockCalendarPreview.State?
     var calendarNow = Date()
     var calendarView: DockCalendarView = .list
     var calendarMonth = Date()
     var calendarSelectedDay = Date()
     var nativeWindowsExpanded = false
-    var hasNativeCard: Bool { media != nil || calendarState != nil }
+    var hasNativeCard: Bool { musicPlayerEnabled || media != nil || calendarState != nil }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
     var largeCards = false
     /// The insets and corners the panel draws, from the card's Spacing —

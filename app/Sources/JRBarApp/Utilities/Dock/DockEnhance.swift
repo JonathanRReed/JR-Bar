@@ -1623,6 +1623,17 @@ final class DockEnhanceController {
         panel.actions.onCloseAll = { [weak self] in self?.closeAll() }
         panel.actions.onOpen = { [weak self] url in self?.openItem(url) }
         panel.actions.onMediaCommand = { [weak self] in self?.nativePreviews.send($0) }
+        panel.actions.onMusicAllow = { [weak self] in
+            guard let self, let player = self.preview.music else { return }
+            self.preferences.musicFullControls = true
+            player.configure(fullControls: true)
+            _ = Task { await player.allowFullControls(request: player.permissionRequest()) }
+        }
+        panel.actions.onMusicOpen = {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockMusicSource.bundleID) {
+                DesktopServices.automatic.open(url)
+            }
+        }
         panel.actions.onMediaSeek = { [weak self] in self?.nativePreviews.seek(to: $0) }
         panel.actions.lyrics = lyrics
         panel.actions.onReveal = { url in DesktopServices.automatic.reveal([url]) }
@@ -1980,7 +1991,7 @@ final class DockEnhanceController {
     /// the arrow is already the preview's.
     private func mirrorPreviewChars(pointerInPanel inPanel: Bool? = nil) {
         let chars = tracker.shown == nil ? [] : Self.previewChars(
-            walked: preview.selectedWindowID != nil, media: preview.media != nil,
+            walked: preview.selectedWindowID != nil, media: preview.media != nil || preview.music?.canControl == true,
             pointerInPanel: inPanel ?? pointerInPanel())
         guard chars != mirroredChars else { return }
         mirroredChars = chars

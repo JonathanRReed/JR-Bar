@@ -85,6 +85,8 @@ final class DockPreviewActions {
     /// The player row's transport — previous, play/pause, next.
     var onMediaCommand: (@MainActor (MediaRemoteBridge.Command) -> Void)?
     /// The player row's scrubber — seek to a playhead in seconds.
+    var onMusicAllow: (@MainActor () -> Void)?
+    var onMusicOpen: (@MainActor () -> Void)?
     var onMediaSeek: (@MainActor (Double) -> Void)?
     /// The synced lyrics the notch Shelf already holds for the playing
     /// track — read, never fetched: nil unless the Shelf has them.
@@ -475,7 +477,14 @@ struct DockPreviewView: View {
             if content.mediaPending, content.windows.isEmpty, !content.hasNativeCard {
                 Text("Loading playback…").jrbarType(.callout).foregroundStyle(.secondary)
             }
-            if let media = content.media {
+            if content.musicPlayerEnabled {
+                rule
+                if let music = content.music {
+                    DockMusicCard(player: music, actions: actions)
+                } else {
+                    Text("Loading Music…").jrbarType(.callout).foregroundStyle(.secondary)
+                }
+            } else if let media = content.media {
                 rule
                 DockMediaRow(media: media, actions: actions)
             }
