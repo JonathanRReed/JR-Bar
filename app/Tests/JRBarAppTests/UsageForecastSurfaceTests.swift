@@ -161,7 +161,7 @@ struct UsageForecastSurfaceTests {
         #expect(reading.footnote != "Runs out " + reading.resetFootnote)
     }
 
-    @Test func warningRowsKeepTheCompactHeight() {
+    @Test func warningRowsKeepThePanelHeight() {
         for state in ["runs out", "used up"] {
             let (panel, _, original) = Self.fixture(state)
             for imminent in [false, true] {
@@ -172,8 +172,8 @@ struct UsageForecastSurfaceTests {
                 let row = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider)
                 for width: CGFloat in [320, 372] {
                     let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
-                    #expect(host.fittingSize.height == 36)
-                    #expect(PanelComposition.usageHeight(provider) == 36)
+                    #expect(host.fittingSize.height == 52)
+                    #expect(PanelComposition.usageHeight(provider) == 52)
                 }
             }
         }

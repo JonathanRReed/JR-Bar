@@ -331,84 +331,41 @@ public struct UsageGaugeRow: View {
     }
 
     @ViewBuilder private var compactContent: some View {
-        if style == .panel && showsWindows && Self.panelAdditionalHeight(provider) > 0 {
+        if style == .panel && showsWindows {
             panelWindows
         } else {
             compactWindows
         }
     }
 
-    /// Own-only providers start beside their identity; mixed providers keep duration columns.
+    /// Inline window labels keep both single-window and paired rows self-contained.
     private var panelWindows: some View {
-        let ownWindows = provider.windows.filter { $0.placement == .labelled }
-        let ownOnly = ownWindows.count == provider.windows.count
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                ProviderLogoTile(provider: provider.id, accent: tileAccent)
-                compactIdentity.frame(width: Self.compactIdentityWidth - 30)
-                ForEach([UsageWindowPlacement.fiveHour, .weekly], id: \.rawValue) { placement in
-                    let windows = ownOnly && placement == .weekly ? Array(ownWindows.prefix(1))
-                        : provider.windows.filter { $0.placement == placement }
-                    VStack(spacing: 8) {
-                        if windows.isEmpty {
-                            Color.clear.frame(height: Self.panelCellHeight)
-                                .accessibilityHidden(true)
-                                .preference(key: UsageGaugeCellEvidence.self, value: [placement.rawValue: .empty])
-                        }
-                        ForEach(windows) { window in
-                            VStack(alignment: .leading, spacing: 2) {
-                                if window.overviewColumn != placement.rawValue {
-                                    let title = UsageWindowLabel.column(window.name)
-                                    let suffix = " " + placement.rawValue
-                                    let poolTitle = title.hasSuffix(suffix) ? String(title.dropLast(suffix.count)) : title
-                                    Text(poolTitle)
-                                        .font(JRBarTokens.TypeStyle.caption.font)
-                                        .foregroundStyle(neutralInk.secondary).lineLimit(1)
-                                        .frame(height: Self.panelPoolLabelHeight, alignment: .leading)
-                                        .help(window.name)
-                                }
-                                compactGauge(window)
-                                    .frame(height: Self.panelCellHeight)
-                            }
-                            .preference(key: UsageGaugeCellEvidence.self,
-                                value: [placement.rawValue: ownOnly ? .ownCell : cellState(window)])
-                        }
+        HStack(alignment: .top, spacing: 10) {
+            ProviderLogoTile(provider: provider.id, accent: tileAccent)
+            compactIdentity.frame(width: Self.compactIdentityWidth - 30)
+            ForEach(provider.panelColumns, id: \.rawValue) { column in
+                if let window = provider.panelWindow(in: column) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(UsageWindowLabel.column(window.name))
+                            .font(JRBarTokens.TypeStyle.caption.font)
+                            .foregroundStyle(neutralInk.secondary).lineLimit(1)
+                            .frame(height: Self.panelPoolLabelHeight, alignment: .leading)
+                            .help(accessibilityValue)
+                        compactGauge(window)
+                            .frame(height: Self.panelCellHeight)
                     }
                     .frame(minWidth: compactColumnWidth, maxWidth: .infinity)
+                    .preference(key: UsageGaugeCellEvidence.self,
+                                value: [column.rawValue: cellState(window)])
                 }
-            }
-            .frame(minHeight: Self.panelCellHeight)
-            ForEach(ownOnly ? Array(ownWindows.dropFirst()) : ownWindows) { window in
-                HStack(spacing: 10) {
-                    Text(window.placementLabel).font(JRBarTokens.TypeStyle.callout.font)
-                        .lineLimit(1).help(window.name)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    compactGauge(window)
-                        .frame(width: compactColumnWidth)
-                }
-                .frame(height: Self.panelCellHeight)
-                .padding(.leading, 30)
             }
         }
     }
 
     public static func panelAdditionalHeight(_ provider: CoreProviderUsage) -> CGFloat {
-        guard provider.quotaSource, !provider.usageIsOff,
+        guard provider.quotaSource, !provider.usageIsOff, !provider.windows.isEmpty,
               !["absent", "not_found"].contains(provider.availability) else { return 0 }
-        let heights = [UsageWindowPlacement.fiveHour, .weekly].map { placement -> CGFloat in
-            let windows = provider.windows.filter { $0.placement == placement }
-            let labels = windows.filter { $0.overviewColumn != placement.rawValue }.count
-            let cells = CGFloat(max(1, windows.count)) * panelCellHeight
-            let gaps = CGFloat(max(0, windows.count - 1)) * 8
-            let captions = CGFloat(labels) * (panelPoolLabelHeight + 2)
-            return cells + gaps + captions
-        }
-        let otherCount = provider.windows.filter { $0.placement == .labelled }.count
-        if otherCount > 0 && otherCount == provider.windows.count {
-            return panelPoolLabelHeight + 2 + CGFloat(otherCount - 1) * (panelCellHeight + 8)
-        }
-        let additionalColumns = max(0, (heights.max() ?? panelCellHeight) - panelCellHeight)
-        return additionalColumns + CGFloat(otherCount) * (panelCellHeight + 8)
+        return panelPoolLabelHeight + 2
     }
 
     @ViewBuilder private var compactWindows: some View {
@@ -460,7 +417,7 @@ public struct UsageGaugeRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(name)
+        .help(style == .panel && showsWindows ? accessibilityValue : name)
     }
 
     private var spokenReadingAge: String {

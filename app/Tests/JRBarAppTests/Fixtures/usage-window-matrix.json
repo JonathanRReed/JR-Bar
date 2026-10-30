@@ -92,9 +92,13 @@
         "gemini-weekly": "7d",
         "claude-gpt-weekly": "7d"
       },
+      "panel_windows": {
+        "short": "gemini-five-hour",
+        "cycle": "claude-gpt-weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -184,9 +188,13 @@
         "weekly": "7d",
         "fable-only": "7d"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -265,9 +273,13 @@
         "five-hour": "5h",
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -361,9 +373,13 @@
         "spark-five-hour": "5h",
         "spark-weekly": "7d"
       },
+      "panel_windows": {
+        "short": "spark-five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -431,9 +447,13 @@
         "spark-five-hour": "5h",
         "spark-weekly": "7d"
       },
+      "panel_windows": {
+        "short": "spark-five-hour",
+        "cycle": "spark-weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -527,9 +547,13 @@
         "auto-composer": "labelled",
         "api-models": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "auto-composer"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -608,9 +632,13 @@
         "daily": "labelled",
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": "daily",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -693,9 +721,13 @@
         "model-gemini-3-flash": "labelled",
         "model-gemini-2-5-flash-lite": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "model-gemini-3-pro"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -759,9 +791,13 @@
       "placements": {
         "credits": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "credits"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -797,9 +833,13 @@
         "action_kind": null
       },
       "placements": {},
+      "panel_windows": {
+        "short": null,
+        "cycle": null
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "empty"
+        "short": "empty",
+        "cycle": "empty"
       }
     },
     {
@@ -893,9 +933,13 @@
         "go-weekly": "7d",
         "go-monthly": "labelled"
       },
+      "panel_windows": {
+        "short": "go-rolling",
+        "cycle": "go-weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -1030,9 +1074,13 @@
         "core-7d": "7d",
         "core-30d": "labelled"
       },
+      "panel_windows": {
+        "short": "standard-5h",
+        "cycle": "standard-7d"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -1107,9 +1155,13 @@
         "standard-billing": "labelled",
         "premium-billing": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "premium-billing"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -1184,9 +1236,13 @@
         "monthly": "labelled",
         "overage": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "monthly"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -1276,9 +1332,13 @@
         "weekly": "7d",
         "monthly": "labelled"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -1353,9 +1413,13 @@
         "credits": "labelled",
         "pass": "labelled"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "credits"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "own-cell"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -1430,9 +1494,13 @@
         "weekly-opus": "7d",
         "weekly-sonnet": "7d"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "weekly-sonnet"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "reading"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -1597,9 +1665,13 @@
         "gemini-argon-five-hour": "5h",
         "gemini-argon-weekly": "7d"
       },
+      "panel_windows": {
+        "short": "gemini-five-hour",
+        "cycle": "gemini-weekly"
+      },
       "panel_cells": {
-        "5h": "reading",
-        "7d": "reading"
+        "short": "reading",
+        "cycle": "reading"
       }
     },
     {
@@ -1674,9 +1746,13 @@
         "five-hour": "5h",
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "dash",
-        "7d": "reading"
+        "short": "dash",
+        "cycle": "reading"
       }
     },
     {
@@ -1751,9 +1827,13 @@
         "five-hour": "5h",
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "dash",
-        "7d": "reading"
+        "short": "dash",
+        "cycle": "reading"
       }
     },
     {
@@ -1813,9 +1893,13 @@
       "placements": {
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": null,
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "empty",
-        "7d": "reading"
+        "short": "empty",
+        "cycle": "reading"
       }
     },
     {
@@ -1883,9 +1967,226 @@
         "five-hour": "5h",
         "weekly": "7d"
       },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": "weekly"
+      },
       "panel_cells": {
-        "5h": "dash",
-        "7d": "dash"
+        "short": "dash",
+        "cycle": "dash"
+      }
+    },
+    {
+      "name": "codex-five-hour-only",
+      "provider": {
+        "id": "codex",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "5h",
+            "id": "five-hour",
+            "used_pct": 30.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "codex-rollouts",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "five-hour",
+          "name": "5h",
+          "used_pct": 30.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "five-hour": "5h"
+      },
+      "panel_windows": {
+        "short": "five-hour",
+        "cycle": null
+      },
+      "panel_cells": {
+        "short": "reading",
+        "cycle": "empty"
+      }
+    },
+    {
+      "name": "devin-daily-only",
+      "provider": {
+        "id": "devin",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Daily",
+            "id": "daily",
+            "used_pct": 0.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "devin-account-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "daily",
+          "name": "Daily",
+          "used_pct": 0.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "daily": "labelled"
+      },
+      "panel_windows": {
+        "short": "daily",
+        "cycle": null
+      },
+      "panel_cells": {
+        "short": "reading",
+        "cycle": "empty"
+      }
+    },
+    {
+      "name": "devin-unknown-daily",
+      "provider": {
+        "id": "devin",
+        "instance": "default",
+        "quota_source": true,
+        "account": null,
+        "windows": [
+          {
+            "name": "Daily",
+            "id": "daily",
+            "used_pct": null,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "devin-account-api",
+            "detail": false
+          },
+          {
+            "name": "7d",
+            "id": "weekly",
+            "used_pct": 71.0,
+            "elapsed": false,
+            "last_used_pct": null,
+            "resets_at": null,
+            "scope": "all",
+            "model": null,
+            "bindable": true,
+            "forecast": null,
+            "source": "devin-account-api",
+            "detail": false
+          }
+        ],
+        "constrained": {
+          "id": "weekly",
+          "name": "7d",
+          "used_pct": 71.0,
+          "resets_at": null,
+          "reason": "only_measured",
+          "candidates": 1
+        },
+        "fidelity": "official",
+        "state": "ready",
+        "incident": null,
+        "reset_credits": null,
+        "reason": null,
+        "action": null,
+        "observed_at": 1789073144.0,
+        "read_at": 1789073144.0,
+        "token_history_state": null,
+        "tokens": {
+          "input": 0,
+          "cached_input": 0,
+          "output": 0
+        },
+        "estimated_cost_usd": null,
+        "credits_remaining": null,
+        "forecast": null,
+        "availability": "available",
+        "status_text": null,
+        "last_good_age_seconds": 0.0,
+        "panel_visible": true,
+        "action_kind": null
+      },
+      "placements": {
+        "daily": "labelled",
+        "weekly": "7d"
+      },
+      "panel_windows": {
+        "short": "daily",
+        "cycle": "weekly"
+      },
+      "panel_cells": {
+        "short": "dash",
+        "cycle": "reading"
       }
     }
   ]

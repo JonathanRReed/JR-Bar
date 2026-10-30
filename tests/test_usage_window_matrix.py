@@ -14,7 +14,12 @@ from jrbar.provider_usage_factory import parse_factory_usage
 from jrbar.provider_usage_kilo import parse_kilo_usage
 from jrbar.provider_usage_kimi import parse_kimi_usage
 from jrbar.provider_usage_kiro import parse_kiro_usage
-from jrbar.provider_usage_parsers import parse_antigravity_usage, parse_claude_usage, parse_codex_usage
+from jrbar.provider_usage_parsers import (
+    parse_antigravity_usage,
+    parse_claude_usage,
+    parse_codex_usage,
+    parse_devin_usage,
+)
 from jrbar.provider_usage_platform import (
     ProviderSourceState,
     failure_snapshot,
@@ -34,6 +39,35 @@ LABELLED = {"daily", "monthly", "credits", "overage", "pass", "go-monthly",
             "included-plan", "auto-composer", "api-models", "standard-30d", "core-30d",
             "standard-billing", "premium-billing", "gemini-session", "claude-gpt-session",
             "model-gemini-3-pro", "model-gemini-3-flash", "model-gemini-2-5-flash-lite"}
+
+# One headline per column. Other pools remain in tooltips and Usage Center.
+PANEL_WINDOWS = {
+    "antigravity-quota.json": ("gemini-five-hour", "claude-gpt-weekly"),
+    "claude-usage-max.json": ("five-hour", "weekly"),
+    "codex-app-server-rate-limits-plus.json": ("five-hour", "weekly"),
+    "codex-app-server-rate-limits-pro.json": ("spark-five-hour", "weekly"),
+    "codex-rollout-rate-limits-spark.json": ("spark-five-hour", "spark-weekly"),
+    "cursor-usage-summary.json": (None, "auto-composer"),
+    "devin-usage.json": ("daily", "weekly"),
+    "gemini-code-assist-quota.json": (None, "model-gemini-3-pro"),
+    "grok-billing.json": (None, "credits"),
+    "openai-api-usage.json": (None, None),
+    "opencode-go-usage.json": ("go-rolling", "go-weekly"),
+    "factory-pools": ("standard-5h", "standard-7d"),
+    "factory-legacy": (None, "premium-billing"),
+    "kiro-credits": (None, "monthly"),
+    "kimi-windows": ("five-hour", "weekly"),
+    "kilo-credits-pass": (None, "credits"),
+    "claude-model-caps": (None, "weekly-sonnet"),
+    "antigravity-all-pools": ("gemini-five-hour", "gemini-weekly"),
+    "codex-unknown-five-hour": ("five-hour", "weekly"),
+    "codex-last-good": ("five-hour", "weekly"),
+    "codex-weekly-only": (None, "weekly"),
+    "codex-all-unknown": ("five-hour", "weekly"),
+    "codex-five-hour-only": ("five-hour", None),
+    "devin-daily-only": ("daily", None),
+    "devin-unknown-daily": ("daily", "weekly"),
+}
 
 
 def matrix():
@@ -78,6 +112,11 @@ def matrix():
         ("codex-all-unknown", parse_codex_usage(windows=[
             {"label": "5-hour", "used_percent": None},
             {"label": "Weekly", "used_percent": None}], observed_at=CLOCK)),
+        ("codex-five-hour-only", parse_codex_usage(windows=[
+            {"label": "5-hour", "used_percent": 30}], observed_at=CLOCK)),
+        ("devin-daily-only", parse_devin_usage({"daily_percentage": 0}, observed_at=CLOCK)),
+        ("devin-unknown-daily", parse_devin_usage({
+            "daily_percentage": None, "weekly_percentage": 71}, observed_at=CLOCK)),
     ]
     cases = []
     for name, snapshot in snapshots:
@@ -88,15 +127,14 @@ def matrix():
             key = window["id"]
             assert key in FIVE_HOUR | WEEKLY | LABELLED, f"add an explicit placement for {key}"
             placements[key] = "5h" if key in FIVE_HOUR else "7d" if key in WEEKLY else "labelled"
-        panel_cells = {}
-        own_only = bool(placements) and set(placements.values()) == {"labelled"}
-        for column in ("5h", "7d"):
-            windows = [w for w in provider["windows"] if placements[w["id"]] == column]
-            if windows:
-                panel_cells[column] = "reading" if any(w["used_pct"] is not None for w in windows) else "dash"
-            else:
-                panel_cells[column] = "own-cell" if own_only and column == "7d" else "empty"
-        cases.append({"name": name, "provider": provider, "placements": placements, "panel_cells": panel_cells})
+        panel_windows = dict(zip(("short", "cycle"), PANEL_WINDOWS[name]))
+        by_id = {w["id"]: w for w in provider["windows"]}
+        panel_cells = {
+            column: "empty" if key is None else "dash" if by_id[key]["used_pct"] is None else "reading"
+            for column, key in panel_windows.items()
+        }
+        cases.append({"name": name, "provider": provider, "placements": placements,
+                      "panel_windows": panel_windows, "panel_cells": panel_cells})
     return {"now": CLOCK - 3600, "cases": cases}
 
 
@@ -108,12 +146,16 @@ def test_matrix_matches_real_parsers_and_every_registered_provider():
     covered = {key for case in generated["cases"] for key in case["placements"]}
     assert covered == FIVE_HOUR | WEEKLY | LABELLED
     by_name = {case["name"]: case for case in generated["cases"]}
-    assert by_name["grok-billing.json"]["panel_cells"] == {"5h": "empty", "7d": "own-cell"}
-    assert by_name["devin-usage.json"]["panel_cells"] == {"5h": "empty", "7d": "reading"}
-    assert by_name["codex-unknown-five-hour"]["panel_cells"] == {"5h": "dash", "7d": "reading"}
-    assert by_name["codex-last-good"]["panel_cells"] == {"5h": "dash", "7d": "reading"}
-    assert by_name["codex-weekly-only"]["panel_cells"] == {"5h": "empty", "7d": "reading"}
-    assert by_name["codex-all-unknown"]["panel_cells"] == {"5h": "dash", "7d": "dash"}
+    assert set(by_name) == set(PANEL_WINDOWS)
+    assert by_name["grok-billing.json"]["panel_cells"] == {"short": "empty", "cycle": "reading"}
+    assert by_name["devin-usage.json"]["panel_cells"] == {"short": "reading", "cycle": "reading"}
+    assert by_name["codex-unknown-five-hour"]["panel_cells"] == {"short": "dash", "cycle": "reading"}
+    assert by_name["codex-last-good"]["panel_cells"] == {"short": "dash", "cycle": "reading"}
+    assert by_name["codex-weekly-only"]["panel_cells"] == {"short": "empty", "cycle": "reading"}
+    assert by_name["codex-all-unknown"]["panel_cells"] == {"short": "dash", "cycle": "dash"}
+    assert by_name["codex-five-hour-only"]["panel_cells"] == {"short": "reading", "cycle": "empty"}
+    assert by_name["devin-daily-only"]["panel_cells"] == {"short": "reading", "cycle": "empty"}
+    assert by_name["devin-unknown-daily"]["panel_cells"] == {"short": "dash", "cycle": "reading"}
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ public struct UsageGaugeEvidence: PreferenceKey {
 
 public enum UsageGaugeCellState: String, Decodable, Sendable {
     case empty, dash, reading
-    case ownCell = "own-cell"
 }
 
 /// Column evidence distinguishes a missing window from a missing reading.
