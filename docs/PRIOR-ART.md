@@ -1050,6 +1050,18 @@ before exchange. Rotations are stored only in JR-Bar Keychain. Existing
 imports never gain renewal permission automatically. The API key remains a
 fallback. This supersedes the API-key-only guidance above.
 
+### Factory renewal recovery, 2026-10-30
+
+Rechecked CodexBar at the same MIT-licensed commit above. Its
+`FactoryStatusProbe.swift` tries its stored refresh token before current
+browser tokens, tries `client_01HXRMBQ9BJ3E7QSTQ9X2PHVB7` before
+`client_01HNM792M5G5G1A2THWPXKFMXB`, and sends an optional organization ID.
+`FactoryLocalStorageImporter.swift` derives that hint from the access JWT's
+`org_id`. JR-Bar independently implements one consented profile re-read after
+rejection, with backoff and no browser writes. Its JWT hint takes priority;
+refresh-only imports can use a validated raw or JSON-string organization hint.
+Provider errors retain only an allowlisted class and HTTP status.
+
 ### T3 Code thread links, 2026-10-29
 
 Read the installed T3 Code Nightly bundle at commit `dc84b0962efa`,

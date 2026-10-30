@@ -205,7 +205,14 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
 
 
 def _collect_factory(preference, *, observed_at, credentials, http_json, _fallback_attempted):
-    from .factory_refresh import FactoryCredentialUnavailable, FactorySessionChanged, access_expired, renew
+    from .factory_refresh import (
+        FactoryCredentialUnavailable,
+        FactoryRenewalFailure,
+        FactoryRenewalRejected,
+        FactorySessionChanged,
+        access_expired,
+        renew,
+    )
     def failure(state, reason, action):
         result = failure_snapshot("factory", observed_at=observed_at, state=state,
                                   reason=reason, action=action)
@@ -271,7 +278,8 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
 
             renewed = _fallback_attempted
             if not renewed and session["consent_version"] == 2 and access_expired(session.get("access_token"), observed_at):
-                session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json)
+                session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json, now=observed_at,
+                    source_instance_id=getattr(preference, "source_instance_id", "default"))
                 headers["Authorization"] = "Bearer " + session["access_token"]
                 renewed = True
             else:
@@ -282,7 +290,8 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
                 if error.status != 401:
                     raise
                 if session["consent_version"] == 2 and not renewed:
-                    session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json)
+                    session, session_fingerprint = renew(session, session_fingerprint, credentials, http_json, now=observed_at,
+                    source_instance_id=getattr(preference, "source_instance_id", "default"))
                     headers["Authorization"] = "Bearer " + session["access_token"]
                     renewed = True
                 elif not sync_browser_access():
@@ -312,7 +321,8 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
                 raise
             # Start again with auth/me after renewal, never reuse another account's identity.
             encoded = json.dumps(session, separators=(",", ":"), sort_keys=True)
-            renew(session, fingerprint(encoded), credentials, http_json)
+            renew(session, fingerprint(encoded), credentials, http_json, now=observed_at,
+                  source_instance_id=getattr(preference, "source_instance_id", "default"))
             return _collect_factory(preference, observed_at=observed_at, credentials=credentials,
                                     http_json=http_json, _fallback_attempted=True)
         if session is not None:
@@ -323,6 +333,11 @@ def _collect_factory(preference, *, observed_at, credentials, http_json, _fallba
                 auth = None
                 return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_changed", "Reconnect Factory browser session")
         return replace(result, source_instance_id=getattr(preference, "source_instance_id", "default"))
+    except FactoryRenewalRejected as error:
+        return failure(ProviderSourceState.NEEDS_SIGN_IN, error.reason, "Reconnect Factory browser session")
+    except FactoryRenewalFailure as error:
+        state = ProviderSourceState.RATE_LIMITED if error.status == 429 else ProviderSourceState.UNAVAILABLE
+        return failure(state, error.reason, "Retry Factory usage")
     except FactoryCredentialUnavailable:
         auth = None
         return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_unavailable", "Connect Factory")

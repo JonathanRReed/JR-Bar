@@ -48,11 +48,19 @@ CURSOR_TOKEN_MAX_BYTES = 64 * 1024
 GROK_AUTH_MAX_BYTES = 256 * 1024
 
 
+WORKOS_ERROR_CODES = frozenset({
+    "invalid_grant", "invalid_client", "invalid_request", "unauthorized_client",
+    "unsupported_grant_type", "access_denied", "organization_not_found",
+    "authentication_required", "server_error", "temporarily_unavailable", "unknown_error",
+})
+
+
 class ProviderHttpError(RuntimeError):
-    def __init__(self, status: int, reason: str) -> None:
+    def __init__(self, status: int, reason: str, *, error_code: str | None = None) -> None:
         super().__init__(reason)
         self.status = int(status)
         self.reason = str(reason)
+        self.error_code = error_code if isinstance(error_code, str) and error_code in WORKOS_ERROR_CODES else "unknown_error"
 
 
 _SENSITIVE_PROVIDER_HEADERS = frozenset(
@@ -156,12 +164,21 @@ def _default_http_json(
             status = int(getattr(response, "status", 200))
     except HTTPError as error:
         reason = "http_error"
-        if error.code == 403:
+        error_code = None
+        if parsed.path == "/user_management/authenticate" and parsed.hostname in {"api.workos.com", "127.0.0.1", "localhost", "::1"}:
+            try:
+                data = error.read(64 * 1024 + 1)
+                payload = json.loads(data) if len(data) <= 64 * 1024 else None
+                candidate = payload.get("error") if isinstance(payload, dict) else None
+                error_code = candidate if isinstance(candidate, str) and candidate in WORKOS_ERROR_CODES else "unknown_error"
+            except (OSError, ValueError):
+                error_code = "unknown_error"
+        elif error.code == 403:
             try:
                 reason = _http_error_reason(error.code, error.read(64 * 1024 + 1))
             except (OSError, ValueError):
                 pass
-        raise ProviderHttpError(error.code, reason) from None
+        raise ProviderHttpError(error.code, reason, error_code=error_code) from None
     except (URLError, OSError, TimeoutError, ValueError):
         raise ProviderHttpError(0, "network_error") from None
     if status < 200 or status >= 300:

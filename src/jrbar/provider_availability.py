@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .provider_usage_collectors import WORKOS_ERROR_CODES
 from .provider_usage_platform import provider_descriptor
 
 GONE_READING_SECONDS = 7 * 24 * 60 * 60
@@ -78,6 +79,15 @@ _CAUSES = {
     "web_session_changed": "The {label} browser session changed. Reconnect it in Settings > Providers.",
     "web_session_unavailable": "Connect a {label} browser session in Settings > Providers.",
 }
+# WorkOS codes are allowlisted before they enter a snapshot or a log.
+_CAUSES.update({
+    "factory_refresh_" + code: "Factory refused the saved sign-in (" + code + "). Choose Connect Factory."
+    for code in WORKOS_ERROR_CODES
+})
+_CAUSES.update({
+    "factory_renewal_" + code: "Factory sign-in renewal failed (" + code + "). Choose Refresh."
+    for code in WORKOS_ERROR_CODES
+})
 ATTENTION = "Usage source needs attention."
 
 #: Reasons that need a person (a sign-in or an OK), not a failing source:
@@ -103,6 +113,8 @@ NO_QUOTA_REASONS = frozenset({
 def status_sentence(reason: str | None, label: str) -> str:
     """The plain sentence for a reason code; never the code itself."""
     template = _CAUSES.get(reason or "")
+    if label == "Factory" and reason == "browser_session_expired":
+        return "Factory sign-in expired. Choose Connect Factory."
     if label == "Factory" and reason == "browser_token_unavailable":
         return "Connect Factory to allow browser sign-in renewal, or add an API key."
     if reason == "browser_token_unavailable" and label == "Cursor":

@@ -965,3 +965,97 @@ def test_legacy_two_field_grant_repairs_access_without_reading_organization(cont
     saved = json.loads(store.get("factory", "web-session").secret)
     assert saved["organization_id"] == "synthetic-org"
     assert saved["consent_version"] == 1
+
+
+def test_profile_picker_checks_keys_only_and_hides_other_profiles(context, monkeypatch):
+    from jrbar import factory_session as module
+
+    home, store = context
+    root = browser_database(home)
+    (root.parent / "synthetic.empty").mkdir()
+    (root.parent / "synthetic.other").mkdir()
+    monkeypatch.setattr(module, "_decoded", lambda _value: pytest.fail("profile discovery decoded a value"))
+    result = module.profiles({}, credentials=store)
+    assert [row["profile"] for row in result["profiles"]] == ["synthetic.default"]
+    database = root / "storage/default/https+++app.factory.ai/ls/data.sqlite"
+    with sqlite3.connect(database) as db:
+        db.execute("DELETE FROM data")
+        db.execute("INSERT INTO data VALUES ('unrelated', 'synthetic-value', 0)")
+    assert module.profiles({}, credentials=store) == {"profiles": []}
+
+
+def test_saved_profile_is_marked_and_remains_removable_without_browser_data(context):
+    from jrbar import factory_session as module
+    from jrbar.provider_browser_consent import load_browser_consents
+    from jrbar.provider_management import revoke_browser_consent
+
+    home, store = context
+    root = browser_database(home)
+    module.import_session({"browser": "zen", "profile": root.name, "confirm": True, "allow_refresh": True}, store)
+    rows = module.profiles({}, credentials=store)["profiles"]
+    assert len(rows) == 1 and rows[0]["connected"] and rows[0]["consented"]
+    database = root / "storage/default/https+++app.factory.ai/ls/data.sqlite"
+    with sqlite3.connect(database) as db:
+        db.execute("DELETE FROM data")
+    rows = module.profiles({}, credentials=store)["profiles"]
+    assert not rows[0]["has_sign_in"] and rows[0]["connected"]
+    result = revoke_browser_consent("factory", "zen", root.name, credentials=store)
+    assert result["imported_data"] == "removed"
+    assert not store.get("factory", "web-session").available
+    assert not load_browser_consents().store.consents
+    assert module.profiles({}, credentials=store) == {"profiles": []}
+
+
+def test_forget_unconnected_profile_preserves_connected_profile_and_other_accounts(context, monkeypatch):
+    from jrbar import factory_session as module
+    from jrbar.provider_browser_consent import load_browser_consents, save_browser_consents
+    from jrbar.provider_instances import ProviderInstanceKey
+    from jrbar.provider_management import revoke_browser_consent
+
+    _, store = context
+    monkeypatch.setattr(module, "read_browser_session", lambda *_a, **_k: session())
+    module.import_session({"browser": "zen", "profile": "synthetic.default", "confirm": True, "allow_refresh": True}, store)
+    loaded = load_browser_consents()
+    updated = loaded.store.grant(provider_id="factory", browser="zen", profile="synthetic.old",
+        domains=module.ORIGINS, fields=module.FIELDS, background_repair=False, granted_at=1000)
+    updated = updated.grant(provider_id="factory", browser="zen", profile="synthetic.old", source_instance_id="work",
+        domains=module.ORIGINS, fields=module.FIELDS, background_repair=False, granted_at=1000)
+    save_browser_consents(updated, loaded=loaded)
+    other = ProviderInstanceKey("factory", "work")
+    store.set_for_instance(other, "web-session", json.dumps(session(profile="synthetic.old", consent_version=2)))
+    before = store.get("factory", "web-session").secret
+    revoke_browser_consent("factory", "zen", "synthetic.old", credentials=store)
+    assert store.get("factory", "web-session").secret == before
+    assert store.get_for_instance(other, "web-session").available
+    assert len(load_browser_consents().store.consents) == 2
+    module.disconnect({}, store)
+    assert not store.get("factory", "web-session").available
+    assert [(row.source_instance_id, row.profile) for row in load_browser_consents().store.consents] == [("work", "synthetic.old")]
+
+
+def test_account_scoped_refresh_command_requests_only_selected_factory(context):
+    from jrbar import core_runtime
+
+    calls = []
+    controller = SimpleNamespace(_request_provider_usage=lambda **kwargs: calls.append(kwargs))
+    core_runtime._cmd_refresh_usage(controller, {"providers": ["factory"], "instance": "work"})
+    assert calls == [{"force": True, "providers": (("factory", "work"),)}]
+    with pytest.raises(CommandError):
+        core_runtime._cmd_refresh_usage(controller, {"providers": [], "instance": "work"})
+
+
+def test_disconnect_queues_read_state_update_on_the_owner_thread(context):
+    from jrbar import core_runtime
+    from jrbar import factory_session as module
+
+    home, store = context
+    profile = browser_database(home)
+    module.import_session({"browser": "zen", "profile": profile.name, "confirm": True}, store)
+    calls, queued = [], []
+    controller = SimpleNamespace(_jrbar_provider_credential_store=store,
+        _core_on_main=queued.append, _request_provider_usage=lambda **kwargs: calls.append(kwargs))
+    result = core_runtime._cmd_factory_session_disconnect(controller, {})
+    assert result["instance"] == "default" and not store.get("factory", "web-session").available
+    assert calls == [] and len(queued) == 1
+    queued[0]()
+    assert calls == [{"force": True, "providers": (("factory", "default"),)}]

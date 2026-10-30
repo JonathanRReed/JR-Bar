@@ -25,7 +25,7 @@ def token(expiry, subject="synthetic-user", org="synthetic-org"):
 
 @pytest.fixture
 def remote():
-    state = {"refreshes": [], "requests": [], "refresh_status": 200, "auth_status": 200,
+    state = {"refreshes": [], "requests": [], "refresh_status": 200, "refresh_error": "invalid_grant", "reject_client": None, "auth_status": 200,
              "billing_status": 200, "user": "synthetic-user", "org": "synthetic-org",
              "access": token(2000), "refresh": "synthetic-rotated-1",
              "reject_access": None, "now": 1000, "valid_refresh": "synthetic-refresh-token", "retired": {}}
@@ -43,6 +43,9 @@ def remote():
             assert self.headers.get("Authorization") is None
             assert self.headers.get("Cookie") is None
             status = state["refresh_status"]
+            code = state["refresh_error"]
+            if body["client_id"] == state["reject_client"]:
+                status, code = 400, "invalid_client"
             payload = {"access_token": state["access"], "refresh_token": state["refresh"]}
             if status == 200:
                 submitted = body["refresh_token"]
@@ -55,7 +58,7 @@ def remote():
                         payload = replay[1]
                     else:
                         status = 400
-            self.reply(status, payload if status == 200 else {"error": "invalid_grant", "message": "synthetic-secret"})
+            self.reply(status, payload if status == 200 else {"error": code, "message": "synthetic-secret", "refresh_token": "synthetic-private-value"})
 
         def do_GET(self):
             state["requests"].append((self.path, self.headers.get("Authorization")))
@@ -166,7 +169,7 @@ def test_refresh_failures_are_sanitized_and_preserve_tokens(context, remote, sta
     count = len(state["refreshes"])
     collect_factory(preference(), observed_at=1001, credentials=store, http_json=http)
     if status in {400, 401}:
-        assert result.reason_code == "browser_session_expired"
+        assert result.reason_code == "factory_refresh_invalid_grant"
         assert saved["refresh_rejected"]
         assert len(state["refreshes"]) == count
     else:
@@ -361,3 +364,148 @@ def test_disconnect_after_client_rejection_stops_the_fallback_exchange(context, 
     assert not result.lanes and result.reason_code == "web_session_changed"
     assert len(state["refreshes"]) == 1
     assert not store.get("factory", "web-session").available
+
+
+def replace_browser_refresh(database, value):
+    with sqlite3.connect(database) as db:
+        db.execute("UPDATE data SET value=? WHERE key='workos:refresh-token'", (value,))
+
+
+def test_superseded_refresh_recovers_current_browser_once_without_writes(context, remote, monkeypatch, caplog):
+    home, store = context
+    state, http = remote
+    database, _ = connect_refresh_only(home, store)
+    state["valid_refresh"] = "synthetic-new-browser-token"
+    replace_browser_refresh(database, state["valid_refresh"])
+    original = database.read_bytes()
+    reader = factory_session.read_browser_session
+    reads = []
+    def read(browser, profile, **kwargs):
+        reads.append((browser, profile))
+        return reader(browser, profile, **kwargs)
+    monkeypatch.setattr(factory_session, "read_browser_session", read)
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.lanes
+    assert reads == [("zen", "synthetic.default")]
+    assert [row["refresh_token"] for row in state["refreshes"]] == [
+        "synthetic-refresh-token", "synthetic-refresh-token", "synthetic-new-browser-token"]
+    saved = json.loads(store.get("factory", "web-session").secret)
+    assert saved["refresh_token"] == state["refresh"] and saved["access_token"] == state["access"]
+    assert not saved.get("refresh_rejected")
+    assert database.read_bytes() == original
+    assert "status=400 error=invalid_grant" in caplog.text
+    assert "synthetic-" not in caplog.text
+
+
+def test_same_token_needs_reconnect_and_backoff_bounds_browser_reads(context, remote, monkeypatch):
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    state["refresh_status"] = 400
+    reader = factory_session.read_browser_session
+    reads = []
+    def read(*args, **kwargs):
+        reads.append(True)
+        return reader(*args, **kwargs)
+    monkeypatch.setattr(factory_session, "read_browser_session", read)
+    for now, expected_reads, expected_next in [(1000, 1, 1060), (1001, 1, 1060), (1060, 2, 1180), (1179, 2, 1180)]:
+        result = collect_factory(preference(), observed_at=now, credentials=store, http_json=http)
+        assert not result.lanes and result.reason_code == "factory_refresh_invalid_grant"
+        saved = json.loads(store.get("factory", "web-session").secret)
+        assert saved["refresh_status"] == 400 and saved["refresh_retry_at"] == expected_next
+        assert len(reads) == expected_reads
+    # Same failed token is never exchanged again, even when the browser-read backoff expires.
+    assert len(state["refreshes"]) == 2
+
+
+def test_rejected_session_can_recover_after_backoff(context, remote):
+    home, store = context
+    state, http = remote
+    database, _ = connect_refresh_only(home, store)
+    state["valid_refresh"] = "synthetic-future-browser-token"
+    assert collect_factory(preference(), observed_at=1000, credentials=store, http_json=http).reason_code == "factory_refresh_invalid_grant"
+    replace_browser_refresh(database, state["valid_refresh"])
+    assert not collect_factory(preference(), observed_at=1059, credentials=store, http_json=http).lanes
+    assert collect_factory(preference(), observed_at=1060, credentials=store, http_json=http).lanes
+    assert len(state["refreshes"]) == 3
+
+
+def test_browser_retry_rejection_keeps_class_and_never_reads_again_in_cycle(context, remote, monkeypatch):
+    home, store = context
+    state, http = remote
+    database, _ = connect_refresh_only(home, store)
+    replace_browser_refresh(database, "synthetic-also-expired")
+    state.update(refresh_status=401, refresh_error="invalid_request")
+    reader = factory_session.read_browser_session
+    reads = []
+    def read(*args, **kwargs):
+        reads.append(True)
+        return reader(*args, **kwargs)
+    monkeypatch.setattr(factory_session, "read_browser_session", read)
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.reason_code == "factory_refresh_invalid_request"
+    assert len(reads) == 1 and len(state["refreshes"]) == 4
+    assert json.loads(store.get("factory", "web-session").secret)["refresh_status"] == 401
+
+
+def test_invalid_client_tries_next_client_even_when_one_was_saved(context, remote):
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    saved = json.loads(store.get("factory", "web-session").secret)
+    store.set("factory", "web-session", json.dumps({**saved, "client_id": factory_session.WORKOS_CLIENT_IDS[0]}))
+    state["reject_client"] = factory_session.WORKOS_CLIENT_IDS[0]
+    assert collect_factory(preference(), observed_at=1000, credentials=store, http_json=http).lanes
+    assert [row["client_id"] for row in state["refreshes"]] == list(factory_session.WORKOS_CLIENT_IDS)
+
+
+@pytest.mark.parametrize("organization", ["synthetic-org", '"synthetic-org"'])
+def test_organization_storage_decodes_raw_and_json_quoted(context, remote, organization):
+    home, store = context
+    _, http = remote
+    database, _ = connect_refresh_only(home, store)
+    with sqlite3.connect(database) as db:
+        db.execute("UPDATE data SET value=? WHERE key='factory:active-organization-id'", (organization,))
+    factory_session.import_session({"browser": "zen", "profile": "synthetic.default", "confirm": True, "allow_refresh": True}, store)
+    assert json.loads(store.get("factory", "web-session").secret)["organization_id"] == "synthetic-org"
+    assert collect_factory(preference(), observed_at=1000, credentials=store, http_json=http).lanes
+
+
+def test_jwt_organization_takes_priority_over_active_storage_hint(context):
+    home, store = context
+    database, _ = connect_refresh_only(home, store)
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO data VALUES ('workos:access-token', ?, 0)", (token(2000, org="synthetic-jwt-org"),))
+    imported = factory_session.read_browser_session("zen", "synthetic.default")
+    assert imported["organization_id"] == "synthetic-jwt-org"
+
+
+@pytest.mark.parametrize("code", ["invalid_grant", "invalid_client", "invalid_request", "synthetic-private-value", {"secret": "synthetic-private-value"}])
+def test_workos_errors_keep_only_allowlisted_codes(context, remote, caplog, code):
+    from jrbar.provider_availability import availability_document
+
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    state.update(refresh_status=400, refresh_error=code)
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    expected = code if isinstance(code, str) and code in {"invalid_grant", "invalid_client", "invalid_request"} else "unknown_error"
+    assert result.reason_code == "factory_refresh_" + expected
+    document = availability_document(result, now=1000, installed=True)
+    assert expected in document["status_text"] and "Connect Factory" in document["status_text"]
+    assert "synthetic-" not in caplog.text + repr(result) + repr(document)
+
+
+def test_recovery_requires_current_v2_profile_and_instance_consent(context, remote, monkeypatch):
+    from jrbar.provider_browser_consent import load_browser_consents, save_browser_consents
+
+    home, store = context
+    state, http = remote
+    connect_refresh_only(home, store)
+    loaded = load_browser_consents()
+    updated = loaded.store.revoke("factory", "zen", "synthetic.default")
+    save_browser_consents(updated, loaded=loaded)
+    monkeypatch.setattr(factory_session, "read_browser_session", lambda *_a, **_k: pytest.fail("read without consent"))
+    state["refresh_status"] = 400
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert result.reason_code == "factory_refresh_invalid_grant"

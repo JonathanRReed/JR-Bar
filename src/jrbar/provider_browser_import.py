@@ -176,6 +176,7 @@ def read_chromium_local_storage(
     origin: str,
     allowed_keys: tuple[str, ...],
     allowed_prefixes: tuple[str, ...] = (),
+    keys_only: bool = False,
     raw_db_factory: Callable[[str], object] | None = None,
     key_state_live: object | None = None,
     key_state_deleted: object | None = None,
@@ -208,7 +209,7 @@ def read_chromium_local_storage(
             else:
                 continue
             user_key = getattr(raw, "user_key", b"")
-            value = getattr(raw, "value", b"")
+            value = b"\x01present" if keys_only else getattr(raw, "value", b"")
             sequence = getattr(raw, "seq", -1)
             try:
                 record = ChromiumRecord(sequence, normalized_state, user_key, value)

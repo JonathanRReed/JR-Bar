@@ -659,6 +659,11 @@ def revoke_browser_consent(
     """Revoking stops every future read (``consents.allows`` gates them
     all) and removes the imported credential only while it is still the
     imported one (T26)."""
+    if provider_id == "factory" and credentials is not None:
+        from .factory_session import forget_profile
+
+        return forget_profile(browser, profile, source_instance_id=source_instance_id,
+                              credentials=credentials, consent_path=consent_path)
     loaded = load_browser_consents(consent_path)
     had = any(
         consent.provider_id == provider_id

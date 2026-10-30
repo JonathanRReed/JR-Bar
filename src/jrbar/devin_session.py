@@ -15,7 +15,7 @@ _IMPORT_LOCK = threading.Lock()
 
 
 def profiles(args):
-    from .factory_session import profiles as browser_profiles
+    from .factory_session import discovered_profiles as browser_profiles
 
     if args:
         raise CommandError("invalid_args", "devin_session_profiles takes no arguments")

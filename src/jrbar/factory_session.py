@@ -73,11 +73,20 @@ def decode_session(raw):
             "identity",
             "client_id",
             "refresh_rejected",
+            "refresh_error",
+            "refresh_status",
+            "refresh_failures",
+            "refresh_retry_at",
         }
         or ("client_id" in value and value["client_id"] not in WORKOS_CLIENT_IDS)
         or type(value.get("consent_version")) is not int
         or value["consent_version"] not in {1, 2}
         or ("refresh_rejected" in value and type(value["refresh_rejected"]) is not bool)
+        or ("refresh_error" in value and (not isinstance(value["refresh_error"], str) or value["refresh_error"] not in _renewal_error_codes()))
+        or any(key in value and (type(value[key]) is not int or not 0 <= value[key] <= maximum)
+               for key, maximum in (("refresh_status", 599), ("refresh_failures", 20)))
+        or ("refresh_retry_at" in value and (type(value["refresh_retry_at"]) not in {int, float}
+            or not 0 <= value["refresh_retry_at"] <= 1e12))
         or not _text(value.get("refresh_token"))
         or not isinstance(value.get("browser"), str)
         or value["browser"] not in _ROOTS
@@ -89,7 +98,28 @@ def decode_session(raw):
         )
     ):
         raise ValueError("invalid Factory session")
+    if "organization_id" in value:
+        value["organization_id"] = _organization_id(value["organization_id"])
+        if value["organization_id"] is None:
+            raise ValueError("invalid Factory organization")
     return value
+
+
+def _renewal_error_codes():
+    from .provider_usage_collectors import WORKOS_ERROR_CODES
+
+    return WORKOS_ERROR_CODES
+
+
+def _organization_id(value):
+    if not isinstance(value, str):
+        return None
+    if value.startswith('"'):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    return value if _text(value, 256) and re.fullmatch(r"[A-Za-z0-9_-]+", value) else None
 
 
 def _valid_profile(profile):
@@ -118,7 +148,7 @@ def save_if_current(credentials, expected, value):
         return True
 
 
-def profiles(args, *, home=None):
+def discovered_profiles(args, *, home=None):
     if args:
         raise CommandError("invalid_args", "factory_session_profiles takes no arguments")
     support = (Path.home() if home is None else Path(home)) / "Library/Application Support"
@@ -154,7 +184,56 @@ def profiles(args, *, home=None):
     return {"profiles": rows}
 
 
-def _firefox_values(profile_root, origin, fields=FIELDS):
+def profiles(args, *, home=None, credentials=None):
+    if set(args) - {"instance"}:
+        raise CommandError("invalid_args", "factory_session_profiles accepts only instance")
+    key = _instance(args)
+    home = Path.home() if home is None else Path(home)
+    rows = []
+    for row in discovered_profiles({}, home=home)["profiles"]:
+        root = home / "Library/Application Support" / _ROOTS[row["browser"]] / row["profile"]
+        try:
+            present = False
+            for origin in ORIGINS:
+                if row["browser"] in _CHROMIUM_PROFILE_ROOT_BY_BROWSER:
+                    _owned_path(root, ("Local Storage", "leveldb"))
+                    keys = read_chromium_local_storage(root, origin="https://" + origin,
+                                                       allowed_keys=FIELDS[:2], keys_only=True)
+                else:
+                    keys = _firefox_values(root, origin, FIELDS[:2], keys_only=True)
+                present |= bool(set(keys) & set(FIELDS[:2]))
+            if present:
+                rows.append(row)
+        except OSError:
+            continue
+    with SESSION_LOCK:
+        saved = None
+        if credentials is not None:
+            stored = _read(credentials, key)
+            if stored.available:
+                saved = decode_session(stored.secret)
+            elif stored.reason != "credential_not_found":
+                raise CommandError("credential_unavailable", "Factory sign-in could not be read")
+        grants = [grant for grant in load_browser_consents().store.consents
+                  if (grant.provider_id, grant.source_instance_id) == key.value]
+        identities = {(row["browser"], row["profile"]): row for row in rows}
+        for browser, profile in [(grant.browser, grant.profile) for grant in grants] + (
+            [(saved["browser"], saved["profile"])] if saved else []
+        ):
+            identity = browser, profile
+            if identity not in identities:
+                row = {"browser": browser, "profile": profile, "label": f"{browser.title()} · {profile}", "has_sign_in": False}
+                rows.append(row)
+                identities[identity] = row
+        for row in rows:
+            if any((grant.browser, grant.profile) == (row["browser"], row["profile"]) for grant in grants):
+                row["consented"] = True
+            if saved and (saved["browser"], saved["profile"]) == (row["browser"], row["profile"]):
+                row["connected"] = True
+    return {"profiles": rows}
+
+
+def _firefox_values(profile_root, origin, fields=FIELDS, *, keys_only=False):
     try:
         database = _owned_path(
             profile_root, ("storage", "default", "https+++" + origin, "ls", "data.sqlite"), file=True
@@ -177,13 +256,16 @@ def _firefox_values(profile_root, origin, fields=FIELDS):
                 return {}
             connection = sqlite3.connect(f"{snapshot.as_uri()}?mode=ro", uri=True, timeout=1)
             try:
+                columns = "key" if keys_only else "key, value, compression_type"
                 rows = connection.execute(
-                    f"SELECT key, value, compression_type FROM data WHERE key IN ({','.join('?' for _ in fields)}) LIMIT 4", fields
+                    f"SELECT {columns} FROM data WHERE key IN ({','.join('?' for _ in fields)}) LIMIT 4", fields
                 ).fetchall()
             finally:
                 connection.close()
         if len(rows) > len(fields):
             return {}
+        if keys_only:
+            return {row[0]: "present" for row in rows}
         return {key: _decoded(value) for key, value, compression in rows if compression == 0}
     except (OSError, sqlite3.Error):
         return {}
@@ -251,8 +333,8 @@ def read_browser_session(browser, profile, *, home=None, include_organization=Tr
             organization = _jwt_organization(access)
             if organization is not None:
                 row["organization_id"] = organization
-        organization = values.get(FIELDS[2])
-        if _text(organization, 256):
+        organization = _organization_id(values.get(FIELDS[2]))
+        if organization is not None and "organization_id" not in row:
             row["organization_id"] = organization
         found.append(row)
     if not found and incomplete:
@@ -282,6 +364,14 @@ def _instance(args):
 
 def _read(store, key):
     return store.get_for_instance(key, "web-session")
+
+
+def refresh_recovery_allowed(session, *, source_instance_id="default"):
+    identity = ("factory", source_instance_id, session["browser"], session["profile"])
+    return session["consent_version"] == 2 and any(
+        row.identity == identity and set(ORIGINS) <= set(row.domains) and set(FIELDS) <= set(row.fields)
+        for row in load_browser_consents().store.consents
+    )
 
 
 def background_repair_allowed(session, *, source_instance_id="default"):
@@ -399,3 +489,28 @@ def disconnect(args, credentials):
             "credential_unavailable", "Factory browser session could not be disconnected. Check Keychain and try again."
         ) from None
     return {"provider": "factory", "instance": key.value[1], "message": "Factory browser session disconnected."}
+
+
+def forget_profile(browser, profile, *, source_instance_id="default", credentials, consent_path=None):
+    """Remove this profile's permission and its connected session, including rotations."""
+    key = ProviderInstanceKey("factory", source_instance_id)
+    with SESSION_LOCK:
+        _IMPORT_GENERATIONS[key.value] = _IMPORT_GENERATIONS.get(key.value, 0) + 1
+        loaded = load_browser_consents(consent_path)
+        identity = ("factory", source_instance_id, browser, profile)
+        had = any(row.identity == identity for row in loaded.store.consents)
+        current = _read(credentials, key)
+        if not current.available and current.reason != "credential_not_found":
+            raise CommandError("credential_unavailable", "Factory sign-in could not be read")
+        saved = decode_session(current.secret) if current.available else None
+        removed = saved and (saved["browser"], saved["profile"]) == (browser, profile)
+        if removed:
+            credentials.delete_for_instance(key, "web-session")
+            after = _read(credentials, key)
+            if after.available or after.reason != "credential_not_found":
+                raise CommandError("credential_unavailable", "Factory sign-in could not be removed")
+        updated = loaded.store.revoke("factory", browser, profile, source_instance_id=source_instance_id)
+        save_browser_consents(updated, consent_path, loaded=loaded)
+    return {"provider_id": "factory", "source_instance_id": source_instance_id,
+            "browser": browser, "profile": profile, "was_granted": had,
+            "imported_data": "removed" if removed else "none"}

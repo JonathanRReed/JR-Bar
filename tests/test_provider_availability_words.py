@@ -55,7 +55,11 @@ def test_every_emitted_reason_has_a_sentence():
 def test_each_sentence_is_plain(reason):
     words = status_sentence(reason, "Kiro")
     assert words[0].isupper() and words.endswith("."), words
-    assert "_" not in words and "{" not in words, words
+    if reason.startswith(("factory_refresh_", "factory_renewal_")):
+        assert reason.removeprefix("factory_refresh_").removeprefix("factory_renewal_") in words
+    else:
+        assert "_" not in words, words
+    assert "{" not in words, words
     assert words.lower() != reason.replace("_", " ")
 
 

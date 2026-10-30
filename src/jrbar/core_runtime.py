@@ -2661,7 +2661,18 @@ def _cmd_usage_graph(self, args):
 @command("refresh_usage")
 def _cmd_refresh_usage(self, args):
     providers = tuple(p for p in (args.get("providers") or []) if isinstance(p, str))
-    self._request_provider_usage(force=True, providers=providers or None)
+    instance = args.get("instance")
+    if instance is not None:
+        if not isinstance(instance, str) or not instance or len(providers) != 1:
+            raise CommandError("invalid_args", "instance requires one provider")
+        from .provider_instances import ProviderInstanceKey
+
+        try:
+            ProviderInstanceKey(providers[0], instance)
+        except (ValueError, TypeError):
+            raise CommandError("invalid_args", "invalid provider instance") from None
+    scope = ((providers[0], instance),) if instance is not None else providers or None
+    self._request_provider_usage(force=True, providers=scope)
     return {"requested_at": time.time(), "providers": list(providers)}
 
 
@@ -2769,7 +2780,7 @@ def _cmd_devin_session_import(self, args):
 def _cmd_factory_session_profiles(self, args):
     from .factory_session import profiles
 
-    return profiles(args)
+    return profiles(args, credentials=_provider_credentials(self))
 
 
 @command("factory_session_import", main_thread=False)
@@ -2783,7 +2794,12 @@ def _cmd_factory_session_import(self, args):
 def _cmd_factory_session_disconnect(self, args):
     from .factory_session import disconnect
 
-    return disconnect(args, _provider_credentials(self))
+    result = disconnect(args, _provider_credentials(self))
+    request = getattr(self, "_request_provider_usage", None)
+    if callable(request):
+        on_main = getattr(self, "_core_on_main", lambda action: action())
+        on_main(lambda: request(force=True, providers=(("factory", result["instance"]),)))
+    return result
 
 
 @command("set_provider_credential", main_thread=False)
