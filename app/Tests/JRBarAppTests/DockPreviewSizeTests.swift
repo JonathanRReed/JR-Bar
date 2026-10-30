@@ -219,6 +219,41 @@ struct DockPreviewSizeTests {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
+    func renderContactSheet() async throws {
+        let fixture = DockMusicTests.Fixture()
+        fixture.reading = .init(media: DockMusicTests.track(), shuffle: true, repeatMode: .one, volume: 72, favorite: true)
+        let player = fixture.makePlayer()
+        player.start(fullControls: true)
+        await player.settle()
+        defer { player.stop() }
+        let names = ["calendar-list", "calendar-month", "reminders-due", "shortcuts-list", "media"]
+        var samples = cards().filter { names.contains($0.name) }
+        let actions = DockPreviewActions(content: DockPreviewContent())
+        samples.append(Card(name: "music", view: AnyView(DockMusicCard(player: player, actions: actions))))
+        let width = DockPreviewSize.medium.widgetSize.width
+        for dark in [false, true] {
+            let sheet = Grid(alignment: .topLeading, horizontalSpacing: 20, verticalSpacing: 20) {
+                ForEach(0..<2, id: \.self) { row in
+                    GridRow {
+                        ForEach(0..<3, id: \.self) { column in
+                            let sample = samples[row * 3 + column]
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(sample.name).font(.headline)
+                                sample.view
+                            }
+                            .frame(width: width, alignment: .topLeading)
+                        }
+                    }
+                }
+            }
+            .environment(\.dockPreviewSize, .medium)
+            .padding(20).background(Color(nsColor: .windowBackgroundColor))
+            try ProofRender.write(sheet, size: measure(sheet),
+                name: "dock-widget-contact-sheet-\(dark ? "dark" : "light")", dark: dark, settle: 0)
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func renderCards() throws {
         for size in DockPreviewSize.allCases {
             for dark in [false, true] {
