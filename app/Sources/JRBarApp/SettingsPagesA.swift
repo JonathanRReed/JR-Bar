@@ -1033,7 +1033,7 @@ enum ScreenBarCameraHold {
 
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
-            ? "Keep the band still while a camera is in use. Asks stay a steady amber."
+            ? "While a camera is in use, the band stops moving. Asks stay a steady amber."
             : "Needs a camera reading: turn on Mic & camera indicators under Notch & Shelf."
     }
 }
