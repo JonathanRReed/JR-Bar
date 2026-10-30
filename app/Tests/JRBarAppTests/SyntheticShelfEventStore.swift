@@ -21,6 +21,7 @@ final class SyntheticShelfEventStore: ShelfEventStore, @unchecked Sendable {
     @MainActor var synchronous = false
     var hasDefaultList = true
     var writeError: (any Error)?
+    var onComplete: (@Sendable () -> Void)?
 
     func events(from now: Date) -> [ShelfCalendarModel.Event] {
         calls.withLock { $0.events += 1 }
@@ -57,6 +58,7 @@ final class SyntheticShelfEventStore: ShelfEventStore, @unchecked Sendable {
     }
 
     func completeReminder(id: String) throws -> Bool {
+        onComplete?()
         if let writeError { throw writeError }
         calls.withLock { $0.completed.append(id) }
         return true

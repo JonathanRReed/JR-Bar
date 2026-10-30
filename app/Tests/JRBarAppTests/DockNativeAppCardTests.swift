@@ -118,7 +118,7 @@ struct DockNativeAppCardTests {
     }
 
     @Test("Reminders loading, due filter, empty, stale, writes and store signals")
-    func reminderStates() {
+    func reminderStates() async {
         let store = SyntheticShelfEventStore()
         let model = reminders(store)
         model.start()
@@ -130,6 +130,7 @@ struct DockNativeAppCardTests {
         store.answer(1, with: [later, today, undated, old])
         #expect(model.state == .items([old, today]))
         model.notifications.post(name: .EKEventStoreChanged, object: nil)
+        await notificationTurn()
         #expect(store.fetches == 2)
         store.answer(2, with: nil)
         #expect(model.state == .stale([old, today]))
@@ -146,6 +147,32 @@ struct DockNativeAppCardTests {
         model.notifications.post(name: .EKEventStoreChanged, object: nil)
         model.refresh()
         #expect(store.fetches == 4)
+    }
+
+    private func notificationTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    @Test("a synchronous store signal waits for the write and coalesces its refresh")
+    func notificationDuringWrite() async {
+        let store = SyntheticShelfEventStore()
+        let model = reminders(store)
+        let entry = ShelfRemindersModel.Entry(id: "one", title: "Synthetic reminder", due: Self.now)
+        model.start()
+        store.answer(1, with: [entry])
+        let center = model.notifications
+        store.onComplete = {
+            center.post(name: .EKEventStoreChanged, object: nil)
+            MainActor.assumeIsolated { #expect(store.fetches == 1) }
+        }
+        model.complete(entry)
+        #expect(store.fetches == 2)
+        await notificationTurn()
+        #expect(store.fetches == 2)
+        store.answer(2, with: [])
+        model.stop()
     }
 
     @Test("a slow reminder fetch marks the last reading stale without cancelling or starting another fetch")

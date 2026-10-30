@@ -41,10 +41,22 @@ final class DockRemindersPreview {
         for name in [Notification.Name.EKEventStoreChanged, PermissionRequest.didChange,
                      NSApplication.didBecomeActiveNotification] {
             observers.append(notifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refresh() }
+                MainActor.assumeIsolated { self?.storeChanged() }
             })
         }
         refresh()
+    }
+
+    private func storeChanged() {
+        let epoch = self.epoch
+        // A save may post synchronously while the shared store holds its lock.
+        // An explicit refresh after that save also supersedes this queued signal.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.running, self.epoch == epoch else { return }
+                self.refresh()
+            }
+        }
     }
 
     func stop() {
