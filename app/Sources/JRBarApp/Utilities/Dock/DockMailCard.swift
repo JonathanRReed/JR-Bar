@@ -67,16 +67,18 @@ struct DockMailCard: View {
 
     private func messages(_ reading: DockMailReading, stale: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            if reading.unread == 0 {
-                Text("No unread messages").foregroundStyle(.secondary)
-            } else {
+            if reading.unread > 0 || stale {
                 HStack {
-                    Text("Newest unread").fontWeight(.semibold)
+                    if reading.unread > 0 { Text("Newest unread").fontWeight(.semibold) }
                     Spacer(minLength: 0)
                     if stale { Text("Stale").foregroundStyle(DockChrome.caution) }
                 }
                 .jrbarType(.caption)
                 .foregroundStyle(.secondary)
+            }
+            if reading.unread == 0 {
+                Text("No unread messages").foregroundStyle(.secondary)
+            } else {
                 if reading.messages.isEmpty {
                     Text("No unread messages among the newest 40 in Inbox.").foregroundStyle(.secondary)
                 }

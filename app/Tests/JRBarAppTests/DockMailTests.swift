@@ -222,6 +222,34 @@ struct DockMailTests {
         #expect(reads.withLock { $0 } == 3)
     }
 
+    @Test("a badge refresh cancelled on hide stays stale and retries on the next show")
+    func cancelledRefreshStaysStale() async {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let entered = TestSignal()
+        let gate = TestGate()
+        defer { gate.signal() }
+        let reader = DockMailReader(isRunning: { true }, permission: { _ in .granted }, runner: { _, _, _ in
+            let count = reads.withLock { value in value += 1; return value }
+            if count == 2 { entered.signal(); gate.wait() }
+            return .success(Self.output)
+        })
+        let mail = DockMailPreview(reader: reader)
+        mail.clock = { Self.now }
+        mail.show(badge: "9")
+        await settle(mail)
+        mail.badgeChanged("10")
+        #expect(await entered.wait())
+        mail.hide()
+        #expect(mail.cacheIsStale)
+        gate.signal()
+        await settle(mail)
+        mail.show(badge: "10")
+        await settle(mail)
+        #expect(reads.withLock { $0 } == 3)
+        #expect(!mail.cacheIsStale)
+        mail.hide()
+    }
+
     @Test("hiding during a read cancels its child and drops the late result")
     func lateRead() async {
         let entered = TestSignal()

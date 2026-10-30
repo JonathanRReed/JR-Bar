@@ -92,6 +92,7 @@ final class DockMailPreview {
 
     func refresh(force: Bool = false) {
         guard visible else { return }
+        if force { cacheIsStale = cached != nil }
         guard reader.isRunning() else { cached = nil; onChange(.notRunning); return }
         switch reader.permission(false) {
         case .needsConsent: cached = nil; onChange(.noAccess); return
@@ -105,7 +106,10 @@ final class DockMailPreview {
             onChange(.messages(cached))
             return
         }
-        if let cached { onChange(.stale(cached)) } else { onChange(.loading) }
+        if let cached {
+            cacheIsStale = true
+            onChange(.stale(cached))
+        } else { onChange(.loading) }
         let reader = self.reader
         let generation = self.generation
         let cancellation = DockMailCancellation()

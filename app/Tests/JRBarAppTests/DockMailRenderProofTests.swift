@@ -33,6 +33,7 @@ struct DockMailRenderProofTests {
             ("empty", .messages(DockMailReading(unread: 0, messages: [], date: Self.now))),
             ("not-running", .notRunning), ("stale", .stale(Self.reading(stale: true))),
             ("loading", .loading), ("timeout", .timeout),
+            ("stale-empty", .stale(DockMailReading(unread: 0, messages: [], date: Self.now.addingTimeInterval(-360)))),
         ]
         for dark in [false, true] {
             let theme = dark ? "dark" : "light"
