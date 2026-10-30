@@ -42,10 +42,21 @@ struct DockMusicRenderProofTests {
                 content.icon = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Music")
                 content.musicPlayerEnabled = true
                 content.music = player
-                let scene = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
-                    .background(dark ? Color(nsColor: .windowBackgroundColor) : Color.white)
-                try ProofRender.write(scene, size: CGSize(width: 370, height: 600),
-                    name: "dock-music-\(mode)-\(dark ? "dark" : "light")", dark: dark, settle: 0)
+                for size in DockPreviewSize.allCases {
+                    content.previewSize = size
+                    let actions = DockPreviewActions(content: content)
+                    actions.onMusicOpen = {}
+                    let card = DockMusicCard(player: player, actions: actions)
+                        .environment(\.dockPreviewSize, size)
+                    let host = NSHostingView(rootView: card)
+                    host.layoutSubtreeIfNeeded()
+                    #expect(host.fittingSize.width == size.widgetSize.width)
+                    #expect(host.fittingSize.height <= size.widgetSize.height)
+                    let scene = DockPreviewView(content: content, actions: actions)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                    try ProofRender.write(scene, size: host.fittingSize,
+                        name: "music-\(mode)-\(size.rawValue)-\(dark ? "dark" : "light")", dark: dark, settle: 0)
+                }
                 player.stop()
             }
         }
