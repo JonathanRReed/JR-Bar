@@ -90,6 +90,16 @@ final class DockPreviewActions {
     /// track — read, never fetched: nil unless the Shelf has them.
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
     /// Calendar access uses Setup's existing permission action.
+    var onRemindersAuth: (@MainActor () -> Void)?
+    var onReminderComplete: (@MainActor (ShelfRemindersModel.Entry) -> Void)?
+    var onReminderAdd: (@MainActor (String) -> Bool)?
+    var onRemindersOpen: (@MainActor () -> Void)?
+    var onShortcutRun: (@MainActor (String) -> Void)?
+    var onShortcutOpen: (@MainActor (String) -> Void)?
+    var onShortcutsOpen: (@MainActor () -> Void)?
+    var onShortcutNew: (@MainActor () -> Void)?
+    var onMessagesOpen: (@MainActor () -> Void)?
+    var onMessageNew: (@MainActor () -> Void)?
     var onCalendarAuth: (@MainActor () -> Void)?
     var onCalendarView: (@MainActor (DockCalendarView) -> Void)?
     var onCalendarMonth: (@MainActor (Date) -> Void)?
@@ -486,6 +496,19 @@ struct DockPreviewView: View {
                                  view: content.calendarView, month: content.calendarMonth,
                                  selectedDay: Binding(get: { content.calendarSelectedDay },
                                                       set: { content.calendarSelectedDay = $0 }))
+            }
+            if let state = content.remindersState {
+                rule
+                DockRemindersCard(state: state, now: content.remindersNow,
+                                  writeNotice: content.remindersWriteNotice, actions: actions)
+            }
+            if let state = content.shortcutsState {
+                rule
+                DockShortcutsCard(state: state, runs: content.shortcutRuns, actions: actions)
+            }
+            if let state = content.messagesState {
+                rule
+                DockMessagesCard(state: state, actions: actions)
             }
             if content.folderURL != nil {
                 rule
@@ -917,6 +940,7 @@ struct DockPreviewView: View {
     }
 
     private var subtitle: String {
+        if let summary = content.nativeAppSubtitle { return summary }
         if content.folderURL != nil {
             return Self.folderSubtitle(state: content.folderState, count: content.folderEntries.count)
         }

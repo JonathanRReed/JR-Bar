@@ -8,6 +8,12 @@ final class DockNativePreviews {
     let feed: MediaFeed
     let calendar: DockCalendarPreview
     var onChange: () -> Void = {}
+    private(set) var reminders: DockRemindersPreview?
+    private(set) var shortcuts: DockShortcutsPreview?
+    private(set) var messages: DockMessagesPreview?
+    var makeReminders: () -> DockRemindersPreview = { DockRemindersPreview() }
+    var makeShortcuts: () -> DockShortcutsPreview = { DockShortcutsPreview() }
+    var makeMessages: () -> DockMessagesPreview = { DockMessagesPreview() }
     private var mediaToken: UUID?
     private weak var content: DockPreviewContent?
 
@@ -23,6 +29,10 @@ final class DockNativePreviews {
             DockEnhanceMath.showsMediaRow(mediaBundleID: $0.bundleIdentifier, appBundleID: bundleID) ? $0 : nil
         } : nil
         content.mediaPending = settings.mediaPreview && content.isRunning && !feed.hasSnapshot
+        content.remindersState = settings.remindersPreview && bundleID == "com.apple.reminders" ? .loading : nil
+        content.shortcutsState = settings.shortcutsPreview && bundleID == "com.apple.shortcuts" ? .loading : nil
+        content.messagesState = settings.messagesPreview && bundleID == "com.apple.MobileSMS"
+            ? (content.isRunning ? DockMessagesPreview.read(content.badge) : .notRunning) : nil
         content.calendarNow = calendar.clock()
         content.calendarView = settings.calendarView
         content.calendarMonth = calendar.calendar.dateInterval(of: .month, for: content.calendarNow)?.start
@@ -84,6 +94,86 @@ final class DockNativePreviews {
             calendar.stop()
             content.calendarState = nil
         }
+        updateReminders(content: content, settings: settings)
+        updateShortcuts(content: content, settings: settings)
+        updateMessages(content: content, settings: settings)
+        onChange()
+    }
+
+    private func updateReminders(content: DockPreviewContent, settings: DockEnhanceSettings) {
+        guard settings.remindersPreview, content.bundleID == "com.apple.reminders" else {
+            reminders?.stop()
+            reminders = nil
+            content.remindersState = nil
+            content.remindersWriteNotice = nil
+            return
+        }
+        guard reminders == nil else { return }
+        let preview = makeReminders()
+        reminders = preview
+        preview.onChange = { [weak self, weak content, weak preview] state in
+            guard let self, let content, let preview else { return }
+            content.remindersState = state
+            content.remindersWriteNotice = preview.writeNotice
+            content.remindersNow = preview.clock()
+            self.onChange()
+        }
+        preview.start()
+    }
+
+    private func updateShortcuts(content: DockPreviewContent, settings: DockEnhanceSettings) {
+        guard settings.shortcutsPreview, content.bundleID == "com.apple.shortcuts" else {
+            shortcuts?.stop()
+            shortcuts = nil
+            content.shortcutsState = nil
+            content.shortcutRuns = [:]
+            return
+        }
+        guard shortcuts == nil else { return }
+        let preview = makeShortcuts()
+        shortcuts = preview
+        preview.onChange = { [weak self, weak content, weak preview] in
+            guard let self, let content, let preview else { return }
+            content.shortcutsState = preview.state
+            content.shortcutRuns = preview.runs
+            self.onChange()
+        }
+        content.shortcutsState = .loading
+        preview.start()
+    }
+
+    private func updateMessages(content: DockPreviewContent, settings: DockEnhanceSettings) {
+        guard settings.messagesPreview, content.bundleID == "com.apple.MobileSMS" else {
+            messages = nil
+            content.messagesState = nil
+            return
+        }
+        if messages == nil { messages = makeMessages() }
+        content.messagesState = messages?.update(running: content.isRunning, badge: content.badge)
+    }
+
+    func tileChanged(badge: String?, running: Bool) {
+        guard let content else { return }
+        content.badge = badge
+        content.isRunning = running
+        if let messages {
+            let state = messages.update(running: running, badge: badge)
+            guard state != content.messagesState else { return }
+            content.messagesState = state
+            onChange()
+        }
+    }
+
+    func badgeUnavailable() {
+        guard let content, messages != nil else { return }
+        let count: String?
+        switch content.messagesState {
+        case .unread(let value), .stale(.some(let value)): count = value
+        default: count = nil
+        }
+        let state = DockMessagesPreview.State.stale(count)
+        guard state != content.messagesState else { return }
+        content.messagesState = state
         onChange()
     }
 
@@ -95,6 +185,16 @@ final class DockNativePreviews {
     }
 
     func stop() {
+        reminders?.stop()
+        reminders = nil
+        shortcuts?.stop()
+        shortcuts = nil
+        messages = nil
+        content?.remindersState = nil
+        content?.remindersWriteNotice = nil
+        content?.shortcutsState = nil
+        content?.shortcutRuns = [:]
+        content?.messagesState = nil
         content?.media = nil
         content?.mediaPending = false
         content?.calendarState = nil

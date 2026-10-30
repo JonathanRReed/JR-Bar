@@ -905,6 +905,9 @@ No DockDoor implementation source or assets were read or copied.
 The month grid added on 2026-10-29 follows the owner's request and Foundation
 calendar arithmetic. It extends these cards without studying further DockDoor
 material.
+The Reminders, Shortcuts and quiet Messages cards added on 2026-10-29 follow
+the approved native-app memo. They reuse the independent-switch behavior
+credited above. No additional DockDoor source or assets were studied.
 
 ## macOS Calendar event links, 2026-10-29
 

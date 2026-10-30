@@ -194,6 +194,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var calendarPreview: Bool
     public var calendarView: DockCalendarView
     public var mediaPreview: Bool
+    public var remindersPreview: Bool
+    public var shortcutsPreview: Bool
+    public var messagesPreview: Bool
     /// Bigger cards — 208×130 instead of 144×90 — for people who read
     /// the thumbnail rather than the title.
     public var largePreviews: Bool
@@ -295,6 +298,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 calendarPreview: Bool = true,
                 calendarView: DockCalendarView = .list,
                 mediaPreview: Bool = true,
+                remindersPreview: Bool = true,
+                shortcutsPreview: Bool = true,
+                messagesPreview: Bool = true,
                 largePreviews: Bool = false,
                 includeOffscreenWindows: Bool = true,
                 holdDockOpen: Bool = true,
@@ -324,6 +330,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.calendarPreview = calendarPreview
         self.calendarView = calendarView
         self.mediaPreview = mediaPreview
+        self.remindersPreview = remindersPreview
+        self.shortcutsPreview = shortcutsPreview
+        self.messagesPreview = messagesPreview
         self.largePreviews = largePreviews
         self.includeOffscreenWindows = includeOffscreenWindows
         self.holdDockOpen = holdDockOpen
@@ -374,6 +383,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case calendarPreview, calendarView, mediaPreview
+        case remindersPreview, shortcutsPreview, messagesPreview
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
@@ -392,6 +402,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         calendarPreview = (try? c.decodeIfPresent(Bool.self, forKey: .calendarPreview)) ?? true
         calendarView = (try? c.decodeIfPresent(DockCalendarView.self, forKey: .calendarView)) ?? .list
         mediaPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mediaPreview)) ?? true
+        remindersPreview = (try? c.decodeIfPresent(Bool.self, forKey: .remindersPreview)) ?? true
+        shortcutsPreview = (try? c.decodeIfPresent(Bool.self, forKey: .shortcutsPreview)) ?? true
+        messagesPreview = (try? c.decodeIfPresent(Bool.self, forKey: .messagesPreview)) ?? true
         largePreviews = (try? c.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true
         holdDockOpen = (try? c.decodeIfPresent(Bool.self, forKey: .holdDockOpen)) ?? true

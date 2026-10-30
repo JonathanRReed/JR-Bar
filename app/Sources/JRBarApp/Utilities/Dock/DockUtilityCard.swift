@@ -562,6 +562,15 @@ struct DockUtilityControls: View {
                 .labelsHidden()
                 .padding(.vertical, 8)
             }
+            DockRemindersPreviewSetting(isOn: Binding(
+                get: { utility.enhance.preferences.remindersPreview },
+                set: { utility.enhance.preferences.remindersPreview = $0 }))
+            DockShortcutsPreviewSetting(isOn: Binding(
+                get: { utility.enhance.preferences.shortcutsPreview },
+                set: { utility.enhance.preferences.shortcutsPreview = $0 }))
+            DockMessagesPreviewSetting(isOn: Binding(
+                get: { utility.enhance.preferences.messagesPreview },
+                set: { utility.enhance.preferences.messagesPreview = $0 }))
             Toggle(isOn: mediaPreview) {
                 SettingLabel(title: "Media preview",
                              subtitle: "Show playback controls when you hover the app playing audio.")

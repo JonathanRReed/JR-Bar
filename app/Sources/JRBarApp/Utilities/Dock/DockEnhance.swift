@@ -370,7 +370,18 @@ final class DockEnhanceController {
     @ObservationIgnored private var magnifiedSize: CGFloat?
     /// The list's app tiles, read once per `itemsTTL` for the list
     /// frame they were read under.
-    @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)?
+    @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)? {
+        didSet {
+            guard preview.messagesState != nil else { return }
+            guard let cachedItems, let anchor,
+                  let tile = cachedItems.items.first(where: { $0.hoverID == anchor.item.hoverID }) else {
+                nativePreviews.badgeUnavailable()
+                return
+            }
+            let running = preview.bundleID.map { RunningApps.shared.bundleIDs.contains($0) } ?? false
+            nativePreviews.tileChanged(badge: tile.badge, running: running)
+        }
+    }
     /// The tile the visible panel is anchored to and the edge it opens
     /// from — re-anchored every tick while the pointer stays on the
     /// tile, so a Dock still sliding in carries the panel with it and
@@ -1633,6 +1644,29 @@ final class DockEnhanceController {
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)
         }
+        panel.actions.onRemindersAuth = { [weak self] in
+            _ = Task { @MainActor [weak self] in
+                await SetupModel.requestReminders()
+                self?.nativePreviews.reminders?.refresh()
+            }
+        }
+        panel.actions.onReminderComplete = { [weak self] in self?.nativePreviews.reminders?.complete($0) }
+        panel.actions.onReminderAdd = { [weak self] in self?.nativePreviews.reminders?.add($0) ?? false }
+        panel.actions.onRemindersOpen = { Self.openNativeApp("com.apple.reminders") }
+        panel.actions.onShortcutRun = { [weak self] in self?.nativePreviews.shortcuts?.run($0) }
+        panel.actions.onShortcutOpen = { name in
+            if let url = DockShortcutsPreview.openURL(name) { DesktopServices.automatic.open(url) }
+        }
+        panel.actions.onShortcutsOpen = { Self.openNativeApp("com.apple.shortcuts") }
+        panel.actions.onShortcutNew = {
+            if let url = URL(string: "shortcuts://create-shortcut") { DesktopServices.automatic.open(url) }
+        }
+        panel.actions.onMessagesOpen = { Self.openNativeApp("com.apple.MobileSMS") }
+        panel.actions.onMessageNew = {
+            guard let url = URL(string: "sms:"),
+                  let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.MobileSMS") else { return }
+            DesktopServices.automatic.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
         panel.actions.onCalendarView = { [weak self] in self?.preferences.calendarView = $0 }
         panel.actions.onCalendarMonth = { [weak self] in self?.nativePreviews.showMonth($0) }
@@ -1692,6 +1726,11 @@ final class DockEnhanceController {
         content.media = nil
         content.mediaPending = false
         content.calendarState = nil
+        content.remindersState = nil
+        content.remindersWriteNotice = nil
+        content.shortcutsState = nil
+        content.shortcutRuns = [:]
+        content.messagesState = nil
         content.nativeWindowsExpanded = false
         content.badge = item.badge
         if let key = agentGuard.armedKey { content.clearGuardNote(key) }
@@ -2407,6 +2446,12 @@ final class DockEnhanceController {
     func syncNativePreviews() {
         guard previewUp else { return }
         nativePreviews.update(settings: preferences.read())
+    }
+
+    private static func openNativeApp(_ bundleID: String) {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            DesktopServices.automatic.open(url)
+        }
     }
 
     private func authorizeCalendar() {

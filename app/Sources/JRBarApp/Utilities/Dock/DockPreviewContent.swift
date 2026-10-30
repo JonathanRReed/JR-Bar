@@ -188,8 +188,17 @@ final class DockPreviewContent {
     var calendarView: DockCalendarView = .list
     var calendarMonth = Date()
     var calendarSelectedDay = Date()
+    var remindersState: DockRemindersPreview.State?
+    var remindersWriteNotice: String?
+    var remindersNow = Date()
+    var shortcutsState: DockShortcutsPreview.State?
+    var shortcutRuns: [String: DockShortcutsPreview.RunState] = [:]
+    var messagesState: DockMessagesPreview.State?
     var nativeWindowsExpanded = false
-    var hasNativeCard: Bool { media != nil || calendarState != nil }
+    var hasNativeCard: Bool {
+        media != nil || calendarState != nil || remindersState != nil
+            || shortcutsState != nil || messagesState != nil
+    }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
     var largeCards = false
     /// The insets and corners the panel draws, from the card's Spacing —
