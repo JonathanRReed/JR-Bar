@@ -119,8 +119,8 @@ struct DockRemindersCard: View {
                     .buttonStyle(.plain).accessibilityLabel("Complete \(entry.title)")
                     Text(entry.title).fontWeight(.medium).lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if let due = entry.due {
-                        Text(time(due, hasTime: entry.hasTime, overdue: overdue))
+                    if let due = entry.due, let when = time(due, hasTime: entry.hasTime, overdue: overdue) {
+                        Text(when)
                             .jrbarType(.caption).monospacedDigit()
                             .foregroundStyle(overdue ? JRBarTokens.Ink.failure : JRBarTokens.Ink.secondary)
                     }
@@ -130,9 +130,16 @@ struct DockRemindersCard: View {
         }
     }
 
-    private func time(_ due: Date, hasTime: Bool, overdue: Bool) -> String {
+    /// The row's due words. An all-day reminder under the Today heading
+    /// needs none: the heading already says when it is due.
+    static func dueWords(_ due: Date, hasTime: Bool, overdue: Bool, calendar: Calendar) -> String? {
         if overdue { return due.formatted(Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated)) }
-        return hasTime ? due.formatted(date: .omitted, time: .shortened) : "Today"
+        guard hasTime else { return nil }
+        return due.formatted(Date.FormatStyle(date: .omitted, time: .shortened, calendar: calendar, timeZone: calendar.timeZone))
+    }
+
+    private func time(_ due: Date, hasTime: Bool, overdue: Bool) -> String? {
+        Self.dueWords(due, hasTime: hasTime, overdue: overdue, calendar: calendar)
     }
 }
 
