@@ -1390,7 +1390,7 @@ enum AutomationPermission: Equatable, Sendable {
     /// Never asked: the first use will raise macOS's prompt.
     case needsConsent
     case denied
-    /// System Events is not running, so macOS cannot say yet.
+    /// The target is not running, or macOS cannot report its permission.
     case unavailable
 
     nonisolated static let systemEventsBundleID = "com.apple.systemevents"
@@ -1402,7 +1402,11 @@ enum AutomationPermission: Equatable, Sendable {
     /// `ask: true` blocks until the person answers the prompt — call it
     /// off the main thread.
     nonisolated static func systemEvents(ask: Bool) -> AutomationPermission {
-        systemEvents(ask: ask, isRunning: {
+        target(systemEventsBundleID, ask: ask)
+    }
+
+    nonisolated static func target(_ bundleID: String, ask: Bool) -> AutomationPermission {
+        target(bundleID, ask: ask, isRunning: {
             !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
         }, determine: { bundleID, ask in
             let target = NSAppleEventDescriptor(bundleIdentifier: bundleID)
@@ -1415,8 +1419,15 @@ enum AutomationPermission: Equatable, Sendable {
         ask: Bool, isRunning: (String) -> Bool,
         determine: (String, Bool) -> OSStatus
     ) -> AutomationPermission {
-        guard isRunning(systemEventsBundleID) else { return .unavailable }
-        return classify(determine(systemEventsBundleID, ask))
+        target(systemEventsBundleID, ask: ask, isRunning: isRunning, determine: determine)
+    }
+
+    nonisolated static func target(
+        _ bundleID: String, ask: Bool, isRunning: (String) -> Bool,
+        determine: (String, Bool) -> OSStatus
+    ) -> AutomationPermission {
+        guard isRunning(bundleID) else { return .unavailable }
+        return classify(determine(bundleID, ask))
     }
 
     nonisolated static func classify(_ status: OSStatus) -> AutomationPermission {
