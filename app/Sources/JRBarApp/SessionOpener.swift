@@ -70,6 +70,7 @@ enum SessionOpener {
     /// ended row has no window left to find — its refusal stands.
     nonisolated static func raisesWindowInstead(_ error: CoreReplyError?, session: CoreSession?) -> Bool {
         guard error?.code == "not_found", let session, !session.isRemote, !session.remote else { return false }
+        if session.openTarget != nil { return false }
         let activity = SessionActivity.reduce(session)
         return !activity.isClearable && activity != .failed
     }

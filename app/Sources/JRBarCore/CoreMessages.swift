@@ -418,6 +418,12 @@ public struct CoreAskChoice: Codable, Hashable, Sendable {
     }
 }
 
+public struct CoreSessionOpenTarget: Codable, Hashable, Sendable {
+    public var kind: String
+    public var value: String
+    public var reason: String
+}
+
 public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var provider: String
@@ -478,6 +484,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
 
     public var failureSignalUntil: Double?
     public var sourceIntegration: String?
+    public var openTarget: CoreSessionOpenTarget?
+    public var openTargetReason: String?
     public var groupId: String?
     public var unlinkedWorker: Bool
     /// False when working summarizes the group rather than this session.
@@ -533,6 +541,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         case unlinkedWorker = "unlinked_worker"
         case quotaWorking = "quota_working"
         case sourceIntegration = "source_integration"
+        case openTarget = "open_target"
+        case openTargetReason = "open_target_reason"
         case workersWaiting = "workers_waiting"
         case shortId = "short_id"
         case nextActor = "next_actor"
@@ -575,6 +585,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         unlinkedWorker = (try? c.decodeIfPresent(Bool.self, forKey: .unlinkedWorker)) ?? false
         quotaWorking = try c.decodeIfPresent(Bool.self, forKey: .quotaWorking)
         sourceIntegration = try? c.decodeIfPresent(String.self, forKey: .sourceIntegration)
+        openTarget = try? c.decodeIfPresent(CoreSessionOpenTarget.self, forKey: .openTarget)
+        openTargetReason = try? c.decodeIfPresent(String.self, forKey: .openTargetReason)
     }
 }
 
