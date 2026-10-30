@@ -500,7 +500,7 @@ final class MenuBarUtility: Toy {
 
     let id = "menuBar"
     let name = "Menu Bar"
-    let blurb = "Menu bar item hiding and reveal controls."
+    let blurb = "Hide menu bar items until you need them."
     let symbol = "menubar.rectangle"
 
     var isOn: Bool {
