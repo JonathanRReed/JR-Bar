@@ -26,6 +26,8 @@ final class ShelfRemindersModel {
         let title: String
         /// The due date when the reminder carries one; nil sorts last.
         let due: Date?
+        var calendarColor: ShelfCalendarModel.CalendarColor?
+        var hasTime = true
     }
 
     private(set) var state: State = .needsPermission

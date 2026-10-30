@@ -103,8 +103,11 @@ final class SystemShelfEventStore: ShelfEventStore, @unchecked Sendable {
             // Project without the lock: EventKit's own queue delivers the reminders, and
             // waiting there on a lock another thread holds inside EventKit could hang both.
             let callback = ShelfReminderReader.callback(project: { (reminder: EKReminder) in
-                ShelfReminderReader.entry(id: reminder.calendarItemIdentifier, title: reminder.title,
+                var entry = ShelfReminderReader.entry(id: reminder.calendarItemIdentifier, title: reminder.title,
                                           due: reminder.dueDateComponents?.date)
+                entry?.calendarColor = ShelfCalendarModel.color(reminder.calendar?.cgColor)
+                entry?.hasTime = reminder.dueDateComponents?.hour != nil
+                return entry
             }, completion: completion)
             _ = store.fetchReminders(matching: predicate, completion: callback)
         }

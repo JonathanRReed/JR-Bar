@@ -225,7 +225,7 @@ final class ShelfCalendarModel {
               calendarOccurrence: event.hasRecurrenceRules ? event.startDate : nil)
     }
 
-    nonisolated private static func color(_ color: CGColor?) -> CalendarColor {
+    nonisolated static func color(_ color: CGColor?) -> CalendarColor {
         guard let color, let rgb = NSColor(cgColor: color)?.usingColorSpace(.sRGB) else {
             return CalendarColor(red: 0.3, green: 0.5, blue: 0.9)
         }
