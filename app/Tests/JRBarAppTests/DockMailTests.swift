@@ -327,6 +327,17 @@ struct DockMailTests {
         #expect(result == .success("世界 مرحبا 👍\n"))
     }
 
+    @Test("opaque message identifiers are rejected rather than shortened", arguments: ["separator", "too-long"])
+    func exactIdentifiers(_ mode: String) async {
+        let helper = DockMailReader.script.components(separatedBy: "if not application id")[0]
+        let script = helper + "\non run argv\nreturn my safeID(item 1 of argv)\nend run"
+        let identifier = mode == "separator" ? "synthetic\u{1f}id" : String(repeating: "x", count: 513)
+        let result = await Task.detached {
+            DockMailReader.run(script, [identifier], DockMailCancellation())
+        }.value
+        #expect(result == .failure(.failed))
+    }
+
     @Test("the hard deadline kills a nonresponsive synthetic script without Mail")
     func runnerTimeout() async {
         let result = await Task.detached {

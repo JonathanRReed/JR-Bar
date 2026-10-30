@@ -163,6 +163,11 @@ struct DockMailReader: Sendable {
         end repeat
         return resultText
     end safeText
+    on safeID(value)
+        set keyText to my safeText(value, 512)
+        if keyText is not value then error number -1700
+        return keyText
+    end safeID
     if not application id "com.apple.mail" is running then error number -600
     set rowSeparator to ASCII character 30
     set fieldSeparator to ASCII character 31
@@ -179,7 +184,7 @@ struct DockMailReader: Sendable {
                 if read status of m is false then
                     set senderName to extract name from (sender of m)
                     if senderName contains "@" then set senderName to "Unknown sender"
-                    set keyText to my safeText(message id of m, 512)
+                    set keyText to my safeID(message id of m)
                     set nameText to my safeText(senderName, 60)
                     set subjectText to my safeText(subject of m, 120)
                     set receivedSeconds to ((date received of m) - sampledAt) as integer
