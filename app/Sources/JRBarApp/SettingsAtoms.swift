@@ -197,8 +197,13 @@ struct CardToggleStyle: ToggleStyle {
 
 /// A card-body labelled row: the form's own layout, with a row's air.
 struct CardLabeledContentStyle: LabeledContentStyle {
+    @Environment(\.adaptiveSettingsRows) private var adaptive
+
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: SettingsMetrics.m) {
+        let layout = adaptive
+            ? AnyLayout(SettingsControlLayout())
+            : AnyLayout(HStackLayout(spacing: SettingsMetrics.m))
+        layout {
             configuration.label.frame(maxWidth: .infinity, alignment: .leading)
             configuration.content
         }
@@ -585,16 +590,21 @@ struct DisclosureRow<Content: View>: View {
     @Environment(SettingsStore.self) private var store: SettingsStore?
 
     init(_ title: String, subtitle: String? = nil, fold: String? = nil,
+         initiallyExpanded: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.subtitle = subtitle
         self.fold = fold
+        _local = ViewState(initialValue: initiallyExpanded)
         self.content = content
     }
 
     private var expanded: Binding<Bool> {
         guard let fold, let store else { return $local }
-        return Binding(get: { store.isFoldOpen(fold) }, set: { store.setFold(fold, open: $0) })
+        return Binding(get: { store.isFoldOpen(fold) || local }, set: { open in
+            local = false
+            store.setFold(fold, open: open)
+        })
     }
 
     var body: some View {

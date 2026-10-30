@@ -106,13 +106,14 @@ struct DeviceHardwareSettings: View {
     }
     var body: some View {
         if device.kind != "screen_bar" {
-            SettingToggle(store, "Use this device", path: "\(device.prefix).enabled", default: true)
+            SettingToggle(store, "Use this device", subtitle: "Allow this device to show JR-Bar's lights.",
+                          path: "\(device.prefix).enabled", default: true)
         }
-        SettingSlider(store, "Brightness", subtitle: linkedBrightness ? "Follows the strip's brightness." : nil,
+        SettingSlider(store, "Brightness", subtitle: linkedBrightness ? "Follows the strip's brightness." : "Set how bright this device glows.",
                       path: "\(device.prefix).brightness", in: 0...255,
                       step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
             .disabled(linkedBrightness || (store.values.bool(SettingsPath("\(device.prefix).auto_brightness_enabled")) ?? false))
-        SettingToggle(store, "Auto-brightness", path: "\(device.prefix).auto_brightness_enabled")
+        SettingToggle(store, "Auto-brightness", subtitle: "Adjust brightness to match the room.", path: "\(device.prefix).auto_brightness_enabled")
             .disabled(linkedBrightness)
         DeviceCalibrationRow(store: store, deviceID: device.id, prefix: device.prefix)
     }
@@ -120,17 +121,58 @@ struct DeviceHardwareSettings: View {
 
 struct SettingsFeatureDetail: View {
     let toy: any Toy
-    var body: some View {
-        SettingsGroup {
-            SettingsRow(toy.switchLabel) {
-                Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
-                    .labelsHidden().toggleStyle(.switch)
+    var expandDisclosures = false
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+
+    private var enabledControl: some View {
+        Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
+            .labelsHidden().toggleStyle(.switch)
+    }
+
+    private var featureSwitch: some View {
+        VStack(alignment: .trailing, spacing: JRBarTokens.Space.xs) {
+            if toy.switchLabel != toy.name {
+                Text(toy.switchLabel).jrbarType(.caption).foregroundStyle(.secondary)
             }
+            enabledControl
+                .help(toy.id == "keepAwake" ? KeepAwakeReading.manualSessionHelp : toy.blurb)
         }
-        .id(SettingsStore.cardAnchor(toy.id))
-        toy.controls
-            .cardBodyStyle(flattenDisclosures: toy.id != "notch")
-            .padding(JRBarTokens.Space.md)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if toy.id == "dock" {
+            SettingsGroup {
+                SettingsRow(toy.switchLabel) { enabledControl }
+            }
+            .id(SettingsStore.cardAnchor(toy.id))
+            toy.controls.cardBodyStyle(flattenDisclosures: true).padding(JRBarTokens.Space.md)
+        } else {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+                SettingsFeatureHeading(
+                    title: toy.id == "notch" ? "Notch & Shelf" : toy.name,
+                    symbol: toy.symbol, purpose: toy.blurb, status: statusText,
+                    tint: ToyCard.tint(for: toy.id, page: JRBarTokens.Ink.accent)
+                ) {
+                    featureSwitch
+                }
+                if let settings { SettingsPageNotice(store: settings, page: settings.page) }
+                toy.controls.cardBodyStyle(flattenDisclosures: expandDisclosures)
+            }
+            .environment(\.adaptiveSettingsRows, true)
+            .id(SettingsStore.cardAnchor(toy.id))
+        }
+    }
+
+    private var statusText: String {
+        let status = toy.status
+        guard let awake = toy as? KeepAwakeUtility else { return status.text }
+        switch status {
+        case .failed, .paused: return status.text
+        default:
+            guard awake.toggles.state.awakeReading.holding else { return status.text }
+            return status == .on ? "Holding the Mac awake" : "Holding the Mac awake · " + status.text
+        }
     }
 }
 
@@ -172,11 +214,11 @@ struct ScreenBarMotionSettings: View {
 
     var body: some View {
         SettingGroup("Screen Bar motion") {
-            SettingToggle(store, "Mirror hardware strip", path: "link_screen_bar_to_hardware", default: true)
-            SettingSlider(store, "Phase nudge", path: "screen_bar_phase_offset_ms", in: -500...500,
+            SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on the same clock.", path: "link_screen_bar_to_hardware", default: true)
+            SettingSlider(store, "Phase nudge", subtitle: "Shift the band's timing relative to the hardware strip.", path: "screen_bar_phase_offset_ms", in: -500...500,
                           step: 10, default: 0) { "\(Int($0)) ms" }
                 .disabled(!(store.values.bool("link_screen_bar_to_hardware") ?? true))
-            SettingSlider(store, "Minimum glow", path: "screen_bar_min_glow", in: 0...1,
+            SettingSlider(store, "Minimum glow", subtitle: "Set the band's brightness floor.", path: "screen_bar_min_glow", in: 0...1,
                           default: 0.25, format: SettingsStore.percent)
             SettingsRow("Hold still on camera", subtitle: ScreenBarCameraHold.subtitle(
                 cameraReadable: ScreenBarLiveStatus.shared.cameraReadable)) {

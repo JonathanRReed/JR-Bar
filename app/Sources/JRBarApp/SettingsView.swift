@@ -210,6 +210,12 @@ struct SettingsPageContainer: View {
     let page: SettingsStore.Page
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var featureHasHeading: Bool {
+        if page == .notch { return store.toys?.notch != nil }
+        guard let id = store.subpage, id != "dock" else { return false }
+        return store.cardToy(id) != nil
+    }
+
     var body: some View {
         // The store rides the environment so a toy or utility card can
         // read its own disclosure and light from it; a search hit into a
@@ -257,7 +263,7 @@ struct SettingsPageContainer: View {
     private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
-            Section {
+            if !featureHasHeading {
                 SettingsPageHeader(page: page)
                     .overlay(alignment: .topLeading) {
                         if page == .utilities { SeasonalHeaderAccent(store: store) }
@@ -268,7 +274,7 @@ struct SettingsPageContainer: View {
                     SettingsSealBanner(seal: seal)
                 }
             }
-            SettingsPageNotice(store: store, page: page)
+            if !featureHasHeading { SettingsPageNotice(store: store, page: page) }
             if let provider = store.selectedProvider {
                 SettingsProviderDetail(store: store, provider: provider)
             } else if let subpage = store.subpage, subpage != "advanced", let toy = store.cardToy(subpage) {
