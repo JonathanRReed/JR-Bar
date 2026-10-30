@@ -154,7 +154,7 @@ final class DockMailPreview {
         // Share cancellation with the read lifecycle so hide/off always stops the child.
         if let activeRead = work {
             activeRead.cancel()
-            generation += 1
+            self.generation += 1
             dirty = true
         }
         replying = true
