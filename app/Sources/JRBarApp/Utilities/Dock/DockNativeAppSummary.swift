@@ -20,7 +20,8 @@ extension DockPreviewContent {
             case .loading: return "Loading shortcuts…"
             case .unavailable: return "Shortcuts unavailable"
             case .stale: return "Stale"
-            case .shortcuts(let names): return "\(names.count) shortcuts"
+            case .shortcuts(let names):
+                return names.count == 1 ? "1 shortcut" : "\(names.count) shortcuts"
             }
         }
         if let state = messagesState {
