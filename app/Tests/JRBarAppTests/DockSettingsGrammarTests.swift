@@ -51,7 +51,7 @@ struct DockSettingsGrammarTests {
 
     @Test func widgetAccessUsesTheSharedPermissionAction() async {
         let cases: [(access: DockWidgetAccess, permission: SetupPermission)] = [
-            (.calendar, .calendar), (.reminders, .reminders), (.mail, .automation), (.music, .automation),
+            (.calendar, .calendar), (.reminders, .reminders), (.music, .automation),
         ]
         for item in cases {
             var effects: [String] = []
@@ -65,8 +65,8 @@ struct DockSettingsGrammarTests {
             await PermissionRequest.$override.withValue(factory) { await item.access.request() }
             #expect(effects == ["activate", "prompt", "refresh"])
         }
-        #expect(DockWidgetAccess.mail.text(for: .denied) == "Needs Automation")
+        #expect(DockWidgetAccess.music.text(for: .denied) == "Needs Automation")
         #expect(DockWidgetAccess.music.text(for: .granted) == "Access allowed")
-        #expect(DockWidgetAccess.mail.text(for: .unavailable).contains("Open Mail first"))
+        #expect(DockWidgetAccess.music.text(for: .unavailable).contains("Open Music first"))
     }
 }

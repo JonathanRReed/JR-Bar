@@ -20,11 +20,9 @@ struct DockPreviewSizeTests {
     private func cards() -> [Card] {
         let content = DockPreviewContent()
         let actions = DockPreviewActions(content: content)
-        actions.onMailOpen = {}
         actions.onCalendarOpen = {}
         actions.onRemindersOpen = {}
         actions.onShortcutsOpen = {}
-        actions.onMessagesOpen = {}
         let calendar = DockNativeAppCardTests.calendar
         let events = DockNativePreviewRenderProofTests.state("many")
         var result: [Card] = []
@@ -47,24 +45,6 @@ struct DockPreviewSizeTests {
         result.append(Card(name: "calendar-day-list", view: AnyView(DockCalendarCard(
             state: events, now: Self.now, calendar: calendar, actions: actions,
             listDay: selected, selectedDay: .constant(selected)))))
-        for mode in ["messages", "no-access", "denied", "stale", "empty", "not-running", "loading", "timeout"] {
-            let reading = mode == "empty" ? DockMailReading(unread: 0, messages: [], date: Self.now) : DockMailRenderProofTests.reading()
-            let state: DockMailPreview.State
-            switch mode {
-            case "no-access": state = .noAccess
-            case "denied": state = .denied
-            case "not-running": state = .notRunning
-            case "loading": state = .loading
-            case "timeout": state = .timeout
-            case "stale": state = .stale(reading)
-            default: state = .messages(reading)
-            }
-            result.append(Card(name: "mail-\(mode)", view: AnyView(DockMailCard(
-                state: state, now: Self.now, actions: actions))))
-        }
-        let mail = DockMailRenderProofTests.reading()
-        result.append(Card(name: "mail-actions", view: AnyView(DockMailCard(
-            state: .messages(mail), now: Self.now, actions: actions, highlightedMessageID: mail.messages[0].id))))
         result.append(Card(name: "reminders-new", view: AnyView(DockRemindersCard(
             state: .items(DockNativeAppCardRenderProofTests.entries()), now: Self.now,
             actions: actions, adding: true, draft: "Water the plants"))))
@@ -88,9 +68,6 @@ struct DockPreviewSizeTests {
         result.append(Card(name: "reminders-write-failed", view: AnyView(DockRemindersCard(
             state: .items(DockNativeAppCardRenderProofTests.entries()), now: Self.now,
             writeNotice: "Couldn't mark that reminder done. Open Reminders to try again.", actions: actions))))
-        let oneMail = DockMailRenderProofTests.reading()
-        let oneReading = DockMailReading(unread: 1, messages: Array(oneMail.messages.prefix(1)), date: Self.now)
-        result.append(Card(name: "mail-one", view: AnyView(DockMailCard(state: .messages(oneReading), now: Self.now, actions: actions))))
         let entries = DockNativeAppCardRenderProofTests.entries()
         result.append(Card(name: "reminders-one", view: AnyView(DockRemindersCard(state: .items(Array(entries.prefix(1))), now: Self.now, actions: actions))))
         result.append(Card(name: "shortcuts-one", view: AnyView(DockShortcutsCard(state: .shortcuts(["Morning Brief"]), actions: actions))))
@@ -100,10 +77,6 @@ struct DockPreviewSizeTests {
         result.append(Card(name: "reminders-many", view: AnyView(DockRemindersCard(state: .items(manyReminders), now: Self.now, actions: actions))))
         let manyShortcuts = (1...30).map { "Shortcut \($0)" }
         result.append(Card(name: "shortcuts-many", view: AnyView(DockShortcutsCard(state: .shortcuts(manyShortcuts), actions: actions))))
-        for mode in ["unread", "stale", "stale-empty", "not-running", "no-badge", "badge-only"] {
-            let card = DockMessagesCard(state: DockNativeAppCardRenderProofTests.messageState(mode), actions: actions)
-            result.append(Card(name: "messages-\(mode)", view: AnyView(card)))
-        }
         result.append(Card(name: "media", view: AnyView(DockMediaRow(media: DockMusicTests.track(playing: false), actions: actions))))
         let windows = (0..<20).map { index in
             DockPreviewWindow(id: index, title: "Synthetic window \(index + 1)", minimized: false,
@@ -138,7 +111,7 @@ struct DockPreviewSizeTests {
             for card in cards() {
                 heights[card.name] = measure(card.view.environment(\.dockPreviewSize, size)).height
             }
-            for name in ["mail-empty", "reminders-loading", "shortcuts-empty", "messages-no-badge"] {
+            for name in ["reminders-loading", "shortcuts-empty"] {
                 let height = try #require(heights[name])
                 #expect(height < size.widgetSize.height, "\(name) at \(size) reserved its full height")
             }
@@ -156,8 +129,8 @@ struct DockPreviewSizeTests {
         for size in DockPreviewSize.allCases {
             let content = DockPreviewContent()
             content.previewSize = size
-            content.appName = "Messages"
-            content.messagesState = .unread("3")
+            content.appName = "Reminders"
+            content.remindersState = .items([])
             content.isRunning = true
             content.windows = DockPreviewSamples.terminal().windows
             let expected = size.widgetSize.width
@@ -269,12 +242,12 @@ struct DockPreviewSizeTests {
                 expanded.windows = DockPreviewSamples.browser().windows
                 expanded.isRunning = true
                 expanded.previewSize = size
-                expanded.appName = "Messages"
-                expanded.bundleID = "com.apple.MobileSMS"
-                expanded.messagesState = .unread("3")
+                expanded.appName = "Reminders"
+                expanded.bundleID = "com.apple.reminders"
+                expanded.remindersState = .items([])
                 expanded.nativeWindowsExpanded = true
                 let expandedActions = DockPreviewActions(content: expanded)
-                expandedActions.onMessagesOpen = {}
+                expandedActions.onRemindersOpen = {}
                 let expandedView = DockPreviewView(content: expanded, actions: expandedActions)
                     .background(Color(nsColor: .windowBackgroundColor))
                 try ProofRender.write(expandedView, size: measure(expandedView),
@@ -287,14 +260,14 @@ struct DockPreviewSizeTests {
                         DockPreviewSizeOverridePicker(name: "Music", selection: .constant(.large))
                     }
                     HStack {
-                        Text("Mail")
+                        Text("Calendar")
                         Spacer()
-                        DockPreviewSizeOverridePicker(name: "Mail", selection: .constant(.small))
+                        DockPreviewSizeOverridePicker(name: "Calendar", selection: .constant(.small))
                     }
                     HStack {
-                        Text("Messages")
+                        Text("Reminders")
                         Spacer()
-                        DockPreviewSizeOverridePicker(name: "Messages", selection: .constant(nil))
+                        DockPreviewSizeOverridePicker(name: "Reminders", selection: .constant(nil))
                     }
                 }
                 .padding(size.outerPadding).background(Color(nsColor: .windowBackgroundColor))

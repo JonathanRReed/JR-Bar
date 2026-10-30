@@ -199,11 +199,9 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Native app cards borrow the shared readers only while visible.
     public var calendarPreview: Bool
     public var calendarView: DockCalendarView
-    public var mailPreview: Bool
     public var mediaPreview: Bool
     public var remindersPreview: Bool
     public var shortcutsPreview: Bool
-    public var messagesPreview: Bool
     public var musicPlayer: Bool
     public var musicFullControls: Bool
     /// The size of window previews and native app cards.
@@ -308,8 +306,6 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 mediaPreview: Bool = true,
                 remindersPreview: Bool = true,
                 shortcutsPreview: Bool = true,
-                messagesPreview: Bool = true,
-                mailPreview: Bool = false,
                 musicPlayer: Bool = true,
                 musicFullControls: Bool = false,
                 previewSize: DockPreviewSize = .medium,
@@ -344,8 +340,6 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.mediaPreview = mediaPreview
         self.remindersPreview = remindersPreview
         self.shortcutsPreview = shortcutsPreview
-        self.messagesPreview = messagesPreview
-        self.mailPreview = mailPreview
         self.musicPlayer = musicPlayer
         self.musicFullControls = musicFullControls
         self.previewSize = previewSize
@@ -408,8 +402,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, previewSize, previewSizeOverrides, includeOffscreenWindows
         case calendarPreview, calendarView, mediaPreview
-        case remindersPreview, shortcutsPreview, messagesPreview
-        case mailPreview
+        case remindersPreview, shortcutsPreview
         case musicPlayer, musicFullControls
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
@@ -428,18 +421,17 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         showThumbnails = (try? c.decodeIfPresent(Bool.self, forKey: .showThumbnails)) ?? true
         calendarPreview = (try? c.decodeIfPresent(Bool.self, forKey: .calendarPreview)) ?? true
         calendarView = (try? c.decodeIfPresent(DockCalendarView.self, forKey: .calendarView)) ?? .list
-        mailPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mailPreview)) ?? false
         mediaPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mediaPreview)) ?? true
         remindersPreview = (try? c.decodeIfPresent(Bool.self, forKey: .remindersPreview)) ?? true
         shortcutsPreview = (try? c.decodeIfPresent(Bool.self, forKey: .shortcutsPreview)) ?? true
-        messagesPreview = (try? c.decodeIfPresent(Bool.self, forKey: .messagesPreview)) ?? true
         musicPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .musicPlayer)) ?? true
         musicFullControls = (try? c.decodeIfPresent(Bool.self, forKey: .musicFullControls)) ?? false
         let legacy = try decoder.container(keyedBy: LegacyKeys.self)
         let wasLarge = (try? legacy.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
         previewSize = (try? c.decodeIfPresent(DockPreviewSize.self, forKey: .previewSize))
             ?? (wasLarge ? .large : .medium)
-        previewSizeOverrides = (try? c.decodeIfPresent([String: DockPreviewSize].self, forKey: .previewSizeOverrides)) ?? [:]
+        let overrides = (try? c.decodeIfPresent([String: DockPreviewSize].self, forKey: .previewSizeOverrides)) ?? [:]
+        previewSizeOverrides = overrides.filter { $0.key != "com.apple.mail" && $0.key != "com.apple.MobileSMS" }
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true
         holdDockOpen = (try? c.decodeIfPresent(Bool.self, forKey: .holdDockOpen)) ?? true
         compactListLimit = Self.clampedCompactLimit(

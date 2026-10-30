@@ -11,11 +11,6 @@ struct DockShortcutsPreviewSetting: View {
     var body: some View { Toggle("Shortcuts preview", isOn: $isOn) }
 }
 
-struct DockMessagesPreviewSetting: View {
-    @Binding var isOn: Bool
-    var body: some View { Toggle("Messages preview", isOn: $isOn) }
-}
-
 struct DockRemindersCard: View {
     @Environment(\.dockPreviewSize) private var previewSize
     let state: DockRemindersPreview.State
@@ -216,41 +211,6 @@ struct DockShortcutsCard: View {
                     Button("Open in Shortcuts") { actions.onShortcutOpen?(name) }.buttonStyle(DockCapsuleButtonStyle())
                 }
             }
-        }
-    }
-}
-
-struct DockMessagesCard: View {
-    @Environment(\.dockPreviewSize) private var previewSize
-    let state: DockMessagesPreview.State
-    let actions: DockPreviewActions
-
-    var body: some View {
-        DockWidget(title: "Messages", symbol: "message.fill", open: actions.onMessagesOpen) {
-            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
-                Text(title).jrbarType(.title).fontWeight(.semibold).monospacedDigit()
-                if previewSize == .large {
-                    Text("Conversations need more access and aren't shown here. Only the Dock badge is available.")
-                        .foregroundStyle(.secondary)
-                }
-                if previewSize != .small {
-                    HStack(spacing: JRBarTokens.Space.sm) {
-                        Button("Open Messages") { actions.onMessagesOpen?() }
-                        Button("New Message") { actions.onMessageNew?() }
-                    }
-                    .buttonStyle(DockCapsuleButtonStyle())
-                }
-            }
-        }
-    }
-
-    private var title: String {
-        switch state {
-        case .notRunning: "Messages is not open"
-        case .noBadge: "No unread badge"
-        case .unread(let count): "\(count) unread"
-        case .badgeOnly: "Messages has a badge"
-        case .stale(let count): count.map { "\($0) unread · Stale" } ?? "Dock badge unavailable · Stale"
         }
     }
 }

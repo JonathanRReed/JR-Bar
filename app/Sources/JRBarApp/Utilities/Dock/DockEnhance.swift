@@ -370,18 +370,7 @@ final class DockEnhanceController {
     @ObservationIgnored private var magnifiedSize: CGFloat?
     /// The list's app tiles, read once per `itemsTTL` for the list
     /// frame they were read under.
-    @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)? {
-        didSet {
-            guard preview.messagesState != nil else { return }
-            guard let cachedItems, let anchor,
-                  let tile = cachedItems.items.first(where: { $0.hoverID == anchor.item.hoverID }) else {
-                nativePreviews.badgeUnavailable()
-                return
-            }
-            let running = preview.bundleID.map { RunningApps.shared.bundleIDs.contains($0) } ?? false
-            nativePreviews.tileChanged(badge: tile.badge, running: running)
-        }
-    }
+    @ObservationIgnored private var cachedItems: (listFrame: CGRect, items: [DockAXItem], at: TimeInterval)?
     /// The tile the visible panel is anchored to and the edge it opens
     /// from — re-anchored every tick while the pointer stays on the
     /// tile, so a Dock still sliding in carries the panel with it and
@@ -727,7 +716,6 @@ final class DockEnhanceController {
         quickQuitMonitor = nil
         installGestureMonitors()
         hidePreview()
-        nativePreviews.discardMail()
     }
 
     /// The card's appear hook and the tick's gate: re-read TCC only
@@ -955,7 +943,7 @@ final class DockEnhanceController {
         axReadCadence.observe(pointer: axPoint, at: now)
         var hovered: DockAXItem?
         if let list = dockList(near: axPoint, at: now) {
-            if Self.listReach(of: list.frame).contains(axPoint) || (inPanel && preview.mailState != nil) {
+            if Self.listReach(of: list.frame).contains(axPoint) {
                 hovered = tiles(of: list, at: now).first { $0.frame.contains(axPoint) }
             }
         }
@@ -1044,9 +1032,6 @@ final class DockEnhanceController {
         }
         let items = AppleDockReader.items(list: list.element)
         cachedItems = (list.frame, items, now)
-        if let shown = tracker.shown, let item = items.first(where: { $0.hoverID == shown }) {
-            nativePreviews.badgeChanged(item.badge)
-        }
         return items
     }
 
@@ -1309,7 +1294,6 @@ final class DockEnhanceController {
         anchorRect = itemFrame
 
         let panel = ensurePanel()
-        panel.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
         panel.apply(preview.metrics)
         let place = placement
         let target = targetFrame(item: itemFrame, edge: edge, screen: screenFrame,
@@ -1689,30 +1673,6 @@ final class DockEnhanceController {
         panel.actions.onShortcutNew = {
             if let url = URL(string: "shortcuts://create-shortcut") { DesktopServices.automatic.open(url) }
         }
-        panel.actions.onMessagesOpen = { Self.openNativeApp("com.apple.MobileSMS") }
-        panel.actions.onMessageNew = {
-            guard let url = URL(string: "sms:"),
-                  let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.MobileSMS") else { return }
-            DesktopServices.automatic.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-        }
-        panel.actions.onMailAuth = { [weak self] in
-            guard let mail = self?.nativePreviews.mail else { return }
-            _ = Task { await mail.requestAccess() }
-        }
-        panel.actions.onMailSettings = { SetupModel.openSettingsPane(AutomationPermission.settingsURL) }
-        panel.actions.onMailOpen = {
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.mailBundleID) else { return }
-            DesktopServices.automatic.open(url)
-        }
-        panel.actions.onMailNew = {
-            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.mailBundleID) else { return }
-            DesktopServices.automatic.open([URL(string: "mailto:")!], withApplicationAt: url,
-                                           configuration: NSWorkspace.OpenConfiguration())
-        }
-        panel.actions.onMailMessage = { message in
-            if let url = message.url { DesktopServices.automatic.open(url) }
-        }
-        panel.actions.onMailReply = { [weak self] in self?.nativePreviews.mail?.reply($0) }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
         panel.actions.onCalendarView = { [weak self] view in
             guard let self else { return }
@@ -1781,13 +1741,11 @@ final class DockEnhanceController {
         content.folderEntries = []
         content.media = nil
         content.mediaPending = false
-        content.mailState = nil
         content.calendarState = nil
         content.remindersState = nil
         content.remindersWriteNotice = nil
         content.shortcutsState = nil
         content.shortcutRuns = [:]
-        content.messagesState = nil
         content.nativeWindowsExpanded = false
         content.badge = item.badge
         if let key = agentGuard.armedKey { content.clearGuardNote(key) }
@@ -2490,7 +2448,6 @@ final class DockEnhanceController {
 
     private func nativePreviewChanged() {
         syncPreviewSize()
-        panel?.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
         reframe(onlyIfResized: true, animate: true)
         mirrorPreviewChars()
         guard !previewHasContent else { return }
@@ -2503,7 +2460,6 @@ final class DockEnhanceController {
     }
 
     func syncNativePreviews() {
-        nativePreviews.discardMailIfDisabled(preferences.read())
         guard previewUp else { return }
         syncPreviewSize()
         nativePreviews.update(settings: preferences.read())

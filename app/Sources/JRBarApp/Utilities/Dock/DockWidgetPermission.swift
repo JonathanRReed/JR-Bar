@@ -3,13 +3,12 @@ import JRBarUI
 import SwiftUI
 
 enum DockWidgetAccess {
-    case calendar, reminders, mail, music
+    case calendar, reminders, music
 
     var title: String {
         switch self {
         case .calendar: "Calendar"
         case .reminders: "Reminders"
-        case .mail: "Mail"
         case .music: "Music"
         }
     }
@@ -18,17 +17,17 @@ enum DockWidgetAccess {
         switch self {
         case .calendar: "Needs Calendar access"
         case .reminders: "Needs Reminders access"
-        case .mail, .music: "Needs Automation"
+        case .music: "Needs Automation"
         }
     }
 
-    private var bundleID: String { self == .mail ? "com.apple.mail" : "com.apple.Music" }
+    private var bundleID: String { "com.apple.Music" }
 
     @MainActor func status() async -> SetupPermissionStatus {
         switch self {
         case .calendar: return SetupModel.calendarStatus()
         case .reminders: return SetupModel.reminderStatus()
-        case .mail, .music:
+        case .music:
             let target = bundleID
             let answer = await Task.detached { AutomationPermission.target(target, ask: false) }.value
             return SetupModel.automationStatus(answer)
@@ -39,7 +38,7 @@ enum DockWidgetAccess {
         switch self {
         case .calendar: await SetupModel.requestCalendar()
         case .reminders: await SetupModel.requestReminders()
-        case .mail, .music:
+        case .music:
             let target = bundleID
             await PermissionRequest.live(permission: .automation, status: { await status() }, prompt: {
                 _ = await Task.detached { AutomationPermission.target(target, ask: true) }.value
@@ -50,7 +49,7 @@ enum DockWidgetAccess {
     func text(for status: SetupPermissionStatus) -> String {
         if status == .granted { return "Access allowed" }
         if status == .unavailable {
-            if self == .mail || self == .music { return "\(neededText) · Open \(title) first" }
+            if self == .music { return "\(neededText) · Open \(title) first" }
             return "\(title) access unavailable"
         }
         return neededText

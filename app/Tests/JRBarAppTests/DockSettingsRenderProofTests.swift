@@ -39,7 +39,6 @@ struct DockSettingsRenderProofTests {
             }
         }
         var draft = DockSettings(enabled: true)
-        draft.enhance.mailPreview = true
         draft.enhance.musicFullControls = true
         let optedIn = draft
         fixture.utilities.dock.settings = { optedIn }

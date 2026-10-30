@@ -905,14 +905,9 @@ No DockDoor implementation source or assets were read or copied.
 The month grid added on 2026-10-29 follows the owner's request and Foundation
 calendar arithmetic. It extends these cards without studying further DockDoor
 material.
-The Reminders, Shortcuts and quiet Messages cards added on 2026-10-29 follow
+The Reminders and Shortcuts cards added on 2026-10-29 follow
 the approved native-app memo. They reuse the independent-switch behavior
 credited above. No additional DockDoor source or assets were studied.
-
-The Mail card added on 2026-10-29 follows the approved JR-Bar mockup and Mail's
-scripting dictionary. Its permission button, rows and independent switch reuse
-JR-Bar's existing Dock patterns. DockDoor's public preview behavior informed
-those patterns; no GPL implementation source or assets were read or copied.
 
 The Music player added on 2026-10-29 extends that behavior with a large cover,
 album, remaining time and optional Music controls. The same DockDoor 1.41.0

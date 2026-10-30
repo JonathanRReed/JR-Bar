@@ -122,6 +122,10 @@ public struct AppStateFile: Sendable {
     /// recovery copy. Add a path here when a key is retired.
     public static let retiredKeyPaths: Set<String> = [
         "utilities.dock.enhance.largePreviews",
+        "utilities.dock.enhance.mailPreview",
+        "utilities.dock.enhance.messagesPreview",
+        "utilities.dock.enhance.previewSizeOverrides.com.apple.mail",
+        "utilities.dock.enhance.previewSizeOverrides.com.apple.MobileSMS",
         "utilities.menuBar.agentStatusItem",
         "utilities.menuBar.combinedSystemItem",
         "utilities.menuBar.combinedStatusItem",

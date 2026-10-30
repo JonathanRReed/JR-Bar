@@ -571,12 +571,6 @@ struct DockUtilityControls: View {
                 SettingLabel(title: "Calendar view", subtitle: "Choose an event list or a month grid.")
             }
             .disabled(!calendarPreview.wrappedValue)
-            nativePreviewRow("Mail", bundleID: "com.apple.mail") {
-                SettingLabel(title: "Mail preview", subtitle: "Show unread Mail messages. Stays off until you choose it.")
-            } control: { Toggle("Mail preview", isOn: Binding(
-                get: { utility.enhance.preferences.mailPreview },
-                set: { utility.enhance.preferences.mailPreview = $0 })).labelsHidden() }
-            if utility.enhance.preferences.mailPreview { DockWidgetPermission(access: .mail) }
             nativePreviewRow("Music", bundleID: "com.apple.Music") {
                 SettingLabel(title: "Music player", subtitle: "Show the current track and playback controls when you hover Music.")
             } control: { Toggle("Music player", isOn: musicPlayer).labelsHidden() }
@@ -596,16 +590,11 @@ struct DockUtilityControls: View {
             } control: { Toggle("Shortcuts preview", isOn: Binding(
                 get: { utility.enhance.preferences.shortcutsPreview },
                 set: { utility.enhance.preferences.shortcutsPreview = $0 })).labelsHidden() }
-            nativePreviewRow("Messages", bundleID: "com.apple.MobileSMS") {
-                SettingLabel(title: "Messages preview", subtitle: "Show the unread badge and actions to open Messages. Conversation text stays private.")
-            } control: { Toggle("Messages preview", isOn: Binding(
-                get: { utility.enhance.preferences.messagesPreview },
-                set: { utility.enhance.preferences.messagesPreview = $0 })).labelsHidden() }
             nativePreviewRow("Other media", bundleID: DockEnhanceSettings.otherMediaSizeKey) {
                 SettingLabel(title: "Other media previews", subtitle: "Show the playing track for other media apps, with windows when no track is available.")
             } control: { Toggle("Other media previews", isOn: mediaPreview).labelsHidden() }
             let known = Set(["com.apple.iCal", "com.apple.reminders", "com.apple.shortcuts",
-                             "com.apple.MobileSMS", "com.apple.Music", "com.apple.mail", DockEnhanceSettings.otherMediaSizeKey])
+                             "com.apple.Music", DockEnhanceSettings.otherMediaSizeKey])
             ForEach(utility.settings().enhance.previewSizeOverrides.keys.sorted().filter { !known.contains($0) }, id: \.self) { bundleID in
                 nativePreviewRow(appName(for: bundleID), bundleID: bundleID) {
                     SettingLabel(title: appName(for: bundleID), subtitle: "An individual preview size for this app.")

@@ -183,8 +183,6 @@ final class DockPreviewContent {
     /// that app is playing. nil until a track lands.
     var media: AlcoveMedia?
     var mediaPending = false
-    var mailState: DockMailPreview.State?
-    var mailNow = Date()
     var musicPlayerEnabled = false
     var music: DockMusicPreview?
     var calendarState: DockCalendarPreview.State?
@@ -198,11 +196,10 @@ final class DockPreviewContent {
     var remindersNow = Date()
     var shortcutsState: DockShortcutsPreview.State?
     var shortcutRuns: [String: DockShortcutsPreview.RunState] = [:]
-    var messagesState: DockMessagesPreview.State?
     var nativeWindowsExpanded = false
     var hasNativeCard: Bool {
-        musicPlayerEnabled || media != nil || calendarState != nil || mailState != nil
-            || remindersState != nil || shortcutsState != nil || messagesState != nil
+        musicPlayerEnabled || media != nil || calendarState != nil
+            || remindersState != nil || shortcutsState != nil
     }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
     var previewSize: DockPreviewSize = .medium

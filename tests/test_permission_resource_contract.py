@@ -59,7 +59,7 @@ def test_both_builders_preserve_the_source_privacy_strings(tmp_path, builder):
     # The exact words are pinned above against privacy_usage.plist; here the
     # sentence must name every app JR-Bar automates.
     automation = built["NSAppleEventsUsageDescription"]
-    for target in ("Terminal", "iTerm2", "Mail", "Music", "Calendar"):
+    for target in ("Terminal", "iTerm2", "Music", "Calendar"):
         assert target in automation, target
 
 

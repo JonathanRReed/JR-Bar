@@ -117,7 +117,7 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .accessibility:
             return "Answering asks straight into the session's terminal, and following Alcove's capsule."
         case .automation:
-            return "System Events for appearance and Dock controls. Mail for the optional Mail preview."
+            return "System Events for appearance and Dock controls."
         case .location:
             return "Wi-Fi rules in the Menu Bar utility — macOS only tells apps a network's name with Location on. Nothing reads where you are."
         case .fullDiskAccess:

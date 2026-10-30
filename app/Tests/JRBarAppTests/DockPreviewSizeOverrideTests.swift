@@ -12,8 +12,8 @@ struct DockPreviewSizeOverrideTests {
         preferences.read = { saved }
         preferences.write = { saved = $0 }
         let controller = DockEnhanceController(preferences: preferences)
-        controller.preview.bundleID = "test.synthetic.mail"
-        controller.preview.mailState = .loading
+        controller.preview.bundleID = "test.synthetic.reminders"
+        controller.preview.remindersState = .loading
         let panel = controller.ensurePanel()
         defer { panel.close() }
         #expect(saved.previewSize == .medium)
@@ -21,23 +21,23 @@ struct DockPreviewSizeOverrideTests {
         for size in DockPreviewSize.allCases {
             // This is the callback used by every context-menu size item.
             panel.actions.onPreviewSize?(size)
-            #expect(saved.previewSizeOverrides["test.synthetic.mail"] == size)
+            #expect(saved.previewSizeOverrides["test.synthetic.reminders"] == size)
             #expect(controller.preview.previewSize == size)
             #expect(panel.fittingSize().width == size.widgetSize.width)
             #expect(panel.fittingSize().height <= size.widgetSize.height)
             let restored = try JSONDecoder().decode(DockEnhanceSettings.self, from: JSONEncoder().encode(saved))
-            #expect(restored.previewSize(for: "test.synthetic.mail") == size)
+            #expect(restored.previewSize(for: "test.synthetic.reminders") == size)
             #expect(restored.previewSize(for: "test.synthetic.other") == .medium)
         }
         // A Settings override reaches an already-created card through the same resolution.
-        preferences.setPreviewSize(.small, for: "test.synthetic.mail")
+        preferences.setPreviewSize(.small, for: "test.synthetic.reminders")
         controller.syncPreviewSize()
         #expect(controller.preview.previewSize == .small)
         preferences.previewSize = .large
         controller.syncPreviewSize()
         #expect(controller.preview.previewSize == .small)
         panel.actions.onPreviewSize?(nil)
-        #expect(saved.previewSizeOverrides["test.synthetic.mail"] == nil)
+        #expect(saved.previewSizeOverrides["test.synthetic.reminders"] == nil)
         #expect(controller.preview.previewSize == .large)
         #expect(saved.previewSize == .large)
     }

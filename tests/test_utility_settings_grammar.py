@@ -79,9 +79,9 @@ def test_dock_has_named_sections_and_searchable_widget_rows():
     assert 'SettingsFeatureMoreOptions(id: "dock"' in card
     search = (APP / "Toys/ToySearchRows.swift").read_text().split('"dock": [', 1)[1].split('"agents": [', 1)[0]
     for title in [
-        "Calendar preview", "Calendar view", "Mail preview", "Music player",
+        "Calendar preview", "Calendar view", "Music player",
         "Full Music controls", "Reminders preview", "Shortcuts preview",
-        "Messages preview", "Other media previews", "Folder pops",
+        "Other media previews", "Folder pops",
         "Never switch to", "Hold the Dock out", "List past N windows",
         "⌥⇥ lists this display only",
     ]:

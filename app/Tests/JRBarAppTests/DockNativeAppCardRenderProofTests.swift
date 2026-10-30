@@ -10,7 +10,6 @@ struct DockNativeAppCardRenderProofTests {
     static let now = DockNativeAppCardTests.now
     static let reminderModes = ["loading", "no-access", "denied", "empty", "due", "stale", "stale-empty", "write-failed", "long-title"]
     static let shortcutModes = ["loading", "unavailable", "empty", "list", "running", "done", "failed", "timed-out", "stale", "long-name"]
-    static let messageModes = ["not-running", "no-badge", "unread", "badge-only", "stale", "stale-empty"]
 
     static func entries(long: Bool = false) -> [ShelfRemindersModel.Entry] {
         let title = long ? String(repeating: "Review the presentation and prepare the illustrations ", count: 3) : "Send the slides"
@@ -46,17 +45,6 @@ struct DockNativeAppCardRenderProofTests {
         }
     }
 
-    static func messageState(_ mode: String) -> DockMessagesPreview.State {
-        switch mode {
-        case "not-running": return .notRunning
-        case "no-badge": return .noBadge
-        case "badge-only": return .badgeOnly
-        case "stale": return .stale("3")
-        case "stale-empty": return .stale(nil)
-        default: return .unread("3")
-        }
-    }
-
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
     func cards() throws {
         for dark in [false, true] {
@@ -85,18 +73,10 @@ struct DockNativeAppCardRenderProofTests {
                 }
                 try write(content, name: "shortcuts-\(mode)-\(theme)", dark: dark)
             }
-            for mode in Self.messageModes {
-                let content = base("Messages", bundle: "com.apple.MobileSMS", symbol: "message.fill")
-                content.messagesState = Self.messageState(mode)
-                if mode == "unread" { content.badge = "3" }
-                content.isRunning = mode != "not-running"
-                try write(content, name: "messages-\(mode)-\(theme)", dark: dark)
-            }
             for enabled in [false, true] {
                 let settings = VStack(alignment: .leading, spacing: 0) {
                     DockRemindersPreviewSetting(isOn: .constant(enabled))
                     DockShortcutsPreviewSetting(isOn: .constant(enabled))
-                    DockMessagesPreviewSetting(isOn: .constant(enabled))
                 }
                 .toggleStyle(CardToggleStyle()).controlSize(.small).padding(16)
                 .background(dark ? Color(nsColor: .windowBackgroundColor) : .white)

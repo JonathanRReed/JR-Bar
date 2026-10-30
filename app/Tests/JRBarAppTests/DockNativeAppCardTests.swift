@@ -35,42 +35,56 @@ struct DockNativeAppCardTests {
         return model
     }
 
+    @Test("removed widgets use ordinary window previews", arguments: ["com.apple.mail", "com.apple.MobileSMS"])
+    func removedWidgetsShowWindows(_ bundle: String) {
+        let fixture = DockMusicTests.Fixture()
+        let native = DockNativePreviews(feed: fixture.feed)
+        let content = DockPreviewContent()
+        content.bundleID = bundle
+        content.isRunning = true
+        content.windows = DockPreviewSamples.terminal().windows
+        let settings = DockEnhanceSettings()
+        native.seed(content: content, settings: settings)
+        #expect(!content.hasNativeCard && content.showsWindows)
+        native.start(content: content, settings: settings)
+        #expect(!content.hasNativeCard && content.showsWindows)
+        #expect(native.reminders == nil && native.shortcuts == nil)
+        native.stop()
+    }
+
     @Test("each card switch defaults on, survives old state, and round-trips independently")
     func settings() throws {
-        for json in ["{}", #"{"remindersPreview":null,"shortcutsPreview":"yes","messagesPreview":0}"#] {
+        for json in ["{}", #"{"remindersPreview":null,"shortcutsPreview":"yes"}"#] {
             let value = try JSONDecoder().decode(DockEnhanceSettings.self, from: Data(json.utf8))
-            #expect(value.remindersPreview && value.shortcutsPreview && value.messagesPreview)
+            #expect(value.remindersPreview && value.shortcutsPreview)
         }
         let preferences = DockEnhancePreferences()
         var value = DockEnhanceSettings()
         preferences.read = { value }
         preferences.write = { value = $0 }
         preferences.remindersPreview = false
-        #expect(!value.remindersPreview && value.shortcutsPreview && value.messagesPreview)
+        #expect(!value.remindersPreview && value.shortcutsPreview)
         preferences.shortcutsPreview = false
-        preferences.messagesPreview = false
         let decoded = try JSONDecoder().decode(DockEnhanceSettings.self, from: JSONEncoder().encode(value))
-        #expect(!decoded.remindersPreview && !decoded.shortcutsPreview && !decoded.messagesPreview)
+        #expect(!decoded.remindersPreview && !decoded.shortcutsPreview)
         #expect(decoded.calendarPreview && decoded.mediaPreview)
     }
 
-    @Test("off creates no card reader and performs no preflight or cache work", arguments: ["com.apple.reminders", "com.apple.shortcuts", "com.apple.MobileSMS"])
+    @Test("off creates no card reader and performs no preflight or cache work", arguments: ["com.apple.reminders", "com.apple.shortcuts"])
     func off(_ bundle: String) {
         let native = DockNativePreviews()
         var creations = 0
         native.makeReminders = { creations += 1; Issue.record("created reminders while off"); return reminders(SyntheticShelfEventStore()) }
         native.makeShortcuts = { creations += 1; return DockShortcutsPreview(reader: SyntheticDockShortcutsReader()) }
-        native.makeMessages = { creations += 1; return DockMessagesPreview(readBadge: { _ in Issue.record("read badge while off"); return .noBadge }) }
         let content = DockPreviewContent()
         content.bundleID = bundle
         content.isRunning = true
         let settings = DockEnhanceSettings(calendarPreview: false, mediaPreview: false,
-                                           remindersPreview: false, shortcutsPreview: false, messagesPreview: false)
+                                           remindersPreview: false, shortcutsPreview: false)
         native.seed(content: content, settings: settings)
         native.start(content: content, settings: settings)
-        native.tileChanged(badge: "9", running: true)
         #expect(creations == 0)
-        #expect(native.reminders == nil && native.shortcuts == nil && native.messages == nil)
+        #expect(native.reminders == nil && native.shortcuts == nil)
         #expect(!content.hasNativeCard)
         native.stop()
     }
@@ -303,11 +317,6 @@ struct DockNativeAppCardTests {
         native.update(settings: settings)
         #expect(shortcutReader.cancellations == 1)
         #expect(native.shortcuts == nil && content.shortcutsState == nil)
-        content.bundleID = "com.apple.MobileSMS"
-        native.start(content: content, settings: settings)
-        settings.messagesPreview = false
-        native.update(settings: settings)
-        #expect(native.messages == nil && content.messagesState == nil)
         native.stop()
     }
 
@@ -323,35 +332,8 @@ struct DockNativeAppCardTests {
         content.shortcutsState = .shortcuts([])
         #expect(content.hasNativeCard && !content.showsWindows)
         content.shortcutsState = nil
-        content.messagesState = .noBadge
-        #expect(content.hasNativeCard && !content.showsWindows)
     }
 
-    @Test("Messages uses only the injected Dock badge and preserves unknown and stale states")
-    func messages() {
-        var reads = 0
-        let model = DockMessagesPreview(readBadge: { badge in reads += 1; return DockMessagesPreview.read(badge) })
-        #expect(model.update(running: false, badge: "4") == .notRunning)
-        #expect(reads == 0)
-        #expect(model.update(running: true, badge: "3") == .unread("3"))
-        #expect(model.update(running: true, badge: nil) == .noBadge)
-        #expect(model.update(running: true, badge: "•") == .badgeOnly)
-        #expect(model.update(running: true, badge: "0") == .unread("0"))
-        let native = DockNativePreviews()
-        native.makeMessages = { model }
-        let content = DockPreviewContent()
-        content.bundleID = "com.apple.MobileSMS"
-        content.isRunning = true
-        content.badge = "3"
-        native.start(content: content, settings: .init(calendarPreview: false, mediaPreview: false))
-        native.tileChanged(badge: "5", running: true)
-        #expect(content.messagesState == .unread("5"))
-        native.badgeUnavailable()
-        #expect(content.messagesState == .stale("5"))
-        native.tileChanged(badge: nil, running: true)
-        #expect(content.messagesState == .noBadge)
-        native.stop()
-    }
 }
 
 @Suite("Dock Music header and width")

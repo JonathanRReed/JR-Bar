@@ -27,15 +27,6 @@ extension DockPreviewContent {
                 return names.count == 1 ? "1 shortcut" : "\(names.count) shortcuts"
             }
         }
-        if let state = messagesState {
-            switch state {
-            case .notRunning: return "Not running"
-            case .noBadge: return "No unread badge"
-            case .unread(let count): return "\(count) unread"
-            case .badgeOnly: return "Unread count unavailable"
-            case .stale: return "Stale"
-            }
-        }
         return nil
     }
 

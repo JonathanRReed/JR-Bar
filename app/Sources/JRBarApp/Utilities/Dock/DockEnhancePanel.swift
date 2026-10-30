@@ -97,12 +97,6 @@ final class DockPreviewActions {
     /// The synced lyrics the notch Shelf already holds for the playing
     /// track — read, never fetched: nil unless the Shelf has them.
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
-    var onMailAuth: (@MainActor () -> Void)?
-    var onMailSettings: (@MainActor () -> Void)?
-    var onMailOpen: (@MainActor () -> Void)?
-    var onMailNew: (@MainActor () -> Void)?
-    var onMailMessage: (@MainActor (DockMailMessage) -> Void)?
-    var onMailReply: (@MainActor (DockMailMessage) -> Void)?
     /// Calendar access uses Setup's existing permission action.
     var onRemindersAuth: (@MainActor () -> Void)?
     var onReminderComplete: (@MainActor (ShelfRemindersModel.Entry) -> Void)?
@@ -112,8 +106,6 @@ final class DockPreviewActions {
     var onShortcutOpen: (@MainActor (String) -> Void)?
     var onShortcutsOpen: (@MainActor () -> Void)?
     var onShortcutNew: (@MainActor () -> Void)?
-    var onMessagesOpen: (@MainActor () -> Void)?
-    var onMessageNew: (@MainActor () -> Void)?
     var onCalendarAuth: (@MainActor () -> Void)?
     var onCalendarView: (@MainActor (DockCalendarView) -> Void)?
     var onCalendarDay: (@MainActor (Date) -> Void)?
@@ -283,11 +275,6 @@ final class DockPreviewPanel: NSPanel {
     func hold(_ placement: DockPlacement) {
         let wanted = Self.level(coversLabel: placement.coversLabel)
         if level != wanted { level = wanted }
-    }
-
-    /// Mail stays private even under the development capture override.
-    func protectMail(_ isMail: Bool) {
-        sharingType = isMail || ProcessInfo.processInfo.environment["JRBAR_CAPTURE_CARD"] == nil ? .none : .readOnly
     }
 
     /// The glass takes the spacing's corner — concentric with the card
@@ -544,10 +531,6 @@ struct DockPreviewView: View {
                 rule
                 DockMediaRow(media: media, actions: actions, appName: content.appName)
             }
-            if let state = content.mailState {
-                rule
-                DockMailCard(state: state, now: content.mailNow, actions: actions)
-            }
             if let state = content.calendarState {
                 rule
                 DockCalendarCard(state: state, now: content.calendarNow, actions: actions,
@@ -565,10 +548,6 @@ struct DockPreviewView: View {
             if let state = content.shortcutsState {
                 rule
                 DockShortcutsCard(state: state, runs: content.shortcutRuns, actions: actions)
-            }
-            if let state = content.messagesState {
-                rule
-                DockMessagesCard(state: state, actions: actions)
             }
             if content.folderURL != nil {
                 rule
@@ -642,12 +621,7 @@ struct DockPreviewView: View {
 
     private var header: some View {
         Group {
-            if content.mailState != nil {
-                HStack(spacing: 10) {
-                    headerIcon
-                    headerWords
-                }
-            } else if cardStripWidth >= wideHeaderMinimum {
+            if cardStripWidth >= wideHeaderMinimum {
                 HStack(spacing: 10) {
                     headerBack
                     headerIcon
@@ -699,7 +673,7 @@ struct DockPreviewView: View {
                 .overlay(alignment: .topTrailing) {
                     if let badge = content.badge {
                         DockBadgePill(text: badge)
-                            .fixedSize(horizontal: content.mailState != nil, vertical: true)
+                            .fixedSize(horizontal: false, vertical: true)
                             .offset(x: 7, y: -6)
                     }
                 }
@@ -1024,7 +998,6 @@ struct DockPreviewView: View {
     }
 
     private var subtitle: String {
-        if let state = content.mailState { return state.subtitle(now: content.mailNow) }
         if let summary = content.nativeAppSubtitle { return summary }
         if content.folderURL != nil {
             return Self.folderSubtitle(state: content.folderState, count: content.folderEntries.count)
