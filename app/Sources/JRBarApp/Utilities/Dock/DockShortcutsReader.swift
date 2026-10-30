@@ -103,9 +103,12 @@ final class DockShortcutsReader: DockShortcutsReading {
             var timedOut = false
             var overflow = false
             var waitFailed = false
+            var outputClosed = false
             while true {
                 for _ in 0..<16 {
+                    guard !outputClosed else { break }
                     let count = Darwin.read(readFD, &buffer, buffer.count)
+                    if count == 0 { outputClosed = true }
                     guard count > 0 else { break }
                     if arguments.first != "list" { continue }
                     if output.count + count <= 256 * 1024 { output.append(contentsOf: buffer.prefix(count)) }
@@ -132,7 +135,7 @@ final class DockShortcutsReader: DockShortcutsReading {
                     }
                     break
                 }
-                var descriptor = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
+                var descriptor = pollfd(fd: outputClosed ? -1 : readFD, events: Int16(POLLIN), revents: 0)
                 _ = Darwin.poll(&descriptor, 1, 50)
             }
             if timedOut { return .timedOut }
