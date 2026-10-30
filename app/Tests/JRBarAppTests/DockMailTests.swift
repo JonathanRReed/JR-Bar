@@ -317,6 +317,42 @@ struct DockMailTests {
         #expect(calls.withLock { $0.count } == 2)
     }
 
+    @Test("Reply takes priority over a pending refresh and keeps the selected identifier")
+    func replyDuringRefresh() async throws {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let replies = OSAllocatedUnfairLock(initialState: [String]())
+        let entered = TestSignal()
+        let gate = TestGate()
+        defer { gate.signal() }
+        let reader = DockMailReader(isRunning: { true }, permission: { _ in .granted }, runner: { _, argv, cancellation in
+            if let id = argv.first { replies.withLock { $0.append(id) }; return .success("opened") }
+            let count = reads.withLock { value in value += 1; return value }
+            if count == 2 {
+                entered.signal()
+                gate.wait()
+                #expect(cancellation.cancelled)
+            }
+            return .success(Self.output)
+        })
+        let mail = DockMailPreview(reader: reader)
+        mail.clock = { Self.now }
+        mail.show(badge: nil)
+        await settle(mail)
+        let selected = try #require(mail.cached?.messages.first)
+        let previousFrame = DockMailMessage(id: selected.id, sender: selected.sender, subject: selected.subject,
+            received: selected.received.addingTimeInterval(-1), flagged: selected.flagged)
+        mail.refresh(force: true)
+        #expect(await entered.wait())
+        mail.reply(previousFrame)
+        mail.reply(previousFrame)
+        gate.signal()
+        await settle(mail)
+        await settle(mail)
+        #expect(replies.withLock { $0 } == [selected.id])
+        #expect(reads.withLock { $0 } == 3)
+        mail.hide()
+    }
+
     @Test("the production field encoder removes separators before joining, using synthetic text only")
     func scriptFieldEncoder() async {
         let helper = DockMailReader.script.components(separatedBy: "if not application id")[0]

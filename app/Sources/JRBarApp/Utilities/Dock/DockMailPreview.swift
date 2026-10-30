@@ -41,6 +41,7 @@ final class DockMailPreview {
     private var work: DockMailCancellation?
     private var generation = 0
     private var dirty = false
+    private var replying = false
     private var badge: String?
     private var observers: [NSObjectProtocol] = []
 
@@ -71,6 +72,7 @@ final class DockMailPreview {
         work?.cancel()
         work = nil
         dirty = false
+        replying = false
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers.removeAll()
     }
@@ -146,11 +148,16 @@ final class DockMailPreview {
     }
 
     func reply(_ message: DockMailMessage) {
-        guard visible, cached?.messages.contains(message) == true else { return }
+        guard visible, !replying, cached?.messages.contains(where: { $0.id == message.id }) == true else { return }
         let reader = self.reader
         let cancellation = DockMailCancellation()
         // Share cancellation with the read lifecycle so hide/off always stops the child.
-        guard work == nil else { return }
+        if let activeRead = work {
+            activeRead.cancel()
+            generation += 1
+            dirty = true
+        }
+        replying = true
         work = cancellation
         let generation = self.generation
         queue.async { [weak self] in
@@ -161,6 +168,7 @@ final class DockMailPreview {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.visible, self.generation == generation else { return }
                 self.work = nil
+                self.replying = false
                 if case .failure = result { self.onChange(self.cached.map { .stale($0) } ?? .timeout) }
                 if self.dirty { self.dirty = false; self.refresh(force: true) }
             }
