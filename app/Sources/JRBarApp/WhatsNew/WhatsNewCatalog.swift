@@ -36,28 +36,27 @@ enum WhatsNewCatalog {
     static let releaseID = "0.10.2"
 
     /// The header's one line.
-    static let headline = "Permissions and sign-ins that work."
+    static let headline = "Every plan, every provider, and more of your Mac in the Dock."
 
     /// The window has room for this many rows and no more: the lead and
     /// four cards. The view draws exactly this many.
     static let maximumRows = 5
 
     static let entries: [WhatsNewEntry] = [
+        WhatsNewEntry(id: "plan-meters", symbol: "chart.bar", title: "Meters that fit your plan",
+            detail: "One limit gets a full-width bar, two limits sit side by side, and credits and daily allowances finally show.",
+            tryIt: .panel(toggle: false), opens: "Opens the panel"),
+        WhatsNewEntry(id: "connect-factory", symbol: "person.badge.key", title: "Factory and Devin connect again",
+            detail: "Choose the browser profile where you're signed in, allow it, and JR-Bar reads your subscription.",
+            tryIt: .settings(page: "providers"), opens: "Opens Providers"),
+        WhatsNewEntry(id: "dock-cards", symbol: "dock.rectangle", title: "New Dock previews",
+            detail: "Hover Mail, Music, Reminders, Shortcuts, Messages or Calendar for a card of its own.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "t3-open", symbol: "arrow.up.forward.app", title: "Open lands in T3 Code",
+            detail: "Open on an agent running in T3 Code goes straight to its thread."),
         WhatsNewEntry(id: "permissions", symbol: "lock.open", title: "Allow Access works",
             detail: "Calendar, Reminders, the camera and system audio can ask for access, and every Allow button now does something.",
             tryIt: .settings(page: "privacy"), opens: "Opens Privacy"),
-        WhatsNewEntry(id: "connect-devin", symbol: "person.badge.key", title: "Connect Devin",
-            detail: "Choose the browser profile where you signed in to Devin, allow access, and import.",
-            tryIt: .settings(page: "providers"), opens: "Opens Providers"),
-        WhatsNewEntry(id: "fix-actions", symbol: "arrow.triangle.2.circlepath", title: "The button that fixes it",
-            detail: "A provider that needs you offers Sign in, Reconnect or Add API key instead of Retry.",
-            tryIt: .window(.usage), opens: "Opens Usage Center"),
-        WhatsNewEntry(id: "plain-words", symbol: "text.bubble", title: "Plain words",
-            detail: "Internal codes are gone, and History's events run in time order in your own clock.",
-            tryIt: .window(.history), opens: "Opens History"),
-        WhatsNewEntry(id: "every-window", symbol: "chart.bar", title: "Every reading shows",
-            detail: "Credits, daily and monthly allowances show beside the 5-hour and weekly columns.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel"),
     ]
 }
 
