@@ -19,6 +19,7 @@ struct UsageWindowMatrixTests {
         var provider: CoreProviderUsage
         var placements: [String: UsageWindowPlacement]
         var panel_cells: [String: UsageGaugeCellState]
+        var panel_windows: [String: String?]
     }
 
     static func fixture() throws -> Matrix {
@@ -42,13 +43,19 @@ struct UsageWindowMatrixTests {
             let row = PanelProviderSection(store: panel, composition: PanelComposition(store: panel)).gauge(provider)
             for width: CGFloat in [320, 372] {
                 let rendered = await evidence(row.frame(width: width))
-                let measured = provider.windows.filter { $0.usedPct != nil }
-                for window in measured {
+                let selected = provider.panelColumns.compactMap { provider.panelWindow(in: $0) }
+                #expect(Set(rendered.readings.keys) == Set(selected.map(\.id)))
+                for window in selected {
                     #expect(rendered.readings[window.id]?.percentUsed == window.usedPct, "\(entry.name): \(window.id) at \(width)")
                 }
-                if !measured.isEmpty { #expect(!rendered.readings.isEmpty, "\(entry.name) must not show only dashes") }
-                for column in ["5h", "7d"] {
-                    #expect((rendered.cells[column] ?? .empty) == entry.panel_cells[column], "\(entry.name): \(column) at \(width)")
+                for window in provider.windows {
+                    #expect(row.accessibilityValue.contains(row.reading(for: window).accessibilityLabel))
+                }
+                for column in UsagePanelColumn.allCases {
+                    let expectedID = entry.panel_windows[column.rawValue] ?? nil
+                    #expect(provider.panelWindow(in: column)?.id == expectedID, "\(entry.name): \(column)")
+                    #expect((rendered.cells[column.rawValue] ?? .empty) == entry.panel_cells[column.rawValue],
+                            "\(entry.name): \(column) at \(width)")
                 }
                 let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
                 #expect(host.fittingSize.width == width)
@@ -85,7 +92,8 @@ struct UsageWindowMatrixTests {
         let row = UsageGaugeRow(provider: grok, name: "Grok", now: matrix.now,
             style: .panel, windowNames: ["5h", "7d"])
         let rendered = await evidence(row.frame(width: 320))
-        #expect(rendered.cells == ["5h": .empty, "7d": .ownCell])
+        #expect(rendered.cells == ["cycle": .reading])
+        #expect(grok.panelColumns == [.cycle])
         #expect(!rendered.cells.values.contains(.dash))
         #expect(rendered.readings["credits"]?.percentUsed == grok.windows.first?.usedPct)
         #expect(UsageGaugeRow.panelAdditionalHeight(grok) == 16)
@@ -100,11 +108,30 @@ struct UsageWindowMatrixTests {
         let unknown = CoreUsageWindow(key: "daily", name: "Daily", usedPct: nil)
         let provider = CoreProviderUsage(id: "devin", windows: [unknown], state: "ready")
         #expect(unknown.placement == .labelled)
+        #expect(provider.panelColumns == [.short])
+        #expect(provider.panelWindow(in: .short) == unknown)
         #expect(UsageGaugeReading(window: unknown, provider: provider, now: 0).percentUsed == nil)
         #expect(UsageWindowLabel.column("Standard 5-hour") == "Standard 5h")
         #expect(UsageWindowLabel.column("Core 7-day") == "Core 7d")
         #expect(UsageWindowLabel.column("Standard Monthly") == "Standard Monthly")
         #expect(UsageWindowLabel.column("Included plan") == "Included plan")
+    }
+
+    @Test func accountWindowsDetermineTheNumberOfCells() {
+        let weekly = CoreUsageWindow(key: "weekly", name: "7d", usedPct: 45)
+        let fiveHour = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: nil)
+        var account = CoreProviderUsage(id: "codex", windows: [weekly], state: "ready")
+        account.account = UsageAccount(plan: "Plus")
+        #expect(account.panelColumns == [.cycle])
+        account.windows.insert(fiveHour, at: 0)
+        #expect(account.panelColumns == [.short, .cycle])
+        #expect(account.panelWindow(in: .short)?.usedPct == nil)
+        account.account = UsageAccount(plan: "Pro")
+        #expect(account.panelColumns == [.short, .cycle])
+        account.windows = [fiveHour]
+        #expect(account.panelColumns == [.short])
+        account.windows = []
+        #expect(account.panelColumns.isEmpty)
     }
 
     private struct Evidence {

@@ -34,7 +34,7 @@ struct PanelComposition {
         let earlier = store.earlierPanelAgents.isEmpty && store.hiddenCount == 0 ? 0 : Self.sectionHeight
         let banner: CGFloat = store.coreCrashed || !store.isLive || store.providerList.failure != nil ? 70 : 0
         let rows = store.editingProviders ? store.panelEditProviders.count : store.panelUsage.count
-        let header: CGFloat = store.editingProviders || !store.panelWindowNames.isEmpty ? 20 : 0
+        let header: CGFloat = store.editingProviders ? 20 : 0
         let live = store.isLive
         let usageHeights = store.panelUsage.map { Self.usageHeight($0, connected: live) }
         let minimumUsage = store.editingProviders ? Self.rowHeight : usageHeights.first ?? Self.rowHeight
@@ -362,9 +362,6 @@ struct PanelProviderSection: View {
             .padding(.horizontal, JRBarTokens.Space.md).frame(height: PanelComposition.sectionHeight)
             if store.editingProviders { editor }
             else {
-                if !store.panelWindowNames.isEmpty {
-                    UsageGaugeHeader(windowNames: store.panelWindowNames).frame(height: 20)
-                }
                 if store.panelUsage.isEmpty {
                     Button("Add providers…") { store.openSettings(page: .agents) }
                         .buttonStyle(.plain).font(JRBarTokens.TypeStyle.body.font)

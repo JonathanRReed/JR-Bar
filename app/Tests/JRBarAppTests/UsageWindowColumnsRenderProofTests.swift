@@ -76,35 +76,16 @@ struct UsageWindowColumnsRenderProofTests {
         }
     }
 
-    @Test func conventionalRowsRetainTheirPixels() throws {
-        for provider in Self.providers().prefix(3) {
+    @Test func extraPoolsDoNotIncreasePanelRowHeight() {
+        for provider in Self.providers() {
+            #expect(UsageGaugeRow.panelAdditionalHeight(provider) == 16)
             for width: CGFloat in [320, 372] {
-                for dark in [false, true] {
-                    let before = try pixels(provider, style: .compact, width: width, dark: dark)
-                    let after = try pixels(provider, style: .panel, width: width, dark: dark)
-                    #expect(before == after, "\(provider.id), \(width), dark \(dark)")
-                }
+                let row = UsageGaugeRow(provider: provider, name: ProviderPalette.displayName(for: provider.id),
+                    now: Self.now, style: .panel, windowNames: ["5h", "7d"])
+                let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
+                #expect(host.fittingSize.height == 52)
+                #expect(PanelComposition.usageHeight(provider) == 52)
             }
         }
-    }
-
-    private func pixels(_ provider: CoreProviderUsage, style: UsageGaugeRow.Style,
-                        width: CGFloat, dark: Bool) throws -> Data {
-        let root = UsageGaugeRow(provider: provider, name: ProviderPalette.displayName(for: provider.id),
-            now: Self.now, style: style, windowNames: ["5h", "7d"])
-            .environment(\.colorScheme, dark ? .dark : .light)
-            .environment(\.renderSnapshot, true).frame(width: width)
-            .fixedSize(horizontal: false, vertical: true)
-        let host = NSHostingView(rootView: root)
-        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let image = try #require(bitmap.cgImage)
-        let scale = CGFloat(image.width) / width
-        let topRect = CGRect(x: 0, y: 0, width: CGFloat(image.width), height: 36 * scale)
-        let top = try #require(image.cropping(to: topRect))
-        return try #require(NSBitmapImageRep(cgImage: top).representation(using: .png, properties: [:]))
     }
 }

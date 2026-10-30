@@ -2,12 +2,13 @@ import AppKit
 import Carbon
 import Foundation
 import JRBarUI
+import JRBarTestSupport
 import SwiftUI
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-@Suite("Panel composition", .serialized)
+@Suite("Panel composition", .serialized, .renderProofAppearance)
 @MainActor
 struct PanelCompositionTests {
     static let time: Double = 1_790_000_000
@@ -18,7 +19,7 @@ struct PanelCompositionTests {
         for reading in readings {
             for width: CGFloat in [320, 372] {
                 let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
-                                        now: Self.time, style: .compact, windowNames: ["5h", "7d"],
+                                        now: Self.time, style: .panel, windowNames: ["5h", "7d"],
                                         snapshotReceivedAt: Self.time, onAction: {},
                                         onRetry: reading.availability == "failing" ? {} : nil)
                 let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
@@ -40,7 +41,7 @@ struct PanelCompositionTests {
             #expect(PanelComposition.usageHeight(reading, connected: false) >= 64)
             for width: CGFloat in [320, 372] {
                 let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
-                                        now: Self.time + 2460, connected: false, style: .compact, windowNames: ["5h", "7d"],
+                                        now: Self.time + 2460, connected: false, style: .panel, windowNames: ["5h", "7d"],
                                         snapshotReceivedAt: Self.time, suppressDisconnectedStatus: true,
                                         onAction: reading.action == nil ? nil : {})
                 let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))
@@ -69,7 +70,7 @@ struct PanelCompositionTests {
             for connected in [true, false] {
                 for width: CGFloat in [320, 372] {
                     let row = UsageGaugeRow(provider: reading, name: ProviderPalette.displayName(for: reading.id),
-                                            now: Self.time + 2460, connected: connected, style: .compact,
+                                            now: Self.time + 2460, connected: connected, style: .panel,
                                             windowNames: ["5h", "7d"], snapshotReceivedAt: Self.time,
                                             suppressDisconnectedStatus: !connected, onAction: {})
                     let host = NSHostingView(rootView: row.frame(width: width).fixedSize(horizontal: false, vertical: true))

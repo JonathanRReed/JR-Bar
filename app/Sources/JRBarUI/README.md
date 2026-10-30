@@ -51,20 +51,26 @@ quiet and unavailable states use neutral ink. `Runs out` uses `warning`;
 `UsageGaugeRow(provider:name:now:connected:accent:style:windowNames:
 snapshotReceivedAt:locale:timeZone:pace:fix:onAction:onRetry:)` renders
 supplied facts without polling. The default `.detail` layout has 6 pt
-lanes and optional pace ticks. Use `.compact` in the panel and drawer.
-It has a 20 pt tile and a 100 pt identity column. Window columns share
-all remaining width, with a 76 pt minimum. Each percentage sits beside
-its 4 pt gauge, with the reset time below. Normal panel rows are 36 pt
-tall with 2/12 pt padding. Status and action rows keep extra height.
-Columns wrap below the name when they cannot fit beside it.
+lanes and optional pace ticks. Use `.panel` in the panel and `.compact`
+in the overview. Both have a 20 pt tile and a 100 pt identity column.
+Window columns share the remaining width, with a 76 pt minimum. Each
+percentage sits beside its 4 pt gauge, with its reset or forecast below.
 
-Place `UsageGaugeHeader(windowNames:)` once above compact rows. Pass the
-same names to each row so mixed window sets align. A missing slot is a
-dash. `orderedWindowNames(_:)` deduplicates names and places 5h before 7d.
-Rows identify columns by window name. Overview passes `compactColumnWidth` to
-fit its two-line headers. Other callers keep the 76 pt default. Detail rows label their own lanes.
-Percentages clamp to 0...100. Missing values have no track. Elapsed
-windows say Reset; an unmeasured window says No reading.
+Panel rows label their own windows. The short cell selects a 5h window,
+or Daily when there is no 5h window. The cycle cell selects weekly,
+then monthly, then another reported pool or balance. Each cell uses the
+provider's headline rule within that cadence. A single cell spans the
+whole meter area. Additional pools remain in the provider and window-label
+tooltips and in Usage Center. Normal panel rows are 52 pt tall. Status
+and action rows reserve extra height.
+
+`UsageGaugeHeader(windowNames:)` can label a compact table. Pass the same
+names to its rows. `orderedWindowNames(_:)` deduplicates names and places
+5h before 7d. Rows identify columns by window name. Overview passes
+`compactColumnWidth` to fit its two-line headers. Detail rows label their
+own lanes. A window the account has not reported takes no meter space.
+A reported window with no percentage shows a dash without a track.
+Percentages clamp to 0...100. Elapsed windows say Reset.
 
 Pass the page's clock, locale, time zone and connection state. Pass
 `snapshotReceivedAt` from the store when the snapshot arrives, especially
