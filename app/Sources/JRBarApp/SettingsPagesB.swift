@@ -448,20 +448,20 @@ struct AutoDimSection: View {
                         }
                     }
                 }
-                SettingSlider(store, "Dim to", path: AutoDimSettings.scheduleFractionPath.description, in: AutoDimSettings.minFraction...1,
+                SettingSlider(store, "Scheduled brightness", path: AutoDimSettings.scheduleFractionPath.description, in: AutoDimSettings.minFraction...1,
                               default: AutoDimSettings.defaults.scheduleFraction, format: SettingsStore.percent)
             case .display:
-                SettingSlider(store, "Never below", subtitle: "The floor under the display's brightness.", path: AutoDimSettings.displayMinFractionPath.description,
+                SettingSlider(store, "Display brightness floor", subtitle: "The floor under the display's brightness.", path: AutoDimSettings.displayMinFractionPath.description,
                               in: AutoDimSettings.minFraction...1, default: AutoDimSettings.defaults.displayMinFraction, format: SettingsStore.percent)
             case .ambient:
-                SettingSlider(store, "Never below", subtitle: "The brightness at the low lux mark.", path: AutoDimSettings.ambientMinFractionPath.description,
+                SettingSlider(store, "Room brightness floor", subtitle: "The brightness at the low lux mark.", path: AutoDimSettings.ambientMinFractionPath.description,
                               in: AutoDimSettings.minFraction...1, default: AutoDimSettings.defaults.ambientMinFraction, format: SettingsStore.percent)
                 SettingNumberField(store, "Dark below", subtitle: "Full floor at this reading.", path: AutoDimSettings.ambientLuxFloorPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxFloor, unit: "lux")
                 SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
                 AutoDimLearningRow(store: store)
-                Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
+                Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description, recordsControl: false) {
                     SettingRow("Marks from room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.") {
                         Button("Use current light") { useRoomLight() }
                             .disabled(roomMarks == nil)
@@ -917,14 +917,15 @@ struct NotificationsAdvanced: View {
     }
 }
 
-/// Utilities & Toys › Keep Awake › Power: whether JR-Bar holds the Mac awake while agents run.
+/// Automatic agent holds and the safeguards shared by every hold.
 struct PowerGroup: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        SettingGroup("Power") {
-            SettingToggle(store, "Keep Mac awake", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled", default: true)
-            SettingToggle(store, "Keep display awake", subtitle: KeepAwakeReading.displayChoiceHelp, path: "keep_display_awake", default: false)
+        SettingGroup("While agents run") {
+            SettingToggle(store, "Keep the Mac awake for agents", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled", default: true)
+        }
+        SettingGroup("Lid & battery") {
             SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
                 ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
             ], default: "never")
@@ -1146,8 +1147,9 @@ struct FocusRuleRow: View {
     }
 
     var body: some View {
-        Provided(store, "focus_dim_rules") {
+        Provided(store, "focus_dim_rules", recordsControl: false) {
             row
+                .settingControl("focus_dim_rules[\(focusID)]")
         }
     }
 
@@ -1202,7 +1204,7 @@ struct RemotePage: View {
 
         SettingGroup("Local tools", note: "The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.") {
             SettingToggle(store, "Share status with local tools", subtitle: "Lets local tools read this Mac's status.", path: "serve_enabled")
-            Provided(store, "serve_enabled") {
+            Provided(store, "serve_enabled", recordsControl: false) {
                 SettingRow("Access key", subtitle: "Bearer token for local tools.") {
                     ActionButton("Copy key") { store.copyServeToken() }
                         .disabled(!(store.values.bool("serve_enabled") ?? false) || !store.isLive)
@@ -1332,8 +1334,8 @@ struct MachineList: View {
 }
 
 /// Settings › Devices & Lighting's Stream Deck card: the desk-side half
-/// of the loopback status endpoint, next to the other pads. The switch is
-/// the same `serve_enabled` Settings › Remote carries; the deck polls
+/// of the loopback status endpoint, next to the other pads. Remote owns
+/// `serve_enabled`; the deck polls
 /// `GET /status.json` with the bearer the Copy button fetches.
 struct StreamDeckCard: View {
     @Bindable var store: SettingsStore
@@ -1358,9 +1360,7 @@ struct StreamDeckCard: View {
         SettingGroup(note: "Copy the status link and key, then paste them into a Stream Deck web-request action.", anchor: "Stream Deck") {
             SettingsFoldRow(store, id: SettingsFold.streamDeck, title: "Settings",
                             subtitle: "Share status with local tools and copy its access key.") {
-                SettingToggle(store, "Share status with local tools", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
-                              path: "serve_enabled")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                SettingsNavigationRow(SettingsHome.localTools.linkTitle) { store.revealHome(.localTools) }
                 Toggle("Answer from a key", isOn: Binding(
                     get: { store.values.bool("serve_answer_enabled") ?? false },
                     set: { enabled in

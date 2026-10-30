@@ -55,6 +55,34 @@ struct SettingsHomesTests {
         #expect(!SettingsSearch.rows.contains { $0.chapter == .general && $0.title == "Maximum brightness" })
     }
 
+    @Test func navigationWordsFindTheirSingleControl() throws {
+        for home in [SettingsHome.localTools, .followAlcove, .keepAwakeDisplay] {
+            let hit = try #require(SettingsSearch.search(home.linkTitle, in: SettingsSearch.rows).first)
+            #expect(hit.chapter == home.chapter)
+            #expect(hit.title == home.title)
+        }
+        let display = SettingsSearch.rows.filter { $0.title == "Keep the display on" }
+        #expect(display.count == 1)
+        #expect(display.first?.card == "keepAwake")
+        #expect(SettingsSearch.rows.filter { $0.title == "Share status with local tools" }.count == 1)
+    }
+
+    @Test func brightnessFloorsHaveSeparateSearchTargets() throws {
+        let store = SettingsStore(core: CoreModel(socketPath: "/nonexistent-settings-floor.sock"))
+        let suite = ScratchDefaults.suiteName("settings-floor-search")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let studio = EffectStudioStore(core: store.core, defaults: defaults, settings: store)
+        let targets = ["Display brightness floor": "auto_dim.display.min_fraction",
+                       "Room brightness floor": "auto_dim.ambient.min_fraction"]
+        for (title, path) in targets {
+            let entry = try #require(SettingsSearch.rows.first { $0.title == title })
+            studio.reveal(entry)
+            #expect(studio.mode == .colours)
+            #expect(studio.searchPath == path)
+        }
+    }
+
     @Test("following a pointer opens the home page scrolled to its row")
     func followingAPointer() {
         let store = SettingsStore(core: CoreModel())

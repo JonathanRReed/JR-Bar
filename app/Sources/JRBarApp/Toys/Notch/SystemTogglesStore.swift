@@ -87,9 +87,13 @@ final class SystemTogglesStore {
         /// The five-minute heads-up before a timed session ends: one
         /// scheduled event, re-planned only when the hold moves.
         @ObservationIgnored let headsUp: KeepAwakeHeadsUpScheduler
-        /// "Awake" holds the display on too (no screen saver, no lock)
-        /// rather than only the Mac. App-local, remembered.
+        /// The shared display preference, cached for offline assertions.
         var awakeKeepsDisplay: Bool
+        var displayChoiceError: String?
+        @ObservationIgnored var writeDisplayChoice: (@MainActor (Bool) async -> Bool)?
+        @ObservationIgnored var readDisplayChoice: (@MainActor () -> Bool?)?
+        @ObservationIgnored private(set) var displayChoiceTask: Task<Void, Never>?
+        @ObservationIgnored private var displayChoiceRevision = 0
         @ObservationIgnored var awakeTimer: Task<Void, Never>?
         /// Mount paths the daemon lists as connected LED strips — Eject
         /// leaves them. Wired by the delegate to the core's devices.
@@ -351,6 +355,55 @@ final class SystemTogglesStore {
         /// daemon's lease re-sent in the same shape, or the app's own
         /// assertion re-made.
         func setAwakeKeepsDisplay(_ on: Bool) {
+            applyAwakeKeepsDisplay(on)
+            guard awakeKeepsDisplay == on else { return }
+            defaults.set(on, forKey: SystemTogglesStore.awakeDisplayPendingKey)
+            saveDisplayChoice(on)
+        }
+
+        /// Merge the former manual choice once. After that, the daemon
+        /// owns the value; the app keeps only an offline cache and any
+        /// explicit choice waiting to save.
+        func receiveDisplayChoice(_ on: Bool) {
+            guard displayChoiceTask == nil else { return }
+            let pending = defaults.object(forKey: SystemTogglesStore.awakeDisplayPendingKey) as? Bool
+            let migrated = defaults.bool(forKey: SystemTogglesStore.awakeDisplayUnifiedKey)
+            let wanted = pending ?? (migrated ? on : awakeKeepsDisplay || on)
+            if wanted == on {
+                if !migrated { defaults.set(true, forKey: SystemTogglesStore.awakeDisplayUnifiedKey) }
+                if pending != nil { defaults.removeObject(forKey: SystemTogglesStore.awakeDisplayPendingKey) }
+                if displayChoiceError != nil { displayChoiceError = nil }
+                applyAwakeKeepsDisplay(on)
+            } else {
+                applyAwakeKeepsDisplay(wanted)
+                defaults.set(wanted, forKey: SystemTogglesStore.awakeDisplayPendingKey)
+                saveDisplayChoice(wanted)
+            }
+        }
+
+        private func saveDisplayChoice(_ on: Bool) {
+            guard daemonLive, let writeDisplayChoice else { return }
+            displayChoiceRevision += 1
+            let revision = displayChoiceRevision
+            let previous = displayChoiceTask
+            displayChoiceError = nil
+            displayChoiceTask = Task { @MainActor [weak self] in
+                await previous?.value
+                guard let self, self.displayChoiceRevision == revision else { return }
+                let saved = await writeDisplayChoice(on)
+                guard self.displayChoiceRevision == revision else { return }
+                self.displayChoiceTask = nil
+                if saved {
+                    self.defaults.set(true, forKey: SystemTogglesStore.awakeDisplayUnifiedKey)
+                    self.defaults.removeObject(forKey: SystemTogglesStore.awakeDisplayPendingKey)
+                    if let latest = self.readDisplayChoice?() { self.applyAwakeKeepsDisplay(latest) }
+                } else {
+                    self.displayChoiceError = "Couldn't save the display setting. Try again."
+                }
+            }
+        }
+
+        private func applyAwakeKeepsDisplay(_ on: Bool) {
             guard on != awakeKeepsDisplay else { return }
             let wasHeld = awake.held
             if wasHeld && !releaseLocalAwake() {
@@ -454,6 +507,14 @@ final class SystemTogglesStore {
         /// `hold_awake`/`release_awake`, and `state.power.hold` comes back
         /// as the chip's truth on every change.
         func attachLease(to core: CoreModel) {
+            readDisplayChoice = { [weak core] in
+                guard let core, core.isLive else { return nil }
+                return core.settings?.document["keep_display_awake"]?.boolValue
+            }
+            writeDisplayChoice = { [weak core] on in
+                guard let core, core.isLive else { return false }
+                return (try? await core.setSetting("keep_display_awake", value: .bool(on)))?.ok == true
+            }
             sendLease = { [weak core] request in
                 guard let core else { return .unavailable }
                 do {
@@ -469,6 +530,7 @@ final class SystemTogglesStore {
                 }
             }
             observeLease(core)
+            observeDisplayChoice(core)
         }
 
         private func observeLease(_ core: CoreModel) {
@@ -479,9 +541,24 @@ final class SystemTogglesStore {
                 _ = core.power?.hold
                 _ = core.hello
             } onChange: { [weak self, weak core] in
-                Task { @MainActor [weak self, weak core] in
+                _ = Task { @MainActor [weak self, weak core] in
                     guard let self, let core else { return }
                     self.observeLease(core)
+                }
+            }
+        }
+
+        private func observeDisplayChoice(_ core: CoreModel) {
+            if core.isLive, let on = core.settings?.document["keep_display_awake"]?.boolValue {
+                receiveDisplayChoice(on)
+            }
+            withObservationTracking {
+                _ = core.isLive
+                _ = core.settings
+            } onChange: { [weak self, weak core] in
+                _ = Task { @MainActor [weak self, weak core] in
+                    guard let self, let core else { return }
+                    self.observeDisplayChoice(core)
                 }
             }
         }
@@ -670,6 +747,8 @@ final class SystemTogglesStore {
     }
 
     nonisolated static let awakeDisplayDefaultsKey = "keepAwakeDisplay"
+    nonisolated static let awakeDisplayUnifiedKey = "keepAwakeDisplayUnified"
+    nonisolated static let awakeDisplayPendingKey = "keepAwakeDisplayPending"
     /// 1: a manual session holds the computer, not the display, until the
     /// person turns "Keep the display on" on again.
     nonisolated static let awakeDisplayMigrationKey = "keepAwakeDisplayMigration"

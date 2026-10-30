@@ -116,6 +116,17 @@ def test_the_display_setting_adds_the_display_to_the_agents_hold() -> None:
 
 
 @pytest.mark.parametrize("lease", _leases(), ids=lambda lease: lease.kind)
+def test_the_shared_display_setting_covers_manual_and_process_leases(lease) -> None:
+    factory = _Factory()
+    controller = _ordinary(factory, keep_display_awake=True)
+    controller.start_lease(lease)
+    assert controller.update(AgentMode.IDLE_READY)
+    assert factory.processes[-1].command[1] == COMPUTER_AND_DISPLAY
+    controller.set_keep_display_awake(False)
+    assert factory.processes[-1].command[1] == COMPUTER
+
+
+@pytest.mark.parametrize("lease", _leases(), ids=lambda lease: lease.kind)
 def test_a_display_lease_adds_the_display(lease) -> None:
     factory = _Factory()
     controller = _ordinary(factory)
