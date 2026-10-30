@@ -342,3 +342,22 @@ def test_overlapping_polls_use_one_rotated_credential(context, remote):
         assert first.result(timeout=5).lanes
         assert second.result(timeout=5).lanes
     assert len(state["refreshes"]) == 1
+
+
+def test_disconnect_after_client_rejection_stops_the_fallback_exchange(context, remote):
+    from jrbar.provider_usage_collectors import ProviderHttpError
+
+    home, store = context
+    state, transport = remote
+    connect_refresh_only(home, store)
+    state["refresh_status"] = 400
+    def http(method, url, **kwargs):
+        try:
+            return transport(method, url, **kwargs)
+        except ProviderHttpError:
+            factory_session.disconnect({}, store)
+            raise
+    result = collect_factory(preference(), observed_at=1000, credentials=store, http_json=http)
+    assert not result.lanes and result.reason_code == "web_session_changed"
+    assert len(state["refreshes"]) == 1
+    assert not store.get("factory", "web-session").available

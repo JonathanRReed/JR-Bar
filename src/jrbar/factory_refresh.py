@@ -53,12 +53,12 @@ def renew(session, expected, credentials, http_json):
     """Persist rotation before using access, without changing browser-owned files."""
     if session["consent_version"] != 2 or session.get("refresh_rejected"):
         raise ProviderHttpError(401, "refresh_rejected")
-    with SESSION_LOCK:
-        current = credentials.get("factory", "web-session")
-        if not current.available or fingerprint(current.secret) != expected:
-            raise FactorySessionChanged
     clients = (session["client_id"],) if session.get("client_id") else WORKOS_CLIENT_IDS
     for index, client in enumerate(clients):
+        with SESSION_LOCK:
+            current = credentials.get("factory", "web-session")
+            if not current.available or fingerprint(current.secret) != expected:
+                raise FactorySessionChanged
         body = {"client_id": client, "grant_type": "refresh_token", "refresh_token": session["refresh_token"]}
         if session.get("organization_id"):
             body["organization_id"] = session["organization_id"]
