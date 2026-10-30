@@ -579,8 +579,7 @@
     "radius: cornerRadius: 10": 1
   },
   "app/Sources/JRBarApp/Toys/Notch/SystemTogglesStore.swift": {
-    "error-words: : \\(error)\"": 1,
-    "retired-page: Settings \u203a General \u203a Power": 1
+    "error-words: : \\(error)\"": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyBodies.swift": {
     "colour: Color(red: 0.45": 1,
