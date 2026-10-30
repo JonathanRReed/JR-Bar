@@ -10,6 +10,8 @@ from test_settings_duplicates import arguments
 
 APP = Path(__file__).resolve().parents[1] / "app/Sources/JRBarApp"
 CARDS = [
+    "Utilities/Dock/DockUtilityCard.swift",
+    "Utilities/Dock/DockPreviewSize.swift",
     "Utilities/KeepAwake/KeepAwakeUtilityCard.swift",
     "Utilities/MenuBar/MenuBarUtilityCard.swift",
     "Utilities/MenuBar/MenuBarCardRows.swift",
@@ -68,3 +70,19 @@ def test_guard_rejects_a_control_without_an_explanation(subtitle):
 
 def test_dynamic_explanations_are_allowed():
     assert not missing_descriptions('SettingLabel(title: "Synthetic setting", subtitle: model.status)')
+
+
+def test_dock_has_named_sections_and_searchable_widget_rows():
+    card = (APP / "Utilities/Dock/DockUtilityCard.swift").read_text()
+    for title in ["Previews", "App widgets", "Switchers", "Folders", "Exclusions"]:
+        assert f'SettingGroup("{title}")' in card
+    assert 'SettingsFeatureMoreOptions(id: "dock"' in card
+    search = (APP / "Toys/ToySearchRows.swift").read_text().split('"dock": [', 1)[1].split('"agents": [', 1)[0]
+    for title in [
+        "Calendar preview", "Calendar view", "Mail preview", "Music player",
+        "Full Music controls", "Reminders preview", "Shortcuts preview",
+        "Messages preview", "Other media previews", "Folder pops",
+        "Never switch to", "Hold the Dock out", "List past N windows",
+        "⌥⇥ lists this display only",
+    ]:
+        assert f'ToySearchRow("{title}"' in search, title

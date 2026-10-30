@@ -10,7 +10,7 @@ import Testing
 @Suite("Utility settings proofs", .serialized, .temporaryDirectory, .renderProofAppearance)
 @MainActor
 struct UtilitySettingsRenderProofTests {
-    static let cards = ["keepAwake", "menuBar", "agents", "fold", "aquarium", "notch-buddy", "confetti", "notch"]
+    static let cards = ["dock", "keepAwake", "menuBar", "agents", "fold", "aquarium", "notch-buddy", "confetti", "notch"]
 
     @Test(.enabled(if: SettingsRenderProofTests.enabled))
     func pages() async throws {

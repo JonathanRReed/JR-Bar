@@ -38,5 +38,21 @@ struct DockSettingsRenderProofTests {
                 fixture.settings.openFolds.remove(SettingsFeatureOptions.fold("dock"))
             }
         }
+        var draft = DockSettings(enabled: true)
+        draft.enhance.mailPreview = true
+        draft.enhance.musicFullControls = true
+        let optedIn = draft
+        fixture.utilities.dock.settings = { optedIn }
+        for dark in [false, true] {
+            let content = VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+                SettingsFeatureDetail(toy: fixture.utilities.dock)
+            }.padding(JRBarTokens.Space.xl).environment(fixture.settings)
+            try await U5Proof.render(content, name: "dock-permissions-minimum", width: 430, dark: dark)
+            for size in DockPreviewSize.allCases {
+                try await U5Proof.render(
+                    DockSettingsWidgetSample(size: size).padding(JRBarTokens.Space.md),
+                    name: "dock-widget-\(size.rawValue)", width: 366, dark: dark)
+            }
+        }
     }
 }
