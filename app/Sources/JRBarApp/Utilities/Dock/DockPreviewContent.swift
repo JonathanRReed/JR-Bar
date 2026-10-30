@@ -185,6 +185,9 @@ final class DockPreviewContent {
     var mediaPending = false
     var calendarState: DockCalendarPreview.State?
     var calendarNow = Date()
+    var calendarView: DockCalendarView = .list
+    var calendarMonth = Date()
+    var calendarSelectedDay = Date()
     var nativeWindowsExpanded = false
     var hasNativeCard: Bool { media != nil || calendarState != nil }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }

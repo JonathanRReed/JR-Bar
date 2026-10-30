@@ -91,6 +91,9 @@ final class DockPreviewActions {
     @ObservationIgnored var lyrics: @MainActor () -> SyncedLyrics? = { nil }
     /// Calendar access uses Setup's existing permission action.
     var onCalendarAuth: (@MainActor () -> Void)?
+    var onCalendarView: (@MainActor (DockCalendarView) -> Void)?
+    var onCalendarMonth: (@MainActor (Date) -> Void)?
+    var onCalendarEvent: (@MainActor (ShelfCalendarModel.Event) -> Void)?
     var onCalendarOpen: (@MainActor () -> Void)?
     var onNativeWindowsChange: (@MainActor () -> Void)?
     /// The calendar row's "Join" — opens the meeting link.
@@ -479,7 +482,10 @@ struct DockPreviewView: View {
             if let state = content.calendarState {
                 rule
                 DockCalendarCard(state: state, now: content.calendarNow, actions: actions,
-                                 isCalendarApp: content.bundleID == DockEnhanceMath.calendarBundleID)
+                                 isCalendarApp: content.bundleID == DockEnhanceMath.calendarBundleID,
+                                 view: content.calendarView, month: content.calendarMonth,
+                                 selectedDay: Binding(get: { content.calendarSelectedDay },
+                                                      set: { content.calendarSelectedDay = $0 }))
             }
             if content.folderURL != nil {
                 rule

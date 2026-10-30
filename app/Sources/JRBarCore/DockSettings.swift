@@ -170,6 +170,12 @@ public enum DockPreviewSpacing: String, CaseIterable, Sendable {
     }
 }
 
+public enum DockCalendarView: String, Codable, CaseIterable, Sendable {
+    case list, month
+
+    public var title: String { self == .list ? "List" : "Month" }
+}
+
 /// The hover-preview knobs (docs/TOY-PARITY.md, "Dock — Enhance"):
 /// how long the pointer must rest on an Apple-Dock icon before the
 /// preview panel opens, whether the panel's cards carry live
@@ -186,6 +192,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public var showThumbnails: Bool
     /// Native app cards borrow the shared readers only while visible.
     public var calendarPreview: Bool
+    public var calendarView: DockCalendarView
     public var mediaPreview: Bool
     /// Bigger cards — 208×130 instead of 144×90 — for people who read
     /// the thumbnail rather than the title.
@@ -286,6 +293,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     public init(previewDelay: Double = DockEnhanceSettings.defaultDelay,
                 showThumbnails: Bool = true,
                 calendarPreview: Bool = true,
+                calendarView: DockCalendarView = .list,
                 mediaPreview: Bool = true,
                 largePreviews: Bool = false,
                 includeOffscreenWindows: Bool = true,
@@ -314,6 +322,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.previewDelay = Self.clampedDelay(previewDelay)
         self.showThumbnails = showThumbnails
         self.calendarPreview = calendarPreview
+        self.calendarView = calendarView
         self.mediaPreview = mediaPreview
         self.largePreviews = largePreviews
         self.includeOffscreenWindows = includeOffscreenWindows
@@ -364,7 +373,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
-        case calendarPreview, mediaPreview
+        case calendarPreview, calendarView, mediaPreview
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
         case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
@@ -381,6 +390,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
             (try? c.decodeIfPresent(Double.self, forKey: .previewDelay)) ?? Self.defaultDelay)
         showThumbnails = (try? c.decodeIfPresent(Bool.self, forKey: .showThumbnails)) ?? true
         calendarPreview = (try? c.decodeIfPresent(Bool.self, forKey: .calendarPreview)) ?? true
+        calendarView = (try? c.decodeIfPresent(DockCalendarView.self, forKey: .calendarView)) ?? .list
         mediaPreview = (try? c.decodeIfPresent(Bool.self, forKey: .mediaPreview)) ?? true
         largePreviews = (try? c.decodeIfPresent(Bool.self, forKey: .largePreviews)) ?? false
         includeOffscreenWindows = (try? c.decodeIfPresent(Bool.self, forKey: .includeOffscreenWindows)) ?? true

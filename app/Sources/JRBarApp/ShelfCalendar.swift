@@ -41,6 +41,33 @@ final class ShelfCalendarModel {
         var calendarTitle: String?
         var calendarIdentifier: String?
         var isBirthday = false
+        var calendarItemIdentifier: String?
+        var calendarOccurrence: Date?
+
+        func calendarURL(timeZone: TimeZone = .current) -> URL? {
+            guard let identifier = calendarItemIdentifier, !identifier.isEmpty else {
+                return URL(string: "ical://")
+            }
+            var parts: [String] = []
+            if let calendarOccurrence {
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.calendar = Calendar(identifier: .gregorian)
+                formatter.timeZone = isAllDay ? timeZone : TimeZone(secondsFromGMT: 0)
+                formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+                parts.append(formatter.string(from: calendarOccurrence))
+            }
+            parts.append(identifier)
+            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+            let encoded = parts.map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? "" }
+            var components = URLComponents()
+            components.scheme = "ical"
+            components.host = "ekevent"
+            components.percentEncodedPath = "/" + encoded.joined(separator: "/")
+            components.queryItems = [URLQueryItem(name: "method", value: "show"),
+                                     URLQueryItem(name: "options", value: "more")]
+            return components.url
+        }
 
         var shortLocation: String? {
             guard let location = location?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -194,7 +221,8 @@ final class ShelfCalendarModel {
               url: joinableURL(for: event), isAllDay: event.isAllDay,
               calendarColor: color(event.calendar?.cgColor), location: event.location,
               calendarTitle: event.calendar?.title, calendarIdentifier: event.calendar?.calendarIdentifier,
-              isBirthday: event.calendar?.type == .birthday)
+              isBirthday: event.calendar?.type == .birthday, calendarItemIdentifier: event.calendarItemIdentifier,
+              calendarOccurrence: event.hasRecurrenceRules ? event.startDate : nil)
     }
 
     nonisolated private static func color(_ color: CGColor?) -> CalendarColor {

@@ -38,7 +38,6 @@ struct DockNativePreviewTests {
         let calendar = DockCalendarPreview(reader: ShelfCalendarReader(fetch: { _ in events }))
         calendar.authorization = { .fullAccess }
         calendar.clock = { Self.now }
-        calendar.scheduleRefreshOverride = {}
         return calendar
     }
 
@@ -56,7 +55,6 @@ struct DockNativePreviewTests {
         _ = reader.events(from: Self.now)
         #expect(reads.withLock { $0 } == 1)
         let calendar = DockCalendarPreview(reader: reader)
-        calendar.scheduleRefreshOverride = {}
         calendar.clock = { Self.now }
         var allowed = false
         calendar.authorization = { allowed ? .fullAccess : .denied }
@@ -102,7 +100,6 @@ struct DockNativePreviewTests {
         let source = ShelfCalendarReader(fetch: { _ in reads.withLock { $0 += 1 }; return [] })
         let calendar = DockCalendarPreview(reader: source)
         calendar.authorization = { .fullAccess }
-        calendar.scheduleRefreshOverride = {}
         let monitor = Monitor()
         let feed = MediaFeed(monitor: monitor)
         let readers = DockNativePreviews(feed: feed, calendar: calendar)
@@ -142,7 +139,6 @@ struct DockNativePreviewTests {
             reads.withLock { $0 += 1 }; return []
         }))
         calendar.authorization = { status }
-        calendar.scheduleRefreshOverride = {}
         var state: DockCalendarPreview.State?
         calendar.onChange = { state = $0 }
         calendar.start()
@@ -173,19 +169,17 @@ struct DockNativePreviewTests {
         let calendar = DockCalendarPreview(reader: reader)
         calendar.authorization = { .fullAccess }
         calendar.clock = { Self.now }
-        var schedules = 0
-        calendar.scheduleRefreshOverride = { schedules += 1 }
         calendar.start()
         await settle(calendar)
-        #expect(reads.withLock { $0 } == 1 && schedules == 1)
+        #expect(reads.withLock { $0 } == 1)
         reader.notifications.post(name: .EKEventStoreChanged, object: nil)
         await settle(calendar)
-        #expect(reads.withLock { $0 } == 2 && schedules == 2)
+        #expect(reads.withLock { $0 } == 2)
         calendar.stop()
         reader.notifications.post(name: .EKEventStoreChanged, object: nil)
         calendar.refresh()
         await settle(calendar)
-        #expect(reads.withLock { $0 } == 2 && schedules == 2)
+        #expect(reads.withLock { $0 } == 2)
     }
 
     @Test("closing or revoking access during a read drops its result", arguments: [false, true])
@@ -198,7 +192,6 @@ struct DockNativePreviewTests {
         let source = ShelfCalendarReader(fetch: { _ in entered.signal(); gate.wait(); return [event] })
         let calendar = DockCalendarPreview(reader: source)
         calendar.authorization = { .fullAccess }
-        calendar.scheduleRefreshOverride = {}
         var last: DockCalendarPreview.State?
         calendar.onChange = { last = $0 }
         calendar.start()
@@ -284,7 +277,6 @@ struct DockNativePreviewTests {
             reads.withLock { $0 += 1 }; return []
         }))
         calendar.authorization = { .fullAccess }
-        calendar.scheduleRefreshOverride = {}
         let monitor = Monitor()
         let feed = MediaFeed(monitor: monitor)
         var settings = DockEnhanceSettings(calendarPreview: enabled, mediaPreview: enabled)

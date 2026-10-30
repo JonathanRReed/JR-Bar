@@ -901,6 +901,19 @@ The README describes Calendar events and a player on the app playing audio.
 These behaviors informed JR-Bar's Dock cards and their separate switches.
 JR-Bar reuses its shelf calendar reader and shared Alcove MediaRemote feed.
 No DockDoor implementation source or assets were read or copied.
+The month grid added on 2026-10-29 follows the owner's request and Foundation
+calendar arithmetic. It extends these cards without studying further DockDoor
+material.
+
+## macOS Calendar event links, 2026-10-29
+
+Studied the event-link protocol in Raycast's menubar-calendar extension at
+[`36abdaacac9b02cbbc54dbe33f16b6c40cd23f54`](https://github.com/raycast/extensions/blob/36abdaacac9b02cbbc54dbe33f16b6c40cd23f54/extensions/menubar-calendar/swift/AppleReminders/Sources/Calendar.swift),
+[MIT](https://github.com/raycast/extensions/blob/36abdaacac9b02cbbc54dbe33f16b6c40cd23f54/LICENSE).
+It identifies macOS Calendar's local event route, item identifier and recurring
+occurrence date. JR-Bar constructs that route with encoded path components and
+synthetic tests. No Raycast code was copied. Calendar's installed bundle metadata
+also lists the `ical` scheme. This check did not open Calendar or read events.
 
 ## JavaScriptCore value ownership, 2026-10-27
 

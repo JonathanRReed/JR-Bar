@@ -13,12 +13,12 @@ final class DockCalendarPreview {
     var authorization: () -> EKAuthorizationStatus = { EKEventStore.authorizationStatus(for: .event) }
     var clock: () -> Date = { Date() }
     var onChange: (State) -> Void = { _ in }
-    var scheduleRefreshOverride: (() -> Void)?
+    private(set) var month: Date?
+    var calendar: Calendar = .current
     let reader: ShelfCalendarReader
     let queue = DispatchQueue(label: "jrbar.dock-calendar", qos: .userInitiated)
     private(set) var running = false
     private var work: DispatchWorkItem?
-    private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var generation = 0
     private var dirty = false
@@ -50,8 +50,6 @@ final class DockCalendarPreview {
         generation += 1
         work?.cancel()
         work = nil
-        timer?.invalidate()
-        timer = nil
         for observer in observers {
             reader.notifications.removeObserver(observer)
         }
@@ -69,15 +67,17 @@ final class DockCalendarPreview {
         guard running else { return }
         guard authorization() == .fullAccess else {
             onChange(.noAccess)
-            scheduleRefresh()
             return
         }
         guard work == nil else { return }
         let generation = self.generation
         let reader = self.reader
         let now = clock()
+        let month = self.month
+        let calendar = self.calendar
         let next = DispatchWorkItem { @Sendable [weak self] in
-            let events = reader.events(from: now)
+            let events = month.map { reader.events(inMonth: $0, calendar: calendar, now: now) }
+                ?? reader.events(from: now)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.running, self.generation == generation else { return }
@@ -86,8 +86,6 @@ final class DockCalendarPreview {
                     if self.dirty {
                         self.dirty = false
                         self.refresh()
-                    } else {
-                        self.scheduleRefresh()
                     }
                 }
             }
@@ -96,16 +94,9 @@ final class DockCalendarPreview {
         queue.async(execute: next)
     }
 
-    private func scheduleRefresh() {
-        timer?.invalidate()
-        timer = nil
-        guard running else { return }
-        if let scheduleRefreshOverride { scheduleRefreshOverride(); return }
-        let timer = Timer(timeInterval: 60, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
-        timer.tolerance = 5
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+    func show(month: Date?) {
+        guard self.month != month else { return }
+        self.month = month
+        if running { start() }
     }
 }

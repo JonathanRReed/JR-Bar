@@ -1634,6 +1634,11 @@ final class DockEnhanceController {
             self?.swipeMinimize(window, minimize)
         }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
+        panel.actions.onCalendarView = { [weak self] in self?.preferences.calendarView = $0 }
+        panel.actions.onCalendarMonth = { [weak self] in self?.nativePreviews.showMonth($0) }
+        panel.actions.onCalendarEvent = { event in
+            if let url = event.calendarURL() { DesktopServices.automatic.open(url) }
+        }
         panel.actions.onCalendarOpen = {
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: DockEnhanceMath.calendarBundleID) {
                 DesktopServices.automatic.open(url)

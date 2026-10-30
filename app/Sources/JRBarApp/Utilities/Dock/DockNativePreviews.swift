@@ -24,6 +24,10 @@ final class DockNativePreviews {
         } : nil
         content.mediaPending = settings.mediaPreview && content.isRunning && !feed.hasSnapshot
         content.calendarNow = calendar.clock()
+        content.calendarView = settings.calendarView
+        content.calendarMonth = calendar.calendar.dateInterval(of: .month, for: content.calendarNow)?.start
+            ?? content.calendarNow
+        content.calendarSelectedDay = calendar.calendar.startOfDay(for: content.calendarNow)
         content.calendarState = settings.calendarPreview && bundleID == DockEnhanceMath.calendarBundleID
             ? (calendar.authorization() == .fullAccess ? .loading : .noAccess) : nil
     }
@@ -54,6 +58,12 @@ final class DockNativePreviews {
         }
         let wantsCalendar = settings.calendarPreview &&
             (bundleID == DockEnhanceMath.calendarBundleID || DockEnhanceMath.isMeetingApp(bundleID))
+        if wantsCalendar {
+            content.calendarView = settings.calendarView
+            let month = bundleID == DockEnhanceMath.calendarBundleID && settings.calendarView == .month
+                ? content.calendarMonth : nil
+            calendar.show(month: month)
+        }
         if wantsCalendar, !calendar.running {
             calendar.onChange = { [weak self, weak content] state in
                 guard let self, let content else { return }
@@ -75,6 +85,13 @@ final class DockNativePreviews {
             content.calendarState = nil
         }
         onChange()
+    }
+
+    func showMonth(_ month: Date) {
+        guard let content, calendar.running else { return }
+        content.calendarMonth = month
+        content.calendarSelectedDay = month
+        calendar.show(month: month)
     }
 
     func stop() {

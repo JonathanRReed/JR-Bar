@@ -550,8 +550,17 @@ struct DockUtilityControls: View {
     private var nativePreviews: some View {
         VStack(alignment: .leading, spacing: 0) {
             Toggle(isOn: calendarPreview) {
-                SettingLabel(title: "Calendar preview",
-                             subtitle: "Show upcoming events when you hover Calendar.")
+                Text("Calendar preview")
+            }
+            if utility.enhance.preferences.calendarPreview {
+                Picker("Calendar view", selection: calendarView) {
+                    ForEach(DockCalendarView.allCases, id: \.self) { view in
+                        Text(view.title).tag(view)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.vertical, 8)
             }
             Toggle(isOn: mediaPreview) {
                 SettingLabel(title: "Media preview",
@@ -563,6 +572,10 @@ struct DockUtilityControls: View {
     private var calendarPreview: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.calendarPreview },
                 set: { utility.enhance.preferences.calendarPreview = $0 })
+    }
+    private var calendarView: Binding<DockCalendarView> {
+        Binding(get: { utility.enhance.preferences.calendarView },
+                set: { utility.enhance.preferences.calendarView = $0 })
     }
     private var mediaPreview: Binding<Bool> {
         Binding(get: { utility.enhance.preferences.mediaPreview },
