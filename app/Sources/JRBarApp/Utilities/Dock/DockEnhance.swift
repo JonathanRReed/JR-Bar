@@ -388,6 +388,7 @@ final class DockEnhanceController {
     /// a size measured before the content settled is corrected a beat
     /// later.
     @ObservationIgnored private var anchor: (item: DockAXItem, edge: DockEdge, screen: CGRect)?
+    @ObservationIgnored private var anchorRect: CGRect?
 
     /// The hold that keeps an auto-hiding Dock out while the panel is
     /// up — injectable; the default resolves the CoreDock verbs.
@@ -455,6 +456,10 @@ final class DockEnhanceController {
     /// on its tile, so the rest-and-grace rules don't close it — Esc,
     /// Return, a click away or resting on another tile do.
     @ObservationIgnored private var keyboardPinned = false
+
+    @ObservationIgnored var openCalendarDate: @MainActor (Date) async throws -> Void = { day in
+        try await DockCalendarDateOpener.open(day)
+    }
 
     // MARK: Seams
 
@@ -1245,11 +1250,10 @@ final class DockEnhanceController {
         let item = landing.item
         liveStill.stop()
         nativePreviews.stop()
-        preview.largeCards = preferences.largePreviews
-        preview.metrics = preferences.metrics
         preview.hugWindows = preferences.cardsHugWindows
         fill(preview, for: item, tile: landing.tile, answer: answer)
         nativePreviews.seed(content: preview, settings: preferences.read())
+        preview.previewSize = preferences.read().previewSize(for: preview.bundleID, isMedia: preview.media != nil)
         preview.nativeWindowsExpanded = landing.keyboardOpened
 
         guard previewHasContent else {
@@ -1302,6 +1306,7 @@ final class DockEnhanceController {
         let edge = DockEnhanceMath.dockEdge(listFrame: listFrame, screen: screenFrame)
         let itemFrame = anchorFrame(for: item, edge: edge, pointer: pointer)
         anchor = (item, edge, screenFrame)
+        anchorRect = itemFrame
 
         let panel = ensurePanel()
         panel.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
@@ -1373,6 +1378,7 @@ final class DockEnhanceController {
         keyboardPinned = false
         liveStill.stop()
         anchor = nil
+        anchorRect = nil
         windowObserver.stop()
         nativePreviews.stop()
         watchers.stop()
@@ -1599,6 +1605,7 @@ final class DockEnhanceController {
                                  placement: place)
         panel.hold(place)
         self.anchor = (item, anchor.edge, anchor.screen)
+        anchorRect = itemFrame
         if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
             || abs(target.width - panel.frame.width) > 1 || abs(target.height - panel.frame.height) > 1 {
             panel.setFrame(target, display: true)
@@ -1626,6 +1633,11 @@ final class DockEnhanceController {
     func ensurePanel() -> DockPreviewPanel {
         if let panel { return panel }
         let panel = DockPreviewPanel(content: preview)
+        panel.actions.onPreviewSize = { [weak self] size in
+            guard let self, let bundleID = self.preview.bundleID else { return }
+            self.preferences.setPreviewSize(size, for: bundleID)
+            self.syncPreviewSize()
+        }
         panel.actions.onPick = { [weak self] window in self?.pick(window) }
         panel.actions.onPickKeepOpen = { [weak self] window in self?.pick(window, keepOpen: true) }
         panel.actions.onClose = { [weak self] window in self?.close(window) }
@@ -1702,7 +1714,17 @@ final class DockEnhanceController {
         }
         panel.actions.onMailReply = { [weak self] in self?.nativePreviews.mail?.reply($0) }
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
-        panel.actions.onCalendarView = { [weak self] in self?.preferences.calendarView = $0 }
+        panel.actions.onCalendarView = { [weak self] view in
+            guard let self else { return }
+            self.preview.calendarListDay = nil
+            self.preview.calendarView = view
+            self.preferences.calendarView = view
+            self.reframe(onlyIfResized: true, animate: true)
+        }
+        panel.actions.onCalendarDay = { [weak self] day in self?.selectCalendarDay(day) }
+        panel.actions.onCalendarDateOpen = { [weak self] day in
+            _ = Task { @MainActor [weak self] in await self?.showCalendarDate(day) }
+        }
         panel.actions.onCalendarMonth = { [weak self] in self?.nativePreviews.showMonth($0) }
         panel.actions.onCalendarEvent = { event in
             if let url = event.calendarURL() { DesktopServices.automatic.open(url) }
@@ -2467,8 +2489,9 @@ final class DockEnhanceController {
     }
 
     private func nativePreviewChanged() {
+        syncPreviewSize()
         panel?.protectMail(preview.bundleID == DockEnhanceMath.mailBundleID)
-        reframe()
+        reframe(onlyIfResized: true, animate: true)
         mirrorPreviewChars()
         guard !previewHasContent else { return }
         // Subscribe can deliver synchronously, before its token is stored. Close on the next turn.
@@ -2482,7 +2505,40 @@ final class DockEnhanceController {
     func syncNativePreviews() {
         nativePreviews.discardMailIfDisabled(preferences.read())
         guard previewUp else { return }
+        syncPreviewSize()
         nativePreviews.update(settings: preferences.read())
+    }
+
+    func syncPreviewSize() {
+        let size = preferences.read().previewSize(for: preview.bundleID, isMedia: preview.media != nil)
+        guard size != preview.previewSize else { return }
+        preview.previewSize = size
+        panel?.apply(size.metrics)
+        reframe(onlyIfResized: true, animate: true)
+    }
+
+    func selectCalendarDay(_ day: Date) {
+        preview.calendarSelectedDay = day
+        preview.calendarListDay = day
+        let calendar = nativePreviews.calendar.calendar
+        preview.calendarMonth = calendar.dateInterval(of: .month, for: day)?.start ?? day
+        preview.calendarView = .list
+        preferences.calendarView = .list
+        reframe(onlyIfResized: true, animate: true)
+    }
+
+    func showCalendarDate(_ day: Date) async {
+        let openedGeneration = generation
+        do { try await openCalendarDate(day) }
+        catch DockCalendarDateOpener.Failure.denied {
+            guard generation == openedGeneration else { return }
+            preview.actionFailure = "Allow JR-Bar to control Calendar in Privacy & Security › Automation."
+            reframe(onlyIfResized: true, animate: true)
+        } catch {
+            guard generation == openedGeneration else { return }
+            preview.actionFailure = "Couldn't show that date in Calendar. Try again."
+            reframe(onlyIfResized: true, animate: true)
+        }
     }
 
     private static func openNativeApp(_ bundleID: String) {
@@ -2834,12 +2890,12 @@ final class DockEnhanceController {
     /// same tile, from the same edge, clamped to the same screen.
     /// `onlyIfResized` leaves a panel whose content still fits its frame
     /// where it is — a live retitle usually changes nothing it sizes by.
-    private func reframe(onlyIfResized: Bool = false) {
+    private func reframe(onlyIfResized: Bool = false, animate: Bool = false) {
         guard let panel, panel.isVisible else { return }
         let place = placement
         let maximumSize = anchor.map {
-            place.availableSize(anchor: anchorFrame(for: $0.item, edge: $0.edge, pointer: NSEvent.mouseLocation),
-                                edge: $0.edge, screen: $0.screen, title: preview.appName)
+            let item = anchorRect ?? anchorFrame(for: $0.item, edge: $0.edge, pointer: NSEvent.mouseLocation)
+            return place.availableSize(anchor: item, edge: $0.edge, screen: $0.screen, title: preview.appName)
         } ?? panel.frame.size
         let size = panel.fittingSize(maximumSize: maximumSize)
         if onlyIfResized, size == panel.frame.size { return }
@@ -2847,17 +2903,25 @@ final class DockEnhanceController {
             var frame = panel.frame
             frame.origin.x += (frame.width - size.width) / 2
             frame.size = size
-            panel.setFrame(frame, display: true)
+            panel.resize(to: frame, animated: animate)
+            return
+        }
+        if animate {
+            var frame = DockPreviewPanel.resizedFrame(panel.frame, size: size, edge: anchor.edge)
+            let bounds = anchor.screen.insetBy(dx: 20, dy: 20)
+            frame.origin.x = min(max(frame.minX, bounds.minX), bounds.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, bounds.minY), bounds.maxY - frame.height)
+            panel.resize(to: frame, animated: true)
             return
         }
         // The same anchor the show/hover path uses — under magnification
         // the AX frame is the unmagnified layout and the tile sits at
         // the pointer, so refitting on it jumped the panel off the icon.
-        let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge,
-                                    pointer: NSEvent.mouseLocation)
+        let itemFrame = anchorRect ?? anchorFrame(for: anchor.item, edge: anchor.edge,
+                                                  pointer: NSEvent.mouseLocation)
         panel.hold(place)
-        panel.setFrame(targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size,
-                                   placement: place),
-                       display: true)
+        let frame = targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size,
+                                placement: place)
+        panel.resize(to: frame, animated: animate)
     }
 }

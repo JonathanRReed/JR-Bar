@@ -122,7 +122,7 @@ struct DockStillPlaceholder: View {
                     }
                     if minimized {
                         Text("Minimized")
-                            .jrbarType(.caption).fontWeight(.semibold)
+                            .font(JRBarTokens.TypeStyle.caption.font).fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -229,15 +229,16 @@ private struct DockCapsuleFace: View {
     let prominent: Bool
     let tint: Color
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.dockPreviewSize) private var previewSize
 
     var body: some View {
         configuration.label
-            .font(.system(size: 11.5, weight: .semibold))
+            .font(JRBarTokens.TypeStyle.caption.font).fontWeight(.semibold)
             .labelStyle(.titleAndIcon)
             .lineLimit(1)
             .foregroundStyle(ink)
-            .padding(.horizontal, 11)
-            .frame(height: 24)
+            .padding(.horizontal, previewSize.innerPadding + JRBarTokens.Space.xs)
+            .frame(height: previewSize.rowHeight - JRBarTokens.Space.xs)
             .background(Capsule().fill(fill))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(prominent ? 0 : 0.1), lineWidth: 0.5))
             .opacity(enabled ? 1 : 0.45)

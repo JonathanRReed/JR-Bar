@@ -18,12 +18,12 @@ import SwiftUI
 /// never a capture, so opening Settings never lights macOS's recording
 /// dot. The sample takes no clicks.
 struct DockPreviewSample: View {
-    var spacing: Double
+    var previewSize: DockPreviewSize = .medium
     var dockGap: Double
     var coversLabel: Bool
     /// The sample's size on the card as a share of the desk's real
     /// points — the proofs draw it at 1.
-    var scale: CGFloat = 0.6
+    var scale: CGFloat = 0.5
     /// A measure beside the air between icon and glass — the placement
     /// proof's, off on the card.
     var showsMeasure = false
@@ -32,7 +32,7 @@ struct DockPreviewSample: View {
     /// a slider: room for the roomiest spacing's panel at the farthest
     /// gap with the name band kept, over a Dock of 55 pt tiles
     /// (`UtilitySurfacesRenderProofTests` measures it).
-    static let desk = CGSize(width: 600, height: 380)
+    static let desk = CGSize(width: 760, height: 440)
     /// Jonathan's `tilesize`, and a tile's reach off the Dock's glass.
     static let tile: CGFloat = 55
     static let dockPad: CGFloat = 6
@@ -53,7 +53,9 @@ struct DockPreviewSample: View {
 
     var body: some View {
         let air = Self.air(dockGap: dockGap, coversLabel: coversLabel)
-        DockSampleDesk(content: DockPreviewSamples.browser(spacing: spacing),
+        let sample = DockPreviewSamples.browser()
+        sample.previewSize = previewSize
+        return DockSampleDesk(content: sample,
                        air: air, showsMeasure: showsMeasure)
             .frame(width: Self.desk.width, height: Self.desk.height)
             .scaleEffect(scale, anchor: .topLeading)
@@ -268,7 +270,7 @@ enum DockPreviewSamples {
     /// Safari with three pages, one minimized — the card's sample.
     static func browser(spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.previewSize = .medium
         content.appName = "Safari"
         content.icon = safariIcon
         content.bundleID = "com.apple.Safari"

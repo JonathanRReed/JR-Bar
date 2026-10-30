@@ -625,7 +625,6 @@
     "animation: duration: 0.12": 1,
     "colour: Color(red: 0.16": 1,
     "colour: Color(red: 1.0": 2,
-    "font: .system(size: 11.5": 1,
     "icon-label: Image(systemName:) button without accessibilityLabel": 1
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockEnhance.swift": {
@@ -634,17 +633,15 @@
   "app/Sources/JRBarApp/Utilities/Dock/DockEnhancePanel.swift": {
     "animation: duration: 0.12": 4,
     "animation: duration: 0.18": 1,
-    "font: .system(size: 11": 11,
+    "font: .system(size: 11": 9,
     "font: .system(size: 11.5": 1,
     "font: .system(size: 12": 2,
-    "font: .system(size: 12.5": 4,
-    "font: .system(size: 13": 1,
-    "font: .system(size: 14": 1,
+    "font: .system(size: 12.5": 3,
     "radius: cornerRadius: 11": 1,
     "radius: cornerRadius: 12": 4,
     "radius: cornerRadius: 4": 2,
     "radius: cornerRadius: 5": 1,
-    "radius: cornerRadius: 8": 3
+    "radius: cornerRadius: 8": 1
   },
   "app/Sources/JRBarApp/Utilities/Dock/DockPreviewSample.swift": {
     "colour: Color(red: 0.10": 1,

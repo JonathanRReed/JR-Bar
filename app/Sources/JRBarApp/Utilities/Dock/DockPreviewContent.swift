@@ -192,6 +192,7 @@ final class DockPreviewContent {
     var calendarView: DockCalendarView = .list
     var calendarMonth = Date()
     var calendarSelectedDay = Date()
+    var calendarListDay: Date?
     var remindersState: DockRemindersPreview.State?
     var remindersWriteNotice: String?
     var remindersNow = Date()
@@ -204,10 +205,10 @@ final class DockPreviewContent {
             || remindersState != nil || shortcutsState != nil || messagesState != nil
     }
     var showsWindows: Bool { !hasNativeCard || nativeWindowsExpanded || selectedWindowID != nil }
-    var largeCards = false
+    var previewSize: DockPreviewSize = .medium
     /// The insets and corners the panel draws, from the card's Spacing —
     /// set at each show, so a late thumbnail re-renders at the same air.
-    var metrics = DockPreviewMetrics.standard
+    var metrics: DockPreviewMetrics { previewSize.metrics }
     /// Each card takes its window's shape (the card's opt-in).
     var hugWindows = false
     /// True when the window count passed `compactListLimit` — the

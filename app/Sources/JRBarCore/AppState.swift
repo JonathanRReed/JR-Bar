@@ -121,6 +121,7 @@ public struct AppStateFile: Sendable {
     /// key on the next save loses nothing anyone reads, so it must not cut a
     /// recovery copy. Add a path here when a key is retired.
     public static let retiredKeyPaths: Set<String> = [
+        "utilities.dock.enhance.largePreviews",
         "utilities.menuBar.agentStatusItem",
         "utilities.menuBar.combinedSystemItem",
         "utilities.menuBar.combinedStatusItem",

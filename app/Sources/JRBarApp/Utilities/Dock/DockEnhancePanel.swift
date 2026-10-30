@@ -44,6 +44,11 @@ final class DockPreviewActions {
         action?(current, value)
     }
 
+    func calendarDay(_ day: Date, clickCount: Int) {
+        if clickCount == 2 { onCalendarDateOpen?(day) }
+        else if clickCount == 1 { onCalendarDay?(day) }
+    }
+
     /// A window card's click — the controller raises it.
     var onPick: (@MainActor (DockPreviewWindow) -> Void)?
     /// A window card's ⌥-click — raise it and keep the panel up, so a
@@ -87,6 +92,7 @@ final class DockPreviewActions {
     /// The player row's scrubber — seek to a playhead in seconds.
     var onMusicAllow: (@MainActor () -> Void)?
     var onMusicOpen: (@MainActor () -> Void)?
+    var onPreviewSize: (@MainActor (DockPreviewSize?) -> Void)?
     var onMediaSeek: (@MainActor (Double) -> Void)?
     /// The synced lyrics the notch Shelf already holds for the playing
     /// track — read, never fetched: nil unless the Shelf has them.
@@ -110,6 +116,8 @@ final class DockPreviewActions {
     var onMessageNew: (@MainActor () -> Void)?
     var onCalendarAuth: (@MainActor () -> Void)?
     var onCalendarView: (@MainActor (DockCalendarView) -> Void)?
+    var onCalendarDay: (@MainActor (Date) -> Void)?
+    var onCalendarDateOpen: (@MainActor (Date) -> Void)?
     var onCalendarMonth: (@MainActor (Date) -> Void)?
     var onCalendarEvent: (@MainActor (ShelfCalendarModel.Event) -> Void)?
     var onCalendarOpen: (@MainActor () -> Void)?
@@ -210,7 +218,7 @@ final class DockPreviewPanel: NSPanel {
         // Keep the content at its natural size. On a small display the
         // viewport scrolls, so minimum widths never hide controls.
         hosting.sizingOptions = [.intrinsicContentSize]
-        let radius = content.metrics.panelRadius
+        let radius = content.hasNativeCard ? JRBarTokens.Radius.panel : content.metrics.panelRadius
         glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 96))
         glass.cornerRadius = radius
         glass.style = .regular
@@ -286,7 +294,8 @@ final class DockPreviewPanel: NSPanel {
     /// plates at the spacing's inset — and the window re-reads the
     /// rounded shadow. Called on every show.
     func apply(_ metrics: DockPreviewMetrics) {
-        let radius = metrics.panelRadius
+        let native = hosting.rootView.content.hasNativeCard
+        let radius = native ? JRBarTokens.Radius.panel : metrics.panelRadius
         glass.cornerRadius = radius
         container.layer?.cornerRadius = radius
         invalidateShadow()
@@ -299,8 +308,10 @@ final class DockPreviewPanel: NSPanel {
         hosting.layoutSubtreeIfNeeded()
         let fit = hosting.intrinsicContentSize
         let natural = CGSize(width: max(1, fit.width), height: max(1, fit.height))
+        let sizeLimit = hosting.rootView.content.previewSize.maximumHeight
+        let heightLimit = min(sizeLimit, max(1, maximumSize.height))
         let size = CGSize(width: min(natural.width, max(1, maximumSize.width)),
-                          height: min(natural.height, max(1, maximumSize.height)))
+                          height: min(natural.height, heightLimit))
         let wasAtTop = hosting.isFlipped
             ? viewport.contentView.bounds.minY <= 1
             : viewport.contentView.bounds.maxY >= hosting.frame.height - 1
@@ -358,6 +369,25 @@ final class DockPreviewPanel: NSPanel {
                 controlPoints: 0.25, 1.3, 0.4, 1)
             animator().alphaValue = 1
             animator().setFrame(target, display: true)
+        }
+    }
+
+    static func resizedFrame(_ prior: CGRect, size: CGSize, edge: DockEdge) -> CGRect {
+        let origin: CGPoint
+        switch edge {
+        case .bottom: origin = CGPoint(x: prior.midX - size.width / 2, y: prior.minY)
+        case .left: origin = CGPoint(x: prior.minX, y: prior.midY - size.height / 2)
+        case .right: origin = CGPoint(x: prior.maxX - size.width, y: prior.midY - size.height / 2)
+        }
+        return CGRect(origin: origin, size: size)
+    }
+
+    func resize(to frame: CGRect, animated: Bool) {
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard animated && !reduced else { setFrame(frame, display: true); return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = JRBarTokens.Motion.rowChange.duration
+            animator().setFrame(frame, display: true)
         }
     }
 
@@ -463,6 +493,7 @@ struct DockPreviewView: View {
     let actions: DockPreviewActions
     /// A document card held over the panel — the highlight ring.
     @ViewState private var dropTargeted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The spacing the panel was shown at: its inset from the glass
     /// edge, the air between sections, and the corners — the cards'
@@ -471,13 +502,14 @@ struct DockPreviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
-            header
+            if !content.hasNativeCard { header }
             if let note = content.headerNote {
                 Label(note, systemImage: "info.circle")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, content.hasNativeCard ? content.previewSize.widgetPadding : 2)
+                    .frame(width: content.hasNativeCard ? content.previewSize.contentWidth : nil, alignment: .leading)
             }
             if let failure = content.actionFailure {
                 Label(failure, systemImage: "exclamationmark.triangle")
@@ -485,7 +517,8 @@ struct DockPreviewView: View {
                     .foregroundStyle(DockChrome.caution)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, content.hasNativeCard ? content.previewSize.widgetPadding : 2)
+                    .frame(width: content.hasNativeCard ? content.previewSize.contentWidth : nil, alignment: .leading)
                     .help(failure)
             }
             if !content.askRows.isEmpty {
@@ -503,11 +536,13 @@ struct DockPreviewView: View {
                 if let music = content.music {
                     DockMusicCard(player: music, actions: actions)
                 } else {
-                    Text("Loading Music…").jrbarType(.callout).foregroundStyle(.secondary)
+                    DockWidget(title: "Music", symbol: "music.note") {
+                        Text("Loading Music…").jrbarType(.callout).foregroundStyle(.secondary)
+                    }
                 }
             } else if let media = content.media {
                 rule
-                DockMediaRow(media: media, actions: actions)
+                DockMediaRow(media: media, actions: actions, appName: content.appName)
             }
             if let state = content.mailState {
                 rule
@@ -518,6 +553,7 @@ struct DockPreviewView: View {
                 DockCalendarCard(state: state, now: content.calendarNow, actions: actions,
                                  isCalendarApp: content.bundleID == DockEnhanceMath.calendarBundleID,
                                  view: content.calendarView, month: content.calendarMonth,
+                                 listDay: content.calendarListDay,
                                  selectedDay: Binding(get: { content.calendarSelectedDay },
                                                       set: { content.calendarSelectedDay = $0 }))
             }
@@ -539,10 +575,23 @@ struct DockPreviewView: View {
                 folder
             } else if !content.windows.isEmpty {
                 rule
-                windowSection
+                windowSection.frame(width: content.hasNativeCard ? content.previewSize.contentWidth : nil)
             }
         }
-        .padding(metrics.panelInset)
+        .environment(\.dockPreviewSize, content.previewSize)
+        .padding(content.hasNativeCard ? 0 : metrics.panelInset)
+        .contextMenu {
+            if content.bundleID != nil {
+                ForEach(DockPreviewSize.allCases, id: \.self) { size in
+                    Button { actions.onPreviewSize?(size) } label: {
+                        if size == content.previewSize { Label(size.title, systemImage: "checkmark") }
+                        else { Text(size.title) }
+                    }
+                }
+                Button("Use Default Size") { actions.onPreviewSize?(nil) }
+            }
+        }
+        .animation(reduceMotion ? nil : JRBarTokens.Motion.rowChange.animation, value: content.previewSize)
         // The card→Dock-tile handoff's other half: a document card
         // dropped on this preview opens the file in the previewed app —
         // DockDoor's drag between previews. Folder previews and bare
@@ -586,7 +635,7 @@ struct DockPreviewView: View {
     /// alone separates them.
     @ViewBuilder
     private var rule: some View {
-        if metrics.showsRule { DockPanelRule() }
+        if metrics.showsRule && !content.hasNativeCard { DockPanelRule() }
     }
 
     // MARK: Header
@@ -627,7 +676,7 @@ struct DockPreviewView: View {
                 }
             }
         }
-        .frame(width: Self.stripWidth(cards: cardStripWidth, nativeCard: content.mailState != nil || content.musicPlayerEnabled))
+        .frame(width: Self.stripWidth(cards: cardStripWidth, nativeCard: content.hasNativeCard, size: content.previewSize))
     }
 
     @ViewBuilder
@@ -667,7 +716,7 @@ struct DockPreviewView: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Text(appTitle.base)
-                    .font(.system(size: 13, weight: .semibold))
+                    .jrbarType(content.previewSize.headerType)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let channel = appTitle.channel {
@@ -769,17 +818,14 @@ struct DockPreviewView: View {
         return headerChromeWidth + titleWidth
     }
 
-    /// The Mail and Music cards need room for their rows and controls; with
-    /// open windows beside them the strip may be wider still.
-    static let nativeCardWidth: CGFloat = 320
-
-    static func stripWidth(cards: CGFloat, nativeCard: Bool) -> CGFloat {
-        nativeCard ? max(nativeCardWidth, cards) : cards
+    /// Native widgets keep their width when their window strip is expanded.
+    static func stripWidth(cards: CGFloat, nativeCard: Bool, size: DockPreviewSize = .medium) -> CGFloat {
+        nativeCard ? size.contentWidth : cards
     }
 
     private var cardStripWidth: CGFloat {
-        guard !content.compact, !content.windows.isEmpty else {
-            return DockPreviewCompactRow.minWidth
+        if content.hasNativeCard || content.compact || content.windows.isEmpty {
+            return content.previewSize.contentWidth
         }
         let cards = content.windows.map { max(cardSize($0).width, DockPreviewCard.minColumn)
             + 2 * metrics.cardPad }
@@ -867,8 +913,8 @@ struct DockPreviewView: View {
     /// A card's still box: 16:10, or the window's own shape when the
     /// cards hug their windows.
     private func cardSize(_ window: DockPreviewWindow) -> CGSize {
-        guard content.hugWindows else { return DockEnhanceMath.cardSize(large: content.largeCards) }
-        return DockEnhanceMath.cardSize(large: content.largeCards, aspect: DockEnhanceMath.aspect(of: window))
+        guard content.hugWindows else { return DockEnhanceMath.cardSize(size: content.previewSize) }
+        return DockEnhanceMath.cardSize(size: content.previewSize, aspect: DockEnhanceMath.aspect(of: window))
     }
 
     /// A card whose title is just the app name again — "Claude" under a
@@ -1279,6 +1325,7 @@ struct DockPreviewCompactList: View {
     var armedNote: String? = nil
     /// A row's padding across — the spacing's `listPadH`.
     var rowPad: CGFloat = DockPreviewMetrics.standard.listPadH
+    @Environment(\.dockPreviewSize) private var previewSize
     let actions: DockPreviewActions
 
     var body: some View {
@@ -1287,7 +1334,7 @@ struct DockPreviewCompactList: View {
         // starts on the same line.
         let columns = DockCompactColumns.of(windows, agents: agents)
         ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(spacing: 1) {
+            LazyVStack(spacing: previewSize.rowSpacing) {
                 ForEach(windows) { window in
                     DockPreviewCompactRow(window: window, agent: agents[window.id],
                                           selected: window.id == selectedWindowID,
@@ -1298,7 +1345,8 @@ struct DockPreviewCompactList: View {
         }
         // The list takes the panel's width — an ask row above it can be
         // wider than the rows need — and never less than a row's own.
-        .frame(minWidth: DockPreviewCompactRow.minWidth, maxHeight: Self.maxHeight)
+        .frame(width: previewSize.contentWidth)
+        .frame(height: min(CGFloat(windows.count) * (previewSize.rowHeight + previewSize.rowSpacing), previewSize.maximumCardHeight))
     }
 
     /// Nine rows and half the tenth: a longer list shows it scrolls.
@@ -1577,13 +1625,13 @@ struct DockCompactColumns: Equatable {
 /// One row of the compact list — click raises, hover shows the verbs.
 private struct DockPreviewCompactRow: View {
     /// A row's narrowest — the list never squeezes a title below it.
-    static let minWidth: CGFloat = 340
     let window: DockPreviewWindow
     var agent: DockAgentMark? = nil
     var selected = false
     var armedNote: String? = nil
     var columns = DockCompactColumns()
     var pad: CGFloat = DockPreviewMetrics.standard.listPadH
+    @Environment(\.dockPreviewSize) private var previewSize
     let actions: DockPreviewActions
     @ViewState private var hovering = false
 
@@ -1649,7 +1697,8 @@ private struct DockPreviewCompactRow: View {
                 }
             }
             .padding(.horizontal, pad)
-            .frame(minWidth: Self.minWidth, maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+            .frame(maxWidth: .infinity)
+            .frame(height: previewSize.rowHeight)
             .background(plate)
             .contentShape(Rectangle())
         }
@@ -1886,89 +1935,88 @@ private struct DockAskChoices: View {
 /// The player tile's Now Playing row — DockDoor's media widget: the
 /// artwork, the title over the artist, and the transport the shared
 /// MediaRemote feed sends for real.
-private struct DockMediaRow: View {
+struct DockMediaRow: View {
+    @Environment(\.dockPreviewSize) private var previewSize
     let media: AlcoveMedia
     let actions: DockPreviewActions
+    var appName = "Now playing"
 
     var body: some View {
-        VStack(spacing: 6) {
-            transport
-            // Seek without opening the player: a continuous hairline of
-            // the playhead, the times either side. Only when the source
-            // named both a playhead and a length — never a bar at 0:00.
-            if let duration = media.duration, duration > 0, media.elapsed != nil {
-                DockMediaScrubber(media: media, duration: duration) { actions.onMediaSeek?($0) }
-            }
-            // The line the notch Shelf is singing — its own LRCLIB cache,
-            // stepped to this row's playhead; no lookup of the Dock's own.
-            // Silent between stamps and whenever the Shelf has no lyrics.
-            // A paused track's line cannot move, so it ticks slowly.
-            if let synced = actions.lyrics() {
-                TimelineView(.periodic(from: .now, by: media.playing ? 0.5 : 30)) { context in
-                    if let line = synced.line(at: media.liveElapsed(at: context.date) ?? 0) {
-                        Text(line)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        DockWidget(title: appName, symbol: "music.note", fillsSize: previewSize == .small) {
+            if previewSize == .small {
+                artwork.overlay(alignment: .bottom) {
+                    HStack {
+                        Text(media.title).jrbarType(.headline).lineLimit(2)
+                        playButton
                     }
+                    .padding(JRBarTokens.Space.sm)
+                    .background(.regularMaterial)
                 }
+            } else if previewSize == .medium {
+                HStack(spacing: JRBarTokens.Space.md) {
+                    artwork.frame(width: previewSize.artwork, height: previewSize.artwork)
+                    VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                        words
+                        progress
+                        transport
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                VStack(spacing: JRBarTokens.Space.sm) {
+                    artwork.frame(width: previewSize.artwork, height: previewSize.artwork)
+                    words
+                    progress
+                    transport
+                }
+                .frame(maxWidth: .infinity)
             }
         }
-        .frame(width: 300)
+    }
+
+    private var artwork: some View {
+        GeometryReader { geometry in
+            Group {
+                if let data = media.artworkData, let image = ArtworkThumbCache.shared.image(for: data) {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else {
+                    Rectangle().fill(Color.primary.opacity(0.06))
+                        .overlay { Image(systemName: "music.note").jrbarType(.title).foregroundStyle(.secondary) }
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+        .clipShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
+    }
+
+    private var words: some View {
+        VStack(alignment: previewSize == .large ? .center : .leading, spacing: 0) {
+            Text(media.title).jrbarType(.title3).lineLimit(2)
+            if let artist = media.artist { Text(artist).foregroundStyle(.secondary).lineLimit(1) }
+            if previewSize == .large, let album = media.album { Text(album).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(1) }
+        }
+    }
+
+    @ViewBuilder private var progress: some View {
+        if let duration = media.duration, duration > 0, media.elapsed != nil {
+            DockMediaScrubber(media: media, duration: duration, showsTimes: previewSize == .large) { actions.onMediaSeek?($0) }
+        }
+    }
+
+    private var playButton: some View {
+        DockTransportButton(symbol: media.playing ? "pause.fill" : "play.fill", label: media.playing ? "Pause" : "Play", size: 16) {
+            actions.onMediaCommand?(.togglePlayPause)
+        }
     }
 
     private var transport: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let data = media.artworkData, let image = ArtworkThumbCache.shared.image(for: data) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    ZStack {
-                        Rectangle().fill(Color.primary.opacity(0.08))
-                        Image(systemName: "music.note")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .frame(width: 38, height: 38)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(DockChrome.hairline, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(media.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let artist = media.artist, !artist.isEmpty {
-                    Text(artist)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            Spacer(minLength: 10)
-            HStack(spacing: 2) {
-                DockTransportButton(symbol: "backward.fill", label: "Previous track") {
-                    actions.onMediaCommand?(.previousTrack)
-                }
-                DockTransportButton(symbol: media.playing ? "pause.fill" : "play.fill",
-                                    label: media.playing ? "Pause" : "Play", size: 16) {
-                    actions.onMediaCommand?(.togglePlayPause)
-                }
-                DockTransportButton(symbol: "forward.fill", label: "Next track") {
-                    actions.onMediaCommand?(.nextTrack)
-                }
-            }
+        HStack(spacing: JRBarTokens.Space.sm) {
+            DockTransportButton(symbol: "backward.fill", label: "Previous track") { actions.onMediaCommand?(.previousTrack) }
+            playButton
+            DockTransportButton(symbol: "forward.fill", label: "Next track") { actions.onMediaCommand?(.nextTrack) }
         }
-        .help(media.displayLine)
     }
 }
 
@@ -2004,6 +2052,7 @@ private struct DockTransportButton: View {
 private struct DockMediaScrubber: View {
     let media: AlcoveMedia
     let duration: Double
+    var showsTimes = true
     let onSeek: (Double) -> Void
     @ViewState private var dragFraction: Double?
 
@@ -2012,9 +2061,11 @@ private struct DockMediaScrubber: View {
             let elapsed = media.liveElapsed(at: context.date) ?? 0
             let fraction = dragFraction ?? min(1, max(0, elapsed / duration))
             HStack(spacing: 8) {
-                Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 34, alignment: .leading)
+                if showsTimes {
+                    Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 34, alignment: .leading)
+                }
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.primary.opacity(0.12))
@@ -2035,9 +2086,11 @@ private struct DockMediaScrubber: View {
                         })
                 }
                 .frame(height: 12)
-                Text(DockEnhanceMath.clock(duration))
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 34, alignment: .trailing)
+                if showsTimes {
+                    Text(DockEnhanceMath.clock(duration))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 34, alignment: .trailing)
+                }
             }
             .jrbarType(.caption).fontWeight(.medium).monospacedDigit()
             .foregroundStyle(.secondary)

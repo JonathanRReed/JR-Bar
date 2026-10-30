@@ -71,7 +71,7 @@ struct DecidedVerbsRenderProofTests {
                                             label: "same, from an older daemon", activity: .waiting,
                                             ask: Self.justOpened(Fixture.olderDaemonDecidedAsk()))
         let content = DockPreviewSamples.terminal()
-        content.metrics = DockPreviewMetrics.scaled(DockEnhanceSettings.defaultSpacing)
+        content.previewSize = .medium
         content.agents = [1: DockPreviewSamples.waiting, 2: DockPreviewSamples.working]
         content.appAgents = [answered, older, DockPreviewSamples.waiting, DockPreviewSamples.working]
         for dark in [true, false] {

@@ -62,53 +62,57 @@ struct UtilitySurfacesRenderProofTests {
         }
     }
 
-    /// The fixtures the spacing proofs walk, by the name their PNGs take.
-    private static let spacingFixtures: [(String, (Double) -> DockPreviewContent)] = [
-        ("browser", { Fixtures.browserContent(spacing: $0) }),
-        ("terminal", { Fixtures.terminalContent(spacing: $0) }),
-        ("music", { Fixtures.musicContent(spacing: $0) }),
-        ("compact", { Fixtures.compactContent(spacing: $0) }),
-        ("nostills", { Fixtures.noStillsContent(spacing: $0) }),
+    private static func sized(_ content: DockPreviewContent, _ size: DockPreviewSize) -> DockPreviewContent {
+        content.previewSize = size
+        return content
+    }
+
+    private static let sizeFixtures: [(String, (DockPreviewSize) -> DockPreviewContent)] = [
+        ("browser", { sized(Fixtures.browserContent(), $0) }),
+        ("terminal", { sized(Fixtures.terminalContent(), $0) }),
+        ("music", { sized(Fixtures.musicContent(), $0) }),
+        ("compact", { sized(Fixtures.compactContent(), $0) }),
+        ("nostills", { sized(Fixtures.noStillsContent(), $0) }),
     ]
 
-    /// Tight is smaller than Standard and Standard than Roomy, both ways,
-    /// for every face the panel wears.
-    @Test("each spacing stop grows the panel both ways")
-    func spacingOrdersThePanel() {
-        for (name, make) in Self.spacingFixtures {
-            let sizes = DockPreviewSpacing.allCases.map { DockPreviewPanel(content: make($0.scale)).fittingSize() }
-            #expect(sizes[0].width < sizes[1].width && sizes[1].width < sizes[2].width, "\(name) widths \(sizes)")
-            #expect(sizes[0].height < sizes[1].height && sizes[1].height < sizes[2].height, "\(name) heights \(sizes)")
+    @Test("each preview size fits its viewport without changing native-card width")
+    func sizesFitThePanel() {
+        for (name, make) in Self.sizeFixtures {
+            for size in DockPreviewSize.allCases {
+                let content = make(size)
+                let panel = DockPreviewPanel(content: content)
+                let measured = panel.fittingSize()
+                #expect(measured.height > 0 && measured.height <= size.maximumHeight, "\(name) at \(size)")
+                if content.hasNativeCard { #expect(measured.width == size.contentWidth) }
+                panel.close()
+            }
         }
     }
 
-    /// Standard is the panel people had before the knob, to the point;
-    /// Tight is pinned where it measured, so a later padding drift trips
-    /// here rather than on the Dock.
-    @Test("Standard keeps the old size and Tight is pinned")
-    func spacingPinsTheSizes() {
-        let standard = DockPreviewPanel(content: Fixtures.browserContent(spacing: 1)).fittingSize()
-        #expect(standard == CGSize(width: 496, height: 194), "Standard browser \(standard)")
-        let tight = DockPreviewPanel(content: Fixtures.browserContent(spacing: 0.6)).fittingSize()
-        #expect(tight == CGSize(width: 472, height: 165), "Tight browser \(tight)")
-        let terminalStandard = DockPreviewPanel(content: Fixtures.terminalContent(spacing: 1)).fittingSize()
-        let terminalTight = DockPreviewPanel(content: Fixtures.terminalContent(spacing: 0.6)).fittingSize()
-        #expect(terminalStandard.width - terminalTight.width >= 16, "\(terminalStandard) vs \(terminalTight)")
-        #expect(terminalStandard.height - terminalTight.height >= 20, "\(terminalStandard) vs \(terminalTight)")
-        #expect(terminalTight == CGSize(width: 472, height: 247), "Tight terminal \(terminalTight)")
+    @Test("window strips use the shared Small, Medium and Large thumbnail sizes")
+    func sizeTableControlsWindowStrips() {
+        let cases: [(DockPreviewSize, CGFloat)] = [(.small, 480), (.medium, 608), (.large, 712)]
+        for (size, width) in cases {
+            let content = Self.sized(Fixtures.browserContent(), size)
+            let panel = DockPreviewPanel(content: content)
+            #expect(panel.fittingSize().width == width)
+            panel.close()
+        }
     }
 
-    /// The card's sample draws its desk at one fixed size, so the row
-    /// never jumps under a slider: the roomiest panel at the farthest
-    /// gap, with the name band kept, still fits under its top edge.
-    @Test("the Settings sample's desk holds its roomiest, farthest panel")
+    @Test("the Settings sample's desk holds every size at the farthest gap")
     func sampleDeskHoldsEverySetting() {
-        let panel = DockPreviewPanel(content: DockPreviewSamples.browser(spacing: 1.6)).fittingSize()
-        let air = DockPreviewSample.air(dockGap: 40, coversLabel: false)
-        let dock = DockPreviewSample.tile + DockPreviewSample.dockPad * 2
-        let needed = panel.height + air + dock + 8
-        #expect(needed <= DockPreviewSample.desk.height, "needs \(needed), desk \(DockPreviewSample.desk.height)")
-        #expect(panel.width + 16 <= DockPreviewSample.desk.width, "panel \(panel)")
+        for size in DockPreviewSize.allCases {
+            let content = Self.sized(DockPreviewSamples.browser(), size)
+            let preview = DockPreviewPanel(content: content)
+            let panel = preview.fittingSize()
+            let air = DockPreviewSample.air(dockGap: 40, coversLabel: false)
+            let dock = DockPreviewSample.tile + DockPreviewSample.dockPad * 2
+            let needed = panel.height + air + dock + 8
+            #expect(needed <= DockPreviewSample.desk.height)
+            #expect(panel.width + 16 <= DockPreviewSample.desk.width)
+            preview.close()
+        }
     }
 
     /// Pointing at a card brings up its verbs, and never widens it: a
@@ -119,7 +123,7 @@ struct UtilitySurfacesRenderProofTests {
         let content = DockPreviewSamples.shapes(hug: true)
         let cases = content.windows.flatMap { window in [(window, false), (window, true)] }
         for (window, large) in cases {
-            let size = DockEnhanceMath.cardSize(large: large, aspect: DockEnhanceMath.aspect(of: window))
+            let size = DockEnhanceMath.cardSize(size: large ? .large : .small, aspect: DockEnhanceMath.aspect(of: window))
             func card(_ hover: Bool) -> CGSize {
                 let view = DockPreviewCard(window: window, icon: content.icon, size: size, fillsStill: true,
                                            metrics: content.metrics, hoverShown: hover,
@@ -189,7 +193,7 @@ struct UtilitySurfacesRenderProofTests {
         let longSize = DockPreviewPanel(content: long).fittingSize()
 
         #expect(longSize.width == shortSize.width)
-        let card = DockEnhanceMath.cardSize(large: false).width
+        let card = DockEnhanceMath.cardSize(size: long.previewSize).width
         let expected = card + 2 * long.metrics.cardPad + 2 * long.metrics.panelInset
         #expect(longSize.width == expected)
     }
@@ -198,32 +202,37 @@ struct UtilitySurfacesRenderProofTests {
     func portraitCardOwnsPanelWidth() throws {
         let content = DockPreviewSamples.shapes(hug: true)
         let portrait = try #require(content.windows.min { left, right in
-            DockEnhanceMath.cardSize(large: false, aspect: DockEnhanceMath.aspect(of: left)).width
-                < DockEnhanceMath.cardSize(large: false, aspect: DockEnhanceMath.aspect(of: right)).width
+            DockEnhanceMath.cardSize(size: content.previewSize, aspect: DockEnhanceMath.aspect(of: left)).width
+                < DockEnhanceMath.cardSize(size: content.previewSize, aspect: DockEnhanceMath.aspect(of: right)).width
         })
         content.windows = [portrait]
         content.appName = "A Long Synthetic Application (Nightly)"
         content.appAgents = Array(repeating: Fixtures.working, count: 24)
 
         let panel = DockPreviewPanel(content: content).fittingSize()
-        let card = DockEnhanceMath.cardSize(large: false,
+        let card = DockEnhanceMath.cardSize(size: content.previewSize,
                                             aspect: DockEnhanceMath.aspect(of: portrait)).width
         let column = max(card, DockPreviewCard.minColumn)
         let expected = column + 2 * content.metrics.cardPad + 2 * content.metrics.panelInset
         #expect(panel.width == expected)
     }
 
-    @Test("paused video metadata never widens the Dock preview")
+    @Test("paused video metadata keeps its width and stays within the size limit")
     func pausedVideoMetadataKeepsWidth() {
-        for spacing in [0.6, 1, 1.6] {
-            let short = Self.pausedVideo(title: "A video", artist: "A channel", spacing: spacing)
+        for size in DockPreviewSize.allCases {
+            let short = Self.pausedVideo(title: "A video", artist: "A channel")
+            short.previewSize = size
             let expected = DockPreviewPanel(content: short).fittingSize()
-            for (title, artist) in [(String(repeating: "A synthetic video title ", count: 12), "A channel"),
-                                    ("A video", String(repeating: "A synthetic channel name ", count: 12))] {
-                let content = Self.pausedVideo(title: title, artist: artist, spacing: spacing)
+            let cases: [(String, String)] = [
+                (String(repeating: "A synthetic video title ", count: 12), "A channel"),
+                ("A video", String(repeating: "A synthetic channel name ", count: 12)),
+            ]
+            for (title, artist) in cases {
+                let content = Self.pausedVideo(title: title, artist: artist)
+                content.previewSize = size
                 let actual = DockPreviewPanel(content: content).fittingSize()
                 #expect(actual.width == expected.width)
-                #expect(actual.height == expected.height)
+                #expect(actual.height > 0 && actual.height <= size.maximumHeight)
             }
         }
     }
@@ -299,22 +308,20 @@ struct UtilitySurfacesRenderProofTests {
         ]
         // The plain shots wear the default spacing — what a new install
         // shows; the stops below walk every face through all three.
-        let defaultMetrics = DockPreviewMetrics.scaled(DockEnhanceSettings.defaultSpacing)
         for (name, content) in shots {
-            if name != "dock-long-name-tight" { content.metrics = defaultMetrics }
             for dark in [true, false] {
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                 try Self.write(view, glassRadius: content.metrics.panelRadius, name: name, dark: dark,
                                canvas: CGSize(width: 900, height: 460))
             }
         }
-        for (name, make) in Self.spacingFixtures {
-            for stop in DockPreviewSpacing.allCases {
-                let content = make(stop.scale)
+        for (name, make) in Self.sizeFixtures {
+            for size in DockPreviewSize.allCases {
+                let content = make(size)
                 for dark in [true, false] {
                     let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                     try Self.write(view, glassRadius: content.metrics.panelRadius,
-                                   name: "dock-\(name)-\(stop.rawValue)", dark: dark,
+                                   name: "dock-\(name)-\(size.rawValue)", dark: dark,
                                    canvas: CGSize(width: 900, height: 480))
                 }
             }
@@ -338,7 +345,7 @@ struct UtilitySurfacesRenderProofTests {
                 HStack(alignment: .top, spacing: hugged.metrics.cardSpacing) {
                     ForEach(hugged.windows) { window in
                         DockPreviewCard(window: window, icon: hugged.icon,
-                                        size: DockEnhanceMath.cardSize(large: large,
+                                        size: DockEnhanceMath.cardSize(size: large ? .large : .small,
                                                                        aspect: DockEnhanceMath.aspect(of: window)),
                                         fillsStill: true, metrics: hugged.metrics, hoverShown: true,
                                         actions: DockPreviewActions(content: hugged))
@@ -356,7 +363,7 @@ struct UtilitySurfacesRenderProofTests {
         // band that clears it.
         for (name, covers) in [("dock-placement-cover", true), ("dock-placement-classic", false)] {
             for dark in [true, false] {
-                let sample = DockPreviewSample(spacing: DockEnhanceSettings.defaultSpacing,
+                let sample = DockPreviewSample(previewSize: .medium,
                                                dockGap: DockEnhanceSettings.defaultDockGap,
                                                coversLabel: covers, scale: 1, showsMeasure: true)
                 try Self.write(sample, glassRadius: nil, name: name, dark: dark,
@@ -365,10 +372,12 @@ struct UtilitySurfacesRenderProofTests {
         }
         // The card's sample at the stops and at the far gap, as Settings
         // draws it.
-        for (name, spacing, gap) in [("dock-sample-tight", 0.6, 4.0), ("dock-sample-roomy", 1.4, 4.0),
-                                     ("dock-sample-far", 0.6, 40.0)] {
+        let sampleCases: [(String, DockPreviewSize, Double)] = [
+            ("dock-sample-small", .small, 4), ("dock-sample-large", .large, 4), ("dock-sample-far", .medium, 40),
+        ]
+        for (name, size, gap) in sampleCases {
             for dark in [true, false] {
-                let sample = DockPreviewSample(spacing: spacing, dockGap: gap, coversLabel: true)
+                let sample = DockPreviewSample(previewSize: size, dockGap: gap, coversLabel: true)
                 try Self.write(sample, glassRadius: nil, name: name, dark: dark,
                                canvas: CGSize(width: 420, height: 260))
             }

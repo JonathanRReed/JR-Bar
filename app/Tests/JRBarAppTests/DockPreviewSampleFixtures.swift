@@ -40,8 +40,8 @@ extension DockPreviewSamples {
     /// Ghostty with an agent waiting on you, one working, and a shell.
     static func terminal(large: Bool = false, spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
-        content.largeCards = large
+        content.previewSize = .medium
+        content.previewSize = large ? .large : .small
         content.appName = "Ghostty"
         content.icon = terminalIcon
         content.bundleID = "com.mitchellh.ghostty"
@@ -60,7 +60,7 @@ extension DockPreviewSamples {
     /// Two windows and no Screen Recording: icon cards.
     static func noStills(spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.previewSize = .medium
         content.appName = "T3 Code (Nightly)"
         content.icon = icon("/Applications/T3 Code (Nightly).app")
         content.bundleID = "com.t3.code"
@@ -75,7 +75,7 @@ extension DockPreviewSamples {
     /// Ten terminals: past the limit, a title list.
     static func compact(spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.previewSize = .medium
         content.appName = "Ghostty"
         content.icon = terminalIcon
         content.bundleID = "com.mitchellh.ghostty"
@@ -98,7 +98,7 @@ extension DockPreviewSamples {
     /// window's shape.
     static func shapes(hug: Bool, spacing: Double = DockEnhanceSettings.defaultSpacing) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.previewSize = .medium
         content.hugWindows = hug
         content.appName = "Safari"
         content.icon = safariIcon
@@ -115,7 +115,7 @@ extension DockPreviewSamples {
     /// Music with a track playing.
     static func music(spacing: Double = 1) -> DockPreviewContent {
         let content = DockPreviewContent()
-        content.metrics = DockPreviewMetrics.scaled(spacing)
+        content.previewSize = .medium
         content.appName = "Music"
         content.icon = icon("/System/Applications/Music.app")
         content.bundleID = "com.apple.Music"

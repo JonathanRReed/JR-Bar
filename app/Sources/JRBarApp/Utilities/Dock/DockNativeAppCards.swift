@@ -17,6 +17,7 @@ struct DockMessagesPreviewSetting: View {
 }
 
 struct DockRemindersCard: View {
+    @Environment(\.dockPreviewSize) private var previewSize
     let state: DockRemindersPreview.State
     let now: Date
     var calendar = Calendar.current
@@ -37,46 +38,40 @@ struct DockRemindersCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            content
-            if let writeNotice { Text(writeNotice).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-            HStack(spacing: 8) {
-                Button("Open Reminders") { actions.onRemindersOpen?() }
-                if canWrite { Button("New Reminder") { adding.toggle() } }
-            }
-            .buttonStyle(DockCapsuleButtonStyle(prominent: false))
-            if adding && canWrite {
-                HStack {
-                    TextField("New reminder", text: $draft).onSubmit { add() }
-                    Button("Add") { add() }.disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+        DockWidget(title: "Reminders", symbol: "list.bullet", open: actions.onRemindersOpen) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                content
+                if let writeNotice { Text(writeNotice).jrbarType(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if previewSize == .large, canWrite {
+                    Button("New Reminder") { adding.toggle() }.buttonStyle(DockCapsuleButtonStyle())
+                    if adding {
+                        HStack {
+                            TextField("New reminder", text: $draft).onSubmit { add() }
+                            Button("Add") { add() }.disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
                 }
             }
         }
-        .jrbarType(.callout)
-        .frame(width: 320, alignment: .leading)
     }
 
     private var canWrite: Bool {
         switch state {
-        case .items, .stale: return true
-        default: return false
+        case .items, .stale: true
+        default: false
         }
     }
 
     private func add() {
-        if actions.onReminderAdd?(draft) == true {
-            draft = ""
-            adding = false
-        }
+        if actions.onReminderAdd?(draft) == true { draft = ""; adding = false }
     }
 
     @ViewBuilder private var content: some View {
         switch state {
         case .loading: Text("Loading reminders…").foregroundStyle(.secondary)
         case .noAccess, .denied:
-            HStack {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
                 Text("Reminders access is off").foregroundStyle(.secondary)
-                Spacer(minLength: 0)
                 Button(state == .denied ? "Open Settings" : "Allow Access") { actions.onRemindersAuth?() }
                     .buttonStyle(DockCapsuleButtonStyle(prominent: true))
             }
@@ -86,79 +81,83 @@ struct DockRemindersCard: View {
     }
 
     private func rows(_ entries: [ShelfRemindersModel.Entry], stale: Bool) -> some View {
-        let start = calendar.startOfDay(for: now)
-        let overdue = entries.filter { ($0.due ?? now) < start }
-        let today = entries.filter { ($0.due ?? now) >= start }
-        return VStack(alignment: .leading, spacing: 10) {
-            if stale { Text("Stale · Couldn't refresh reminders").foregroundStyle(.secondary) }
-            if entries.isEmpty {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+            if stale { Text("Stale").jrbarType(.caption).foregroundStyle(.secondary) }
+            if previewSize == .small {
+                let today = entries.filter { $0.due.map { calendar.isDate($0, inSameDayAs: now) } == true }
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(today.count)").jrbarType(.title).monospacedDigit()
+                    Text("due today").foregroundStyle(.secondary)
+                }
+                if let entry = entries.first {
+                    if let due = entry.due, due < calendar.startOfDay(for: now) {
+                        Text("Overdue").jrbarType(.caption).foregroundStyle(JRBarTokens.Ink.failure)
+                    }
+                    Text(entry.title).jrbarType(.headline).lineLimit(3)
+                } else { Text(stale ? "Reminders unavailable" : "All done for today").foregroundStyle(.secondary) }
+            } else if entries.isEmpty {
                 Text(stale ? "Reminders are unavailable" : "All done for today").foregroundStyle(.secondary)
+            } else if previewSize == .medium {
+                ForEach(Array(entries.prefix(3))) { entry in reminder(entry) }
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        group("Overdue", entries: overdue, overdue: true)
-                        group("Today", entries: today, overdue: false)
+                DockContentList(maximumHeight: previewSize.widgetContentHeight - 80) {
+                    VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+                        ForEach(entries) { entry in reminder(entry) }
                     }
                 }
-                .frame(height: min(CGFloat(entries.count) * 38 + CGFloat(overdue.isEmpty || today.isEmpty ? 22 : 44), 280))
             }
         }
     }
 
-    @ViewBuilder private func group(_ title: String, entries: [ShelfRemindersModel.Entry], overdue: Bool) -> some View {
-        if !entries.isEmpty {
-            Text(title).jrbarType(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
-            ForEach(entries) { entry in
-                HStack(alignment: .top, spacing: 9) {
-                    if let tint = entry.calendarColor {
-                        Capsule().fill(Color(red: tint.red, green: tint.green, blue: tint.blue)).frame(width: 3)
-                    }
-                    Button { actions.onReminderComplete?(entry) } label: {
-                        Image(systemName: "circle").jrbarType(.body).foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain).accessibilityLabel("Complete \(entry.title)")
-                    Text(entry.title).fontWeight(.medium).lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let due = entry.due, let when = time(due, hasTime: entry.hasTime, overdue: overdue) {
-                        Text(when)
-                            .jrbarType(.caption).monospacedDigit()
-                            .foregroundStyle(overdue ? JRBarTokens.Ink.failure : JRBarTokens.Ink.secondary)
-                    }
+    private func reminder(_ entry: ShelfRemindersModel.Entry) -> some View {
+        HStack(spacing: JRBarTokens.Space.sm) {
+            Button { actions.onReminderComplete?(entry) } label: {
+                Image(systemName: "circle").jrbarType(.body).frame(width: 24, height: 28)
+            }
+            .buttonStyle(.plain).accessibilityLabel("Complete \(entry.title)")
+            Text(entry.title).fontWeight(.medium).lineLimit(previewSize == .medium ? 1 : 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let due = entry.due {
+                let overdue = due < calendar.startOfDay(for: now)
+                if let words = Self.dueWords(due, hasTime: entry.hasTime, overdue: overdue, calendar: calendar) {
+                    Text(words).jrbarType(.caption).monospacedDigit()
+                        .foregroundStyle(overdue ? JRBarTokens.Ink.failure : JRBarTokens.Ink.secondary)
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(minHeight: previewSize.rowHeight)
     }
 
-    /// The row's due words. An all-day reminder under the Today heading
-    /// needs none: the heading already says when it is due.
     static func dueWords(_ due: Date, hasTime: Bool, overdue: Bool, calendar: Calendar) -> String? {
         if overdue { return due.formatted(Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated)) }
         guard hasTime else { return nil }
         return due.formatted(Date.FormatStyle(date: .omitted, time: .shortened, calendar: calendar, timeZone: calendar.timeZone))
     }
-
-    private func time(_ due: Date, hasTime: Bool, overdue: Bool) -> String? {
-        Self.dueWords(due, hasTime: hasTime, overdue: overdue, calendar: calendar)
-    }
 }
 
 struct DockShortcutsCard: View {
+    @Environment(\.dockPreviewSize) private var previewSize
     let state: DockShortcutsPreview.State
     var runs: [String: DockShortcutsPreview.RunState] = [:]
     let actions: DockPreviewActions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            content
-            HStack(spacing: 8) {
-                Button("Open Shortcuts") { actions.onShortcutsOpen?() }
-                Button("New Shortcut") { actions.onShortcutNew?() }
+        DockWidget(title: "Shortcuts", symbol: "square.stack.3d.up.fill", open: actions.onShortcutsOpen, fillsSize: fillsTile) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                content
+                if previewSize == .large {
+                    Button("New Shortcut") { actions.onShortcutNew?() }.buttonStyle(DockCapsuleButtonStyle())
+                }
             }
-            .buttonStyle(DockCapsuleButtonStyle(prominent: false))
         }
-        .jrbarType(.callout)
-        .frame(width: 320, alignment: .leading)
+    }
+
+    private var fillsTile: Bool {
+        guard previewSize == .small else { return false }
+        switch state {
+        case .shortcuts(let names), .stale(let names): return !names.isEmpty
+        default: return false
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -170,78 +169,88 @@ struct DockShortcutsCard: View {
         }
     }
 
-    private func rows(_ names: [String], stale: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if stale { Text("Stale · Couldn't refresh shortcuts").foregroundStyle(.secondary) }
-            if names.isEmpty {
-                Text("No shortcuts").foregroundStyle(.secondary)
-            } else {
-                Text("Your shortcuts").jrbarType(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(names, id: \.self) { name in shortcut(name, stale: stale) }
-                    }
+    @ViewBuilder private func rows(_ names: [String], stale: Bool) -> some View {
+        if stale { Text("Stale").jrbarType(.caption).foregroundStyle(.secondary) }
+        if names.isEmpty { Text("No shortcuts").foregroundStyle(.secondary) }
+        else if previewSize == .small {
+            shortcut(names[0], stale: stale, tile: true).frame(maxHeight: .infinity)
+        } else if previewSize == .medium {
+            let columns = [GridItem(.flexible()), GridItem(.flexible())]
+            LazyVGrid(columns: columns, spacing: JRBarTokens.Space.sm) {
+                ForEach(Array(names.prefix(4)), id: \.self) { name in
+                    shortcut(name, stale: stale, tile: true).frame(height: 60)
                 }
-                .frame(height: min(CGFloat(names.count) * 40, 280))
+            }
+        } else {
+            DockContentList(maximumHeight: previewSize.widgetContentHeight - 48) {
+                VStack(spacing: JRBarTokens.Space.xs) {
+                    ForEach(names, id: \.self) { name in shortcut(name, stale: stale, tile: false) }
+                }
             }
         }
     }
 
-    private func shortcut(_ name: String, stale: Bool) -> some View {
+    private func shortcut(_ name: String, stale: Bool, tile: Bool) -> some View {
         let run = runs[name] ?? .idle
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 9) {
-                Image(systemName: "square.stack.3d.up.fill").foregroundStyle(.purple)
-                Text(name).fontWeight(.medium).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                switch run {
-                case .running: Text("Running…").foregroundStyle(.secondary)
-                case .idle, .done, .failed, .timedOut:
-                    Button { actions.onShortcutRun?(name) } label: {
-                        Image(systemName: run == .done ? "checkmark" : "play.fill")
-                            .foregroundStyle(run == .done ? JRBarTokens.Ink.done : JRBarTokens.Ink.label)
-                            .frame(width: 22, height: 22)
-                            .background(DockChrome.plateHover, in: Circle())
-                    }
-                    .buttonStyle(.plain).accessibilityLabel("Run \(name)")
-                    .disabled(stale || runs.values.contains(.running))
+        return VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
+            Button { actions.onShortcutRun?(name) } label: {
+                HStack(spacing: JRBarTokens.Space.sm) {
+                    Text(name).jrbarType(previewSize == .small ? .title3 : .callout).lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: run == .done ? "checkmark" : run == .running ? "hourglass" : "play.fill")
                 }
+                .padding(tile ? JRBarTokens.Space.sm : JRBarTokens.Space.xs)
+                .frame(maxWidth: .infinity, maxHeight: tile ? .infinity : nil)
+                .frame(minHeight: previewSize.rowHeight)
+                .background(tile ? Color.accentColor.opacity(0.14) : DockChrome.plateHover,
+                            in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control))
             }
+            .buttonStyle(.plain).accessibilityLabel("Run \(name)")
+            .disabled(stale || runs.values.contains(.running))
             if run == .failed || run == .timedOut {
-                Text(run == .timedOut ? "Didn't finish within 10 seconds. It may need input." : "Couldn't run this shortcut.")
-                    .foregroundStyle(.secondary)
-                Button("Open in Shortcuts") { actions.onShortcutOpen?(name) }
-                    .buttonStyle(DockCapsuleButtonStyle(prominent: false))
+                let detail = run == .timedOut ? "Didn't finish within 10 seconds. It may need input." : "Couldn't run this shortcut."
+                let brief = run == .timedOut ? "Timed out" : "Couldn't run"
+                Text(previewSize == .large ? detail : brief)
+                    .jrbarType(.caption).foregroundStyle(.secondary).lineLimit(2).help(detail)
+                if previewSize == .large {
+                    Button("Open in Shortcuts") { actions.onShortcutOpen?(name) }.buttonStyle(DockCapsuleButtonStyle())
+                }
             }
         }
     }
 }
 
 struct DockMessagesCard: View {
+    @Environment(\.dockPreviewSize) private var previewSize
     let state: DockMessagesPreview.State
     let actions: DockPreviewActions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).jrbarType(.title1).fontWeight(.semibold).monospacedDigit()
-            Text("JR-Bar reads only the Dock tile's badge. Message text and names stay in Messages.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button("Open Messages") { actions.onMessagesOpen?() }
-                Button("New Message") { actions.onMessageNew?() }
+        DockWidget(title: "Messages", symbol: "message.fill", open: actions.onMessagesOpen) {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                Text(title).jrbarType(.title).fontWeight(.semibold).monospacedDigit()
+                if previewSize == .large {
+                    Text("Conversations need more access and aren't shown here. Only the Dock badge is available.")
+                        .foregroundStyle(.secondary)
+                }
+                if previewSize != .small {
+                    HStack(spacing: JRBarTokens.Space.sm) {
+                        Button("Open Messages") { actions.onMessagesOpen?() }
+                        Button("New Message") { actions.onMessageNew?() }
+                    }
+                    .buttonStyle(DockCapsuleButtonStyle())
+                }
             }
-            .buttonStyle(DockCapsuleButtonStyle(prominent: false))
         }
-        .jrbarType(.callout)
-        .frame(width: 320, alignment: .leading)
     }
 
     private var title: String {
         switch state {
-        case .notRunning: return "Messages is not open"
-        case .noBadge: return "No unread badge"
-        case .unread(let count): return "\(count) unread in Messages"
-        case .badgeOnly: return "Messages has a badge"
-        case .stale(let count): return count.map { "\($0) unread · Stale" } ?? "Dock badge unavailable · Stale"
+        case .notRunning: "Messages is not open"
+        case .noBadge: "No unread badge"
+        case .unread(let count): "\(count) unread"
+        case .badgeOnly: "Messages has a badge"
+        case .stale(let count): count.map { "\($0) unread · Stale" } ?? "Dock badge unavailable · Stale"
         }
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import JRBarTestSupport
 import SwiftUI
 import Testing
@@ -50,7 +51,7 @@ struct DockMailRenderProofTests {
                 content.badge = state.reading.flatMap { $0.unread > 0 ? String($0.unread) : nil }
                 let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
                     .background(Color(nsColor: .windowBackgroundColor))
-                try ProofRender.write(view, size: CGSize(width: 340, height: 1),
+                try ProofRender.write(view, size: CGSize(width: DockPreviewSize.medium.widgetSize.width + 24, height: 1),
                     name: "dock-mail-\(name)-\(theme)", dark: dark, settle: 0)
             }
             let actions = DockPreviewActions(content: DockPreviewContent())
@@ -58,7 +59,7 @@ struct DockMailRenderProofTests {
                                          highlightedMessageID: good.messages[1].id)
                 .padding(10)
                 .background(Color(nsColor: .windowBackgroundColor))
-            try ProofRender.write(rowActions, size: CGSize(width: 340, height: 1),
+            try ProofRender.write(rowActions, size: CGSize(width: DockPreviewSize.medium.widgetSize.width + 24, height: 1),
                 name: "dock-mail-row-actions-\(theme)", dark: dark, settle: 0)
             for enabled in [false, true] {
                 let view = VStack(alignment: .leading, spacing: 16) {

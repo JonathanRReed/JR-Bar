@@ -68,10 +68,16 @@ final class DockEnhancePreferences {
         set { write?({ var s = read(); s.mediaPreview = newValue; return s }()) }
     }
     /// Bigger cards.
-    var largePreviews: Bool {
-        get { read().largePreviews }
-        set { write?({ var s = read(); s.largePreviews = newValue; return s }()) }
+    var previewSize: DockPreviewSize {
+        get { read().previewSize }
+        set { write?({ var s = read(); s.previewSize = newValue; return s }()) }
     }
+    func setPreviewSize(_ size: DockPreviewSize?, for bundleID: String) {
+        var settings = read()
+        settings.previewSizeOverrides[bundleID] = size
+        write?(settings)
+    }
+
     /// Windows on other Spaces and minimized windows list too.
     var includeOffscreenWindows: Bool {
         get { read().includeOffscreenWindows }
@@ -184,9 +190,6 @@ final class DockEnhancePreferences {
         get { read().switcherStyle }
         set { write?({ var s = read(); s.switcherStyle = newValue; return s }()) }
     }
-    /// The metrics every inset in the preview reads, at the stored scale.
-    var metrics: DockPreviewMetrics { DockPreviewMetrics.scaled(read().previewSpacing) }
-
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
     static let spacingRange: ClosedRange<Double> = DockEnhanceSettings.spacingRange
     static let dockGapRange: ClosedRange<Double> = DockEnhanceSettings.dockGapRange
