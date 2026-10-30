@@ -94,7 +94,7 @@ extension NotchToy {
     /// so while a switch left on from before still waits for its yes.
     var lyricsSubtitle: String {
         let base = "The current and next line under the track, in time. "
-            + "Looks the song up on LRCLIB (title, artist, album, length — nothing else) "
+            + "Looks up the song on LRCLIB using its title, artist, album and length, "
             + "and remembers the answer. Off, nothing is sent."
         let settings = settings
         guard settings.lyrics, !settings.lyricsConsented else { return base }
@@ -132,12 +132,18 @@ struct NotchControlsView: View {
     private var providerControls: some View {
         switch toy.settings.provider {
         case .jrbar:
-            islandRows
-            capsuleRows
-            mediaRows
-            glanceRows
-            shelfRows
-            sensorRows
+            SettingGroup("Island") { islandRows }
+            SettingGroup("Shelf") { shelfRows }
+            SettingsFeatureMoreOptions(id: toy.id, subtitle: "Gestures, notices, media, glances, shelf behavior and camera options.") {
+                SettingGroup("Gestures and display") { islandOptionsRows }
+                SettingGroup("Capsules and timers") { capsuleRows }
+                SettingGroup("Media") { mediaRows }
+                SettingGroup("Glances") { glanceRows }
+                if toy.settings.shelfEnabled {
+                    SettingGroup("Shelf behavior") { shelfSubrows }
+                }
+                SettingGroup("Camera and microphone") { sensorRows }
+            }
         case .alcove:
             if let settings = toy.store?.settings {
                 SettingsNavigationRow(SettingsHome.followAlcove.linkTitle) { settings.revealHome(.followAlcove) }
@@ -156,16 +162,11 @@ struct NotchControlsView: View {
 
     @ViewBuilder
     private var islandRows: some View {
-        CardSectionHeader("Island")
         Toggle(isOn: toy.bind(\.islandEnabled)) {
             SettingLabel(title: "Show the island",
                          subtitle: toy.earsDrawn
-                            ? "The housing under the notch. The Screen Bar's ears draw the HUD beside it, so the island itself stays bare."
-                            : "The housing under the notch — working agents on the left, asks or the track on the right. Hover or click it for the card.")
-        }
-        Toggle(isOn: toy.bind(\.simulateNotch)) {
-            SettingLabel(title: "Simulate notch",
-                         subtitle: "On a display without a notch, the island hugs the top edge instead of floating as a pill.")
+                            ? "Show the housing below the notch. The Screen Bar supplies status on either side."
+                            : "Show working agents, asks and the current track below the notch. Hover or click to open the card.")
         }
         Toggle(isOn: toy.bind(\.expandOnHover)) {
             SettingLabel(title: "Card on hover",
@@ -189,14 +190,22 @@ struct NotchControlsView: View {
             Picker(selection: toy.bind(\.notchDisplay)) {
                 Text("Built-in").tag(NotchDisplay.builtIn)
                 Text("Main display").tag(NotchDisplay.main)
-                Text("Where the pointer is").tag(NotchDisplay.pointer)
+                Text("Pointer").tag(NotchDisplay.pointer)
             } label: { EmptyView() }
                 .labelsHidden()
-                .pickerStyle(.menu)
+                .pickerStyle(.segmented)
                 .fixedSize()
         } label: {
             SettingLabel(title: "Display",
                          subtitle: "Where the island and the Screen Bar live. Where the pointer is moves them when you change Space or plug in a screen, never as the pointer wanders.")
+        }
+    }
+
+    @ViewBuilder
+    private var islandOptionsRows: some View {
+        Toggle(isOn: toy.bind(\.simulateNotch)) {
+            SettingLabel(title: "Simulate notch",
+                         subtitle: "On a display without a notch, the island hugs the top edge instead of floating as a pill.")
         }
         Toggle(isOn: toy.bind(\.hapticTick)) {
             SettingLabel(title: "Haptic tick",
@@ -214,27 +223,27 @@ struct NotchControlsView: View {
 
     @ViewBuilder
     private var capsuleRows: some View {
-        CardSectionHeader("Capsules")
         Toggle(isOn: toy.bind(\.capsuleNotifications)) {
             SettingLabel(title: "Event capsules",
                          subtitle: "The island briefly becomes a notice when an ask opens, a run ends or a quota resets.")
         }
         if toy.settings.capsuleNotifications {
             CardSubrows {
-                FlowLayout {
-                    Toggle("Asks", isOn: toy.bind(\.capsuleKinds.ask))
-                        .help("A session opens a question.")
-                    Toggle("Completions", isOn: toy.bind(\.capsuleKinds.completed))
-                        .help("An agent finishes a run.")
-                    Toggle("Failures", isOn: toy.bind(\.capsuleKinds.failed))
-                        .help("A session stops on an error.")
-                    Toggle("Quota resets", isOn: toy.bind(\.capsuleKinds.quotaReset))
-                        .help("A provider's usage window refills.")
-                    Toggle("Power", isOn: toy.bind(\.capsuleKinds.charging))
-                        .help("Plugging in, switching to battery, fully charged.")
+                Toggle(isOn: toy.bind(\.capsuleKinds.ask)) {
+                    SettingLabel(title: "Ask capsules", subtitle: "Show a notice when a session asks you a question.")
                 }
-                .toggleStyle(ChipToggleStyle())
-                .padding(.vertical, SettingsMetrics.s)
+                Toggle(isOn: toy.bind(\.capsuleKinds.completed)) {
+                    SettingLabel(title: "Completion capsules", subtitle: "Show a notice when an agent finishes a run.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.failed)) {
+                    SettingLabel(title: "Failure capsules", subtitle: "Show a notice when a session stops on an error.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.quotaReset)) {
+                    SettingLabel(title: "Quota reset capsules", subtitle: "Show a notice when a provider's usage window refills.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
+                    SettingLabel(title: "Power capsules", subtitle: "Show charger, battery and fully charged notices.")
+                }
                 Toggle(isOn: toy.bind(\.holdNewsWhileQuiet)) {
                     SettingLabel(title: "Hold news while quiet",
                                  subtitle: "In a Focus or a quiet mode, finished runs and quota resets wait and arrive as one summary when it ends. Asks and failures still show.")
@@ -266,7 +275,7 @@ struct NotchControlsView: View {
                 }
                 Toggle(isOn: toy.bind(\.replaceSystemHUD)) {
                     SettingLabel(title: "Replace the system volume & brightness overlay",
-                                 subtitle: "The keys get our capsule instead of Apple's; needs Accessibility. Changes from Control Center still show Apple's, and JR-Bar never touches OSDUIHelper.")
+                                 subtitle: "Use JR-Bar's overlay for volume and brightness keys. Requires Accessibility. Control Center changes still use Apple's overlay.")
                 }
             }
         }
@@ -274,16 +283,19 @@ struct NotchControlsView: View {
             SettingLabel(title: "Capsule tick",
                          subtitle: "A quiet sound when a capsule shows.")
         }
+        Toggle(isOn: toy.bind(\.timerLights)) {
+            SettingLabel(title: "Timers flash the lights",
+                         subtitle: "Flash a connected SidePulse strip orange when a timer ends. Respects quiet mode.")
+        }
     }
 
     @ViewBuilder
     private var mediaRows: some View {
-        CardSectionHeader("Media")
         Toggle(isOn: toy.bind(\.mediaEnabled)) {
             SettingLabel(title: "Now Playing",
                          subtitle: toy.earsDrawn
-                            ? "Transport buttons in the card. The island's own strip rests while the Screen Bar's ears draw."
-                            : "The track in the right shoulder when nothing needs a hand, and transport buttons in the card.")
+                            ? "Show playback controls in the card. The Screen Bar already shows the track beside the notch."
+                            : "Show the current track beside the notch and playback controls in the card.")
         }
         if toy.settings.mediaEnabled {
             CardSubrows {
@@ -300,7 +312,6 @@ struct NotchControlsView: View {
 
     @ViewBuilder
     private var glanceRows: some View {
-        CardSectionHeader("Glances")
         Toggle(isOn: toy.calendarBinding) {
             SettingLabel(title: "Calendar",
                          subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
@@ -330,15 +341,9 @@ struct NotchControlsView: View {
 
     @ViewBuilder
     private var shelfRows: some View {
-        CardSectionHeader("Shelf & timers")
         Toggle(isOn: toy.bind(\.shelfEnabled)) {
             SettingLabel(title: "Shelf",
-                         subtitle: "Files dropped on the notch wait on the card's second page. Off, the card keeps only the day, the timers and the switches, and a drop goes to a session row or nowhere.")
-        }
-        if toy.settings.shelfEnabled {
-            CardSubrows {
-                shelfSubrows
-            }
+                         subtitle: "Keep files dropped on the notch on the card's second page. Off leaves the day, timers and switches available.")
         }
         if let settings = toy.store?.settings {
             // The key itself is set on Shortcuts, its one home; this row
@@ -351,10 +356,6 @@ struct NotchControlsView: View {
                 SettingLabel(title: "Shelf hotkey", subtitle: shelfHotkeyNote(settings) + " Change it on Shortcuts.")
             }
         }
-        Toggle(isOn: toy.bind(\.timerLights)) {
-            SettingLabel(title: "Timers flash the lights",
-                         subtitle: "A timer coming due breathes the SidePulse strips orange three times — only with a strip connected, and never while the Mac is quiet.")
-        }
     }
 
     /// The shelf's own rows: how files leave it, where new ones land, and
@@ -364,11 +365,11 @@ struct NotchControlsView: View {
     private var shelfSubrows: some View {
         LabeledContent {
             Picker(selection: toy.bind(\.shelfDragOut)) {
-                Text("Copy (⌘ moves)").tag(ShelfDragOut.copy)
+                Text("Copy").tag(ShelfDragOut.copy)
                 Text("Move").tag(ShelfDragOut.move)
             } label: { EmptyView() }
                 .labelsHidden()
-                .pickerStyle(.menu)
+                .pickerStyle(.segmented)
                 .fixedSize()
         } label: {
             SettingLabel(title: "Dragging a file out",
@@ -435,18 +436,17 @@ struct NotchControlsView: View {
 
     @ViewBuilder
     private var sensorRows: some View {
-        CardSectionHeader("Camera & microphone")
         Toggle(isOn: Binding(
             get: { toy.sensorIndicatorsEnabled },
             set: { toy.sensorIndicatorsEnabled = $0 })) {
             SettingLabel(title: "Mic & camera indicators",
                          subtitle: toy.sensorsDrawable
-                            ? "A green dot in the right shoulder while a camera rolls, an orange one while a microphone is live — macOS's own dots. Read-only: JR-Bar listens for the system saying they started and never opens either itself."
-                            : "The Screen Bar's ears are drawing the notch's shoulders, so the island has no room for the dots.")
+                            ? "Show when the camera or microphone is in use. These indicators never open either device."
+                            : "Turn off Notch wings in Devices to show these indicators beside the notch.")
         }
         Toggle(isOn: toy.bind(\.mirror)) {
             SettingLabel(title: "Mirror",
-                         subtitle: "A quick look through the camera: ⌥-click the notch, or the camera button in the card. Never a standing row — the lens closes when the card folds, and macOS asks for the camera the first time.")
+                         subtitle: "Open the camera with Option-click or the card's camera button. macOS asks on first use; the camera closes with the card.")
         }
     }
 
@@ -471,7 +471,7 @@ struct NotchControlsView: View {
         case .writeOnly:
             return "Full access is needed. Turn on to open System Settings."
         case .denied, .restricted, .unavailable:
-            return "\(app) access is off — turning this on opens System Settings, or allow it in Setup."
+            return "\(app) access is off. Turn this on to open System Settings, or allow it in Setup."
         default:
             return "Turning this on asks for \(app) access once; Setup has the same row."
         }

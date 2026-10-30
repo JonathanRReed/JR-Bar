@@ -2056,172 +2056,208 @@ private struct FoldControlsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Group {
-                hero
-                Divider().padding(.vertical, 6)
-
-                Picker(selection: toy.bind(\.look)) {
-                    Text("Duo").tag(FoldLook.duo)
-                    Text("Room").tag(FoldLook.room)
-                } label: {
-                    SettingLabel(title: "Look", subtitle: lookSubtitle)
-                }
-                .pickerStyle(.menu)
-
-                Picker(selection: toy.bind(\.anchor)) {
-                    Text("Set angle").tag(FoldAnchor.angle)
-                    Text("Wherever the lid rests").tag(FoldAnchor.movement)
-                } label: {
-                    SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
-                }
-                .pickerStyle(.menu)
-
-                sliderRow(SettingLabel(title: "Starts folding at",
-                                       subtitle: startSubtitle),
-                          value: toy.bind(\.activationAngle), range: FoldSettings.activationAngleRange,
-                          readout: "\(Int(toy.settings.activationAngle.rounded()))°")
-                    .disabled(toy.settings.anchor == .movement)
-
-                sliderRow(SettingLabel(title: "Release when parked",
-                                       subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
-                          value: toy.bind(\.dwellTimeout), range: FoldSettings.dwellTimeoutRange, step: 1,
-                          readout: toy.settings.dwellTimeout == 0
-                              ? (toy.settings.anchor == .movement ? "Auto" : "Off")
-                              : "\(Int(toy.settings.dwellTimeout))s")
-
-                sliderRow(SettingLabel(title: "Jitter",
-                                       subtitle: "Ignore angle wobbles smaller than this."),
-                          value: toy.bind(\.jitterTolerance), range: FoldSettings.jitterToleranceRange, step: 0.5,
-                          readout: degrees(toy.settings.jitterTolerance))
-
-                Divider().padding(.vertical, 6)
-
-                sliderRow(SettingLabel(title: "Perspective", subtitle: perspectiveSubtitle),
-                          value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
-                sliderRow(SettingLabel(title: "Shade", subtitle: shadeSubtitle),
-                          value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
-                sliderRow(SettingLabel(title: "Blur", subtitle: blurSubtitle),
-                          value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
-                if duo {
-                    fadeLengthRow(owned: true)
-                    if searchedRow == "Frost" { frostRow(owned: false) }
-                } else {
-                    frostRow(owned: true)
-                    if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
-                }
-
-                sliderRow(SettingLabel(title: "Hold picture in place",
-                                       subtitle: "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
-                          value: toy.bind(\.holdStrength), range: 0...1,
-                          readout: percent(toy.settings.holdStrength))
-
-                Divider().padding(.vertical, 6)
-
-                Toggle(isOn: toy.bind(\.restoreSound)) {
-                    SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
-                }
-
-                Picker(selection: toy.bind(\.hingeVoice)) {
-                    Text("Off").tag(HingeVoice.off)
-                    Text("Creak").tag(HingeVoice.creak)
-                    Text("Paper rustle").tag(HingeVoice.rustle)
-                } label: {
-                    SettingLabel(title: "Hinge voice", subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
-                }
-                .pickerStyle(.menu)
-
-                LabeledContent {
-                    HStack(spacing: 10) {
-                        Slider(value: toy.simulateBinding, in: 0...160) { editing in
-                            if editing { toy.beginSimulate() } else { toy.endSimulate() }
-                        }
-                        .frame(width: 180)
-                        // Read only while a simulation plays: the lid's own
-                        // readings never redraw the card.
-                        ValueText(text: toy.simulating ? degrees(toy.cardAngle ?? 0) : "—")
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingGroup("Preview") { hero }
+            SettingGroup("Folding") { foldingRows }
+                .disabled(toy.settings.provider != .jrbar)
+            SettingsFeatureMoreOptions(id: toy.id, subtitle: "Appearance, timing, sound, simulation and renderer choices.") {
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+                    SettingGroup("Appearance") { appearanceRows }
+                    SettingGroup("Timing") { timingRows }
+                    SettingGroup("Sound and simulation") {
+                        soundRows
+                        simulationRow
                     }
-                } label: {
-                    SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
-                }
-
-                Divider().padding(.vertical, 6)
-
-            }
-            .disabled(toy.settings.provider != .jrbar)
-
-            Picker(selection: toy.providerBinding) {
-                Text("JR-Bar").tag(FoldProvider.jrbar)
-                ExternalProviderOption(name: "Bendy", value: FoldProvider.bendy, installed: toy.bendyURL != nil)
-                ExternalProviderOption(name: "Lid Plane", value: FoldProvider.lidPlane, installed: toy.lidPlaneURL != nil)
-            } label: {
-                SettingLabel(title: "Render with", subtitle: "Let Bendy or Lid Plane draw the fold instead.")
-            }
-            .pickerStyle(.menu)
-
-            providerNote
-
-            Toggle(isOn: toy.bind(\.wallpaperFallback)) {
-                SettingLabel(title: "Wallpaper without Screen Recording",
-                             subtitle: "With no permission, the wallpaper alone folds — same motion, just no windows.")
-            }
-            .disabled(toy.settings.provider != .jrbar)
-
-            if toy.isOn && !FoldCapturePermission.granted {
-                HStack(spacing: 8) {
-                    Button("Allow Screen Recording") { toy.requestScreenRecording() }
-                    Button("Open Settings") { toy.openScreenRecordingSettings() }
-                }
-                .padding(.top, 4)
+                }.disabled(toy.settings.provider != .jrbar)
+                SettingGroup("Renderer") { rendererRows }
             }
         }
     }
 
+    @ViewBuilder
+    private var foldingRows: some View {
+        Picker(selection: toy.bind(\.look)) {
+            Text("Duo").tag(FoldLook.duo)
+            Text("Room").tag(FoldLook.room)
+        } label: {
+            SettingLabel(title: "Look", subtitle: lookSubtitle)
+        }
+        .pickerStyle(.segmented)
+
+        Picker(selection: toy.bind(\.anchor)) {
+            Text("Set angle").tag(FoldAnchor.angle)
+            Text("Resting angle").tag(FoldAnchor.movement)
+        } label: {
+            SettingLabel(title: "Fold from", subtitle: "A fixed angle, or wherever the lid was parked when it started to move.")
+        }
+        .pickerStyle(.segmented)
+
+        sliderRow(
+            SettingLabel(title: "Starts folding at",
+                subtitle: startSubtitle),
+            value: toy.bind(\.activationAngle), range: FoldSettings.activationAngleRange,
+            readout: "\(Int(toy.settings.activationAngle.rounded()))°"
+        )
+        .disabled(toy.settings.anchor == .movement)
+    }
+
+    @ViewBuilder
+    private var timingRows: some View {
+        sliderRow(
+            SettingLabel(title: "Release when parked",
+                subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
+            value: toy.bind(\.dwellTimeout), range: FoldSettings.dwellTimeoutRange, step: 1,
+            readout: toy.settings.dwellTimeout == 0
+                ? (toy.settings.anchor == .movement ? "Auto" : "Off")
+                : "\(Int(toy.settings.dwellTimeout)) s")
+
+        sliderRow(
+            SettingLabel(title: "Jitter",
+                subtitle: "Ignore angle wobbles smaller than this."),
+            value: toy.bind(\.jitterTolerance), range: FoldSettings.jitterToleranceRange, step: 0.5,
+            readout: degrees(toy.settings.jitterTolerance))
+    }
+
+    @ViewBuilder
+    private var appearanceRows: some View {
+        sliderRow(
+            SettingLabel(title: "Perspective", subtitle: perspectiveSubtitle),
+            value: toy.bind(\.perspective), range: 0...1, readout: percent(toy.settings.perspective))
+        sliderRow(
+            SettingLabel(title: "Shade", subtitle: shadeSubtitle),
+            value: toy.bind(\.shade), range: 0...1, readout: percent(toy.settings.shade))
+        sliderRow(
+            SettingLabel(title: "Blur", subtitle: blurSubtitle),
+            value: toy.bind(\.blur), range: 0...1, readout: percent(toy.settings.blur))
+        if duo {
+            fadeLengthRow(owned: true)
+            if searchedRow == "Frost" { frostRow(owned: false) }
+        } else {
+            frostRow(owned: true)
+            if searchedRow == "Goes dark over" { fadeLengthRow(owned: false) }
+        }
+
+        sliderRow(
+            SettingLabel(title: "Hold picture in place",
+                subtitle:
+                    "How still the desktop stays while the lid tilts over it: 100% keeps it where you saw it, 0% glues it to the glass."),
+            value: toy.bind(\.holdStrength), range: 0...1,
+            readout: percent(toy.settings.holdStrength))
+    }
+
+    @ViewBuilder
+    private var soundRows: some View {
+        Toggle(isOn: toy.bind(\.restoreSound)) {
+            SettingLabel(title: "Click on return", subtitle: "A quiet Tink when the fold unwinds all the way.")
+        }
+
+        Picker(selection: toy.bind(\.hingeVoice)) {
+            Text("Off").tag(HingeVoice.off)
+            Text("Creak").tag(HingeVoice.creak)
+            Text("Rustle").tag(HingeVoice.rustle)
+        } label: {
+            SettingLabel(title: "Hinge voice",
+                subtitle: "The lid's own speed plays it: a slow close creaks, a quick one stays quiet. Silent while JR-Bar is quiet.")
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var simulationRow: some View {
+        LabeledContent {
+            HStack(spacing: 10) {
+                Slider(value: toy.simulateBinding, in: 0...160) { editing in
+                    if editing { toy.beginSimulate() } else { toy.endSimulate() }
+                }
+                .frame(width: 180)
+                // Read only while a simulation plays: the lid's own
+                // readings never redraw the card.
+                ValueText(text: toy.simulating ? degrees(toy.cardAngle ?? 0) : "—")
+            }
+        } label: {
+            SettingLabel(title: "Simulate a fold", subtitle: "Pretends the lid is moving while you drag.")
+        }
+    }
+
+    @ViewBuilder
+    private var rendererRows: some View {
+        Picker(selection: toy.providerBinding) {
+            Text("JR-Bar").tag(FoldProvider.jrbar)
+            ExternalProviderOption(name: "Bendy", value: FoldProvider.bendy, installed: toy.bendyURL != nil)
+            ExternalProviderOption(name: "Lid Plane", value: FoldProvider.lidPlane, installed: toy.lidPlaneURL != nil)
+        } label: {
+            SettingLabel(title: "Render with", subtitle: "Let Bendy or Lid Plane draw the fold instead.")
+        }
+        .pickerStyle(.menu)
+
+        providerNote
+
+        Toggle(isOn: toy.bind(\.wallpaperFallback)) {
+            SettingLabel(title: "Wallpaper without Screen Recording",
+                subtitle: "Fold the wallpaper when Screen Recording is off. Windows stay unchanged.")
+        }
+        .disabled(toy.settings.provider != .jrbar)
+
+        if toy.isOn && !FoldCapturePermission.granted {
+            HStack(spacing: 8) {
+                Button("Allow Screen Recording") { toy.requestScreenRecording() }
+                Button("Open Settings") { toy.openScreenRecordingSettings() }
+            }
+            .padding(.top, 4)
+        }
+    }
     /// The Duo's "Goes dark over"; drawn off in the Room only for a
     /// search that landed on it.
     private func fadeLengthRow(owned: Bool) -> some View {
-        let subtitle = owned
+        let subtitle =
+            owned
             ? "How much of the close the picture takes to go soft and dark. 55% is the iPhone Duo's own: done by half-closed."
             : "Only the Duo look goes dark over the close. Set Look to Duo to use it."
-        return sliderRow(SettingLabel(title: "Goes dark over", subtitle: subtitle),
-                         value: toy.bind(\.fadeLength), range: FoldSettings.fadeLengthRange,
-                         readout: percent(toy.settings.fadeLength), live: owned)
+        return sliderRow(
+            SettingLabel(title: "Goes dark over", subtitle: subtitle),
+            value: toy.bind(\.fadeLength), range: FoldSettings.fadeLengthRange,
+            readout: percent(toy.settings.fadeLength), live: owned)
     }
 
     /// The Room's Frost; drawn off in the Duo only for a search that
     /// landed on it.
     private func frostRow(owned: Bool) -> some View {
-        let subtitle = owned
-            ? "How milky the cover is — 0 is a black room, higher reads as frosted plastic."
+        let subtitle =
+            owned
+            ? "How milky the cover is. 0 is a black room, higher reads as frosted plastic."
             : "Only the Room look has a cover to frost. Set Look to Room to use it."
-        return sliderRow(SettingLabel(title: "Frost", subtitle: subtitle),
-                         value: toy.bind(\.frost), range: 0...1,
-                         readout: percent(toy.settings.frost), live: owned)
+        return sliderRow(
+            SettingLabel(title: "Frost", subtitle: subtitle),
+            value: toy.bind(\.frost), range: 0...1,
+            readout: percent(toy.settings.frost), live: owned)
     }
 
     private var lookSubtitle: String {
-        "Duo holds your desktop still while the glass folds through it, going soft and dark "
-            + "away from the hinge like the iPhone Duo. Room folds it into a lit room of window cards."
+        "Duo folds the desktop around the hinge. Room tilts it into a room of windows."
     }
 
     private var startSubtitle: String {
-        duo ? "The lid angle the picture holds at. Set it near where your lid rests."
+        duo
+            ? "The lid angle the picture holds at. Set it near where your lid rests."
             : "The lid angle where the tilt begins."
     }
 
     private var perspectiveSubtitle: String {
-        duo ? "Where your eyes are: lower sits further back and keeps the fold flatter, higher leans in."
+        duo
+            ? "Where your eyes are: lower sits further back and keeps the fold flatter, higher leans in."
             : "How much the far edge tapers, like a real tilted plane."
     }
 
     private var shadeSubtitle: String {
-        duo ? "How dark the picture goes away from the hinge. The hinge side always stays bright."
+        duo
+            ? "How dark the picture goes away from the hinge. The hinge side always stays bright."
             : "How dark the room goes toward the hinge and the far wall."
     }
 
     private var blurSubtitle: String {
-        duo ? "How soft the picture goes away from the hinge; the hinge stays sharp. Never under Reduce Motion."
-            : "How much the room defocuses — deeper layers and the far edge soften first. Never under Reduce Motion."
+        duo
+            ? "How soft the picture goes away from the hinge; the hinge stays sharp. Never under Reduce Motion."
+            : "Soften deeper layers and the far edge. Held still under Reduce Motion."
     }
 
     /// The card's head: the lid drawn large on its own tile, live, beside
@@ -2231,19 +2267,24 @@ private struct FoldControlsView: View {
     /// not the Toys page; the state line changes with the fold's state.
     private var hero: some View {
         HStack(alignment: .center, spacing: 16) {
-            FoldLiveLid(toy: toy,
-                        activation: toy.settings.anchor == .angle ? toy.settings.activationAngle : nil)
-                .frame(width: 118, height: 70)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.primary.opacity(0.045)))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            FoldLiveLid(
+                toy: toy,
+                activation: toy.settings.anchor == .angle ? toy.settings.activationAngle : nil
+            )
+            .frame(width: 118, height: 70)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.045))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
             VStack(alignment: .leading, spacing: 6) {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
                 FoldLiveAngle(toy: toy)
-                Text(toy.cardDetail)
+                Text(toy.isOn ? toy.cardDetail.replacingOccurrences(of: " \u{2014} ", with: ". ") : "Turn Fold on to try the effect.")
                     .jrbarType(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2261,9 +2302,11 @@ private struct FoldControlsView: View {
     /// One slider row: the label, the slider and its readout. A row
     /// that is not `live` greys its slider and keeps its words readable,
     /// since they say why.
-    private func sliderRow(_ label: SettingLabel, value: Binding<Double>,
-                           range: ClosedRange<Double>, step: Double? = nil,
-                           readout: String, live: Bool = true) -> some View {
+    private func sliderRow(
+        _ label: SettingLabel, value: Binding<Double>,
+        range: ClosedRange<Double>, step: Double? = nil,
+        readout: String, live: Bool = true
+    ) -> some View {
         LabeledContent {
             HStack(spacing: 10) {
                 if let step {
@@ -2289,11 +2332,13 @@ private struct FoldControlsView: View {
         case .jrbar:
             EmptyView()
         case .bendy:
-            externalNote(installed: toy.bendyURL != nil, name: "Bendy",
-                         link: URL(string: "https://trybendy.app/")!)
+            externalNote(
+                installed: toy.bendyURL != nil, name: "Bendy",
+                link: URL(string: "https://trybendy.app/")!)
         case .lidPlane:
-            externalNote(installed: toy.lidPlaneURL != nil, name: "Lid Plane",
-                         link: URL(string: "https://github.com/jh3y/lid-plane")!)
+            externalNote(
+                installed: toy.lidPlaneURL != nil, name: "Lid Plane",
+                link: URL(string: "https://github.com/jh3y/lid-plane")!)
         }
     }
 

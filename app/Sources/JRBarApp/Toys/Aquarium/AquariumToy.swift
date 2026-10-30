@@ -299,7 +299,7 @@ final class AquariumToy: Toy {
     let id = "aquarium"
     let name = "Aquarium"
     let switchLabel = "Aquarium"
-    let blurb = "An aquarium that represents agent sessions as fish."
+    let blurb = "Watch your agent sessions swim."
     let symbol = "fish.fill"
 
     var isOn: Bool {
@@ -430,7 +430,7 @@ final class AquariumToy: Toy {
         case .alwaysNight:
             return "The night tank, moonlight and all, whatever the hour."
         case .cycle, .realTime:
-            return "The tank's night wash — the real clock, the sun, your Mac's appearance, or a quick loop."
+            return "Choose when the tank changes between day and night."
         }
     }
 

@@ -126,6 +126,7 @@ public extension StatusBanner where Action == EmptyView {
 /// One title and control. Give the control its own accessible label.
 public struct SettingsRow<Control: View>: View {
     @Environment(\.jrbarInk) private var neutralInk
+    @Environment(\.adaptiveSettingsRows) private var adaptive
     public let title: String
     public let subtitle: String?
     private let control: Control
@@ -137,7 +138,10 @@ public struct SettingsRow<Control: View>: View {
     }
 
     public var body: some View {
-        HStack(spacing: JRBarTokens.Space.md) {
+        let layout = adaptive
+            ? AnyLayout(SettingsControlLayout())
+            : AnyLayout(HStackLayout(spacing: JRBarTokens.Space.md))
+        layout {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).jrbarType(.body)
                 if let subtitle { Text(subtitle).jrbarType(.caption).foregroundStyle(neutralInk.secondary) }

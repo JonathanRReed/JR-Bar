@@ -657,6 +657,10 @@ final class SettingsStore {
             // The notch reads as a utility and sits on that page.
             if let notch = toys.notch { cards.append((.notch, notch)) }
             cards += toys.toys.map { (.toys, $0) }
+            entries += SeasonalHoliday.allCases.map { holiday in
+                SettingsSearchEntry(.toys, "Seasonal touches", holiday.displayName, subtitle: holiday.when,
+                                    keywords: ["holiday", "seasonal"])
+            }
         }
         for (chapter, toy) in cards {
             entries.append(SettingsSearchEntry(chapter, toy.name, toy.name, subtitle: toy.blurb, card: toy.id))
@@ -781,6 +785,12 @@ final class SettingsStore {
     /// every device's fold, a group behind one fold is behind that one.
     func folds(holding entry: SettingsSearchEntry) -> [String] {
         var folds = groupFolds(holding: entry)
+        if SettingsFeatureOptions.contains(entry) {
+            folds.append(SettingsFeatureOptions.fold(entry.card ?? "seasonal"))
+        }
+        if entry.card == "agents", entry.title == "Alert rules", let utilities {
+            folds += utilities.agents.alertProviders.map(SettingsFeatureOptions.agentProvider)
+        }
         if SettingsFold.isAdvanced(chapter: entry.chapter, group: entry.group) {
             folds.append(SettingsFold.advanced(entry.page))
         }
@@ -2261,7 +2271,7 @@ enum SettingsFold {
 
     /// Rows listed in search that live inside one of those disclosures.
     static let nested: [(chapter: SettingsStore.Chapter, group: String, titles: Set<String>, fold: String)] = [
-        (.devices, "Screen Bar", ["Gap width", "Wing length"], screenBarAdvanced),
+        (.devices, "Screen Bar", ["Gap width", "Wing length", "Notch wings", "Notch shape", "Corner radius"], screenBarAdvanced),
         (.devices, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
     ]
 }

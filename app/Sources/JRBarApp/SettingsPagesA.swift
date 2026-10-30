@@ -508,14 +508,26 @@ struct ScreenBarSettingsCard: View {
     let device: SettingsStore.DeviceEntry?
 
     var body: some View {
-        SettingGroup(anchor: "Screen Bar") {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            Provided(store, "virtual_status_device_enabled") {
+                SettingsFeatureHeading(
+                    title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
+                    purpose: "See agent status in a light band below the notch.",
+                    status: store.screenBarStatus, tint: Color(nsColor: .systemTeal)
+                ) {
+                    Toggle("Show Screen Bar", isOn: enabled).labelsHidden().toggleStyle(.switch)
+                }
+            }
+            ScreenBarSettingsPreview(store: store)
             ScreenBarCard(store: store, device: device)
-        } header: {
-            SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
-                                tint: Color(nsColor: .systemTeal),
-                                pill: store.screenBarStatus,
-                                pillTint: Tone.neutral.color)
         }
+        .environment(\.adaptiveSettingsRows, true)
+        .id(SettingsStore.groupAnchor("Screen Bar"))
+    }
+
+    private var enabled: Binding<Bool> {
+        store.noteControlTitle("Show Screen Bar", for: "virtual_status_device_enabled")
+        return store.bool("virtual_status_device_enabled", default: true)
     }
 }
 
@@ -886,55 +898,83 @@ struct ScreenBarCard: View {
     @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
-        if store.isLive { ScreenBarRightNowRow(store: store) }
+        if store.isLive {
+            SettingGroup("Current output") { ScreenBarRightNowRow(store: store) }
+        }
         settingsRows
     }
 
     @ViewBuilder
     private var settingsRows: some View {
-        SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
-        if let device {
-            DeviceReceiptRow(store: store, deviceID: device.id, deviceName: "Screen Bar")
-            DeviceHardwareSettings(store: store, device: device)
-        } else {
-            SettingRow("Device settings", subtitle: "Screen Bar display, brightness and calibration settings have not been reported.") {
-                EmptyView()
-            }
-        }
-        SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
-        Provided(store, "screen_bar_show_in_full_screen") {
-            SettingsRow("In full screen", subtitle: ScreenBarFullScreen(
-                shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
-                hideOverVideo: hideOverVideo).detail) {
-                Picker("In full screen", selection: Binding(
-                    get: { ScreenBarFullScreen(shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
-                                               hideOverVideo: hideOverVideo) },
-                    set: { mode in
-                        store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
-                        if mode != .hidden { hideOverVideo = mode == .notOverVideo }
-                    }
-                )) {
-                    ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
+        SettingGroup("Light") {
+            if let device {
+                DeviceReceiptRow(store: store, deviceID: device.id, deviceName: "Screen Bar")
+                DeviceHardwareSettings(store: store, device: device)
+            } else {
+                SettingRow("Device settings", subtitle: "Screen Bar display, brightness and calibration settings have not been reported.") {
+                    EmptyView()
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
             }
         }
-        ScreenBarHiddenAppsRow(store: store)
-        SettingToggle(store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.", path: "screen_bar_notch_wings", default: true)
-        SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
-                      path: "screen_bar_notch_profile",
-                      options: NotchProfile.allCases.map { ($0.rawValue, $0.title) },
-                      default: NotchProfile.auto.rawValue)
-        if NotchProfile(setting: store.values.string("screen_bar_notch_profile")) == .custom {
-            SettingSlider(store, "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8.",
-                          path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
-                          default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
+        SettingGroup("Visibility") {
+            SettingToggle(
+                store, "Follow Alcove", subtitle: "Match Alcove's capsule width so a live activity never outgrows the band.",
+                path: "screen_bar_follow_alcove", default: true)
+            Provided(store, "screen_bar_show_in_full_screen") {
+                SettingsRow(
+                    "In full screen",
+                    subtitle: ScreenBarFullScreen(
+                        shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
+                        hideOverVideo: hideOverVideo
+                    ).detail
+                ) {
+                    Picker(
+                        "In full screen",
+                        selection: Binding(
+                            get: {
+                                ScreenBarFullScreen(
+                                    shows: store.values.bool("screen_bar_show_in_full_screen") ?? true,
+                                    hideOverVideo: hideOverVideo)
+                            },
+                            set: { mode in
+                                store.set("screen_bar_show_in_full_screen", .bool(mode != .hidden))
+                                if mode != .hidden { hideOverVideo = mode == .notOverVideo }
+                            }
+                        )
+                    ) {
+                        ForEach(ScreenBarFullScreen.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+            }
+            ScreenBarHiddenAppsRow(store: store)
         }
-        DisclosureRow("Advanced", subtitle: nil, fold: SettingsFold.screenBarAdvanced) {
-            NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
-            NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
+        SettingsGroup {
+            DisclosureRow("More options", subtitle: "Notch wings, shape and exact dimensions.", fold: SettingsFold.screenBarAdvanced) {
+                SettingToggle(
+                    store, "Notch wings", subtitle: "Status slots beside the notch: sessions on the left, the headline meter on the right.",
+                    path: "screen_bar_notch_wings", default: true)
+                SettingPicker(
+                    store, "Notch shape", subtitle: notchShapeSubtitle,
+                    path: "screen_bar_notch_profile",
+                    options: NotchProfile.allCases.map { ($0.rawValue, $0.title) },
+                    default: NotchProfile.auto.rawValue)
+                if NotchProfile(setting: store.values.string("screen_bar_notch_profile")) == .custom {
+                    SettingSlider(
+                        store, "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8.",
+                        path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
+                        default: Double(NotchProfile.standardCornerRadius)
+                    ) { SettingsStore.points($0) }
+                }
+                NullableSlider(
+                    store: store, title: "Gap width", subtitle: "The opening reserved for the notch, in points.",
+                    path: "screen_bar_gap_width", range: 120...400, fallback: 180)
+                NullableSlider(
+                    store: store, title: "Wing length", subtitle: "How far the light extends beside the notch, in points.",
+                    path: "screen_bar_wing_length", range: 0...80, fallback: 14)
+            }
         }
     }
 
@@ -993,7 +1033,7 @@ enum ScreenBarCameraHold {
 
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
-            ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber."
+            ? "While a camera is in use, the band stops moving. Asks stay a steady amber."
             : "Needs a camera reading: turn on Mic & camera indicators under Notch & Shelf."
     }
 }
@@ -1026,7 +1066,7 @@ enum ScreenBarFullScreen: CaseIterable, Hashable {
     }
 }
 
-/// A number that may be JSON null (automatic): a checkbox and, when manual, a slider.
+/// Automatic sizing, or an exact value in points.
 struct NullableSlider: View {
     @Bindable var store: SettingsStore
     let title: String
@@ -1038,17 +1078,22 @@ struct NullableSlider: View {
     var body: some View {
         Provided(store, path) {
             SettingsRow(title, subtitle: subtitle) {
-                HStack(spacing: 10) {
-                    Toggle("Automatic", isOn: Binding(
+                VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+                    Picker("\(title) sizing", selection: Binding(
                         get: { store.isNull(path) },
                         set: { auto in store.set(path, auto ? .null : .number(fallback)) }
-                    ))
-                    .toggleStyle(.checkbox)
-                    Slider(value: Binding(get: { store.values.double(SettingsPath(path)) ?? fallback },
-                                          set: { store.set(path, .number($0.rounded()), throttled: true) }), in: range)
-                        .frame(width: 120)
-                        .disabled(store.isNull(path))
-                    ValueText(text: store.isNull(path) ? "auto" : SettingsStore.points(store.values.double(SettingsPath(path)) ?? fallback), width: 48)
+                    )) {
+                        Text("Automatic").tag(true)
+                        Text("Custom").tag(false)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 180)
+                    if !store.isNull(path) {
+                        HStack(spacing: JRBarTokens.Space.sm) {
+                            Slider(value: Binding(get: { store.values.double(SettingsPath(path)) ?? fallback },
+                                set: { store.set(path, .number($0.rounded()), throttled: true) }), in: range)
+                                .frame(width: 120).accessibilityLabel(title)
+                            ValueText(text: SettingsStore.points(store.values.double(SettingsPath(path)) ?? fallback), width: 48)
+                        }
+                    }
                 }
             }
         }

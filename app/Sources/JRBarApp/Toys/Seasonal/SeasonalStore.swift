@@ -197,7 +197,7 @@ final class SeasonalStore {
             }
             return "Dates come from your holiday calendars, and JR-Bar's own rules for any they don't list."
         case .notAsked, .refused:
-            return "Calendar access is off, so JR-Bar dates the holidays itself. Turn on Calendar in Notch settings to use your calendars."
+            return "Calendar access is off, so JR-Bar dates the holidays itself. Turn on Calendar in Notch & Shelf to use your calendars."
         }
     }
 }

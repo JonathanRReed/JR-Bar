@@ -1,4 +1,5 @@
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The Agent Overview utility's card on the Utilities page —
@@ -21,34 +22,33 @@ struct AgentUtilityControls: View {
     let utility: AgentUtility
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !utility.snapshot.live {
-                VStack(alignment: .leading, spacing: 6) {
-                    SettingLabel(title: "Monitor", subtitle: utility.connectionDescription())
-                    if utility.onOpenMonitorDetails != nil {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            if !utility.snapshot.live && utility.onOpenMonitorDetails != nil {
+                SettingGroup("Connection") {
+                    SettingRow("Monitor details", subtitle: "Check why agent activity is unavailable.") {
                         Button("Open monitor details") { utility.openMonitorDetails() }
-                            .controlSize(.small)
-                            .fixedSize()
                     }
                 }
-                .padding(.bottom, 8)
             }
 
-            AgentAlertRulesTable(utility: utility)
+            SettingGroup("Provider alerts") { AgentAlertRulesTable(utility: utility) }
 
-            CardSectionHeader("While you watch")
-            Toggle(isOn: utility.bind(\.quietWhenPaneFrontmost)) {
-                SettingLabel(title: "Quiet while you watch",
-                             subtitle: "Mutes ask sounds and escalation while the session's terminal pane is in front. Banners still appear.")
+            SettingGroup("While you watch") {
+                Toggle(isOn: utility.bind(\.quietWhenPaneFrontmost)) {
+                    SettingLabel(title: "Quiet while you watch",
+                        subtitle: "Mute ask sounds and escalation while the session's terminal pane is in front. Banners still appear.")
+                }
             }
 
             if utility.onOpenOverview != nil {
-                LabeledContent {
-                    Button("Open the Overview") { utility.openFullOverview() }
-                        .controlSize(.small)
-                } label: {
-                    SettingLabel(title: "Sessions",
-                                 subtitle: "Session status and controls in the panel and Overview.")
+                SettingGroup("Sessions") {
+                    LabeledContent {
+                        Button("Open the Overview") { utility.openFullOverview() }
+                            .controlSize(.small)
+                    } label: {
+                        SettingLabel(title: "Sessions",
+                            subtitle: "Session status and controls in the panel and Overview.")
+                    }
                 }
             }
         }

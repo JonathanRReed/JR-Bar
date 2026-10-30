@@ -923,14 +923,22 @@ struct PowerGroup: View {
 
     var body: some View {
         SettingGroup("While agents run") {
-            SettingToggle(store, "Keep the Mac awake for agents", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled", default: true)
+            SettingToggle(
+                store, "Keep the Mac awake for agents", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled",
+                default: true)
         }
         SettingGroup("Lid & battery") {
-            SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
-                ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
-            ], default: "never")
-            SettingNumberField(store, "Closed-lid grace", path: "closed_lid_grace_minutes", in: 0...60, default: 5, unit: "min")
-            SettingToggle(store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.", path: "keep_awake_on_battery", default: true)
+            SettingPicker(
+                store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy",
+                options: [
+                    ("never", "Sleep"), ("agents", "While agents run"), ("always", "Stay awake"),
+                ], default: "never", segmented: true)
+            SettingStepper(
+                store, "Closed-lid grace", subtitle: "Keep the closed-lid hold for this long after agents finish.",
+                path: "closed_lid_grace_minutes", in: 0...60, default: 5, unit: "min")
+            SettingToggle(
+                store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.",
+                path: "keep_awake_on_battery", default: true)
         }
     }
 

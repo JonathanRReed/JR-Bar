@@ -12,7 +12,7 @@ struct ConfettiControlsView: View {
     let toy: ConfettiToy
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
             ConfettiLookSection(toy: toy)
             ConfettiWhenSection(toy: toy)
             ConfettiMannersSection(toy: toy)
@@ -25,76 +25,77 @@ private struct ConfettiLookSection: View {
     let toy: ConfettiToy
 
     var body: some View {
-        CardSectionHeader("Look")
-        ConfettiPreviewTile(toy: toy)
-            .equatable()
-            .frame(height: 132)
-            .padding(.vertical, 4)
+        SettingGroup("Preview") {
+            ConfettiPreviewTile(toy: toy)
+                .equatable()
+                .frame(height: 132)
+                .padding(.vertical, 4)
 
-        LabeledContent {
-            Button("Test burst") { [weak toy] in
-                toy?.testBurst()
+            LabeledContent {
+                Button("Test burst") { [weak toy] in
+                    toy?.testBurst()
+                }
+            } label: {
+                SettingLabel(title: "Try it",
+                    subtitle: "Play a burst now with these settings and the focused session's color.")
             }
-        } label: {
-            SettingLabel(title: "Try it",
-                         subtitle: "Fires a burst now, with the settings below, in the focused session's colour.")
         }
+        SettingGroup("Appearance") {
+            Picker(selection: toy.bind(\.origin)) {
+                Text("Notch").tag(ConfettiOrigin.notch)
+                Text("Icon").tag(ConfettiOrigin.icon)
+                Text("Corners").tag(ConfettiOrigin.corners)
+                Text("Rain").tag(ConfettiOrigin.rain)
+            } label: {
+                SettingLabel(title: "Origin", subtitle: originNote)
+            }
+            .pickerStyle(.segmented)
 
-        Picker(selection: toy.bind(\.origin)) {
-            Text("Notch").tag(ConfettiOrigin.notch)
-            Text("Icon").tag(ConfettiOrigin.icon)
-            Text("Corners").tag(ConfettiOrigin.corners)
-            Text("Rain").tag(ConfettiOrigin.rain)
-        } label: {
-            SettingLabel(title: "Origin", subtitle: originNote)
+            Picker(selection: toy.bind(\.intensity)) {
+                Text("Subtle").tag(ConfettiIntensity.subtle)
+                Text("Standard").tag(ConfettiIntensity.standard)
+                Text("Big").tag(ConfettiIntensity.big)
+            } label: {
+                SettingLabel(title: "Size", subtitle: "About 90, 180 or 300 pieces on a laptop screen; Big fires twice.")
+            }
+            .pickerStyle(.segmented)
+
+            ConfettiPalettePicker(toy: toy)
+
+            Picker(selection: toy.bind(\.shapes)) {
+                Text("Mixed").tag(ConfettiShapes.mixed)
+                Text("Streamers").tag(ConfettiShapes.streamers)
+                Text("Flecks").tag(ConfettiShapes.flecks)
+                Text("Glyphs").tag(ConfettiShapes.glyphs)
+                Text("Stars").tag(ConfettiShapes.stars)
+            } label: {
+                SettingLabel(title: "Shapes", subtitle: "Choose paper, ribbons, stars or provider symbols.")
+            }
+            .pickerStyle(.menu)
+
+            Picker(selection: toy.bind(\.landing)) {
+                Text("Rest").tag(ConfettiLanding.rest)
+                Text("Fall").tag(ConfettiLanding.fall)
+                Text("Fade").tag(ConfettiLanding.fade)
+            } label: {
+                SettingLabel(title: "Landing", subtitle: landingNote)
+            }
+            .pickerStyle(.segmented)
+
+            Toggle(isOn: toy.bind(\.seasonal)) {
+                SettingLabel(title: "Seasonal",
+                    subtitle: "Use holiday colors and shapes on the matching dates.")
+            }
         }
-        .pickerStyle(.segmented)
-
-        Picker(selection: toy.bind(\.intensity)) {
-            Text("Subtle").tag(ConfettiIntensity.subtle)
-            Text("Standard").tag(ConfettiIntensity.standard)
-            Text("Big").tag(ConfettiIntensity.big)
-        } label: {
-            SettingLabel(title: "Size", subtitle: "About 90, 180 or 300 pieces on a laptop screen; Big fires twice.")
-        }
-        .pickerStyle(.segmented)
-
-        ConfettiPalettePicker(toy: toy)
-
-        Picker(selection: toy.bind(\.shapes)) {
-            Text("Mixed").tag(ConfettiShapes.mixed)
-            Text("Streamers").tag(ConfettiShapes.streamers)
-            Text("Flecks").tag(ConfettiShapes.flecks)
-            Text("Glyphs").tag(ConfettiShapes.glyphs)
-            Text("Stars").tag(ConfettiShapes.stars)
-        } label: {
-            SettingLabel(title: "Shapes", subtitle: "The full mix — paper, ribbons and the provider's own mark — or one note played loud.")
-        }
-        .pickerStyle(.menu)
-
-        Picker(selection: toy.bind(\.landing)) {
-            Text("Rest").tag(ConfettiLanding.rest)
-            Text("Fall").tag(ConfettiLanding.fall)
-            Text("Fade").tag(ConfettiLanding.fade)
-        } label: {
-            SettingLabel(title: "Landing", subtitle: landingNote)
-        }
-        .pickerStyle(.segmented)
-
-        Toggle(isOn: toy.bind(\.seasonal)) {
-            SettingLabel(title: "Seasonal",
-                         subtitle: "On New Year, Valentine's, Lunar New Year, Easter, Halloween and Christmas, that day's colours and shapes. Read off this Mac's calendar.")
-        }
-
-        ConfettiAdjustDisclosure(toy: toy)
+        SettingsGroup { ConfettiAdjustDisclosure(toy: toy) }
     }
 
     private var originNote: String {
         switch toy.settings.origin {
-        case .notch: return "Out of the notch's lower lip — the menu bar's middle on a screen without one."
+        case .notch: return "From below the notch, or the top center on a screen without one."
         case .icon: return "Out from under JR-Bar's menu-bar icon; other screens use the notch."
         case .corners: return "Two cannons at the bottom corners, crossing over the middle."
-        case .rain: return "A gentle curtain from the top edge — the calmest."
+        case .rain: return "A gentle shower from the top edge."
         }
     }
 
@@ -133,7 +134,7 @@ private struct ConfettiPalettePicker: View {
         case .toys: return "The Toys page's pink, whoever it's for."
         case .everyone: return "Every provider working right now, each in its own colour and glyph."
         case .party: return "Bright and many-coloured."
-        case .gold: return "Gold, champagne and white — a milestone look."
+        case .gold: return "Gold, champagne and white for milestones."
         case .pastel: return "Soft pinks, mints and blues."
         case .mono: return "The provider's colour alone, deep to pale."
         }
@@ -173,7 +174,7 @@ struct ConfettiAdjustDisclosure: View {
         DisclosureGroup(isExpanded: $expanded) {
             ConfettiAdjustRows(toy: toy)
         } label: {
-            SettingLabel(title: "Adjust", subtitle: "How many pieces, and how long they hang in the air.")
+            SettingsMoreOptionsLabel(subtitle: "How many pieces, and how long they hang in the air.")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: toy.store?.settings.revealRequest, initial: true) { _, request in
@@ -204,7 +205,7 @@ private struct ConfettiAdjustRows: View {
                 ValueText(text: String(format: "%.1f×", toy.settings.duration))
             }
         } label: {
-            SettingLabel(title: "Hang time", subtitle: "How slowly pieces fall and how long they rest. The pop keeps its snap.")
+            SettingLabel(title: "Hang time", subtitle: "How slowly pieces fall and how long they rest.")
         }
     }
 }
@@ -214,43 +215,44 @@ private struct ConfettiWhenSection: View {
     let toy: ConfettiToy
 
     var body: some View {
-        CardSectionHeader("When")
+        SettingGroup("Celebrate") {
 
-        Toggle(isOn: toy.bind(\.triggers.quotaReset)) {
-            SettingLabel(title: "Quota resets", subtitle: "A connected provider's quota window refills.")
-        }
+            Toggle(isOn: toy.bind(\.triggers.quotaReset)) {
+                SettingLabel(title: "Quota resets", subtitle: "A connected provider's quota window refills.")
+            }
 
-        Toggle(isOn: toy.bind(\.triggers.sessionCompleted)) {
-            SettingLabel(title: "Session completed", subtitle: "An agent finishes a run.")
-        }
+            Toggle(isOn: toy.bind(\.triggers.sessionCompleted)) {
+                SettingLabel(title: "Session completed", subtitle: "An agent finishes a run.")
+            }
 
-        Toggle(isOn: toy.bind(\.triggers.allClear)) {
-            SettingLabel(title: "All caught up", subtitle: "The last open ask resolves — nothing left waiting on you.")
-        }
+            Toggle(isOn: toy.bind(\.triggers.allClear)) {
+                SettingLabel(title: "All caught up", subtitle: "The last open ask is resolved.")
+            }
 
-        Toggle(isOn: toy.bind(\.triggers.codexBankedReset)) {
-            SettingLabel(title: "Codex banked credits", subtitle: "The banked-credit balance grows.")
-        }
+            Toggle(isOn: toy.bind(\.triggers.codexBankedReset)) {
+                SettingLabel(title: "Codex banked credits", subtitle: "The banked-credit balance grows.")
+            }
 
-        Toggle(isOn: toy.bind(\.triggers.milestones)) {
-            SettingLabel(title: "Milestones", subtitle: "An Aquarium achievement or a new tank level — rare on purpose.")
-        }
+            Toggle(isOn: toy.bind(\.triggers.milestones)) {
+                SettingLabel(title: "Milestones", subtitle: "An Aquarium achievement or a new tank level.")
+            }
 
-        if !toy.settings.triggers.quotaReset, !providerChoices.isEmpty {
-            Text("Every reset from")
-                .jrbarType(.callout)
-                .foregroundStyle(.secondary)
-            ForEach(providerChoices, id: \.self) { id in
-                Toggle(isOn: providerBinding(id)) {
-                    SettingLabel(title: ProviderStyle.style(for: id).name,
-                                 subtitle: "Any window refill — the five-hour one included.")
+            if !toy.settings.triggers.quotaReset, !providerChoices.isEmpty {
+                Text("Every reset from")
+                    .jrbarType(.callout)
+                    .foregroundStyle(.secondary)
+                ForEach(providerChoices, id: \.self) { id in
+                    Toggle(isOn: providerBinding(id)) {
+                        SettingLabel(title: ProviderStyle.style(for: id).name,
+                            subtitle: "Any quota window refill, including the five-hour window.")
+                    }
                 }
             }
-        }
 
-        Toggle(isOn: toy.bind(\.momentStyles)) {
-            SettingLabel(title: "Moment styles",
-                         subtitle: "A milestone bursts gold and big from the corners; All caught up is a gentle rain.")
+            Toggle(isOn: toy.bind(\.momentStyles)) {
+                SettingLabel(title: "Moment styles",
+                    subtitle: "A milestone bursts gold and big from the corners; All caught up is a gentle rain.")
+            }
         }
     }
 
@@ -285,39 +287,40 @@ private struct ConfettiMannersSection: View {
     let toy: ConfettiToy
 
     var body: some View {
-        CardSectionHeader("Manners")
+        SettingGroup("Quiet and sound") {
 
-        Toggle(isOn: toy.hushBinding) {
-            SettingLabel(title: "Quiet the toys during Focus, quiet hours and calls",
-                         subtitle: "While JR-Bar is quiet, a Focus is on or a call has the mic or camera, bursts wait and screens a fullscreen app owns are skipped. The buddy skips its completion hop, the tank saves its reward cards for later and the hinge stays silent.")
-        }
+            Toggle(isOn: toy.hushBinding) {
+                SettingLabel(title: "Quiet the toys during Focus, quiet hours and calls",
+                    subtitle: "Hold celebrations during Focus, quiet hours and calls. Also quiets the buddy, tank and lid sounds.")
+            }
 
-        if toy.hushBinding.wrappedValue {
-            Picker(selection: toy.bind(\.whenHeld)) {
-                Text("Play it smaller after").tag(ConfettiHeldBurst.later)
-                Text("Let it go").tag(ConfettiHeldBurst.drop)
+            if toy.hushBinding.wrappedValue {
+                Picker(selection: toy.bind(\.whenHeld)) {
+                    Text("Play smaller later").tag(ConfettiHeldBurst.later)
+                    Text("Skip").tag(ConfettiHeldBurst.drop)
+                } label: {
+                    SettingLabel(title: "A held burst", subtitle: "What happens once the room clears. Anything held over half an hour is let go.")
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Toggle(isOn: toy.bind(\.sound)) {
+                SettingLabel(title: "Sound",
+                    subtitle:
+                        "A soft pop and rustle with the burst, at Settings › Alerts & Sounds' volume and on its device. Silent while JR-Bar is quiet."
+                )
+            }
+
+            LabeledContent {
+                Picker("Screens", selection: toy.bind(\.screens)) {
+                    Text("Every screen").tag(ConfettiScreens.all)
+                    Text("Main only").tag(ConfettiScreens.main)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
             } label: {
-                SettingLabel(title: "A held burst", subtitle: "What happens once the room clears. Anything held over half an hour is let go.")
+                SettingLabel(title: "Screens", subtitle: "Choose where bursts appear. Full-screen apps keep their screens while quiet-toys is on.")
             }
-            .pickerStyle(.menu)
-        }
-
-        Toggle(isOn: toy.bind(\.sound)) {
-            SettingLabel(title: "Sound",
-                         subtitle: "A soft pop and rustle with the burst, at Settings › Alerts & Sounds' volume and on its device. Silent while JR-Bar is quiet.")
-        }
-
-        HStack(alignment: .top) {
-            SettingLabel(title: "Screens",
-                         subtitle: "While the switch above is on, a screen a fullscreen app owns is skipped. Test burst uses this screen choice, even while quiet.")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Picker("Screens", selection: toy.bind(\.screens)) {
-                Text("Every screen").tag(ConfettiScreens.all)
-                Text("Main screen only").tag(ConfettiScreens.main)
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize(horizontal: true, vertical: false)
         }
     }
 }
@@ -448,4 +451,3 @@ private struct ConfettiPreviewDesk: View {
         }
     }
 }
-

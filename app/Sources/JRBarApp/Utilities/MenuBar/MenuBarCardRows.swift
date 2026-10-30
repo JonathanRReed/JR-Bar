@@ -1,6 +1,51 @@
 import AppKit
 import JRBarCore
 import SwiftUI
+import UniformTypeIdentifiers
+
+struct MenuBarRuleAppPicker: View {
+    @Binding var selection: String
+    @ViewState private var enteringIdentifier = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
+            Menu {
+                ForEach(RunningApps.shared.apps.filter { $0.policy == .regular && $0.bundleID != nil }, id: \.pid) { app in
+                    if let id = app.bundleID {
+                        Button(app.name ?? AppDisplayNames.shared.name(of: id)) { selection = id }
+                    }
+                }
+                Divider()
+                Button("Choose an app…") { chooseApp() }
+                Button("Enter an app identifier…") { enteringIdentifier.toggle() }
+            } label: {
+                Text(selection.isEmpty ? "Choose an app" : AppDisplayNames.shared.name(of: selection))
+            }
+            .fixedSize()
+            .help("Choose the app this rule watches.")
+            if enteringIdentifier {
+                TextField("App identifier", text: $selection)
+                    .textFieldStyle(.roundedBorder).frame(width: 180)
+                    .accessibilityLabel("Application identifier")
+                    .help("For an app that is not installed, enter its identifier.")
+            }
+        }
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Choose"
+        WindowPresenter.automatic.perform {
+            panel.begin { response in
+                guard response == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier else { return }
+                selection = id
+            }
+        }
+    }
+}
 
 /// "Item Bar opens at": under the icon's ‹, or under the pointer.
 struct MenuBarItemBarAnchorRow: View {
@@ -12,7 +57,7 @@ struct MenuBarItemBarAnchorRow: View {
                 Text("The icon").tag(MenuBarItemBarAnchor.icon)
                 Text("The pointer").tag(MenuBarItemBarAnchor.pointer)
             } label: { EmptyView() }
-                .labelsHidden()
+                .labelsHidden().pickerStyle(.segmented)
                 .fixedSize()
         } label: {
             SettingLabel(title: "Item Bar opens at",

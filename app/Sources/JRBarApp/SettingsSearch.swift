@@ -396,6 +396,8 @@ enum SettingsSearch {
               keywords: ["calibration", "day", "night", "travel", "focus", "profile"]),
         .init(.advanced, "Reset to defaults", "Reset to defaults", subtitle: "Puts one page's settings back."),
         // Seasonal touches, below the toys on the Utilities & Toys page.
+        .init(.shortcuts, "Quick toggles", "Control Center",
+              subtitle: "Choose the shelf's controls and their keyboard shortcuts.", keywords: ["chips", "strip", "toggles"]),
         .init(.toys, "Seasonal touches", "Seasonal touches",
               subtitle: "On a holiday the notch, the tank and the buddy dress for it.",
               keywords: ["holiday", "holidays", "halloween", "christmas", "hanukkah", "kwanzaa", "birthday",

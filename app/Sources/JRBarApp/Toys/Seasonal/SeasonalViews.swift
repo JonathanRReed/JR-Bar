@@ -208,30 +208,65 @@ struct SeasonalSettingsSection: View {
 
     private var settings: SeasonalSettings { toys.state.seasonal }
 
+    @ViewState private var previewHoliday = SeasonalHoliday.christmas
+
+    private var status: String {
+        guard settings.enabled else { return "Off" }
+        if toys.seasonal.calendarAccess == .granted && toys.seasonal.reading == nil { return "Checking dates" }
+        if let occasion = toys.seasonal.occasion { return "On · " + occasion.holiday.displayName }
+        return "On · No occasion today"
+    }
+
     var body: some View {
-        SettingGroup("Seasonal touches") {
-            Toggle(isOn: Binding(get: { settings.enabled },
-                                 set: { toys.state.seasonal.enabled = $0 })) {
-                SettingLabel(title: "Seasonal touches",
-                             subtitle: "On a holiday the notch, the tank and the buddy dress for it. Nothing runs and no calendar is read while this is off.")
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingsFeatureHeading(
+                title: "Seasonal touches", symbol: "sparkles",
+                purpose: "Dress the notch, tank and buddy for holidays.", status: status
+            ) {
+                Toggle(
+                    "Seasonal touches",
+                    isOn: Binding(
+                        get: { settings.enabled },
+                        set: { toys.state.seasonal.enabled = $0 })
+                ).labelsHidden().toggleStyle(.switch)
             }
-            if settings.enabled {
-                Text(toys.seasonal.sourceLine)
-                    .jrbarType(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                ForEach(SeasonalHoliday.allCases) { holiday in
-                    holidayRow(holiday)
+            SettingGroup("Preview") {
+                LabeledContent {
+                    Picker("Preview holiday", selection: $previewHoliday) {
+                        ForEach(SeasonalHoliday.allCases) { holiday in
+                            Text(holiday.displayName).tag(holiday)
+                        }
+                    }.labelsHidden().pickerStyle(.menu).fixedSize()
+                } label: {
+                    SettingLabel(title: "Preview holiday", subtitle: "See a holiday's decorations without turning them on.")
                 }
-                if settings.isOn(.birthday) { birthdays }
+                HStack(spacing: JRBarTokens.Space.md) {
+                    SeasonalAccent(holiday: previewHoliday, size: 44)
+                    Text(previewHoliday.when).jrbarType(.callout).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            SettingsFeatureMoreOptions(id: "seasonal", subtitle: "Choose holidays and the birthdays you celebrate.") {
+                SettingGroup("Holidays") {
+                    Text(settings.enabled ? toys.seasonal.sourceLine : "No calendars are read while seasonal touches are off.")
+                        .jrbarType(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(SeasonalHoliday.allCases) { holiday in holidayRow(holiday) }
+                }
+                if settings.isOn(.birthday) {
+                    SettingGroup("Birthdays") { birthdays }
+                }
             }
         }
+        .environment(\.adaptiveSettingsRows, true)
         .id(SettingsStore.groupAnchor("Seasonal touches"))
     }
 
     private func holidayRow(_ holiday: SeasonalHoliday) -> some View {
-        Toggle(isOn: Binding(get: { settings.isOn(holiday) },
-                             set: { toys.state.seasonal.set(holiday, on: $0) })) {
+        Toggle(
+            isOn: Binding(
+                get: { settings.isOn(holiday) },
+                set: { toys.state.seasonal.set(holiday, on: $0) })
+        ) {
             HStack(spacing: 10) {
                 SeasonalAccent(holiday: holiday, size: 22)
                 SettingLabel(title: holiday.displayName, subtitle: holiday.when)
@@ -245,18 +280,24 @@ struct SeasonalSettingsSection: View {
     @ViewBuilder private var birthdays: some View {
         VStack(alignment: .leading, spacing: 6) {
             let people = toys.seasonal.people
-            Text(people.isEmpty
-                 ? "People in your Birthdays calendar show here. Your birthday shows here if it's on your contact card; tag it to celebrate. Names stay on this Mac."
-                 : "Your birthday shows here if it's on your contact card; tag it to celebrate, and anyone else's too. Names stay on this Mac.")
-                .jrbarType(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                people.isEmpty
+                    ? "No birthdays found. Allow Calendar access in Notch & Shelf to choose people. Names stay on this Mac."
+                    : "Choose whose birthdays to celebrate. Names stay on this Mac."
+            )
+            .jrbarType(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             ForEach(people.prefix(40)) { person in
-                Toggle(person.name, isOn: Binding(
-                    get: { toys.state.seasonal.celebrates(person.id) },
-                    set: { on in
-                        toys.state.seasonal.celebrated.removeAll { $0.id == person.id }
-                        if on { toys.state.seasonal.celebrated.append(person) }
-                    }))
+                Toggle(
+                    isOn: Binding(
+                        get: { toys.state.seasonal.celebrates(person.id) },
+                        set: { on in
+                            toys.state.seasonal.celebrated.removeAll { $0.id == person.id }
+                            if on { toys.state.seasonal.celebrated.append(person) }
+                        })
+                ) {
+                    SettingLabel(title: person.name, subtitle: "Celebrate this person's birthday.")
+                }
             }
         }
         .padding(.leading, 32)

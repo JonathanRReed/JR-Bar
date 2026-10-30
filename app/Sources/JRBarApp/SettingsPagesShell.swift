@@ -402,19 +402,24 @@ private struct QuickTogglesGroup: View {
     private var toggles: SystemTogglesStore { .shared }
 
     var body: some View {
-        SettingGroup("Quick toggles", note: "Checked chips show on the notch card's strip, in this order. Each can have its own key.") {
-            // A recorder and a strip switch per chip: folded until asked for.
-            SettingsFoldRow(store, id: SettingsFold.quickToggles, title: "Chips",
-                            subtitle: stripSummary) {
-                chipRows
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+            SettingsFeatureHeading(
+                title: "Control Center", symbol: "switch.2",
+                purpose: "Choose the shelf's controls and their keyboard shortcuts.",
+                status: "\(toggles.strip.count) of \(SystemToggle.allCases.count) controls shown")
+            SettingGroup("Quick toggles") {
+                // A recorder and a strip switch per chip: folded until asked for.
+                SettingsFoldRow(
+                    store, id: SettingsFold.quickToggles, title: "More options",
+                    subtitle: "Show controls on the shelf and record their keys."
+                ) {
+                    chipRows
+                }
+                SettingsNavigationRow(SettingsHome.keepAwakeDisplay.linkTitle) { store.revealHome(.keepAwakeDisplay) }
             }
-            SettingsNavigationRow(SettingsHome.keepAwakeDisplay.linkTitle) { store.revealHome(.keepAwakeDisplay) }
         }
-    }
-
-    /// "8 of 11 on the notch card's strip."
-    private var stripSummary: String {
-        "\(toggles.strip.count) of \(SystemToggle.allCases.count) on the notch card's strip."
+        .environment(\.adaptiveSettingsRows, true)
+        .id(SettingsStore.groupAnchor("Quick toggles"))
     }
 
     /// A row per chip: its key and whether it sits on the strip.
@@ -424,13 +429,18 @@ private struct QuickTogglesGroup: View {
             let id = AppShortcutCatalog.toggleID(toggle)
             LabeledContent {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    ShortcutRecorderField(id: id, chord: store.actionShortcut(id), center: center,
-                                          onChange: { store.setShortcut($0, for: id) },
-                                          onTakeOver: { store.setShortcut(nil, for: $0) })
-                    Toggle("Strip", isOn: Binding(get: { toggles.strip.contains(toggle) },
-                                                  set: { toggles.setInStrip(toggle, $0) }))
-                        .toggleStyle(.checkbox)
-                        .help("Show this chip on the notch card")
+                    ShortcutRecorderField(
+                        id: id, chord: store.actionShortcut(id), center: center,
+                        onChange: { store.setShortcut($0, for: id) },
+                        onTakeOver: { store.setShortcut(nil, for: $0) })
+                    Toggle(
+                        "Show on shelf",
+                        isOn: Binding(
+                            get: { toggles.strip.contains(toggle) },
+                            set: { toggles.setInStrip(toggle, $0) })
+                    )
+                    .toggleStyle(.switch)
+                    .help("Show this chip on the notch card")
                 }
             } label: {
                 HStack(spacing: SettingsMetrics.s) {
@@ -438,10 +448,26 @@ private struct QuickTogglesGroup: View {
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                         .frame(width: 20)
-                    Text(toggle.longTitle)
+                    SettingLabel(title: toggle.longTitle, subtitle: chipDescription(toggle))
                 }
             }
             .settingRowStyle()
+        }
+    }
+
+    private func chipDescription(_ toggle: SystemToggle) -> String {
+        switch toggle {
+        case .keepAwake: return "Start or end a manual awake session."
+        case .darkMode: return "Switch between the Mac's light and dark appearance."
+        case .desktopIcons: return "Show or hide desktop icons. Restarts Finder."
+        case .hiddenFiles: return "Show or hide hidden files. Restarts Finder."
+        case .mute: return "Mute the current sound output."
+        case .screenSaver: return "Start the Mac's screen saver."
+        case .lock: return "Sleep the display. Locking follows the Mac's password settings."
+        case .dockAutoHide: return "Show the Dock only when you move to its edge."
+        case .micMute: return "Mute the default microphone."
+        case .eject: return "Eject removable disks. SidePulse devices stay mounted."
+        case .sleep: return "Put the Mac to sleep."
         }
     }
 }

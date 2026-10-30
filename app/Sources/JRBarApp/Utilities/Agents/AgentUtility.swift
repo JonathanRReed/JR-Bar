@@ -75,7 +75,7 @@ final class AgentUtility: Toy {
 
     let id = "agents"
     let name = "Agent Overview"
-    let blurb = "Live agent activity, session controls, and alerts."
+    let blurb = "Choose how each provider alerts you."
     let symbol = "person.2"
 
     var isOn: Bool {
