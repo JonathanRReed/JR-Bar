@@ -2,6 +2,9 @@ import Foundation
 
 extension DockPreviewContent {
     var nativeAppSubtitle: String? {
+        if musicPlayerEnabled, let music {
+            return Self.musicSubtitle(music.state)
+        }
         if let state = remindersState {
             switch state {
             case .loading: return "Loading reminders…"
@@ -34,5 +37,15 @@ extension DockPreviewContent {
             }
         }
         return nil
+    }
+
+    /// What the Music player is doing, in the header where a window count would be.
+    static func musicSubtitle(_ state: DockMusicPreview.State) -> String {
+        switch state {
+        case .playing: return "Playing"
+        case .paused: return "Paused"
+        case .stopped: return "Nothing playing"
+        case .notRunning: return "Not running"
+        }
     }
 }

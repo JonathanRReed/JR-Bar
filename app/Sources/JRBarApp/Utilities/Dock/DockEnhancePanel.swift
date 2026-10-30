@@ -627,7 +627,7 @@ struct DockPreviewView: View {
                 }
             }
         }
-        .frame(width: content.mailState != nil ? 320 : cardStripWidth)
+        .frame(width: Self.stripWidth(cards: cardStripWidth, nativeCard: content.mailState != nil || content.musicPlayerEnabled))
     }
 
     @ViewBuilder
@@ -767,6 +767,14 @@ struct DockPreviewView: View {
             titleWidth += badge + 18
         }
         return headerChromeWidth + titleWidth
+    }
+
+    /// The Mail and Music cards need room for their rows and controls; with
+    /// open windows beside them the strip may be wider still.
+    static let nativeCardWidth: CGFloat = 320
+
+    static func stripWidth(cards: CGFloat, nativeCard: Bool) -> CGFloat {
+        nativeCard ? max(nativeCardWidth, cards) : cards
     }
 
     private var cardStripWidth: CGFloat {

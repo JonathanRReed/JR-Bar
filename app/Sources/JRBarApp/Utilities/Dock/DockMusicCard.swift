@@ -51,7 +51,7 @@ struct DockMusicCard: View {
             footer
         }
         .padding(14)
-        .frame(width: 310)
+        .frame(maxWidth: .infinity)
         .background {
             let tint = decoded?.tint ?? .primary
             LinearGradient(colors: [tint.opacity(0.18), tint.opacity(0.035)],

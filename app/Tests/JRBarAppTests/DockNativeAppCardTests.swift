@@ -353,3 +353,19 @@ struct DockNativeAppCardTests {
         native.stop()
     }
 }
+
+@Suite("Dock Music header and width")
+struct DockMusicHeaderTests {
+    @Test @MainActor func theHeaderNamesWhatThePlayerIsDoing() {
+        #expect(DockPreviewContent.musicSubtitle(.playing) == "Playing")
+        #expect(DockPreviewContent.musicSubtitle(.paused) == "Paused")
+        #expect(DockPreviewContent.musicSubtitle(.stopped) == "Nothing playing")
+        #expect(DockPreviewContent.musicSubtitle(.notRunning) == "Not running")
+    }
+
+    @Test @MainActor func nativeCardsGetTheirRoomAndNeverShrinkTheStrip() {
+        #expect(DockPreviewView.stripWidth(cards: 144, nativeCard: true) == DockPreviewView.nativeCardWidth)
+        #expect(DockPreviewView.stripWidth(cards: 600, nativeCard: true) == 600)
+        #expect(DockPreviewView.stripWidth(cards: 144, nativeCard: false) == 144)
+    }
+}
