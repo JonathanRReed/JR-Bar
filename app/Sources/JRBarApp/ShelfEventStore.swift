@@ -5,6 +5,7 @@ import JRBarCore
 /// Value-only access lets tests exercise every consumer without opening EventKit.
 protocol ShelfEventStore: AnyObject, Sendable {
     func events(from now: Date) -> [ShelfCalendarModel.Event]
+    func events(in range: DateInterval) -> [ShelfCalendarModel.Event]
     func seasonal(now: Date, birthdays: Bool) -> SeasonalReading
     func requestAccess(to entity: EKEntityType, completion: @escaping @Sendable (Bool) -> Void)
     @MainActor func fetchReminders(_ completion: @escaping @MainActor @Sendable ([ShelfRemindersModel.Entry]?) -> Void)
@@ -41,6 +42,14 @@ final class SystemShelfEventStore: ShelfEventStore, @unchecked Sendable {
             let start = min(Calendar.current.startOfDay(for: now), now.addingTimeInterval(-12 * 3600))
             let predicate = store.predicateForEvents(
                 withStart: start, end: now.addingTimeInterval(ShelfCalendarReader.lookahead), calendars: nil)
+            return store.events(matching: predicate).map(ShelfCalendarModel.project)
+        }
+    }
+
+    func events(in range: DateInterval) -> [ShelfCalendarModel.Event] {
+        withStore { store in
+            let predicate = store.predicateForEvents(
+                withStart: range.start, end: range.end, calendars: nil)
             return store.events(matching: predicate).map(ShelfCalendarModel.project)
         }
     }

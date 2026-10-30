@@ -18,19 +18,23 @@ final class ShelfCalendarReader: @unchecked Sendable {
     private var generation = 0
     let store: any ShelfEventStore
     private var cached: (at: Date, events: [Event])?
+    private var monthCache: [DateInterval: (at: Date, events: [Event])] = [:]
+    private let fetchMonthOverride: (@Sendable (DateInterval) -> [Event])?
     private let fetchOverride: (@Sendable (Date) -> [Event])?
     private let authorization: @Sendable () -> EKAuthorizationStatus
     private var observer: NSObjectProtocol?
 
     init(fetch: (@Sendable (Date) -> [Event])? = nil,
+         fetchMonth: (@Sendable (DateInterval) -> [Event])? = nil,
          authorization: (@Sendable () -> EKAuthorizationStatus)? = nil,
          notifications: NotificationCenter? = nil,
          store: any ShelfEventStore = SystemShelfEventStore.shared) {
         self.store = store
-        self.notifications = notifications ?? (fetch == nil ? .default : NotificationCenter())
+        self.notifications = notifications ?? (fetch == nil && fetchMonth == nil ? .default : NotificationCenter())
         fetchOverride = fetch
+        fetchMonthOverride = fetchMonth
         self.authorization = authorization ?? {
-            fetch == nil ? EKEventStore.authorizationStatus(for: .event) : .fullAccess
+            fetch == nil && fetchMonth == nil ? EKEventStore.authorizationStatus(for: .event) : .fullAccess
         }
         observer = self.notifications.addObserver(
             forName: .EKEventStoreChanged, object: nil, queue: nil
@@ -48,6 +52,7 @@ final class ShelfCalendarReader: @unchecked Sendable {
     func invalidate() {
         cacheLock.withLock {
             cached = nil
+            monthCache.removeAll()
             generation &+= 1
         }
     }
@@ -79,6 +84,41 @@ final class ShelfCalendarReader: @unchecked Sendable {
                 if generation == snapshot.1 { cached = (now, events) }
             }
             return events
+        }
+    }
+
+    /// A bounded month cache shares the same store and invalidation as the shelf.
+    func events(inMonth month: Date, calendar: Calendar = .current, now: Date = Date()) -> [Event] {
+        guard let range = calendar.dateInterval(of: .month, for: month) else { return [] }
+        return storeLock.withLock {
+            guard authorization() == .fullAccess else {
+                invalidate()
+                return []
+            }
+            let snapshot = cacheLock.withLock { (monthCache[range], generation) }
+            if let cached = snapshot.0, now >= cached.at,
+               now.timeIntervalSince(cached.at) < Self.cacheLifetime {
+                return cached.events
+            }
+            let events: [Event]
+            if let fetchMonthOverride {
+                events = fetchMonthOverride(range)
+            } else if let fetchOverride {
+                events = fetchOverride(range.start)
+            } else {
+                events = store.events(in: range)
+            }
+            let matching = events.filter { $0.start < range.end && $0.end > range.start }
+            guard authorization() == .fullAccess else {
+                invalidate()
+                return []
+            }
+            cacheLock.withLock {
+                guard generation == snapshot.1 else { return }
+                if monthCache.count >= 3 { monthCache.removeAll() }
+                monthCache[range] = (now, matching)
+            }
+            return matching
         }
     }
 

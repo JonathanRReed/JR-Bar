@@ -8,6 +8,7 @@ final class SyntheticShelfEventStore: ShelfEventStore, @unchecked Sendable {
     struct Calls {
         var events = 0
         var seasonal = 0
+        var months: [DateInterval] = []
         var permissions: [EKEntityType] = []
         var completed: [String] = []
         var drafts: [ShelfReminderDraft] = []
@@ -23,6 +24,11 @@ final class SyntheticShelfEventStore: ShelfEventStore, @unchecked Sendable {
 
     func events(from now: Date) -> [ShelfCalendarModel.Event] {
         calls.withLock { $0.events += 1 }
+        return []
+    }
+
+    func events(in range: DateInterval) -> [ShelfCalendarModel.Event] {
+        calls.withLock { $0.months.append(range) }
         return []
     }
 
