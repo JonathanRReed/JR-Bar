@@ -857,7 +857,9 @@ extension AquariumView {
             CartoonFish.draw(into: &f, species: fish.species, palette: palette, swim: swim,
                              mouth: mouth, blink: blink, dead: dead,
                              pointSize: length,
-                             variant: fish.isFry || dead ? nil : care?.earnedVariant)
+                             variant: fish.isFry || dead ? nil : care?.earnedVariant,
+                             gaze: Self.gaze(from: CGPoint(x: l.x, y: l.y), to: pointerInTank,
+                                             facing: l.facing, reach: length * 4.5))
             // Wear rides the head in the same unit space, so the pitch,
             // flip and squash all apply to it — and the turn's head lead
             // carries it round with the face.
@@ -1052,6 +1054,22 @@ extension AquariumView {
         }
 
         if showLabels { drawFishLabel(canvas: &canvas, size: size, fish: fish, layout: l) }
+    }
+
+    /// Which way a fish at `from` looks to see the pointer at `to`, in the
+    /// fish's own space (x toward its nose, so a fish facing left has it
+    /// mirrored): a vector at most one long, shorter as the pointer gets
+    /// closer than a body length so the eye does not snap. Nil when there
+    /// is no pointer in the tank or it is further than `reach` away; the
+    /// fish then looks where it is going.
+    static func gaze(from: CGPoint, to: CGPoint?, facing: Double, reach: Double) -> CGVector? {
+        guard let to, reach > 0 else { return nil }
+        let dx = to.x - from.x, dy = to.y - from.y
+        let distance = hypot(dx, dy)
+        guard distance < reach, distance > 0.5 else { return nil }
+        let strength = min(1, distance / (reach * 0.22))
+        let mirror: Double = facing < 0 ? -1 : 1
+        return CGVector(dx: dx / distance * strength * mirror, dy: dy / distance * strength)
     }
 
     /// The asking fish's speech bubble: amber, three dark dots, a small

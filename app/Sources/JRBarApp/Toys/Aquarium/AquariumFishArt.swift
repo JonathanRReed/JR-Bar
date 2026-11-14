@@ -429,7 +429,8 @@ enum CartoonFish {
                      palette: Palette, swim: Swim = .still,
                      mouth: MouthKind, blink: Double, dead: Bool,
                      pointSize: Double = 60,
-                     variant: AquariumVariant? = nil) {
+                     variant: AquariumVariant? = nil,
+                     gaze: CGVector? = nil) {
         let art = art(for: species)
         let pose = Pose(art: art, swim: swim)
         let lw = outlineWidth(pointSize, ink: palette.ink)
@@ -475,7 +476,7 @@ enum CartoonFish {
         }
 
         drawFace(art: art, species: species, swim: swim, palette: palette, into: &f,
-                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed)
+                 mouth: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed, gaze: gaze)
     }
 
     /// How solid the body's thin edge draws: half there on a lit fish,
@@ -778,7 +779,8 @@ enum CartoonFish {
     /// turns with the head, not the middle, and rides the warp with it.
     private static func drawFace(art: Art, species: FishSpecies, swim: Swim, palette: Palette,
                                  into f: inout GraphicsContext, mouth: MouthKind,
-                                 blink: Double, dead: Bool, lw: Double, detailed: Bool) {
+                                 blink: Double, dead: Bool, lw: Double, detailed: Bool,
+                                 gaze: CGVector? = nil) {
         let place = facePlacement(art: art, swim: swim)
         let face = place.face
         if face.turn > 0.05 {
@@ -787,11 +789,11 @@ enum CartoonFish {
             far.opacity = face.far
             drawEye(into: &far, at: place.farEye, r: art.eyeR * 0.94,
                     palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: false,
-                    sx: place.sx)
+                    sx: place.sx, gaze: gaze)
         }
         drawEye(into: &f, at: place.nearEye, r: art.eyeR,
                 palette: palette, mood: mouth, blink: blink, dead: dead, lw: lw, detailed: detailed,
-                sx: place.sx)
+                sx: place.sx, gaze: gaze)
         if !dead, species != .seahorse || mouth != .plain {
             var m = f
             if face.turn > 0.05 {
@@ -860,7 +862,7 @@ enum CartoonFish {
     /// circle back against a turn's squash.
     static func drawEye(into f: inout GraphicsContext, at e: CGPoint, r: Double,
                                 palette: Palette, mood: MouthKind, blink: Double, dead: Bool,
-                                lw: Double, detailed: Bool, sx: Double) {
+                                lw: Double, detailed: Bool, sx: Double, gaze: CGVector? = nil) {
         func oval(_ cx: Double, _ cy: Double, _ rr: Double) -> Path {
             Path(ellipseIn: CGRect(x: cx - rr * sx, y: cy - rr,
                                    width: rr * 2 * sx, height: rr * 2))
@@ -893,7 +895,11 @@ enum CartoonFish {
         // Everything inside the white sits well inside it, so nothing
         // here needs a clip. The iris looks forward, where the fish is
         // going; a hungry fish's goes wide.
-        let ix = e.x + r * 0.22 * sx, iy = e.y + r * 0.03
+        // A fish that has noticed the pointer looks at it: `gaze` is the
+        // way to it in the kit's own space, at most one long.
+        let lookX = gaze.map { 0.24 * $0.dx } ?? 0.22
+        let lookY = gaze.map { 0.24 * $0.dy } ?? 0.03
+        let ix = e.x + r * lookX * sx, iy = e.y + r * lookY
         let irisR = r * (mood == .hungry ? 0.76 : 0.70)
         f.fill(oval(ix, iy, irisR), with: .color(iris))
         // Catchlights: one high and forward, and on a fish big enough to

@@ -692,6 +692,9 @@ struct AquariumView: View {
     }
 
     @ViewState private var hoverProbe = HoverProbe()
+    /// Where the pointer is over the tank, nil when it is not: what a
+    /// nearby fish looks at.
+    var pointerInTank: CGPoint? { hoverProbe.point }
 
     /// One pellet dropped by a tap: sinks from the tap point toward
     /// the sand, claimed by the nearest free-swimming fish, eaten on

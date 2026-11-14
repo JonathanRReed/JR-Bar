@@ -109,5 +109,23 @@ struct AquariumReefWordsTests {
         #expect(box.map { $0.contains(CGPoint(x: 600 * AquariumView.reefBedX, y: $0.midY)) } == true)
         #expect(ready.motion.reefPods.count == 3)
     }
+
+    @Test("a fish near the pointer looks at it, in its own mirrored space, and one far from it looks ahead")
+    func gaze() {
+        let fish = CGPoint(x: 100, y: 100)
+        #expect(AquariumView.gaze(from: fish, to: nil, facing: 1, reach: 200) == nil)
+        #expect(AquariumView.gaze(from: fish, to: CGPoint(x: 400, y: 100), facing: 1, reach: 200) == nil)
+        let ahead = AquariumView.gaze(from: fish, to: CGPoint(x: 200, y: 100), facing: 1, reach: 200)
+        #expect(ahead == CGVector(dx: 1, dy: 0))
+        // The same pointer, for a fish swimming the other way, is behind it.
+        let behind = AquariumView.gaze(from: fish, to: CGPoint(x: 200, y: 100), facing: -1, reach: 200)
+        #expect(behind == CGVector(dx: -1, dy: 0))
+        let below = AquariumView.gaze(from: fish, to: CGPoint(x: 100, y: 180), facing: -1, reach: 200)
+        #expect(below == CGVector(dx: 0, dy: 1))
+        // Right on top of the fish the eye eases back to centre.
+        let close = AquariumView.gaze(from: fish, to: CGPoint(x: 111, y: 100), facing: 1, reach: 200)
+        #expect(close.map { $0.dx > 0.2 && $0.dx < 0.3 } == true)
+        #expect(AquariumView.gaze(from: fish, to: fish, facing: 1, reach: 200) == nil)
+    }
 }
 

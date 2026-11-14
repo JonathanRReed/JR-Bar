@@ -4,6 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Fish near the pointer look at it.
 - The reef's kelp bed grows in the tank: taller and fuller with each level, with pods that glow as a harvest builds. Tap the bed to bring the harvest in.
 - Hovering a Dock icon you looked at in the last ten minutes opens on the windows' pictures at once. The preview used to open on app icons and fill the pictures in after macOS had listed every window. A picture that has gone stale is shown and then replaced.
 - The window pictures the Dock previews keep are held to 32 MiB, and a preview that is closed no longer keeps a copy of every picture it showed.

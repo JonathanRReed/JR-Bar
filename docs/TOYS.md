@@ -573,6 +573,9 @@ because the provider picks the species; two sessions of one provider
 differ by a few degrees of hue. Deeper lanes wash toward the floor's
 colour, and at night every fish sinks a quarter of the way into the dark.
 
+A fish within a few body lengths of the pointer turns its eye to it
+(`AquariumView.gaze`); the rest look where they are going.
+
 A fish says what its session is doing without a label:
 
 - **Working**: it swims with a brisk tail and trails small bubbles.
