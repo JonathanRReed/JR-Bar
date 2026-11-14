@@ -25,10 +25,13 @@ struct AppCoreRefresh {
         if !resets.isEmpty { candidates.append((floor(now / 60) + 1) * 60) }
         for since in elapsedSince where since.isFinite {
             let age = max(0, now - since)
-            let step: Double
-            if age < 60 { step = 1 }
-            else if age < 86_400 { step = 60 }
-            else { step = 3_600 }
+            // Whole minutes, then whole hours. This wake redraws the menu
+            // bar icon's tooltip lines and nothing a person watches by the
+            // second: a working row's clock restarts with every hook event,
+            // so a one-second step under a minute ran the whole refresh
+            // once a second for as long as any agent worked. The panel and
+            // the notch card keep their own clocks while they are open.
+            let step: Double = age < 86_400 ? 60 : 3_600
             let boundary = floor(age / step) + 1
             candidates.append(since + boundary * step)
         }

@@ -1897,7 +1897,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// implies a local window exists for it.
     static func sessionTooltipLine(for row: SessionRow, now: Date) -> String {
         var word = row.activity.word.lowercased()
-        if let elapsed = PanelStore.elapsed(since: row.since, now: now) { word += " \(elapsed)" }
+        // Whole minutes only: the line is refreshed once a minute, and a
+        // count of seconds would be stale before anyone hovered to read it.
+        if let since = row.since, now.timeIntervalSince(since) >= 60,
+           let elapsed = PanelStore.elapsed(since: since, now: now) { word += " \(elapsed)" }
         if row.isSnoozed(now: now), let until = row.snoozedUntil {
             word += " · snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))"
         }

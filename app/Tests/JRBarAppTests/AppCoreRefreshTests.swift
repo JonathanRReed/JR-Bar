@@ -82,11 +82,27 @@ struct AppCoreRefreshTests {
 
     @Test("elapsed labels and snoozes keep their clock boundaries")
     func timedLabels() {
-        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], elapsedSince: [100], now: 100.2) == 101)
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], elapsedSince: [100], now: 100.2) == 160,
+                "a young row wakes at its first whole minute, never once a second")
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], elapsedSince: [100], now: 159.5) == 160)
         #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], elapsedSince: [100], now: 160) == 220)
         #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], elapsedSince: [0], now: 86_400) == 90_000)
         #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], deadlines: [180], now: 170) == 180)
         #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], deadlines: [180], now: 180) == nil)
+    }
+
+    @Test("the icon's tooltip line counts whole minutes, never seconds")
+    func tooltipLineHasNoSeconds() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        func line(age: Double) -> String {
+            let session = CoreSession(id: "claude:session:sample", provider: "claude", label: "docs-sweep",
+                                      mode: "working", lifecycle: "active", since: 10_000 - age)
+            return AppDelegate.sessionTooltipLine(for: SessionRow(session: session, pinnedAsk: nil), now: now)
+        }
+        #expect(line(age: 12) == "docs-sweep · working · Claude")
+        #expect(line(age: 59.9) == "docs-sweep · working · Claude")
+        #expect(line(age: 60) == "docs-sweep · working 1m · Claude")
+        #expect(line(age: 185) == "docs-sweep · working 3m · Claude")
     }
 
     @Test("a pending Screen Bar write gets a wake at the end of its grace")
