@@ -237,6 +237,9 @@ struct DockPreviewAX {
     /// The Dock's list and tiles, walked for `pid` — a gesture's tile hit
     /// and ⌥`'s front-app lookup. nil when the Dock does not answer.
     var dockTiles: @Sendable (_ pid: pid_t) -> DockTileReading? = { AppleDockReader.readTiles(pid: $0) }
-    /// The header's "New": the menu walk and press for `pid`.
-    var newWindow: @Sendable (pid_t) -> Void = { AppleDockReader.pressNewWindow(pid: $0) }
+    /// The header's "New": the menu walk and press for `pid`, and what
+    /// it came to.
+    var newWindow: @Sendable (pid_t) -> AppleDockReader.NewWindowPress = {
+        AppleDockReader.pressNewWindow(pid: $0)
+    }
 }

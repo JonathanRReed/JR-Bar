@@ -406,28 +406,44 @@ enum AppleDockReader {
         return newWindowItemIndex(facts).map { elements[$0] }
     }
 
+    /// What pressing the header's "New" came to.
+    enum NewWindowPress: Equatable, Sendable {
+        /// The app's own menu item took the press.
+        case pressed
+        /// The app's menus offer no New Window item.
+        case noMenuItem
+        /// The item is there and the app refused the press.
+        case refused
+
+        /// The line the preview shows, nil when the press went through.
+        var failureNote: String? {
+            switch self {
+            case .pressed: return nil
+            case .noMenuItem: return "This app has no New Window menu item."
+            case .refused: return "The app did not take New Window. Try again."
+            }
+        }
+    }
+
     /// The header's "New": the app's own New Window menu item, pressed
-    /// through AX — it works where ⌘N means New Document or isn't bound,
-    /// and never types into whatever window has focus. Only when the
-    /// menu offers neither does the old path run: post ⌘N to the app.
+    /// through AX. It works where ⌘N means New Document or isn't bound,
+    /// and never types into whatever window has focus. An app whose menus
+    /// offer no such item gets no press at all: JR-Bar never posts a key
+    /// to stand in for one, and the preview says so instead.
     /// The menu walk is dozens of AX reads against an app that may be
-    /// busy — up to half a second each — so the caller runs it on the
+    /// busy, up to half a second each, so the caller runs it on the
     /// preview lane of `DockAXWorker`; the activation it follows stays on
     /// main.
-    static func pressNewWindow(pid: pid_t) {
-        if let item = newWindowMenuItem(pid: pid),
-           AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
-            return
-        }
-        // Virtual key 45 is 'n'. Posting to the pid lands the chord in
-        // the app's own queue — a real event, and a pid-targeted post
-        // asks for no scripting right.
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 45, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: 45, keyDown: false) else { return }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.postToPid(pid)
-        up.postToPid(pid)
+    static func pressNewWindow(pid: pid_t) -> NewWindowPress {
+        pressNewWindow(
+            item: newWindowMenuItem(pid: pid),
+            press: { AXUIElementPerformAction($0, kAXPressAction as CFString) == .success })
+    }
+
+    /// The decision alone, with the menu item and the press passed in.
+    static func pressNewWindow<Item>(item: Item?, press: (Item) -> Bool) -> NewWindowPress {
+        guard let item else { return .noMenuItem }
+        return press(item) ? .pressed : .refused
     }
 
     // MARK: Primitives

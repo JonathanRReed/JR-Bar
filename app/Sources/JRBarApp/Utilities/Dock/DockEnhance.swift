@@ -2211,22 +2211,39 @@ final class DockEnhanceController {
         })
     }
 
-    /// The header's "New" — the app's New Window. The live list usually lands
+    /// The header's "New": the app's New Window. The live list usually lands
     /// the new card by itself; a beat later the same refresh runs once
-    /// more for apps that post no window-created notification.
+    /// more for apps that post no window-created notification. An app
+    /// with no New Window menu item gets a line saying so, and no refresh
+    /// waits for a window that was never asked for.
     private func newWindow() {
         // The app comes forward from here; the menu walk and the press are
-        // the preview lane's — up to half a second a menu item against a
+        // the preview lane's: up to half a second a menu item against a
         // busy app, and never ahead of or behind a ⌘⇥ commit.
-        if let app = preview.processIdentifier.flatMap({ NSRunningApplication(processIdentifier: $0) }) {
-            WindowPresenter.automatic.perform { app.activate() }
-            let pid = app.processIdentifier
-            let press = ax.newWindow
-            ax.lane.run({ press(pid) }, then: {})
-        }
+        guard let pid = preview.processIdentifier else { return }
+        WindowPresenter.automatic.perform { NSRunningApplication(processIdentifier: pid)?.activate() }
+        let press = ax.newWindow
         let generationAtNew = generation
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
+        ax.lane.run({ press(pid) }, then: { [weak self] result in
+            self?.newWindowPressed(result, generation: generationAtNew)
+        })
+    }
+
+    /// The wait after a New press before the list is read once more.
+    @ObservationIgnored var newWindowSettle: Duration = .milliseconds(600)
+
+    /// The press's answer, back on main: a note when nothing was pressed,
+    /// else the one late refresh.
+    private func newWindowPressed(_ result: AppleDockReader.NewWindowPress, generation generationAtNew: Int) {
+        guard generation == generationAtNew else { return }
+        preview.actionFailure = result.failureNote
+        guard result == .pressed else {
+            reframe()
+            return
+        }
+        let settle = newWindowSettle
+        _ = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: settle)
             guard let self, self.generation == generationAtNew else { return }
             self.refreshLiveWindows(force: true)
         }

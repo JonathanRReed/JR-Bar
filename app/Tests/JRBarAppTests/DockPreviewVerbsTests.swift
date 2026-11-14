@@ -9,7 +9,7 @@ import Testing
 struct DockPreviewVerbsTests {
     private typealias Item = AppleDockReader.MenuItemFacts
 
-    @Test("New presses the app's own New Window item before any ⌘N")
+    @Test("New presses the app's own New Window item, not whatever ⌘N means there")
     func newWindowByTitle() {
         let items = [
             Item(title: "New Tab", cmdChar: "T", cmdModifiers: 0, enabled: true),
@@ -18,6 +18,26 @@ struct DockPreviewVerbsTests {
         ]
         #expect(AppleDockReader.newWindowItemIndex(items) == 2,
                 "the titled item wins even when ⌘N means New Document")
+    }
+
+    @Test("no menu item means no press at all; a refused press is reported, never retried as a key")
+    func newWindowPressOutcomes() {
+        var presses = 0
+        let missing = AppleDockReader.pressNewWindow(item: Int?.none) { _ in
+            presses += 1
+            return true
+        }
+        #expect(missing == .noMenuItem)
+        #expect(presses == 0)
+        let refused = AppleDockReader.pressNewWindow(item: 7) { item in
+            presses += item
+            return false
+        }
+        #expect(refused == .refused)
+        #expect(presses == 7, "the one press was the menu item's own")
+        #expect(AppleDockReader.pressNewWindow(item: 1) { _ in true } == .pressed)
+        #expect(AppleDockReader.NewWindowPress.pressed.failureNote == nil)
+        #expect(AppleDockReader.NewWindowPress.noMenuItem.failureNote == "This app has no New Window menu item.")
     }
 
     @Test("without a titled item, the leaf the app binds to plain ⌘N; submenus and disabled items never")
@@ -31,7 +51,7 @@ struct DockPreviewVerbsTests {
         #expect(AppleDockReader.newWindowItemIndex(items) == 2)
         #expect(AppleDockReader.newWindowItemIndex([
             Item(title: "Open…", cmdChar: "O", cmdModifiers: 0, enabled: true),
-        ]) == nil, "nothing to press — the caller falls back to posting ⌘N")
+        ]) == nil, "nothing to press, and nothing is posted in its place")
         #expect(AppleDockReader.newWindowItemIndex([
             Item(title: "new window…", cmdChar: nil, cmdModifiers: nil, enabled: true),
         ]) == 0, "an ellipsis or case doesn't hide the title")

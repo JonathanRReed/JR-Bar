@@ -49,6 +49,11 @@ PATTERNS = {
     "reason-code-words": re.compile(r'\breason\??\.replacingOccurrences\(of: "_"'),
     # The connection to the monitor is "the monitor", never "the socket".
     "socket-words": re.compile(r'"[^"\n]*\b(?:the|a) socket\b[^"\n]*"'),
+    # The app never posts a key or a click and never moves the pointer: a
+    # verb goes through the other app's own Accessibility action or not at all.
+    "posted-input": re.compile(
+        r"\b(?:postToPid|CGEventPost\w*|CGWarpMouseCursorPosition|CGDisplayMoveCursorToPoint)\b|\.post\(tap:"
+    ),
 }
 #: A button whose label is a bare SF Symbol: VoiceOver needs a name, and
 #: `.help` is only a hint. Text or Label in the label names it.

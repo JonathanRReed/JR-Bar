@@ -47,6 +47,17 @@ private final class FakeAX: @unchecked Sendable {
     private var frameCalls: [Int] = []
     private var frames: [Int: CGRect] = [:]
     private var refusingFrames: Set<Int> = []
+    private var newWindowAnswer = AppleDockReader.NewWindowPress.pressed
+    private var newWindowPIDs: [pid_t] = []
+
+    func answerNewWindow(_ answer: AppleDockReader.NewWindowPress) { lock.withLock { newWindowAnswer = answer } }
+    var newWindowPresses: [pid_t] { lock.withLock { newWindowPIDs } }
+    func newWindow(_ pid: pid_t) -> AppleDockReader.NewWindowPress {
+        lock.withLock {
+            newWindowPIDs.append(pid)
+            return newWindowAnswer
+        }
+    }
 
     func answer(pid: pid_t, _ windows: [DockPreviewWindow]) { lock.withLock { windowsByPID[pid] = windows } }
     func hang(_ pid: pid_t, _ hung: Bool = true) {
@@ -164,7 +175,7 @@ private final class Bench {
             setFrame: { ax.setFrame($0, $1) },
             frame: { ax.frame($0) },
             dockTiles: { ax.dockTiles($0) },
-            newWindow: { _ in })
+            newWindow: { ax.newWindow($0) })
         controller.dockPID = { 777 }
         controller.mediaNow = { [unowned self] in self.clock }
         controller.accessibilityTrusted = true
@@ -711,6 +722,31 @@ struct DockPreviewVerbAsyncTests {
         #expect(bench.ax.fullScreened.isEmpty)
         #expect(bench.controller.preview.windows.first { $0.id == 1 }?.fullScreen == nil)
         #expect(bench.controller.preview.actionFailure == "Could not change full screen. Try again.")
+    }
+
+    @Test("New on an app with no New Window menu item says so and asks for nothing else")
+    func newWindowWithoutAMenuItem() {
+        let (bench, actions) = landed()
+        bench.ax.answerNewWindow(.noMenuItem)
+        actions.onNewWindow?()
+        #expect(bench.ax.newWindowPresses.isEmpty, "the menu walk waits for the lane")
+        bench.lane.runNext()
+        #expect(bench.ax.newWindowPresses == [Bench.alphaPID])
+        #expect(bench.controller.preview.actionFailure == "This app has no New Window menu item.")
+        #expect(bench.lane.waiting == 0, "no window was asked for, so no list is read for one")
+    }
+
+    @Test("New the app refused says so; New it took clears the line")
+    func newWindowRefusedThenTaken() {
+        let (bench, actions) = landed()
+        bench.ax.answerNewWindow(.refused)
+        actions.onNewWindow?()
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == "The app did not take New Window. Try again.")
+        bench.ax.answerNewWindow(.pressed)
+        actions.onNewWindow?()
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == nil)
     }
 
     @Test("a successful action clears the last failure without changing an agent warning")
