@@ -25,3 +25,9 @@ work/
 # Private local final-testing records. Never uploaded automatically.
 .jrbar-verification/
 .playwright-mcp/
+
+# A dump of the daemon's live state (session titles, project names, paths,
+# account labels). Reading the socket for a check is fine; the answer never
+# belongs in the repository.
+/state.json
+/*.state.json
