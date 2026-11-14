@@ -53,6 +53,13 @@ START_TOLERANCE_SECONDS = 5.0
 # delivered end removes the session from the caller's list within a
 # refresh or two, so this repeats only while it is still needed.
 REEMIT_AFTER_SECONDS = 30.0
+# A row can also stay live for a reason no terminal event changes: a T3 Code
+# thread whose own agent process exited while a worker it started is still
+# running is held up by that worker. Saying the death again every 30 s then
+# only costs a durable write, a refresh and a log line each time (seen on
+# 2026-11-14: one such thread, re-ended for hours). Each repeat that changes
+# nothing waits twice as long as the one before, up to this.
+REEMIT_MAX_INTERVAL_SECONDS = 15 * 60.0
 
 _SHELL_NAMES = frozenset(
     {"sh", "bash", "zsh", "fish", "env", "python", "python3", "node", "caffeinate"}
@@ -768,7 +775,8 @@ class ProcessSweeper:
         self._clock = clock
         self._last_sweep_at = 0.0
         self._table: dict[int, ProcessEntry] = {}
-        self._reemitted_at: dict[tuple[str, str], float] = {}
+        # When a recorded death was last said again, and how many times.
+        self._reemitted_at: dict[tuple[str, str], tuple[float, int]] = {}
 
     def _refresh_table(self) -> dict[int, ProcessEntry]:
         now = self._clock()
@@ -831,11 +839,12 @@ class ProcessSweeper:
                 # grace window: the terminal event never landed. Say it
                 # again -- each caller that keeps listing the session is
                 # telling us the first one was lost.
-                last = self._reemitted_at.get(
-                    (provider, session_id), record.ended_at_epoch
+                last, repeats = self._reemitted_at.get(
+                    (provider, session_id), (record.ended_at_epoch, 0)
                 )
-                if self._clock() - last >= REEMIT_AFTER_SECONDS:
-                    self._reemitted_at[(provider, session_id)] = self._clock()
+                wait = min(REEMIT_AFTER_SECONDS * (2 ** min(repeats, 16)), REEMIT_MAX_INTERVAL_SECONDS)
+                if self._clock() - last >= wait:
+                    self._reemitted_at[(provider, session_id)] = (self._clock(), repeats + 1)
                     dead.append(
                         DeadAgentProcess(record, record.end_reason or "process_exited")
                     )

@@ -191,10 +191,20 @@ def test_sweeper_re_reports_an_end_the_row_never_took__and_2_more(tmp_path: Path
     again = sweeper.sweep([("codex", "gone")])
     assert [d.record.session_id for d in again] == ["gone"]
     assert again[0].reason == "process_exited"
-    # A re-report does not open the floodgates: one per cooldown.
+    # A re-report does not open the floodgates: one per cooldown, and each
+    # repeat that changed nothing waits twice as long as the last.
     assert sweeper.sweep([("codex", "gone")]) == []
     clock[0] += pr.REEMIT_AFTER_SECONDS + 1
+    assert sweeper.sweep([("codex", "gone")]) == []
+    clock[0] += pr.REEMIT_AFTER_SECONDS
     assert [d.record.session_id for d in sweeper.sweep([("codex", "gone")])] == ["gone"]
+    # A row something else keeps live is re-ended ever more rarely, never
+    # faster than the ceiling once it is reached, and never given up on.
+    reports = 0
+    for _ in range(4 * 60):  # four hours, one sweep a minute
+        clock[0] += 60.0
+        reports += len(sweeper.sweep([("codex", "gone")]))
+    assert 14 <= reports <= 20
     # And once the caller stops listing it -- the row really did end --
     # the death is not reported again.
     assert sweeper.sweep([]) == []
