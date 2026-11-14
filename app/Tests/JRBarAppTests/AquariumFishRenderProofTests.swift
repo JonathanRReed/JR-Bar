@@ -33,11 +33,12 @@ struct AquariumFishRenderProofTests {
     /// The deep lane's floor colour the tank washes toward.
     private static let floorNS = NSColor(srgbRed: 0.015, green: 0.06, blue: 0.22, alpha: 1)
 
-    /// The tank's palette for `provider` at `lane` depth: the same
+    /// The tank's palette for `species` at `lane` depth: the same
     /// recipe `drawFish` paints with.
-    private static func palette(_ provider: String, lane: Double = 0) -> CartoonFish.Palette {
-        CartoonFish.Palette(accent: ProviderStyle.style(for: provider).nsAccent,
-                            depth: lane, floor: floorNS)
+    private static func palette(_ species: FishSpecies, lane: Double = 0, night: Double = 0,
+                                look: CartoonFish.Look = .natural, gold: Bool = false) -> CartoonFish.Palette {
+        CartoonFish.Palette(coat: CartoonFish.coat(for: species), depth: lane, floor: floorNS,
+                            look: look, night: night, gold: gold)
     }
 
     /// One fish posed the way `drawFish` poses it: centred on `at`,
@@ -112,25 +113,26 @@ struct AquariumFishRenderProofTests {
         try png.write(to: outputDir.appendingPathComponent("\(name).png"))
     }
 
-    private static let providers = ["claude", "codex", "gemini"]
     private static let moods: [(String, CartoonFish.MouthKind)] =
         [("plain", .plain), ("smile", .smile), ("hungry", .hungry)]
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write fish proof PNGs"))
     func speciesSheets() throws {
-        // Every species: a row per provider palette, a column per mood.
+        // Every species: a row per light (shallow by day, a deep lane,
+        // night), a column per mood.
+        let lights: [(String, Double, Double)] = [("shallow", 0, 0), ("deep lane", 0.9, 0), ("night", 0.2, 1)]
         for species in FishSpecies.allCases {
             let cellW = 250.0, cellH = 190.0
             let view = Self.sheet(width: cellW * 3, height: cellH * 3) { c, _ in
-                for (row, provider) in Self.providers.enumerated() {
+                for (row, light) in lights.enumerated() {
                     for (col, mood) in Self.moods.enumerated() {
                         let centre = CGPoint(x: cellW * (Double(col) + 0.5),
                                              y: cellH * (Double(row) + 0.5))
                         Self.pose(&c, species, at: centre, length: 150,
-                                  palette: Self.palette(provider), mouth: mood.1,
+                                  palette: Self.palette(species, lane: light.1, night: light.2), mouth: mood.1,
                                   swim: CartoonFish.Swim(phase: [0.0, 1.2, 4.2][col], amplitude: 0.2))
-                        Self.label(&c, "\(provider) · \(mood.0)",
+                        Self.label(&c, "\(light.0) · \(mood.0)",
                                    at: CGPoint(x: centre.x, y: centre.y + cellH * 0.42))
                     }
                 }
@@ -158,7 +160,7 @@ struct AquariumFishRenderProofTests {
                                      y: cellH * (Double(i / 3) + 0.46))
                 let provider = heroProviders[species] ?? "claude"
                 Self.pose(&c, species, at: centre, length: 170 * species.sizeScale,
-                          palette: Self.palette(provider))
+                          palette: Self.palette(species))
                 Self.label(&c, "\(species.displayName) · \(provider)",
                            at: CGPoint(x: centre.x, y: cellH * (Double(i / 3) + 0.93)))
             }
@@ -177,7 +179,7 @@ struct AquariumFishRenderProofTests {
                     var d = c
                     d.opacity = 1 - lane * 0.28
                     Self.pose(&d, species, at: CGPoint(x: x, y: 60 + Double(row) * 100),
-                              length: length, palette: Self.palette(provider, lane: lane),
+                              length: length, palette: Self.palette(species, lane: lane),
                               facing: i % 2 == 0 ? 1 : -1)
                 }
             }
@@ -193,16 +195,16 @@ struct AquariumFishRenderProofTests {
                 for k in 0..<5 {
                     let beat = CartoonFish.Swim(phase: Double(k) * .pi / 4 - .pi / 2, amplitude: 0.25)
                     Self.pose(&c, species, at: CGPoint(x: 60 + Double(k) * 100, y: y),
-                              length: 80, palette: Self.palette(provider), swim: beat)
+                              length: 80, palette: Self.palette(species), swim: beat)
                 }
                 for (k, p) in [0.2, 0.36, 0.5, 0.64, 0.84].enumerated() {
                     let turn = Self.turning(p)
                     Self.pose(&c, species, at: CGPoint(x: 590 + Double(k) * 95, y: y),
-                              length: 80, palette: Self.palette(provider), swim: turn.swim,
+                              length: 80, palette: Self.palette(species), swim: turn.swim,
                               facing: turn.facing)
                 }
                 Self.pose(&c, species, at: CGPoint(x: 1100, y: y), length: 80,
-                          palette: Self.palette(provider), blink: 1)
+                          palette: Self.palette(species), blink: 1)
             }
         }
         try Self.write(motion, "fish-motion")
@@ -226,18 +228,17 @@ struct AquariumFishRenderProofTests {
                     let hat = item.flatMap { hats.contains($0) ? $0 : nil }
                     let accessory = item.flatMap { hats.contains($0) ? nil : $0 }
                     Self.pose(&c, sp, at: CGPoint(x: cellW * (Double(col) + 0.5), y: y),
-                              length: 74 * sp.sizeScale, palette: Self.palette("claude"),
+                              length: 74 * sp.sizeScale, palette: Self.palette(sp),
                               hat: hat, accessory: accessory)
                 }
                 let base = Double(items.count)
                 Self.pose(&c, sp, at: CGPoint(x: cellW * (base + 0.5), y: y),
-                          length: 74 * sp.sizeScale, palette: Self.palette("codex"), variant: .tide)
+                          length: 74 * sp.sizeScale, palette: Self.palette(sp), variant: .tide)
                 Self.pose(&c, sp, at: CGPoint(x: cellW * (base + 1.5), y: y),
-                          length: 74 * sp.sizeScale, palette: Self.palette("codex"), variant: .starry)
+                          length: 74 * sp.sizeScale, palette: Self.palette(sp), variant: .starry)
                 Self.pose(&c, sp, at: CGPoint(x: cellW * (base + 2.5), y: y),
                           length: 74 * sp.sizeScale,
-                          palette: CartoonFish.Palette(accent: AquariumView.sinkingNS, floor: Self.floorNS),
-                          dead: true)
+                          palette: Self.palette(sp, look: .drained), dead: true)
             }
         }
         try Self.write(view, "fish-wearables")
@@ -253,7 +254,7 @@ struct AquariumFishRenderProofTests {
                 for (k, p) in [0.0, 0.22, 0.36, 0.5, 0.64, 0.8].enumerated() {
                     let turn = Self.turning(p)
                     Self.pose(&c, species, at: CGPoint(x: 80 + Double(k) * 165, y: 60 + Double(row) * 115),
-                              length: 100, palette: Self.palette(provider), swim: turn.swim,
+                              length: 100, palette: Self.palette(species), swim: turn.swim,
                               facing: turn.facing, hat: hat, accessory: item)
                 }
             }
@@ -309,7 +310,7 @@ struct AquariumFishRenderProofTests {
             for (i, overlay) in FishOverlay.allCases.enumerated() {
                 let x = 60 + Double(i) * 110
                 Self.pose(&c, .clownfish, at: CGPoint(x: x, y: 100), length: 60,
-                          palette: Self.palette("claude"))
+                          palette: Self.palette(.clownfish))
                 FishOverlayArt.draw(overlay, into: &c, at: CGPoint(x: x + 6, y: 58), r: 6, t: 0.4)
             }
             for k in 0..<4 {
@@ -318,6 +319,69 @@ struct AquariumFishRenderProofTests {
             }
         }
         try Self.write(marks, "fish-marks", scale: 3)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write fish proof PNGs"))
+    func statesGrid() throws {
+        // Every species in every agent state, through the tank's own
+        // fish pass with labels off: what a person reads without words.
+        let now = Date()
+        let states: [(FishState, String)] = [(.swimming, "working"), (.surfacing, "asking"),
+                                             (.leaving, "done"), (.sinking, "failed"), (.idling, "idle")]
+        let providers: [FishSpecies: String] = [
+            .minnow: "generic", .clownfish: "claude", .angelfish: "gemini", .puffer: "antigravity",
+            .shark: "codex", .seahorse: "hermes", .betta: "opencode", .tang: "devin", .tetra: "cursor",
+        ]
+        let all = FishSpecies.allCases
+        let cellW = 190.0, cellH = 150.0, left = 120.0, top = 40.0
+        for (name, night, size) in [("fish-states-grid", 0.0, 1.0), ("fish-states-grid-night", 1.0, 1.0),
+                                    ("fish-states-grid-24pt", 0.0, 24 / AquariumView.fishBaseLength)] {
+            var cast: [(Fish, AquariumView.Layout)] = []
+            for (row, species) in all.enumerated() {
+                for (col, state) in states.enumerated() {
+                    let id = AquariumFishRenderProofTests.plainID(species, col)
+                    let fish = Fish(id: id, label: "\(species.rawValue)-\(state.1)",
+                                    providerID: providers[species] ?? "generic", state: state.0, lane: 0.15,
+                                    speed: 0.1, direction: 1, stateSince: now.addingTimeInterval(-6),
+                                    enteredAt: .distantPast, lastUpdate: state.0 == .swimming ? now : nil,
+                                    species: species)
+                    var l = AquariumView.Layout()
+                    l.x = left + cellW * (Double(col) + 0.5)
+                    l.y = top + cellH * (Double(row) + 0.5)
+                    l.facing = 1
+                    l.scale = size
+                    l.wag = state.0 == .swimming ? 1.25 : 0.4
+                    if state.0 == .sinking { l.pitch = 0.32 }
+                    if state.0 == .surfacing { l.pitch = -0.2 }
+                    if state.0 == .leaving { l.pitch = -0.12 }
+                    cast.append((fish, l))
+                }
+            }
+            let tank = AquariumView(fixture: AquariumView.Fixture(fish: cast.map(\.0), game: AquariumGame(),
+                                                                  night: night))
+            let view = Self.sheet(width: left + cellW * Double(states.count),
+                                  height: top + cellH * Double(all.count)) { c, sheetSize in
+                for (col, state) in states.enumerated() {
+                    Self.label(&c, state.1, at: CGPoint(x: left + cellW * (Double(col) + 0.5), y: 18))
+                }
+                for (row, species) in all.enumerated() {
+                    Self.label(&c, species.displayName, at: CGPoint(x: left * 0.5, y: top + cellH * (Double(row) + 0.5)))
+                }
+                for (fish, layout) in cast {
+                    tank.drawFish(canvas: &c, size: sheetSize, t: 10, now: now, fish: fish, layout: layout,
+                                  parent: nil, showLabels: false)
+                }
+            }
+            try Self.write(view, name)
+        }
+    }
+
+    /// An id for `species` in column `column` that does not win the
+    /// golden lottery, so the grid shows every coat as itself.
+    private static func plainID(_ species: FishSpecies, _ column: Int) -> String {
+        (0..<200).map { "\(species.rawValue)-\(column)-\($0)" }
+            .first { !AquariumBehavior.isGolden(seed: AquariumModel.stableHash($0)) } ?? "\(species.rawValue)-\(column)"
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",

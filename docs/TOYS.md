@@ -530,13 +530,39 @@ antigravity & openclaw as spotted puffers, hermes as an upright
 seahorse, opencode/kiro/t3code as flowing-finned bettas, devin as a
 tang, cursor & pi as little tetras; anything new is a minnow
 (`FishSpecies` in `AquariumModel.swift`, so the mapping is testable).
-The fish are drawn chunky and cartooned (`AquariumFishArt` /
-`CartoonFish`): fat rounded bodies, big glossy eyes with catchlights,
-soft bellies, expressive fins — a toy's fish, not a field guide's.
+The fish are drawn chunky and friendly (`AquariumFishArt` /
+`CartoonFish`), and they are lit by the tank, not inked. No outline
+carries a fish. Its volume is a four-stop body gradient, a pale crescent
+of surface light along the back, a warm bounce off the sand under the
+belly and one soft catch of light on the brow; fins are translucent and
+thin toward the water; the eyes are dark and bright, with one catchlight.
 Each keeps a translucent tail that articulates a beat behind the head,
-swept dorsal and pectoral fins, a gill line, a pale belly countershade
-and a proper eye with a catchlight, in the provider's colour with the
-session label on a small floating tag tethered under it.
+swept dorsal and pectoral fins and a gill line, with the session label on
+a small floating tag tethered under it.
+
+Each species wears its own coat (`CartoonFish.coat(for:)` in
+`AquariumFishCoat.swift`), chosen to stand off blue water: an orange
+clownfish with white bars, a slate shark with a pale belly, a cream
+angelfish with blue sails, a yellow puffer, a coral seahorse, a crimson
+betta under violet veils, a blue tang with a yellow tail, a silver tetra
+with its neon stripe, a sea-green minnow. The provider still shows,
+because the provider picks the species; two sessions of one provider
+differ by a few degrees of hue. Deeper lanes wash toward the floor's
+colour, and at night every fish sinks a quarter of the way into the dark.
+
+A fish says what its session is doing without a label:
+
+- **Working**: it swims with a brisk tail and trails small bubbles.
+- **Waiting on you**: it rises to the glass and lights amber, the app's
+  one colour for "this needs you", with a glow that breathes and an amber
+  speech bubble with three dots over its head. A permission ask keeps its
+  lock buoy there instead.
+- **Done**: the rim of light on its back turns gold and five gold
+  sparkles twinkle round it as it leaves.
+- **Failed**: its colour drains, its eye shuts with a droop and it sinks.
+  The pattern stays, so the species still reads.
+- **Idle**: a sleepy lid sits over the top of its eye, by day as well as
+  at night.
 
 It's also a small idle game (`JRBarCore/AquariumGame.swift`, the
 `GameStore` on `AquariumStore`): while sessions work, the tank earns

@@ -705,18 +705,21 @@ extension AquariumView {
         let height = max(drawn.above, drawn.below) * 2
 
         // The golden ticket: ~1 fish in 24 swims in gold instead of its
-        // provider colour — a seeded lottery, the same fish every
-        // launch. A sinking fish is beyond vanity: it stays grey.
+        // species' coat, a seeded lottery, the same fish every launch. A
+        // sinking fish is beyond vanity: its colour drains.
         let golden = !fish.isFry && fish.state != .sinking
             && AquariumBehavior.isGolden(seed: h)
-        let base: NSColor = fish.state == .sinking
-            ? Self.sinkingNS
-            : (golden ? NSColor(srgbRed: 0.98, green: 0.76, blue: 0.22, alpha: 1)
-                      : ProviderStyle.style(for: fish.providerID).nsAccent)
-        // Depth: deeper lanes wash toward the column's floor colour.
-        let palette = CartoonFish.Palette(accent: base, depth: lane, floor: floorNS,
-                                          haze: water.style.haze, vivid: water.style.vivid,
-                                          ink: water.style.ink)
+        // Two fish of one species differ by a few degrees of hue, so
+        // two sessions of one provider are two fish.
+        let hue = golden ? 0 : (Double((h >> 12) & 0xFF) / 0xFF - 0.5) * 16
+        // Depth: deeper lanes wash toward the column's floor colour. A
+        // run that just finished wears the gold rim out of the tank.
+        let palette = CartoonFish.Palette(
+            coat: golden ? CartoonFish.goldenCoat : CartoonFish.coat(for: fish.species),
+            depth: lane, floor: floorNS,
+            haze: water.style.haze, vivid: water.style.vivid, ink: water.style.ink,
+            look: fish.state == .sinking ? .drained : .natural, hue: hue,
+            night: nightFactor(t: t), gold: fish.state == .leaving)
 
         // The tail beats on the fish's own clock: faster the faster it
         // really swims, quicker still while its session is busy. A
@@ -778,6 +781,27 @@ extension AquariumView {
             motion.tricks.removeValue(forKey: fish.id)
         }
 
+        // Waiting on you: the fish lights amber, the app's one colour for
+        // "this needs you", bright enough to spot across the room. The
+        // glow breathes on a slow sine and holds still under Reduce
+        // Motion. Fry don't glow; a worker's ask shows on its parent.
+        if fish.state == .surfacing, !fish.isFry {
+            let breath = reduceMotion || isStill ? 0.5 : 0.5 + 0.5 * sin(t * (2 * .pi / 1.2) + phase)
+            let radius = min(length * 0.95, 72) * (1 + 0.08 * breath)
+            let amber = Tone.ask.color
+            var halo = canvas
+            halo.blendMode = .plusLighter
+            halo.opacity = l.opacity
+            halo.fill(Path(ellipseIn: CGRect(x: l.x - radius, y: l.y - radius, width: radius * 2, height: radius * 2)),
+                      with: .radialGradient(
+                        Gradient(stops: [
+                            .init(color: amber.opacity(0.42 + 0.14 * breath), location: 0),
+                            .init(color: amber.opacity(0.16), location: 0.55),
+                            .init(color: amber.opacity(0), location: 1),
+                        ]),
+                        center: CGPoint(x: l.x, y: l.y), startRadius: 0, endRadius: radius))
+        }
+
         var f = canvas
         f.opacity = l.opacity * (1 - lane * 0.28)
         // Surface refraction: anything within ~8% of the waterline
@@ -800,7 +824,10 @@ extension AquariumView {
         let wink = smooth(clamp01((blinkPhase - 0.94) / 0.025))
             * smooth(clamp01((1.0 - blinkPhase) / 0.025))
         let drowsy = smooth(clamp01((l.sleep - 0.3) / 0.5))
-        let blink = dead || reduceMotion ? 0.0 : max(wink, drowsy)
+        // An idle fish keeps a sleepy lid over the top of its eye, so it
+        // reads idle in a still frame too.
+        let sleepy = fish.state == .idling && !fish.isFry ? 0.42 : 0.0
+        let blink = dead ? 0.0 : max(reduceMotion ? 0 : max(wink, drowsy), sleepy)
         let lw = CartoonFish.outlineWidth(length, ink: palette.ink)
         let wear = wearables(for: fish, care: care)
         // The barrel roll squashes across the body, through belly-up.
@@ -839,9 +866,9 @@ extension AquariumView {
                                      thin: side, lead: lead, lineWidth: lw)
         }
 
-        // An ask comes up for air: a small trail climbs from where the
-        // rise began, and a bubble rides overhead growing till it pops.
-        // Fry don't get one — a worker's ask surfaces on its parent.
+        // An ask comes up for air: a small trail of bubbles climbs from
+        // where the rise began. Fry don't get one; a worker's ask
+        // surfaces on its parent.
         if fish.state == .surfacing, !fish.isFry, !isStill {
             let since = now.timeIntervalSince(fish.stateSince)
             for k in 0..<3 {
@@ -859,14 +886,16 @@ extension AquariumView {
                 b.stroke(Path(ellipseIn: CGRect(x: bx - r, y: by - r, width: r * 2, height: r * 2)),
                          with: .color(.white), lineWidth: 0.7)
             }
-            let rise = frac(t * 0.45 + phase / (.pi * 2))
-            let bx = l.x + l.yawCos * 6 + sin(t * 3 + phase) * 2
-            let by = l.y - height * 0.5 - 8 - rise * 20
-            let br = 2.6 + rise * 1.2
-            var b = canvas
-            b.opacity = l.opacity * (1 - rise) * 0.9
-            b.stroke(Path(ellipseIn: CGRect(x: bx - br, y: by - br, width: br * 2, height: br * 2)),
-                     with: .color(.white), lineWidth: 0.9)
+        }
+        // ... and it says so: an amber speech bubble with three dots rides
+        // over its head, bobbing a little. A permission ask keeps its lock
+        // buoy there instead, so the two kinds of ask still differ.
+        if fish.state == .surfacing, !fish.isFry, fish.plan?.overlay != .attentionBuoy {
+            let bob = reduceMotion || isStill ? 0 : sin(t * (2 * .pi / 1.6) + phase + 1.1) * 2
+            drawAskBubble(canvas: &canvas,
+                          at: CGPoint(x: l.x + l.yawCos * length * 0.18,
+                                      y: max(12, l.y - height * 0.5 - max(9, length * 0.2) + bob)),
+                          radius: max(7, min(13, length * 0.15)), opacity: l.opacity)
         }
 
         // Waiting at the glass: a soft amber ring pulses off its nose,
@@ -887,7 +916,10 @@ extension AquariumView {
         // W13's evidence overlays — one marker, only what the plan
         // cites. A buoy is a buoy: the same glyph a fixture asserts
         // the overlay enum carries, drawn small above the fish.
-        if let overlay = fish.plan?.overlay, !fish.isFry {
+        // A question's bubble is the amber speech bubble above; the two
+        // never stack.
+        if let overlay = fish.plan?.overlay, !fish.isFry,
+           !(overlay == .questionBubble && fish.state == .surfacing) {
             drawOverlayMarker(overlay, l: l, canvas: &canvas,
                               length: length, height: height, t: t)
         }
@@ -957,6 +989,36 @@ extension AquariumView {
             }
         }
 
+        // A finished run leaves in a twinkle: five gold sparkles round
+        // the fish, each flaring and dying on its own phase.
+        if fish.state == .leaving, !fish.isFry {
+            let gold = CartoonFish.finishGold
+            for k in 0..<5 {
+                let seed = AquariumBehavior.scramble(h &+ UInt64(k + 7) &* 0x9E3779B97F4A7C15)
+                let angle = Double(k) / 5 * .pi * 2 + 0.4
+                let reach = min(length, 80) * (0.55 + Double(seed & 0xFF) / 0xFF * 0.2)
+                let twinkle = reduceMotion || isStill
+                    ? 0.8 : 0.5 + 0.5 * sin(t * 4.2 + Double((seed >> 8) & 0xFF) / 0xFF * .pi * 2)
+                let s = (3 + Double((seed >> 16) & 0xFF) / 0xFF * 4) * (0.6 + 0.4 * twinkle)
+                let at = CGPoint(x: l.x + cos(angle) * reach, y: l.y + sin(angle) * reach * 0.7)
+                var glow = canvas
+                glow.blendMode = .plusLighter
+                glow.opacity = l.opacity * (0.35 + 0.65 * twinkle)
+                glow.fill(Path(ellipseIn: CGRect(x: at.x - s * 2.4, y: at.y - s * 2.4, width: s * 4.8, height: s * 4.8)),
+                          with: .radialGradient(Gradient(colors: [gold.opacity(0.45), gold.opacity(0)]),
+                                                center: at, startRadius: 0, endRadius: s * 2.4))
+                // The star itself is painted, not added: gold stays gold
+                // over bright water.
+                var star = canvas
+                star.opacity = l.opacity * (0.35 + 0.65 * twinkle)
+                star.translateBy(x: at.x, y: at.y)
+                star.scaleBy(x: s * 2.6, y: s * 2.6)
+                star.fill(Self.sparklePath, with: .color(gold))
+                star.scaleBy(x: 0.3, y: 0.3)
+                star.fill(Self.sparklePath, with: .color(.white))
+            }
+        }
+
         // A dozing fish breathes out the occasional slow "z".
         if l.sleep > 0.35, !fish.isFry {
             let zc = frac(t / 3.8 + phase / (.pi * 2))
@@ -990,6 +1052,37 @@ extension AquariumView {
         }
 
         if showLabels { drawFishLabel(canvas: &canvas, size: size, fish: fish, layout: l) }
+    }
+
+    /// The asking fish's speech bubble: amber, three dark dots, a small
+    /// tail toward the fish.
+    func drawAskBubble(canvas: inout GraphicsContext, at b: CGPoint, radius r: Double, opacity: Double) {
+        var c = canvas
+        c.opacity = opacity
+        var tail = Path()
+        tail.move(to: CGPoint(x: b.x - r * 0.35, y: b.y + r * 0.6))
+        tail.addLine(to: CGPoint(x: b.x + r * 0.05, y: b.y + r * 1.45))
+        tail.addLine(to: CGPoint(x: b.x + r * 0.35, y: b.y + r * 0.55))
+        tail.closeSubpath()
+        let disc = Path(ellipseIn: CGRect(x: b.x - r * 1.25, y: b.y - r, width: r * 2.5, height: r * 2))
+        let amber = Tone.ask.color
+        var shadow = c
+        shadow.addFilter(.shadow(color: CartoonFish.askShadow.opacity(0.35),
+                                 radius: 2, x: 0, y: 1.5))
+        shadow.fill(tail, with: .color(amber))
+        shadow.fill(disc, with: .linearGradient(
+            Gradient(colors: [amber.mix(with: .white, by: 0.38), amber]),
+            startPoint: CGPoint(x: b.x, y: b.y - r), endPoint: CGPoint(x: b.x, y: b.y + r)))
+        var top = c
+        top.clip(to: disc)
+        top.fill(CartoonFish.crescent(of: disc, in: disc.boundingRect, dy: 1.2),
+                 with: .color(.white.opacity(0.6)), style: FillStyle(eoFill: true))
+        var dots = Path()
+        for k in -1...1 {
+            let x = b.x + Double(k) * r * 0.62
+            dots.addEllipse(in: CGRect(x: x - r * 0.17, y: b.y - r * 0.17, width: r * 0.34, height: r * 0.34))
+        }
+        c.fill(dots, with: .color(CartoonFish.askInk))
     }
 
     func drawFishLabel(canvas: inout GraphicsContext, size: CGSize, fish: Fish, layout l: Layout) {

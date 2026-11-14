@@ -102,13 +102,12 @@ extension CartoonFish {
         if art.fins.contains(where: \.solid) {
             drawFrontSpines(into: &f, art: art, width: w, palette: palette, lw: lw)
         }
-        f.stroke(body, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 2, lineJoin: .round))
         f.fill(body, with: .linearGradient(
             Gradient(stops: [
-                .init(color: palette.dark, location: 0),
-                .init(color: palette.body, location: 0.36),
-                .init(color: palette.body, location: 0.58),
-                .init(color: palette.light, location: 0.96),
+                .init(color: palette.light, location: 0),
+                .init(color: palette.body, location: 0.34),
+                .init(color: palette.body.mix(with: palette.dark, by: 0.35), location: 0.66),
+                .init(color: palette.belly, location: 1),
             ]),
             startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: bottom)))
         var lit = f
@@ -116,25 +115,34 @@ extension CartoonFish {
         // A banded fish shows its first band as a pale collar round the
         // face, where it wraps the head — the clownfish, head-on.
         if !dead, art.marks.contains(where: { if case .bar = $0.style { return true }; return false }) {
-            lit.stroke(body, with: .color(palette.outline.opacity(0.6)), lineWidth: w * 0.30 + lw * 2.4)
+            lit.stroke(body, with: .color(palette.mark.opacity(0.6)), lineWidth: w * 0.30 + lw * 1.4)
             lit.stroke(body, with: .color(.white.opacity(0.95)), lineWidth: w * 0.28)
         }
-        lit.fill(body, with: .radialGradient(
-            Gradient(stops: [
-                .init(color: palette.glow.opacity(0.35), location: 0),
-                .init(color: palette.glow.opacity(0), location: 0.4),
-                .init(color: palette.dark.opacity(0), location: 0.6),
-                .init(color: palette.dark.opacity(0.40), location: 1),
-            ]),
-            center: CGPoint(x: -w * 0.12, y: top + h * 0.28), startRadius: 0, endRadius: h * 0.62))
-        // The rim of surface light along the top, as the side view has.
-        lit.stroke(body, with: .linearGradient(
-            Gradient(stops: [
-                .init(color: palette.glow.opacity(0.8), location: 0),
-                .init(color: palette.glow.opacity(0), location: 0.4),
-            ]),
-            startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: bottom)),
-            lineWidth: lw * 2.4)
+        // The sand's bounce, the rim of surface light and the belly's
+        // shade, as the side view has them.
+        if palette.bounce > 0 {
+            let warm = sandBounce
+            lit.fill(body, with: .linearGradient(
+                Gradient(stops: [
+                    .init(color: warm.opacity(0), location: 0.75),
+                    .init(color: warm.opacity(palette.bounce), location: 1),
+                ]),
+                startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: bottom)))
+        }
+        let rim = rimWidth(pointSize)
+        let box = body.boundingRect
+        lit.fill(crescent(of: body, in: box, dy: rim * 2.25), with: .color(palette.glow.opacity(0.22)),
+                 style: FillStyle(eoFill: true))
+        lit.fill(crescent(of: body, in: box, dy: rim), with: .color(palette.glow.opacity(0.9)),
+                 style: FillStyle(eoFill: true))
+        lit.fill(crescent(of: body, in: box, dy: -rim), with: .color(palette.dark.opacity(0.45)),
+                 style: FillStyle(eoFill: true))
+        lit.fill(Path(ellipseIn: CGRect(x: -w * 0.42, y: top + h * 0.10, width: w * 0.5, height: h * 0.16)),
+                 with: .radialGradient(Gradient(colors: [.white.opacity(0.36), .white.opacity(0)]),
+                                       center: CGPoint(x: -w * 0.17, y: top + h * 0.18),
+                                       startRadius: 0, endRadius: w * 0.25))
+        f.stroke(body, with: .color(palette.outline.opacity(edgeOpacity(palette.ink))),
+                 style: StrokeStyle(lineWidth: lw * 0.75, lineJoin: .round))
 
         drawFrontPectorals(into: &f, art: art, width: w, phase: swim.phase, moving: swim.amplitude > 0,
                            palette: palette, lw: lw)
@@ -169,7 +177,7 @@ extension CartoonFish {
             let fan = Path(ellipseIn: CGRect(x: -veil + sweep * 0.4, y: r.minY,
                                              width: veil * 2, height: r.height))
             // As solid as the veil it was a frame ago, rays and all.
-            let cloth = vivid ? (tail.tint ?? palette.body) : palette.body
+            let cloth = palette.fin
             f.fill(fan, with: .radialGradient(
                 Gradient(colors: [cloth.opacity(0.9), cloth.opacity(0.55)]),
                 center: CGPoint(x: sweep * 0.2, y: midY), startRadius: 0, endRadius: r.height * 0.5))
@@ -208,8 +216,8 @@ extension CartoonFish {
                        control: CGPoint(x: sweep * 0.3 + w * 0.12, y: (r.maxY + midY) / 2))
         p.addQuadCurve(to: CGPoint(x: -w * 0.06, y: midY),
                        control: CGPoint(x: sweep * 0.3 - w * 0.12, y: (r.maxY + midY) / 2))
-        let tint = vivid ? (tail.tint ?? palette.dark) : palette.dark
-        f.fill(p, with: .color(tint.opacity(0.72)))
+        let cloth = vivid && tail.accent ? palette.accent : palette.fin.mix(with: palette.dark, by: 0.35)
+        f.fill(p, with: .color(cloth.opacity(0.72)))
     }
 
     /// The dorsal and anal fins edge-on: blades leaning a little with the
@@ -246,8 +254,12 @@ extension CartoonFish {
                 spikes.closeSubpath()
             }
         }
-        f.fill(spikes, with: .color(palette.body.opacity(0.82)))
-        f.stroke(spikes, with: .color(palette.outline.opacity(0.55)), lineWidth: lw * 0.7)
+        let sails = art.fins.contains { fin in
+            if case .ripple = fin.motion { return fin.accent }
+            return false
+        }
+        f.fill(spikes, with: .color((sails ? palette.accent : palette.fin).opacity(0.82)))
+        f.stroke(spikes, with: .color(palette.dark.opacity(0.3 + 0.4 * palette.ink)), lineWidth: lw * 0.6)
     }
 
     /// A spiny fish (the puffer) keeps its spines head-on: short solid
@@ -268,8 +280,9 @@ extension CartoonFish {
             spines.addLine(to: CGPoint(x: base.x - side.x, y: base.y - side.y))
             spines.closeSubpath()
         }
-        f.stroke(spines, with: .color(palette.outline), style: StrokeStyle(lineWidth: lw * 1.6, lineJoin: .round))
         f.fill(spines, with: .color(palette.light))
+        f.stroke(spines, with: .color(palette.outline.opacity(edgeOpacity(palette.ink))),
+                 style: StrokeStyle(lineWidth: lw * 0.7, lineJoin: .round))
     }
 
     /// Both pectorals paddling out to the sides, from where the near
@@ -289,8 +302,8 @@ extension CartoonFish {
             g.rotate(by: .radians(side * (0.55 + flap)))
             let fin = Path(ellipseIn: CGRect(x: side > 0 ? 0 : -reach, y: -reach * 0.22,
                                              width: reach, height: reach * 0.44))
-            g.fill(fin, with: .color((pec.tint ?? palette.body).opacity(0.85)))
-            g.stroke(fin, with: .color(palette.outline.opacity(0.7)), lineWidth: lw * 0.9)
+            g.fill(fin, with: .color((pec.accent ? palette.accent : palette.fin).opacity(0.85)))
+            g.stroke(fin, with: .color(palette.dark.opacity(0.35 + 0.4 * palette.ink)), lineWidth: lw * 0.6)
         }
     }
 

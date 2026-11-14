@@ -21,6 +21,9 @@ extension CartoonFish {
     /// swimmer, across the neck under the head on an upright one.
     private static func finished(_ art: Art) -> Art {
         var art = art
+        // Eyes a fifth smaller than the kits were first drawn with: dark
+        // and bright, a character's and not a sticker's.
+        art.eyeR *= 0.82
         // Every path the swim bends is held as a CoreGraphics path, so
         // bending one each frame reads it without converting it first.
         art.body = Path(art.body.cgPath)
@@ -224,18 +227,17 @@ extension CartoonFish {
     /// A tall oval with a long fin along its back and belly, the deep
     /// sweep of its palette marking and a bright yellow tail.
     private static func tangKit() -> Art {
-        let yellow = Color(red: 1.0, green: 0.80, blue: 0.22)
         let body = spline([k(0.50, 0.08), k(0.47, -0.04), k(0.36, -0.20), k(0.16, -0.315),
                            k(-0.08, -0.31), k(-0.26, -0.20), k(-0.36, -0.085), k(-0.40, 0),
                            k(-0.36, 0.075), k(-0.26, 0.18), k(-0.06, 0.28), k(0.16, 0.285),
                            k(0.36, 0.21), k(0.46, 0.14)])
         let fins = [
             fin(pt(0.20, 0.06), pt(0.17, 0.13), edge: [k(0.11, 0.05), corner(0.03, 0.10), k(0.07, 0.16)],
-                rays: 3, motion: .paddle(0.5), layer: .far, tint: yellow),
+                rays: 3, motion: .paddle(0.5), layer: .far, accent: true),
             fin(pt(-0.37, -0.05), pt(-0.37, 0.05),
                 edge: [k(-0.47, -0.13), corner(-0.64, -0.23), k(-0.585, -0.10), k(-0.57, 0),
                        k(-0.585, 0.10), corner(-0.64, 0.23), k(-0.47, 0.13)],
-                rays: 8, motion: .tail, tint: yellow),
+                rays: 8, motion: .tail, accent: true),
             fin(pt(0.28, -0.25), pt(-0.34, -0.10),
                 edge: [k(0.20, -0.35), k(0.02, -0.41), k(-0.18, -0.39), k(-0.32, -0.28), k(-0.39, -0.14)],
                 rays: 10, motion: .ripple(0.35)),
@@ -246,7 +248,7 @@ extension CartoonFish {
                 rays: 2, motion: .ripple(0.4)),
             fin(pt(0.21, 0.05), pt(0.18, 0.13),
                 edge: [k(0.12, 0.04), k(0.03, 0.09), corner(0.01, 0.15), k(0.10, 0.17)],
-                rays: 4, motion: .paddle(0.6), layer: .near, tint: yellow),
+                rays: 4, motion: .paddle(0.6), layer: .near, accent: true),
         ]
         // The palette: a dark sweep from the eye along the back and down
         // to the tail, hooking forward along the lower flank.
@@ -283,7 +285,7 @@ extension CartoonFish {
         let fins = [
             fin(pt(0.22, 0.27), pt(0.16, 0.30),
                 edge: [k(0.16, 0.44), k(0.06, 0.60), corner(-0.04, 0.74), k(0.05, 0.56), k(0.12, 0.42)],
-                rays: 0, motion: .ripple(0.5), layer: .far),
+                rays: 0, motion: .ripple(0.5), layer: .far, accent: true),
             fin(pt(-0.35, -0.05), pt(-0.35, 0.05),
                 edge: [k(-0.46, -0.16), corner(-0.76, -0.34), k(-0.63, -0.15), k(-0.61, 0),
                        k(-0.63, 0.15), corner(-0.76, 0.34), k(-0.46, 0.16)],
@@ -291,14 +293,14 @@ extension CartoonFish {
             fin(pt(0.16, -0.33), pt(-0.28, -0.13),
                 edge: [k(0.07, -0.48), k(-0.07, -0.62), corner(-0.30, -0.78), k(-0.26, -0.55),
                        k(-0.29, -0.35), k(-0.34, -0.18)],
-                rays: 9, motion: .ripple(0.25)),
+                rays: 9, motion: .ripple(0.25), accent: true),
             fin(pt(0.14, 0.33), pt(-0.28, 0.13),
                 edge: [k(0.06, 0.50), k(-0.08, 0.66), corner(-0.30, 0.82), k(-0.26, 0.57),
                        k(-0.29, 0.37), k(-0.34, 0.19)],
-                rays: 9, motion: .ripple(0.25)),
+                rays: 9, motion: .ripple(0.25), accent: true),
             fin(pt(0.24, 0.26), pt(0.18, 0.29),
                 edge: [k(0.20, 0.44), k(0.12, 0.62), corner(0.02, 0.78), k(0.10, 0.58), k(0.15, 0.42)],
-                rays: 0, motion: .ripple(0.5)),
+                rays: 0, motion: .ripple(0.5), accent: true),
             fin(pt(0.19, 0.02), pt(0.17, 0.09),
                 edge: [k(0.10, 0.02), k(0.03, 0.07), corner(0.01, 0.13), k(0.09, 0.14)],
                 rays: 4, motion: .paddle(0.6), layer: .near),

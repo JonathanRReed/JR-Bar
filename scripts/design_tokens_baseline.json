@@ -209,25 +209,18 @@
     "radius: cornerRadius: 3.2": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishArt.swift": {
-    "colour: Color(red: 0.02": 1,
     "colour: Color(red: 0.30": 2,
     "colour: Color(red: 0.36": 1,
     "colour: Color(red: 0.40": 1,
     "colour: Color(red: 0.55": 1,
-    "colour: Color(red: 0.84": 1,
-    "colour: Color(red: 0.90": 1,
     "colour: Color(red: 0.93": 1,
     "colour: Color(red: 0.95": 1,
-    "colour: Color(red: 0.99": 1,
     "colour: Color(red: 1.0": 3
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishFront.swift": {
     "colour: Color(red: 0.30": 1,
     "colour: Color(red: 0.36": 2,
     "colour: Color(red: 1.0": 2
-  },
-  "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishKits.swift": {
-    "colour: Color(red: 1.0": 1
   },
   "app/Sources/JRBarApp/Toys/Aquarium/AquariumFishWear.swift": {
     "colour: Color(red: 0.02": 1,

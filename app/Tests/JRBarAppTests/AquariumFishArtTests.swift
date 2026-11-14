@@ -19,7 +19,7 @@ struct AquariumFishArtTests {
             // The tank's hover box is ±0.62 lengths wide around the
             // fish's centre; the body itself must sit inside it.
             #expect(art.bounds.minX > -0.62 && art.bounds.maxX < 0.62, "\(species) body inside the box")
-            #expect(art.eyeR > 0.05, "\(species) has a big eye")
+            #expect(art.eyeR > 0.045, "\(species) has an eye big enough to read")
             #expect(art.bounds.contains(art.eye), "\(species) eye is on the head")
             #expect(art.collar.bottom.y >= art.collar.top.y, "\(species) collar found")
         }
