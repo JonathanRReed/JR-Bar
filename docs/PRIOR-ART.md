@@ -1080,3 +1080,20 @@ an agent's question prompted JR-Bar's ⌘1 to ⌘9 in the panel, which pick the
 option buttons a held question shows and nothing folded into a menu
 (`PanelStore.optionLabel`). The design and code are JR-Bar's own.
 
+### Upstream refresh, 2026-11-14
+
+Reviewed `inteliwear/sidepulse` `main` at `20ca7fdd` (MIT) with its pull
+requests 53 to 88 and open issues; the dispositions are in the round's
+research report, not yet a doc here. Taken so far:
+
+- Issue #73, "Claude turns that end with background tasks running show as
+  Completed". JR-Bar had the same fault. The fix here reads only the count
+  of in-flight entries in the Stop hook's `background_tasks`, gives the
+  turn its own canonical event (`stop_background`, work stays active),
+  keeps the idle nudge and the session file's idle status from ending the
+  wait, and bounds the wait at six hours
+  (`provider_adapters.running_background_tasks`, `collector.is_background_wait`,
+  `liveness_sweep.BACKGROUND_WAIT_MAX_SECONDS`). The issue's suggested patch
+  was read; none of it was copied. The hook's fields were checked against
+  Claude Code's hooks reference on 2026-11-14.
+

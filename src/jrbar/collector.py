@@ -86,6 +86,7 @@ from .provider_adapters import (
     minimize_hook_event,
     normalized_provider_record_from_payload,
     provider_facts_for_record,
+    running_background_tasks,
 )
 from .provider_facts import (
     MAX_SAFE_LABEL_LENGTH,
@@ -3722,6 +3723,12 @@ def mode_for_event(record: HookEvent) -> AgentMode | None:
     if event == "Stop":
         if _assistant_message_asks_question(raw.get("last_assistant_message")):
             return AgentMode.WAITING_FOR_INPUT
+        if record.provider == "claude" and running_background_tasks(raw):
+            # The turn ended with a shell job, a monitor or a background
+            # subagent still in flight: the session is paused until that
+            # work wakes it, not done. A later Stop with nothing in flight
+            # completes it (provider_adapters._STOP_BACKGROUND).
+            return AgentMode.LONG_TASK_PROGRESS
         return AgentMode.COMPLETED
     if event == "SessionEnd":
         return AgentMode.COMPLETED
@@ -4176,6 +4183,17 @@ def permission_signature(record: HookEvent) -> str | None:
     return None
 
 
+def is_background_wait(status: AgentStatus | None) -> bool:
+    """A Claude session whose last turn ended with background work still in
+    flight (``mode_for_event``): paused, waiting for that work to wake it."""
+    return (
+        status is not None
+        and status.provider == "claude"
+        and status.mode == AgentMode.LONG_TASK_PROGRESS
+        and status.event_name == "Stop"
+    )
+
+
 def should_ignore_status_transition(
     previous: AgentStatus | None,
     current: AgentStatus,
@@ -4188,7 +4206,7 @@ def should_ignore_status_transition(
     # turn ended) is, finished turn or not.
     if (
         previous is not None
-        and previous.mode == AgentMode.COMPLETED
+        and (previous.mode == AgentMode.COMPLETED or is_background_wait(previous))
         and current.event_name == "Notification"
         and not requests_input
     ):

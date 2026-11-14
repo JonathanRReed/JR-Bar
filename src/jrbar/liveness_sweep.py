@@ -58,6 +58,11 @@ IDLE_REASON = "jrbar_claude_session_idle"
 #: A session file that turns idle within this long of the last hook is the
 #: normal end of a turn whose Stop is still in flight, not a missed one.
 IDLE_GRACE_SECONDS = 3.0
+#: A Claude turn that ended with background work in flight leaves its session
+#: file idle while the work runs: idle is then what waiting looks like, not a
+#: stopped turn. The wait is believed for this long. A job killed by hand
+#: fires no hook, so past this an idle file ends the wait like any other.
+BACKGROUND_WAIT_MAX_SECONDS = 6 * 3600.0
 _WORKING_SHAPED = frozenset(
     {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
 )
@@ -196,7 +201,9 @@ def reap_dead_agents(
             except Exception:
                 failed += 1
     idled = 0
-    for status, changed_at in _idle_claude_turns(rows, live, claude_activity_loader):
+    for status, changed_at in _idle_claude_turns(
+        rows, live, claude_activity_loader, now=time.time() if now is None else now
+    ):
         payload = json.dumps(
             {
                 "hook_event_name": "Interrupt",
@@ -255,12 +262,25 @@ def reap_dead_agents(
     return SweepResult(tuple(dead), synthesized, frozenset(live), failed, idled, tuple(expired))
 
 
+def _waits_on_background_work(status: AgentStatus, now: float) -> bool:
+    """A turn that ended with background work still in flight, inside the
+    time that wait is believed (``collector.is_background_wait``)."""
+    return (
+        status.mode == AgentMode.LONG_TASK_PROGRESS
+        and status.event_name == "Stop"
+        and now - status.updated_at.timestamp() <= BACKGROUND_WAIT_MAX_SECONDS
+    )
+
+
 def _idle_claude_turns(
     rows: Iterable[AgentStatus],
     live: Iterable[tuple[str, str]],
     loader: Callable[[], Mapping[str, ClaudeSessionActivity]],
+    *,
+    now: float | None = None,
 ) -> list[tuple[AgentStatus, float]]:
     """Working Claude sessions whose own pid file went idle after the last hook."""
+    moment = time.time() if now is None else now
     candidates = [
         status
         for status in rows
@@ -268,6 +288,7 @@ def _idle_claude_turns(
         and status.mode in _WORKING_SHAPED
         and status.session_id
         and _subagent_worker_id(status) is None
+        and not _waits_on_background_work(status, moment)
     ]
     live = frozenset(live)
     candidates = [status for status in candidates if ("claude", status.session_id) in live]

@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
@@ -170,6 +171,9 @@ class ProviderEventName(str, Enum):
     STOP_FAILURE = "stop_failure"
     STOP_INTERRUPTED = "stop_interrupted"
     STOP_INCOMPLETE = "stop_incomplete"
+    #: A turn that ended with background work still in flight: the session
+    #: is paused, waiting for that work to wake it, not done.
+    STOP_BACKGROUND = "stop_background"
     SESSION_END = "session_end"
     SESSION_FINALIZE = "session_finalize"
     API_REQUEST_ERROR = "api_request_error"
@@ -395,6 +399,19 @@ _STOP = _rule(
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,
 )
+# Claude Code's Stop hook lists the tasks still in flight when a turn ends
+# (``background_tasks``: a shell job, a monitor, a background subagent). The
+# session is then paused until that work wakes it, so the work stays active:
+# calling it completed put the lights on Done and let the Mac sleep in the
+# middle of a long job. A later Stop with nothing in flight completes it.
+_STOP_BACKGROUND = _rule(
+    ProviderEventName.STOP_BACKGROUND,
+    WorkLifecycle.ACTIVE,
+    NextActor.PROVIDER,
+    82,
+    request_state=ProviderRequestState.RESOLVED,
+    request_kind=RequestKind.UNKNOWN,
+)
 _STOP_FAILURE = _rule(
     ProviderEventName.STOP_FAILURE,
     WorkLifecycle.FAILED,
@@ -513,6 +530,9 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "SubagentStart": _SUBAGENT_START,
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
+        # Never a hook name: `_provider_event_rule` picks it for a Stop
+        # whose `background_tasks` lists work still in flight.
+        "StopBackground": _STOP_BACKGROUND,
         "StopFailure": _STOP_FAILURE,
         # Claude fires no hook when the person stops a turn with Esc. The
         # liveness sweep ends it from the session's own pid file and sends
@@ -1454,7 +1474,42 @@ def _provider_event_rule(record: HookEvent) -> tuple[_EventRule | None, str | No
         return _antigravity_event_rule(record)
     if record.provider == "devin":
         return _devin_event_rule(record)
+    if record.provider == "claude" and record.event_name == "Stop" and running_background_tasks(record.raw):
+        return _STOP_BACKGROUND, None
     return _PROVIDER_EVENT_RULES.get(record.provider, {}).get(record.event_name), None
+
+
+#: A background task's status that says it is over. Claude Code lists only
+#: tasks in flight, so these are a guard, not the expected case.
+_FINISHED_TASK_STATUSES: Final = frozenset({
+    "completed", "complete", "done", "finished", "failed", "error", "errored",
+    "killed", "cancelled", "canceled", "stopped", "timed_out", "timeout",
+})
+#: No Stop is read past this many task entries.
+MAX_BACKGROUND_TASKS_READ: Final = 64
+
+
+def running_background_tasks(raw: object) -> int:
+    """How many tasks a Claude Code Stop hook says are still in flight.
+
+    The hook's ``background_tasks`` array holds one entry per task (a shell
+    job, a monitor, a background subagent, a workflow), each with a
+    ``status``. Only the count is read: never a task's description or its
+    command line, which can hold anything the person typed. A payload with
+    no array, or a malformed one, counts none, so the turn completes as it
+    always did.
+    """
+    tasks = raw.get("background_tasks") if isinstance(raw, Mapping) else None
+    if not isinstance(tasks, list):
+        return 0
+    running = 0
+    for task in tasks[:MAX_BACKGROUND_TASKS_READ]:
+        if not isinstance(task, Mapping):
+            continue
+        status = task.get("status")
+        if isinstance(status, str) and status.strip() and status.strip().lower() not in _FINISHED_TASK_STATUSES:
+            running += 1
+    return running
 
 
 def minimize_hook_event(

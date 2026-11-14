@@ -263,12 +263,16 @@ struct SessionRow: Identifiable, Equatable {
     }
 
     /// The hook's last word about a working row, in the panel's words:
-    /// "running Bash", "ran Edit", "compacting". Only `.working` gets
+    /// "running Bash", "ran Edit", "compacting", "background job running". Only `.working` gets
     /// one — a finished row's last event is history, a waiting row's ask
     /// is already the fact that matters, and a stale row's event stopped
     /// being current when the feed did.
     static func activityFact(session: CoreSession, activity: SessionActivity) -> String? {
         guard activity == .working, !session.stale else { return nil }
+        // A working row whose last word was Stop: the turn ended with a
+        // shell job, a monitor or a background agent still running, and the
+        // session is paused until that work wakes it.
+        if session.event == "Stop" { return "background job running" }
         if let tool = shortFact(session.tool) {
             switch session.event {
             case "PostToolUse", "PostToolUseFailure": return "ran \(tool)"

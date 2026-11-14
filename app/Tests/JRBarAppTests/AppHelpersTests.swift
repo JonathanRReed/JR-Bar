@@ -51,6 +51,12 @@ import JRBarUI
         let compacting = CoreSession(id: "s3", provider: "claude", mode: "working", lifecycle: "active",
                                      event: "PreCompact")
         #expect(SessionRow.activityFact(session: compacting, activity: .working) == "compacting")
+        // A turn that ended with background work in flight stays working and says so,
+        // whatever tool ran last.
+        let paused = CoreSession(id: "s5", provider: "claude", mode: "long_task_progress", lifecycle: "active",
+                                 event: "Stop", tool: "Bash")
+        #expect(SessionActivity.reduce(paused) == .working)
+        #expect(SessionRow.activityFact(session: paused, activity: .working) == "background job running")
         // A stale row's last event is history, not a current fact.
         let stale = CoreSession(id: "s4", provider: "claude", mode: "working", lifecycle: "active",
                                 stale: true, event: "PreToolUse", tool: "Bash")

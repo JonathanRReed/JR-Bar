@@ -565,7 +565,14 @@ Vocabulary:
   that mean "over" are not interchangeable:
   - `active` -- working, waiting, or idle-ready, and still being delivered.
   - `completed` -- a run the provider itself said was finished: the last
-    event was `Stop`, `SessionEnd` or `SubagentStop`. This is the green
+    event was `Stop`, `SessionEnd` or `SubagentStop`. One `Stop` is not a
+    finish (2026-11-14): Claude Code's Stop hook lists the tasks still in
+    flight (`background_tasks`), and a turn that ends with a shell job, a
+    monitor or a background agent running is paused, not done. That row
+    stays `active` with `mode: long_task_progress` and `event: "Stop"`, the
+    app captions it "background job running", and it completes on the next
+    `Stop` with nothing in flight. Only the count of in-flight tasks is
+    read, never a description or a command. This is the green
     check, so it is only ever a report, never a guess. **A real terminal
     event wins over a dead process**: `codex exec`, `claude -p` and `pi -p`
     each send a real `Stop` and `SessionEnd` and then exit, and that is the
