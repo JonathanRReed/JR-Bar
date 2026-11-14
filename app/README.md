@@ -286,6 +286,17 @@ lights audit's delivered programs can be planned in bulk: run
 `JRBAR_AUDIT_PROGRAMS=DIR/delivered-programs.json swift test --filter
 ScreenBarKeyframePerformanceTests/deliveredProgramsPlan`.
 
+Putting a plan on the layers has a cost of its own. Core Animation copies
+every keyframe's colours when the animation is added, on the main thread:
+about a fifth of a second for a long program on a wide band. The band's
+width follows the notch island, so a plan is installed only once the band
+has held one width for 0.4 s (`ScreenBarView.resizeSettle`), and never
+while the island is hovered, open or moving (`ScreenBarController.islandBusy`,
+wired to the notch by the app delegate), for at most a minute. The frame
+clock paints the band meanwhile, sample for sample what the plan shows.
+Without that hold every step of an island's move re-installed the plan and
+the notch stuttered under the pointer (`ScreenBarInstallHoldTests`).
+
 ### Parity
 
 `scripts/gen_leds_fixtures.py` samples 30 programs through

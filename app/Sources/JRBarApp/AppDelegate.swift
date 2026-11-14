@@ -563,6 +563,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         cardTimers.onFire = fireTimer
         screenBar.focusProvider = { [weak store] in store?.screenBarFocus }
+        screenBar.islandBusy = { [weak notch = toysStore.notch] in
+            guard let notch else { return false }
+            return notch.hoverHeld || notch.islandHoverPeek || notch.islandExpanded
+                || notch.island?.isAnimating == true
+        }
         screenBar.onGeometryChange = { [weak self, weak interaction, weak screenBar, weak notch = toysStore.notch] in
             notch?.island?.setShoulderInput(screenBar?.shoulderScreenPath)
             interaction?.geometryChanged()

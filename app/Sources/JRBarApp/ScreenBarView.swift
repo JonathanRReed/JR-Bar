@@ -238,6 +238,76 @@ final class ScreenBarView: NSView {
     }
     var gradientRenderer: GradientRenderer = defaultGradientRenderer
 
+    // Putting a keyframe plan on the layers is not free. Core Animation
+    // copies every keyframe's colours when the animation is added, on the
+    // main thread: about a fifth of a second for a long program on a wide
+    // band. The band's width follows the notch island, so an island that
+    // was hovered, opened or closed re-installed the plan on every step of
+    // its move, and the notch stuttered under the pointer. So a plan is
+    // only installed once the band has stopped changing size, and never
+    // while the island is being used. The frame clock paints the band in
+    // the meantime, sample for sample what the plan would have shown.
+
+    /// The notch island is hovered, open or moving: no plan is installed
+    /// until it is not. The controller wires this to the notch.
+    var installsHeld: @MainActor () -> Bool = { false }
+    /// How long the band's width must hold still before its plan goes on.
+    var resizeSettle: TimeInterval = ScreenBarView.resizeSettle
+    nonisolated static let resizeSettle: TimeInterval = 0.4
+    /// How often a held install looks again.
+    nonisolated static let holdRecheck: TimeInterval = 0.4
+    /// The longest an island left open keeps the band on the frame clock.
+    nonisolated static let longestHold: TimeInterval = 60
+    /// The clock and the delayed second look; a test passes its own.
+    var mediaNow: () -> CFTimeInterval = { CACurrentMediaTime() }
+    var afterDelay: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { work() } }
+    }
+    private var lastPlayedWidth: CGFloat?
+    private var resizedAt: CFTimeInterval = -.infinity
+    private var heldSince: CFTimeInterval?
+    /// Bumped whenever a waiting install is replaced or dropped, so an old
+    /// delayed look finds it is no longer the one being waited on.
+    private var installWaitToken: UInt64 = 0
+    /// A plan is chosen but waiting for the band to settle or the island
+    /// to be let go.
+    private(set) var installWaiting = false
+
+    /// How long to wait before installing a plan, or nil to install now.
+    /// Held, the answer is "look again shortly", until the hold has run
+    /// `longestHold`. Otherwise it is whatever is left of the settle since
+    /// the band last changed width.
+    nonisolated static func installWait(sinceResize: TimeInterval, settle: TimeInterval,
+                                        held: Bool, heldFor: TimeInterval) -> TimeInterval? {
+        if held, heldFor < longestHold { return holdRecheck }
+        if sinceResize < settle { return max(0.01, settle - sinceResize) }
+        return nil
+    }
+
+    /// Install the chosen plan now, or wait and look again.
+    private func scheduleInstall() {
+        installWaitToken &+= 1
+        let now = mediaNow()
+        let held = installsHeld()
+        if held {
+            if heldSince == nil { heldSince = now }
+        } else {
+            heldSince = nil
+        }
+        guard let wait = Self.installWait(sinceResize: now - resizedAt, settle: resizeSettle,
+                                          held: held, heldFor: now - (heldSince ?? now)) else {
+            installWaiting = false
+            prepareGradient()
+            return
+        }
+        installWaiting = true
+        let token = installWaitToken
+        afterDelay(wait) { [weak self] in
+            guard let self, self.isPlayingKeyframes, self.installWaitToken == token else { return }
+            self.scheduleInstall()
+        }
+    }
+
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil {
             earLink?.invalidate()
@@ -733,11 +803,13 @@ final class ScreenBarView: NSView {
         guard width > 0 else { return }
         if isPlayingKeyframes, let last = lastPlay,
            last.plan == plan, last.anchor == anchor, last.width == width { return }
+        if let last = lastPlayedWidth, last != width { resizedAt = mediaNow() }
+        lastPlayedWidth = width
         stopKeyframes()
         lastPlay = (plan, anchor, width)
         isPlayingKeyframes = true
         gradientGeneration &+= 1
-        prepareGradient()
+        scheduleInstall()
     }
 
     /// One worker and one latest request. Geometry changes during planning
@@ -822,6 +894,8 @@ final class ScreenBarView: NSView {
         guard isPlayingKeyframes else { return }
         isPlayingKeyframes = false
         keyframesInstalled = false
+        installWaiting = false
+        installWaitToken &+= 1
         gradientGeneration &+= 1
         lastPlay = nil
         lastStops = []

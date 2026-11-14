@@ -617,6 +617,7 @@ final class ScreenBarController {
         view.relayout()
         view.gradientRenderer = gradientRenderer
         view.onKeyframesInstalled = { [weak self] in self?.updateClock() }
+        view.installsHeld = { [weak self] in self?.islandBusy() ?? false }
         if let reduceMotionOverride { reduceMotion = reduceMotionOverride }
         planQueue.onResult = { [weak self] generation, sampler, plan in
             self?.accept(plan: plan, generation: generation, sampler: sampler)
@@ -746,6 +747,11 @@ final class ScreenBarController {
     }
 
     var onGeometryChange: (@MainActor () -> Void)?
+    /// The notch island is hovered, open or moving. While it is, the band
+    /// stays on its frame clock and no keyframe plan is installed: the
+    /// install is a main-thread cost the island's move would stutter on
+    /// (`ScreenBarView.installsHeld`). The delegate wires it to the notch.
+    var islandBusy: @MainActor () -> Bool = { false }
     var onAccessibilityPress: (@MainActor () -> Bool)?
     var onAccessibilityWing: (@MainActor (ScreenBarWingSide) -> Bool)?
 

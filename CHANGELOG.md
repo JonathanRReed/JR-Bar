@@ -4,6 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- The notch no longer stutters when you hover it or open and close its card. The Screen Bar under it was rebuilding its light animation on every step of the island's move, about a fifth of a second of frozen screen each time. It now waits until the island is back home and still.
 - Installing or repairing Codex hooks says that a new Codex session is needed to use them. A session that is already running keeps the hooks it started with, and JR-Bar never restarts an agent itself.
 - Fish near the pointer look at it.
 - The reef's kelp bed grows in the tank: taller and fuller with each level, with pods that glow as a harvest builds. Tap the bed to bring the harvest in.

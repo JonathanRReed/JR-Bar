@@ -83,11 +83,13 @@ struct DockCaptureStoreTests {
         let pid: pid_t = 914_100
         let epoch = DockThumbnailer.captureEpoch
         let still = image(20)
-        let now = Self.t0
+        // The real time, not a far-off one: storing prunes whatever has
+        // expired, and a date in the future would expire every other
+        // test's stills. The store's byte count belongs to everyone, so it
+        // is not asserted here; the store's own tests cover it.
+        let now = Date()
         #expect(DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: nil, now: now) == nil)
-        let before = DockThumbnailer.cachedBytes
         _ = DockThumbnailer.cacheCapture(still, pid: pid, windowID: 7001, tag: "working", epoch: epoch, now: now)
-        #expect(DockThumbnailer.cachedBytes - before == 1600)
         let fresh = DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: "working",
                                               now: now.addingTimeInterval(10))
         #expect(fresh?.image === still && fresh?.fresh == true)
