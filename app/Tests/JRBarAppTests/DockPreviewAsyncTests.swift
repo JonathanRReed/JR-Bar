@@ -764,8 +764,9 @@ struct DockPreviewVerbAsyncTests {
 
     @Test("a repeat hover opens on each window's last-known picture, before any window listing or capture")
     func lastKnownStillsOnTheFirstFrame() {
-        DockThumbnailer.invalidateCaptures()
-        defer { DockThumbnailer.invalidateCaptures() }
+        // The thumbnailer's store is shared across the process: this test
+        // uses window ids no other test stores, never empties the store,
+        // and does not yield the main actor before it has read it back.
         let bench = Bench()
         bench.controller.preferences.read = {
             DockEnhanceSettings(showThumbnails: true, calendarPreview: false, mediaPreview: false)
@@ -773,21 +774,21 @@ struct DockPreviewVerbAsyncTests {
         bench.controller.captureProbe = { _ in true }
         bench.controller.refreshPermissions(force: true)
         var known = card(1, "Known")
-        known.windowID = 7001
+        known.windowID = 917001
         var aged = card(2, "Aged")
-        aged.windowID = 7002
+        aged.windowID = 917002
         var new = card(3, "New")
-        new.windowID = 7003
+        new.windowID = 917003
         bench.ax.answer(pid: Bench.alphaPID, [known, aged, new, card(4, "No native id")])
         let epoch = DockThumbnailer.captureEpoch
         let still = NSImage(size: NSSize(width: 4, height: 3))
         let old = NSImage(size: NSSize(width: 4, height: 3))
-        _ = DockThumbnailer.cacheCapture(still, pid: Bench.alphaPID, windowID: 7001, tag: nil, epoch: epoch)
-        _ = DockThumbnailer.cacheCapture(old, pid: Bench.alphaPID, windowID: 7002, tag: nil, epoch: epoch,
+        _ = DockThumbnailer.cacheCapture(still, pid: Bench.alphaPID, windowID: 917001, tag: nil, epoch: epoch)
+        _ = DockThumbnailer.cacheCapture(old, pid: Bench.alphaPID, windowID: 917002, tag: nil, epoch: epoch,
                                          now: Date().addingTimeInterval(-120))
         // Another app's still under the same window id must never land here.
         _ = DockThumbnailer.cacheCapture(NSImage(size: NSSize(width: 1, height: 1)), pid: Bench.betaPID,
-                                         windowID: 7003, tag: nil, epoch: epoch)
+                                         windowID: 917003, tag: nil, epoch: epoch)
         bench.showAndLand("Alpha")
         #expect(bench.presented == ["Alpha"])
         let cards = bench.controller.preview.windows
@@ -800,18 +801,16 @@ struct DockPreviewVerbAsyncTests {
         // Hidden, the cards let go of their pictures; the store keeps them.
         bench.controller.hidePreview()
         #expect(bench.controller.preview.windows.allSatisfy { $0.thumbnail == nil })
-        #expect(DockThumbnailer.lastKnown(pid: Bench.alphaPID, windowID: 7001, tag: nil) != nil)
+        #expect(DockThumbnailer.lastKnown(pid: Bench.alphaPID, windowID: 917001, tag: nil) != nil)
     }
 
     @Test("with thumbnails off, or Screen Recording not granted, no still is put on a card")
     func lastKnownStillsRespectTheGrant() {
-        DockThumbnailer.invalidateCaptures()
-        defer { DockThumbnailer.invalidateCaptures() }
         let epoch = DockThumbnailer.captureEpoch
         _ = DockThumbnailer.cacheCapture(NSImage(size: NSSize(width: 4, height: 3)), pid: Bench.alphaPID,
-                                         windowID: 7001, tag: nil, epoch: epoch)
+                                         windowID: 917001, tag: nil, epoch: epoch)
         var known = card(1, "Known")
-        known.windowID = 7001
+        known.windowID = 917001
         // Thumbnails off (the bench's default).
         let off = Bench()
         off.controller.captureProbe = { _ in true }

@@ -417,7 +417,10 @@ def install_note(result: InstallResult) -> str:
     found the hooks already in place, or for a provider that picks its
     hooks up without a new session.
     """
-    if getattr(result, "dry_run", False) or not result.changed or result.provider != "codex":
+    # Read by attribute name: a caller may hand in any result-shaped value.
+    if getattr(result, "dry_run", False) or not getattr(result, "changed", False):
+        return ""
+    if getattr(result, "provider", None) != "codex":
         return ""
     return CODEX_NEW_SESSION_NOTE
 

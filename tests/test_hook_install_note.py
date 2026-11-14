@@ -44,3 +44,11 @@ def test_the_cli_prints_the_note_under_a_changed_codex_install(capsys):
 
     cli.print_install_results([_result("codex", changed=False)], dry_run=False)
     assert CODEX_NEW_SESSION_NOTE not in capsys.readouterr().out
+
+
+def test_a_result_shaped_value_without_every_field_says_nothing():
+    from types import SimpleNamespace
+
+    assert install_note(SimpleNamespace(changed=True)) == ""
+    assert install_note(SimpleNamespace(provider="codex")) == ""
+

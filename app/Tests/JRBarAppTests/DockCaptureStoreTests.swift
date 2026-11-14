@@ -75,29 +75,34 @@ struct DockCaptureStoreTests {
 
     @Test("the thumbnailer serves a last-known still, and says whether it is fresh enough to keep")
     func lastKnown() {
-        DockThumbnailer.invalidateCaptures()
-        defer { DockThumbnailer.invalidateCaptures() }
+        // The thumbnailer's store is shared by every Dock test in the
+        // process, and emptying it bumps the epoch other suites' captures
+        // are waiting on. So this test owns a pid nobody else uses and
+        // never empties the store; it runs to the end without yielding the
+        // main actor, so nothing else can touch the store under it.
+        let pid: pid_t = 914_100
         let epoch = DockThumbnailer.captureEpoch
         let still = image(20)
         let now = Self.t0
-        #expect(DockThumbnailer.lastKnown(pid: 4100, windowID: 7001, tag: nil, now: now) == nil)
-        _ = DockThumbnailer.cacheCapture(still, pid: 4100, windowID: 7001, tag: "working", epoch: epoch, now: now)
-        #expect(DockThumbnailer.cachedBytes == 1600)
-        let fresh = DockThumbnailer.lastKnown(pid: 4100, windowID: 7001, tag: "working",
+        #expect(DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: nil, now: now) == nil)
+        let before = DockThumbnailer.cachedBytes
+        _ = DockThumbnailer.cacheCapture(still, pid: pid, windowID: 7001, tag: "working", epoch: epoch, now: now)
+        #expect(DockThumbnailer.cachedBytes - before == 1600)
+        let fresh = DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: "working",
                                               now: now.addingTimeInterval(10))
         #expect(fresh?.image === still && fresh?.fresh == true)
         // Past the half minute a still stops standing in for a capture,
         // but it is still the picture to open on.
-        let old = DockThumbnailer.lastKnown(pid: 4100, windowID: 7001, tag: "working",
+        let old = DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: "working",
                                             now: now.addingTimeInterval(120))
         #expect(old?.image === still && old?.fresh == false)
         // Taken under another agent state: shown, then replaced.
-        #expect(DockThumbnailer.lastKnown(pid: 4100, windowID: 7001, tag: "asking",
+        #expect(DockThumbnailer.lastKnown(pid: pid, windowID: 7001, tag: "asking",
                                           now: now.addingTimeInterval(10))?.fresh == false)
         // Another app's window with the same id is another window.
-        #expect(DockThumbnailer.lastKnown(pid: 4200, windowID: 7001, tag: "working", now: now) == nil)
-        DockThumbnailer.invalidateCaptures()
-        #expect(DockThumbnailer.lastKnown(pid: 4100, windowID: 7001, tag: "working", now: now) == nil)
-        #expect(DockThumbnailer.cachedBytes == 0)
+        #expect(DockThumbnailer.lastKnown(pid: pid + 1, windowID: 7001, tag: "working", now: now) == nil)
+        // A capture from before a revocation is refused.
+        #expect(DockThumbnailer.cacheCapture(still, pid: pid, windowID: 7002, tag: nil, epoch: epoch - 1) == nil)
+        #expect(DockThumbnailer.lastKnown(pid: pid, windowID: 7002, tag: nil, now: now) == nil)
     }
 }
