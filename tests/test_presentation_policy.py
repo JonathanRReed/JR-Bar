@@ -155,7 +155,7 @@ def test_pairwise_priority_is_the_exact_seven_level_contract__and_2_more() -> No
         event_key="attention-episode",
         semantic=GlanceSemantic.ATTENTION,
         repetitions=2,
-        duration_seconds=0.24,
+        duration_seconds=1.0,
     )
 
     # --- scenario: incomplete_or_untyped_override_cannot_outrank_attention
@@ -494,7 +494,7 @@ def test_finite_motion_never_replaces_the_spatial_semantic_glyph__and_2_more() -
     assert resolved.cue.repetitions == 2
     assert program.temporal is not None
     assert len(program.temporal.frames) == 4
-    assert program.next_visual_change_at == resolved.next_visual_change_at == 10.48
+    assert program.next_visual_change_at == resolved.next_visual_change_at == 12.0
 
     # --- scenario: untrusted_parser_valid_studio_animation_uses_static_fallback
     fallback = "0:#FFFFFF; 1:#000000"

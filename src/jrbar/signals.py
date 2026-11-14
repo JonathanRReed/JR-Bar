@@ -357,6 +357,12 @@ INTERRUPT_ESCALATION = "escalation"
 # phantom-ask fatigue this product exists to avoid. Every renderer must
 # consume THIS constant rather than hard-coding its own count.
 ATTENTION_ARRIVAL_TAPS = 2
+# How long each of those taps takes: one rise and fall of saturated red a
+# second, and no faster. The safety compiler holds every LOOP to that rate;
+# a finite arrival has no loop for it to measure, so the arrival holds
+# itself to it. At the 0.24 s it used to take, the two taps were two red
+# flashes inside half a second.
+ATTENTION_TAP_SECONDS = 1.0
 
 # The one table that says which rung a signal sits on. A kind with no
 # entry here is REFUSED: a signal added later that forgets to declare

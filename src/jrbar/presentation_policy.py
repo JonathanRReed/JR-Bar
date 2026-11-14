@@ -6,7 +6,7 @@ from enum import Enum
 from itertools import pairwise
 
 from .accessibility_display import AccessibilityDisplayPreferences
-from .signals import ATTENTION_ARRIVAL_TAPS
+from .signals import ATTENTION_ARRIVAL_TAPS, ATTENTION_TAP_SECONDS
 from .temporal_safety import (
     CalibrationState,
     SafeTemporalProgram,
@@ -902,7 +902,7 @@ def _automatic_glance(inputs: GlanceInputs) -> tuple[GlanceSemantic, FiniteCue |
             event_key=inputs.actionable_episode_key,
             semantic=GlanceSemantic.ATTENTION,
             repetitions=ATTENTION_ARRIVAL_TAPS,
-            duration_seconds=0.24,
+            duration_seconds=ATTENTION_TAP_SECONDS,
         )
         return (
             GlanceSemantic.ATTENTION,

@@ -942,10 +942,21 @@ def test_reset_celebration_claims_the_strip_and_respects_focus(controller) -> No
         == status_bar.LED_DISPLAY_DND_DARK
     )
 
+    from jrbar.device_writer import leds_addressed_beyond
+
     for led_count in (2, 8):
         program = reset_celebration_program(255, led_count=led_count)
         result = validate_firmware_program(program, led_count=led_count)
         assert result.accepted, (led_count, result.reason)
+        # The writer refuses a program that paints LEDs the device does
+        # not have, so the refill is drawn for the device it goes to. The
+        # eight-LED bytes never reached a two-LED Dot.
+        assert leds_addressed_beyond(program, led_count) == (), led_count
+        assert "repeat 3" in program  # finite by design
+    dot = reset_celebration_program(255, led_count=2)
+    assert "0:#FFD700" in dot and "1:#FFD700" in dot
+    assert "2:" not in dot and "5:" not in dot, "no room for the sparkles on two LEDs"
+    assert leds_addressed_beyond(reset_celebration_program(255, led_count=8), 2) != ()
     assert "repeat 3" in reset_celebration_program(255)  # finite by design
 
 

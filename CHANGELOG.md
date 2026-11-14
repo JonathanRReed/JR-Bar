@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- A new ask announces itself with two slow red pulses, one a second, before it holds steady. The two taps used to land inside half a second, which was two red flashes faster than JR-Bar allows anywhere else.
+- A quota reset plays its refill on the PulseDot. It was drawn for eight LEDs everywhere, and the Dot, which has two, was refused the program and showed nothing.
 - The Aquarium is an idle game now, not a shop. The tank has a reef of four builders: a kelp bed that grows on agent work, an oyster bed on finished runs, an anemone on asks that get settled and a tide pool on quota resets and streak days. Pearls grow the builders, each level pays more and costs more, and a builder's yield doubles at levels 10, 25, 50 and 100. What the reef grows waits as a harvest: a chip says how much is ready and one tap brings it in. It never decays. The old income is unchanged and still goes straight to the wallet.
 - The reef never rewards keeping agents busy: past four agent-hours or twelve finished runs in a day the rest counts for less, starting a session pays nothing, and an answered ask pays the same however long it took.
 - The tank level ladder runs to twenty levels; the first ten are where they were.

@@ -228,7 +228,7 @@ def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_p
                 "attention:request:test",
                 "none",
                 100.0,
-                101.28,
+                102.8,
             ),
         ),
         (

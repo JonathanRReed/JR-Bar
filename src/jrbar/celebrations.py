@@ -5,9 +5,15 @@ sparks that could have meant anything. The event is "the meter refilled",
 so the shape now TELLS that story (2026-08-26, Live Activities grammar:
 glanceable meaning): the provider's own color rises LED-by-LED like a
 gauge refilling, the strip crests white once, two sparkles wink, then
-dark. Three cycles, then the display claim hands back. Indexes past a
-2-LED build are parsed and ignored, so the Dot gets a two-LED refill of
-the same story for free.
+dark. Three cycles, then the display claim hands back.
+
+The program is drawn for the device it goes to. It used to be the same
+eight-LED bytes everywhere, on the reasoning that the firmware ignores an
+index it does not have. The firmware does; the writer does not, and
+rightly refuses a program that addresses LEDs a device lacks. So a quota
+reset never reached the two-LED Dot at all. A Dot now gets its own
+refill: both of its LEDs rise in turn and crest white. There is no room
+on two pixels for the sparkles, so it has none.
 """
 
 from __future__ import annotations
@@ -17,21 +23,24 @@ from .led_status import apply_brightness
 #: The neutral refill color when no provider is known (a manual test,
 #: a celebration fired before identity resolved).
 REFILL_FALLBACK_COLOR = "#FFD700"
+#: The two LEDs that wink after the crest, on a strip long enough to have
+#: them apart from each other and from the ends.
+REFILL_SPARKLE_INDEXES = (2, 5)
 
-def _refill_cycle(color: str) -> str:
+
+def _refill_cycle(color: str, led_count: int = 8) -> str:
+    count = max(1, int(led_count))
     rise = "; ".join(
-        f"{index}:{color} 240ms cosine {index * 90}ms" for index in range(8)
+        f"{index}:{color} 240ms cosine {index * 90}ms" for index in range(count)
     )
-    sparkles = f"2:{color} 220ms pulse 60ms; 5:{color} 220ms pulse 200ms"
-    return "\n".join(
-        [
-            "off 120ms cosine",
-            rise,
-            "#FFFFFF 260ms pulse",
-            sparkles,
-            "off 400ms ease-out",
-        ]
-    )
+    lines = ["off 120ms cosine", rise, "#FFFFFF 260ms pulse"]
+    if all(index < count for index in REFILL_SPARKLE_INDEXES):
+        first, second = REFILL_SPARKLE_INDEXES
+        lines.append(
+            f"{first}:{color} 220ms pulse 60ms; {second}:{color} 220ms pulse 200ms"
+        )
+    lines.append("off 400ms ease-out")
+    return "\n".join(lines)
 
 
 def reset_celebration_program(
@@ -40,8 +49,7 @@ def reset_celebration_program(
     *,
     color: str | None = None,
 ) -> str:
-    del led_count  # same program bytes on every build; extras no-op
-    cycle = _refill_cycle(color or REFILL_FALLBACK_COLOR)
+    cycle = _refill_cycle(color or REFILL_FALLBACK_COLOR, led_count)
     return apply_brightness(f"{cycle}\nrepeat 3\noff 250ms", brightness)
 
 
