@@ -946,6 +946,66 @@ enum ConfettiPaletteRows {
     }
 }
 
+// MARK: - Notch Buddy and Fold
+
+struct BuddyPaletteVerbs {
+    var pet: @MainActor () -> Void
+    var floatFree: @MainActor () -> Void
+    var dock: @MainActor () -> Void
+    var setOn: @MainActor (Bool) -> Void
+}
+
+enum ToyPaletteRows {
+    /// The buddy: pet it, let it float or send it back under the notch,
+    /// and its switch. A buddy that is off offers only the switch.
+    @MainActor
+    static func buddy(isOn: Bool, isFree: Bool, verbs: BuddyPaletteVerbs) -> [PaletteItem] {
+        var actions: [PaletteAction] = []
+        if isOn {
+            actions.append(PaletteAction(id: "pet", title: "Pet the Buddy", symbol: "hand.tap") {
+                verbs.pet()
+                return nil
+            })
+            actions.append(isFree
+                ? PaletteAction(id: "dock", title: "Dock at the Notch", symbol: "arrow.up.to.line") {
+                    verbs.dock()
+                    return "Buddy docked at the notch"
+                }
+                : PaletteAction(id: "float", title: "Let It Float", symbol: "arrow.up.and.down.and.arrow.left.and.right") {
+                    verbs.floatFree()
+                    return "Buddy is floating: drag it anywhere"
+                })
+        }
+        actions.append(PaletteAction(id: "toggle", title: isOn ? "Turn Notch Buddy Off" : "Turn Notch Buddy On",
+                                     symbol: isOn ? "xmark.circle" : "face.smiling") {
+            verbs.setOn(!isOn)
+            return isOn ? "Notch Buddy off" : "Notch Buddy on"
+        })
+        return [PaletteItem(
+            id: "toys.buddy", title: "Notch Buddy",
+            subtitle: isOn ? (isFree ? "Floating on the desktop" : "Under the notch") : "A creature that lives by your agents",
+            keywords: ["pet", "creature", "companion", "tamagotchi", "float", "dock"],
+            icon: .symbol("face.smiling.inverse", .orange),
+            tags: [PaletteTag(text: isOn ? "On" : "Off", tone: isOn ? .positive : .neutral)],
+            kind: "Toy", section: .toys, actions: actions)]
+    }
+
+    /// Fold's demo: the scripted close and reopen, the card's Try it.
+    /// Only while the toy is on, since the demo needs its capture.
+    @MainActor
+    static func fold(isOn: Bool, tryIt: @escaping @MainActor () -> Void) -> [PaletteItem] {
+        guard isOn else { return [] }
+        return [PaletteItem(
+            id: "toys.fold", title: "Fold", subtitle: "Fold the desktop once, without touching the lid",
+            keywords: ["lid", "duo", "hinge", "demo", "try"],
+            icon: .symbol("laptopcomputer", .indigo), kind: "Toy", section: .toys,
+            actions: [PaletteAction(id: "try", title: "Try It", symbol: "play.fill") {
+                tryIt()
+                return nil
+            }])]
+    }
+}
+
 // MARK: - Open (windows) and Settings
 
 /// The windows the palette can raise.

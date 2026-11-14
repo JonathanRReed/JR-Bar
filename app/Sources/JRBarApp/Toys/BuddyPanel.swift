@@ -413,6 +413,11 @@ final class BuddyPanel: NSPanel {
     /// hold).
     private var walk: BuddyWalk?
     private var strollTimer: Timer?
+    /// The walk's clock: the display's own refresh, so the panel moves on
+    /// every frame the screen draws. The 30 Hz timer it replaces stepped
+    /// visibly on a 120 Hz display. The timer stays as the fallback for a
+    /// panel with no view to hang a link on.
+    private var strollLink: CADisplayLink?
     /// The once-a-minute decision beat, alive while the panel shows.
     private var beat: Timer?
     private var lastStrollAt = ProcessInfo.processInfo.systemUptime
@@ -451,11 +456,27 @@ final class BuddyPanel: NSPanel {
         let now = ProcessInfo.processInfo.systemUptime
         walk = BuddyWalk(plan: plan, began: now)
         lastLedgeLook = now
+        strollLink?.invalidate()
+        strollLink = nil
+        if let link = contentView?.displayLink(target: self, selector: #selector(strollTick(_:))) {
+            // The Mac asking for restraint halves the rate, as it does the tank's.
+            let restrained = PowerConditions.shared.policy.interval(1.0 / 60.0) > 1.0 / 60.0
+            link.preferredFrameRateRange = restrained
+                ? CAFrameRateRange(minimum: 24, maximum: 30, preferred: 30)
+                : CAFrameRateRange(minimum: 30, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            strollLink = link
+            return
+        }
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.stepStroll() }
         }
         RunLoop.main.add(timer, forMode: .common)
         strollTimer = timer
+    }
+
+    @objc private func strollTick(_ link: CADisplayLink) {
+        stepStroll()
     }
 
     /// One frame of the walk: the panel moves, the figure turns toward
@@ -510,6 +531,8 @@ final class BuddyPanel: NSPanel {
     private func endStroll(reframe: Bool = true) {
         strollTimer?.invalidate()
         strollTimer = nil
+        strollLink?.invalidate()
+        strollLink = nil
         guard walk != nil else { return }
         walk = nil
         lastStrollAt = ProcessInfo.processInfo.systemUptime

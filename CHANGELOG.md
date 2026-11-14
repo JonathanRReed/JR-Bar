@@ -4,6 +4,9 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- The command palette has the buddy (pet it, let it float, dock it at the notch) and Fold's Try It.
+- The floating buddy's walk moves on every frame the display draws; it stepped visibly on a 120 Hz screen.
+- JR-Bar notices the newer apps that share its surfaces: Thaw and IceMelt in the menu bar, Vibe Island, Vibe Notch and Notchi at the notch, Keepresso for keeping awake.
 - The command palette takes Keep Awake with a length or a time: "awake 45m", "keep awake for 2h", "awake until 6pm". The row says when the hold ends.
 - Claude Code compacting a conversation no longer makes a finished session read Working. Claude compacts idle sessions on its own about an hour after a turn ends, and with nothing to follow it the lights played "working" until the next prompt. Compaction now keeps whatever state the session had: a row in the middle of a turn still says "compacting", a finished one stays finished, and an open ask stays open.
 - A Claude Code turn that ends while a background job is still running stays Working, and Keep Awake holds, instead of showing Done and letting the Mac sleep partway through a long test run. The row says "background job running". It completes, once, when Claude's next turn ends with nothing left running. The "waiting for your input" notice Claude sends a minute after such a turn is no longer read as an ask.

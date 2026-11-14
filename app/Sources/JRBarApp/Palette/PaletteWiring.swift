@@ -30,6 +30,8 @@ enum PaletteWiring {
                         toggles: @escaping @MainActor () -> SystemTogglesStore?,
                         aquarium: @escaping @MainActor () -> AquariumToy?,
                         confetti: @escaping @MainActor () -> ConfettiToy? = { nil },
+                        buddy: @escaping @MainActor () -> NotchBuddyToy? = { nil },
+                        fold: @escaping @MainActor () -> FoldToy? = { nil },
                         history: HistoryStore? = nil,
                         windows: Windows) -> [any PaletteSource] {
         [
@@ -40,6 +42,7 @@ enum PaletteWiring {
             usage(panel: panel, windows: windows),
             tank(aquarium: aquarium),
             confettiSource(confetti),
+            toySource(buddy: buddy, fold: fold),
             AppMenuPaletteSource(),
         ] + (history.map { [historySource($0, windows: windows)] } ?? []) + [
             open(windows: windows),
@@ -249,6 +252,23 @@ enum PaletteWiring {
             return ConfettiPaletteRows.items(automatic: toy.isOn, verbs: ConfettiPaletteVerbs(
                 fire: { toy.testBurst() },
                 setAutomatic: { toy.isOn = $0 }))
+        }
+    }
+
+    /// The buddy and Fold: the verbs their cards have, a keystroke away.
+    static func toySource(buddy: @escaping @MainActor () -> NotchBuddyToy?,
+                          fold: @escaping @MainActor () -> FoldToy?) -> PaletteClosureSource {
+        PaletteClosureSource {
+            var rows: [PaletteItem] = []
+            if let toy = buddy() {
+                rows += ToyPaletteRows.buddy(isOn: toy.isOn, isFree: toy.isFree, verbs: BuddyPaletteVerbs(
+                    pet: { toy.tapped() }, floatFree: { toy.floatFree() }, dock: { toy.dock() },
+                    setOn: { toy.isOn = $0 }))
+            }
+            if let toy = fold() {
+                rows += ToyPaletteRows.fold(isOn: toy.isOn) { toy.tryIt() }
+            }
+            return rows
         }
     }
 

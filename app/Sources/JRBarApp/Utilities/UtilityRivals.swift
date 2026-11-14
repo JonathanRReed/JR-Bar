@@ -96,6 +96,9 @@ enum UtilityRivals {
               roles: [.menuBar], handoffs: [.menuBar: .menuBar(.bartender)]),
         Rival(name: "Ice", bundleIDs: ["com.jordanbaird.Ice"], roles: [.menuBar], handoffs: [.menuBar: .menuBar(.ice)]),
         Rival(name: "Hidden Bar", bundleIDs: ["com.dwarvesf.hidden"], roles: [.menuBar], handoffs: [.menuBar: .menuBar(.hiddenBar)]),
+        // Thaw is the maintained fork of Ice (its id read from the project, 2026-11).
+        Rival(name: "Thaw", bundleIDs: ["com.stonerl.Thaw"], roles: [.menuBar]),
+        Rival(name: "IceMelt", bundleIDs: [], roles: [.menuBar]),
         Rival(name: "Vanilla", bundleIDs: ["net.matthewpalmer.Vanilla"], roles: [.menuBar]),
         Rival(name: "Dozer", bundleIDs: ["com.mortennn.Dozer"], roles: [.menuBar]),
         Rival(name: "Barbee", bundleIDs: ["com.HyperartFlow.Barbee"], roles: [.menuBar]),
@@ -125,6 +128,11 @@ enum UtilityRivals {
         Rival(name: "DynamicLake", bundleIDs: [], otherNames: ["Dynamic Lake"], roles: [.notch]),
         Rival(name: "Notchy", bundleIDs: [], roles: [.notch]),
         Rival(name: "NotchNook", bundleIDs: [], roles: [.notch]),
+        // Agent notches: each draws its own island around the cutout.
+        Rival(name: "Vibe Island", bundleIDs: [], otherNames: ["VibeIsland"], roles: [.notch]),
+        Rival(name: "Vibe Notch", bundleIDs: [], otherNames: ["VibeNotch", "Claude Island", "ClaudeIsland"],
+              roles: [.notch]),
+        Rival(name: "Notchi", bundleIDs: [], roles: [.notch]),
         Rival(name: "MediaMate", bundleIDs: [], roles: [.hud]),
         Rival(name: "SlimHUD", bundleIDs: [], roles: [.hud]),
         Rival(name: "Dropover", bundleIDs: ["me.damir.dropover-mac"], roles: [.shelfGesture]),
@@ -137,6 +145,7 @@ enum UtilityRivals {
         Rival(name: "Caffeine", bundleIDs: ["com.intelliscapesolutions.caffeine"], roles: [.keepAwake]),
         Rival(name: "Lungo", bundleIDs: ["com.sindresorhus.Lungo"], roles: [.keepAwake]),
         Rival(name: "Theine", bundleIDs: [], roles: [.keepAwake]),
+        Rival(name: "Keepresso", bundleIDs: [], roles: [.keepAwake]),
     ]
 
     /// The rivals for `role` among `apps` — each once, in table order.

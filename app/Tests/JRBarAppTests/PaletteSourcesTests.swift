@@ -237,6 +237,44 @@ struct PaletteSourcesTests {
 
     // MARK: Typed arguments
 
+    @Test("the buddy and Fold have their card's verbs in the palette")
+    func toyRows() throws {
+        var calls: [String] = []
+        let verbs = BuddyPaletteVerbs(pet: { calls.append("pet") }, floatFree: { calls.append("float") },
+                                      dock: { calls.append("dock") }, setOn: { calls.append("on:\($0)") })
+        let docked = try #require(ToyPaletteRows.buddy(isOn: true, isFree: false, verbs: verbs).first)
+        #expect(docked.actions.map(\.id) == ["pet", "float", "toggle"])
+        let floating = try #require(ToyPaletteRows.buddy(isOn: true, isFree: true, verbs: verbs).first)
+        #expect(floating.actions.map(\.id) == ["pet", "dock", "toggle"])
+        #expect(floating.subtitle == "Floating on the desktop")
+        let off = try #require(ToyPaletteRows.buddy(isOn: false, isFree: false, verbs: verbs).first)
+        #expect(off.actions.map(\.id) == ["toggle"], "a buddy that is off offers only its switch")
+        for action in docked.actions + floating.actions.filter({ $0.id == "dock" }) { _ = action.run() }
+        _ = off.actions[0].run()
+        #expect(calls == ["pet", "float", "on:false", "dock", "on:true"])
+
+        var tried = 0
+        #expect(ToyPaletteRows.fold(isOn: false) { tried += 1 }.isEmpty, "the demo needs the toy on")
+        let fold = try #require(ToyPaletteRows.fold(isOn: true) { tried += 1 }.first)
+        _ = fold.actions.first?.run()
+        #expect(tried == 1)
+    }
+
+    @Test("the rival table knows the newer menu bar, notch and keep-awake apps")
+    func rivalsCatchUp() {
+        func names(_ role: UtilityRivals.Role, running: [(String?, String?)]) -> [String] {
+            UtilityRivals.running(for: role, in: running.map { (bundleID: $0.0, name: $0.1) }).map(\.name)
+        }
+        #expect(names(.menuBar, running: [("com.stonerl.Thaw", "Thaw")]) == ["Thaw"])
+        #expect(names(.menuBar, running: [(nil, "IceMelt")]) == ["IceMelt"])
+        #expect(names(.notch, running: [(nil, "Vibe Island"), (nil, "Claude Island"), (nil, "Notchi")])
+                == ["Vibe Island", "Vibe Notch", "Notchi"])
+        #expect(names(.keepAwake, running: [(nil, "Keepresso")]) == ["Keepresso"])
+        #expect(names(.menuBar, running: [(nil, "Finder")]).isEmpty)
+        let known = UtilityRivals.known.map(\.name)
+        #expect(Set(known).count == known.count, "each rival once")
+    }
+
     @Test("awake takes a length or a time of day, and nothing vaguer")
     func typedAwake() throws {
         var calendar = Calendar(identifier: .gregorian)

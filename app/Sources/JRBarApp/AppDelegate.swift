@@ -677,6 +677,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             toggles: { [weak toysStore] in toysStore?.notch.cardModel.utility.toggles },
             aquarium: { [weak toysStore] in toysStore?.aquarium },
             confetti: { [weak toysStore] in toysStore?.confetti },
+            buddy: { [weak toysStore] in toysStore?.notchBuddy },
+            fold: { [weak toysStore] in toysStore?.fold },
             history: historyStore,
             windows: PaletteWiring.Windows(
                 overview: { [weak overviewWindow] in overviewWindow?.show() },
