@@ -701,3 +701,9 @@ def test_receipt_wrapper_handles_optional_details_on_macos_bash(tmp_path: Path) 
     result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_source_gate_runs_the_python_suite_in_parallel():
+    """The serial suite outgrew the 30 minutes each gate receipt is allowed."""
+    text = (ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
+    assert '-m pytest tests -q -n "${JRBAR_PYTEST_WORKERS:-auto}" --dist loadfile' in text

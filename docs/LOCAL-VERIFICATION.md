@@ -46,9 +46,10 @@ policy, the secret scan, Ruff, bytecode and version validation, the whole pytest
 suite, wheel and sdist builds with Twine metadata checks, a clean-wheel install
 into a temporary virtual environment, an SBOM, and repository hygiene checks.
 Useful flags: `--fix`, `--no-bootstrap`, `--skip-build`, `--skip-clean-install`,
-`--portable`. `make test` runs the Python suite in parallel (`-n auto --dist
-loadfile`); `make test-serial` runs it in one process, for a failure that only
-shows there.
+`--portable`. It runs the suite in parallel, the way `make test` does (`-n auto
+--dist loadfile`); set `JRBAR_PYTEST_WORKERS` to another worker count, or to `0`
+for one process. `make test-serial` runs the suite in one process, for a failure
+that only shows there.
 
 `swift test` covers the app's own model and the protocol round trips, which
 spawn `app/scripts/mock-core.py` on a socket of their own. It does not need a

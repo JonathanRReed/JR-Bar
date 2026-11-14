@@ -109,7 +109,10 @@ if [ "$PORTABLE" -eq 1 ]; then
         tests/test_inside_out_signing.py \
         -q
 elif [ "$(uname -s)" = "Darwin" ]; then
-    "$PYTHON" -m pytest tests -q
+    # One worker per core, each taking whole files, like `make test`. The
+    # serial run outgrew the release gate's 30-minute limit per receipt.
+    # JRBAR_PYTEST_WORKERS=0 runs in one process.
+    "$PYTHON" -m pytest tests -q -n "${JRBAR_PYTEST_WORKERS:-auto}" --dist loadfile
 else
     echo "Full JR-Bar verification requires macOS and PyObjC." >&2
     echo "Use --portable for the platform-neutral production gate." >&2

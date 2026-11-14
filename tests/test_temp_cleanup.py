@@ -40,7 +40,12 @@ def test_command_guard_detects_leaks_and_removes_only_its_run(leak, tmp_path):
     (False, True, False, 0), (False, True, True, 0),
     (False, False, False, 2), (True, False, False, 2),
 ])
-def test_session_finish_detects_leaks_before_sandbox_cleanup(tmp_path, leak, builder, discarded, workers):
+def test_session_finish_detects_leaks_before_sandbox_cleanup(
+    tmp_path, monkeypatch, leak, builder, discarded, workers,
+):
+    # The release gate runs this suite with options in the environment. The
+    # inner run must not pick them up.
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-n 2")
     project = tmp_path / "project"
     project.mkdir()
     (project / "conftest.py").write_text((ROOT / "tests/conftest.py").read_text())
@@ -97,9 +102,14 @@ def test_session_finish_detects_leaks_before_sandbox_cleanup(tmp_path, leak, bui
     command = [sys.executable, "-m", "pytest", "-q", str(project)]
     if workers:
         command.extend(["-n", str(workers), "--dist", "loadfile"])
+    # The inner run takes its options from `command` alone. Options the outer
+    # run was given through the environment (say `-n 4`) would change what it
+    # prints.
+    inner_env = dict(os.environ, TMPDIR=str(run_temp))
+    inner_env.pop("PYTEST_ADDOPTS", None)
     result = subprocess.run(
         command,
-        env=dict(os.environ, TMPDIR=str(run_temp)),
+        env=inner_env,
         capture_output=True, text=True, check=False, timeout=60,
     )
     if builder:
