@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Sweeping along the Dock with a preview open moves the preview to the next app after a short rest, instead of paying the whole hover delay again on every icon. A pointer on its way up to the preview does not hand it to a neighbour it crosses.
+- A Dock preview that was still reading an app's windows no longer pops up after the pointer has moved on to another icon or left the Dock.
 - A session started in the Mac's temporary folder is no longer filed under a project called "T", and a task named from a pasted transcript drops the leading "User:" and the tree lines.
 - The Dock preview's New presses the app's own New Window menu item and nothing else. Where an app had no such item, JR-Bar used to post ⌘N to it; now the preview says "This app has no New Window menu item." A guard keeps every part of the app from posting a key or a click.
 - The command palette has the buddy (pet it, let it float, dock it at the notch) and Fold's Try It.

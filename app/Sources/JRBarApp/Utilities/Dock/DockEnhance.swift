@@ -484,6 +484,11 @@ final class DockEnhanceController {
     /// as it was — `anchorPanel` holds still — so a retarget swaps the
     /// cards in one step.
     @ObservationIgnored private var pendingShow: PreviewLanding?
+    /// The tile whose cards are on the panel, from a landing to the next
+    /// hide.
+    @ObservationIgnored private(set) var landedHoverID: String?
+    /// Which way the pointer is going: up to the panel, or along the Dock.
+    @ObservationIgnored private var pointerAim = DockPointerAim()
     /// The open panel's live refresh: one read in flight at a time.
     @ObservationIgnored private var liveRefresh = DockLiveRefreshGate()
 
@@ -955,8 +960,9 @@ final class DockEnhanceController {
             hovered?.hoverID, shown: tracker.shown, trigger: preferences.previewTrigger,
             optionHeld: NSEvent.modifierFlags.contains(.option))
         // A keyboard-opened preview holds like one with the pointer on it.
+        let aiming = pointerAim.note(pointer: NSEvent.mouseLocation, at: now, edge: anchor?.edge ?? .bottom)
         let action = tracker.note(hovered: tracked, pointerInPanel: inPanel || keyboardPinned,
-                                  now: now, delay: preferences.previewDelay)
+                                  now: now, delay: preferences.previewDelay, aimingAtPanel: aiming)
         switch action {
         case .show:
             if let hovered {
@@ -966,8 +972,23 @@ final class DockEnhanceController {
         case .hide:
             hidePreview()
         case .none:
+            dropPendingShow(unlessHovered: tracker.hovered)
             if let hovered, hovered.hoverID == tracker.shown, pendingShow == nil { anchorPanel(to: hovered) }
         }
+    }
+
+    /// A show whose window list is still out belongs to the tile the
+    /// pointer rested on. Once the pointer has settled on another tile, or
+    /// left the Dock past the seam's grace, that show is dropped: its app
+    /// would otherwise come up under a pointer that is no longer there.
+    /// A panel already on screen stays as it is and the tracker goes back
+    /// to it. ⌥`'s show has no pointer on its tile and is never dropped
+    /// this way.
+    func dropPendingShow(unlessHovered hovered: String?) {
+        guard let landing = pendingShow, !landing.keyboardOpened, !keyboardPinned,
+              hovered != landing.item.hoverID else { return }
+        pendingShow = nil
+        tracker.abandonShow(backTo: previewUp ? landedHoverID : nil)
     }
 
     /// Mirror the tiles quick quit can act on into the tap, re-derived
@@ -1253,6 +1274,7 @@ final class DockEnhanceController {
             presentLanded(item, generationAtShow: landing.generation)
         }
         previewUp = true
+        landedHoverID = item.hoverID
         // ⌥`: the walk starts on the list that has landed.
         guard landing.keyboardOpened, keyboardPinned else { return }
         preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
@@ -1359,6 +1381,7 @@ final class DockEnhanceController {
         // answer finds the generation moved on.
         pendingShow = nil
         previewUp = false
+        landedHoverID = nil
         keyboardPinned = false
         liveStill.stop()
         anchor = nil

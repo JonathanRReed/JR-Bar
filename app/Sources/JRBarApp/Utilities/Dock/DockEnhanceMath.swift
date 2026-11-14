@@ -177,6 +177,22 @@ enum DockEnhanceMath {
         }
     }
 
+    /// Whether a pointer that moved `from` → `to` (AppKit points) is
+    /// heading off the Dock toward its panel more than along the Dock.
+    /// A pointer leaving a tile for a card on the far side of a wide
+    /// panel crosses the neighbouring tiles on the way; that crossing is
+    /// travel, and must not take the panel away. A pointer at rest aims
+    /// at nothing.
+    static func aimsAtPanel(from: CGPoint, to: CGPoint, edge: DockEdge) -> Bool {
+        let dx = to.x - from.x, dy = to.y - from.y
+        let (along, off): (CGFloat, CGFloat) = switch edge {
+        case .bottom: (dx, dy)
+        case .left: (dy, dx)
+        case .right: (dy, -dx)
+        }
+        return off >= 1 && off * 2 >= abs(along)
+    }
+
     /// The safe road between a tile and its panel: the convex hull of
     /// the two rects. The panel sits over its tile, but a wide panel
     /// still reaches past the icon on both sides — and a clamped one

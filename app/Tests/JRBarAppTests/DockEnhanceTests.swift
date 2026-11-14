@@ -115,6 +115,88 @@ import Testing
                 "the rested new icon takes the panel over — no flicker")
     }
 
+    @Test("with a panel open, the next tile along the Dock takes it after a short rest, not the whole delay again")
+    func aSweepRetargetsQuickly() {
+        var tracker = DockHoverTracker()
+        _ = tracker.note(hovered: "Safari", pointerInPanel: false, now: 0, delay: 0.25)
+        #expect(tracker.note(hovered: "Safari", pointerInPanel: false, now: 0.26, delay: 0.25) == .show("Safari"))
+        #expect(tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.00, delay: 0.25) == .none)
+        #expect(tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.05, delay: 0.25) == .none,
+                "a tile crossed in one tick is not a choice")
+        #expect(tracker.note(hovered: "Notes", pointerInPanel: false, now: 1.06, delay: 0.25) == .none)
+        #expect(tracker.note(hovered: "Notes", pointerInPanel: false,
+                             now: 1.061 + DockHoverTracker.retargetDelay, delay: 0.25) == .show("Notes"))
+        #expect(tracker.shown == "Notes")
+    }
+
+    @Test("a pointer crossing a neighbour on its way up to the panel pays the whole delay, and so does a first show")
+    func travelToThePanelDoesNotRetarget() {
+        var tracker = DockHoverTracker()
+        _ = tracker.summon("Safari", now: 0)
+        #expect(tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.0, delay: 0.25,
+                             aimingAtPanel: true) == .none)
+        #expect(tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.2, delay: 0.25,
+                             aimingAtPanel: true) == .none)
+        #expect(tracker.note(hovered: nil, pointerInPanel: true, now: 1.3, delay: 0.25) == .none)
+        #expect(tracker.shown == "Safari")
+        #expect(DockHoverTracker.rest(delay: 0.25, panelOpen: false, aimingAtPanel: false) == 0.25)
+        #expect(DockHoverTracker.rest(delay: 0.25, panelOpen: true, aimingAtPanel: true) == 0.25)
+        #expect(DockHoverTracker.rest(delay: 0.25, panelOpen: true, aimingAtPanel: false) == 0.06)
+        #expect(DockHoverTracker.rest(delay: 0.02, panelOpen: true, aimingAtPanel: false) == 0.02,
+                "a delay the person set shorter still is kept")
+    }
+
+    @Test("a show abandoned before it landed hands the tracker back to the panel on screen, or to none")
+    func anAbandonedShowGoesBack() {
+        var tracker = DockHoverTracker()
+        _ = tracker.summon("Safari", now: 0)
+        _ = tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.0, delay: 0.25)
+        #expect(tracker.note(hovered: "Mail", pointerInPanel: false, now: 1.1, delay: 0.25) == .show("Mail"))
+        // Mail's windows are still being read; the pointer left the Dock.
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 1.15, delay: 0.25)
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 1.151 + DockHoverTracker.seamGrace, delay: 0.25)
+        #expect(tracker.hovered == nil)
+        tracker.abandonShow(backTo: "Safari")
+        #expect(tracker.shown == "Safari")
+        #expect(tracker.note(hovered: nil, pointerInPanel: false,
+                             now: 1.15 + DockHoverTracker.grace + 0.01, delay: 0.25) == .hide,
+                "the panel still up closes on the usual grace")
+
+        var first = DockHoverTracker()
+        _ = first.note(hovered: "Mail", pointerInPanel: false, now: 0, delay: 0.1)
+        _ = first.note(hovered: "Mail", pointerInPanel: false, now: 0.11, delay: 0.1)
+        _ = first.note(hovered: "Notes", pointerInPanel: false, now: 0.15, delay: 0.1)
+        first.abandonShow(backTo: nil)
+        #expect(first.shown == nil)
+        #expect(first.note(hovered: "Notes", pointerInPanel: false, now: 0.26, delay: 0.1) == .show("Notes"),
+                "with no panel up, the tile under the pointer pays the whole delay")
+    }
+
+    @Test("the pointer's aim is read over a window: up to the panel, along the Dock, at rest, on each Dock edge")
+    func pointerAim() {
+        typealias Math = DockEnhanceMath
+        #expect(Math.aimsAtPanel(from: CGPoint(x: 100, y: 10), to: CGPoint(x: 110, y: 30), edge: .bottom))
+        #expect(!Math.aimsAtPanel(from: CGPoint(x: 100, y: 10), to: CGPoint(x: 160, y: 14), edge: .bottom))
+        #expect(!Math.aimsAtPanel(from: CGPoint(x: 100, y: 30), to: CGPoint(x: 100, y: 10), edge: .bottom),
+                "back down to the Dock is not toward the panel")
+        #expect(!Math.aimsAtPanel(from: CGPoint(x: 100, y: 10), to: CGPoint(x: 100, y: 10), edge: .bottom))
+        #expect(Math.aimsAtPanel(from: CGPoint(x: 10, y: 100), to: CGPoint(x: 40, y: 110), edge: .left))
+        #expect(!Math.aimsAtPanel(from: CGPoint(x: 10, y: 100), to: CGPoint(x: 40, y: 110), edge: .right))
+        #expect(Math.aimsAtPanel(from: CGPoint(x: 900, y: 100), to: CGPoint(x: 870, y: 110), edge: .right))
+
+        var aim = DockPointerAim()
+        let first = aim.note(pointer: CGPoint(x: 100, y: 10), at: 0, edge: .bottom)
+        let tooSoon = aim.note(pointer: CGPoint(x: 100.2, y: 10.4), at: 0.004, edge: .bottom)
+        let rising = aim.note(pointer: CGPoint(x: 104, y: 26), at: 0.034, edge: .bottom)
+        let held = aim.note(pointer: CGPoint(x: 104, y: 26), at: 0.040, edge: .bottom)
+        let resting = aim.note(pointer: CGPoint(x: 104, y: 26), at: 0.070, edge: .bottom)
+        #expect(!first)
+        #expect(!tooSoon, "two readings a few milliseconds apart say nothing yet")
+        #expect(rising)
+        #expect(held, "held between windows")
+        #expect(!resting, "at rest it aims at nothing")
+    }
+
     @Test("a middle click or an upward scroll opens the panel at once; the rest's grace still closes it")
     func summonSkipsTheRest() {
         var tracker = DockHoverTracker()

@@ -32,9 +32,27 @@ struct DockHoverTracker {
     /// never opened anything when each seam started the clock over.
     static let seamGrace: TimeInterval = 0.12
 
+    /// The rest a second tile needs once a panel is open. The first show
+    /// waits out the person's own delay, which keeps a pointer passing
+    /// over the Dock from opening anything; with a panel already up the
+    /// intent is settled, and paying the full delay again on every tile
+    /// made a sweep along the Dock feel like separate hovers.
+    static let retargetDelay: TimeInterval = 0.06
+
+    /// The rest `item` needs before it takes the panel: the full delay
+    /// for a first show, and for a pointer that is on its way up to the
+    /// open panel and only crossing a neighbour; the short one for a
+    /// second tile the pointer came to along the Dock.
+    static func rest(delay: TimeInterval, panelOpen: Bool, aimingAtPanel: Bool) -> TimeInterval {
+        guard panelOpen, !aimingAtPanel else { return delay }
+        return min(delay, retargetDelay)
+    }
+
     @discardableResult
     mutating func note(hovered item: String?, pointerInPanel: Bool,
-                       now: TimeInterval, delay: TimeInterval) -> Action {
+                       now: TimeInterval, delay: TimeInterval,
+                       aimingAtPanel: Bool = false) -> Action {
+        let delay = Self.rest(delay: delay, panelOpen: shown != nil, aimingAtPanel: aimingAtPanel)
         if let item {
             if item != hovered {
                 hovered = item
@@ -65,6 +83,16 @@ struct DockHoverTracker {
             return .hide
         }
         return .none
+    }
+
+    /// The show this tracker granted was abandoned before its panel came
+    /// up: the pointer settled somewhere else while the app's windows
+    /// were still being read. `item` is the tile whose panel is on screen
+    /// now, nil for none, and the tracker goes on from there: the tile
+    /// under the pointer earns its own show, and an open panel the
+    /// pointer has left closes after the usual grace.
+    mutating func abandonShow(backTo item: String?) {
+        shown = item
     }
 
     mutating func reset() {
@@ -104,5 +132,29 @@ struct DockHoverTracker {
         case .optionHover: return optionHeld ? hovered : nil
         case .middleClick: return nil
         }
+    }
+}
+
+/// Which way the pointer is going, read over a short window: the pointer's
+/// moves can run the tick many times in a few milliseconds, and the
+/// distance between two such readings says nothing about a direction.
+struct DockPointerAim {
+    /// The shortest stretch a direction is read over.
+    static let window: TimeInterval = 0.03
+
+    private var reference: (point: CGPoint, at: TimeInterval)?
+    private(set) var aimingAtPanel = false
+
+    /// Note where the pointer is now; answers whether it is heading off
+    /// the Dock toward the panel.
+    mutating func note(pointer: CGPoint, at now: TimeInterval, edge: DockEdge) -> Bool {
+        guard let reference else {
+            self.reference = (pointer, now)
+            return aimingAtPanel
+        }
+        guard now - reference.at >= Self.window else { return aimingAtPanel }
+        aimingAtPanel = DockEnhanceMath.aimsAtPanel(from: reference.point, to: pointer, edge: edge)
+        self.reference = (pointer, now)
+        return aimingAtPanel
     }
 }

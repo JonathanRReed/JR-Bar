@@ -724,6 +724,44 @@ struct DockPreviewVerbAsyncTests {
         #expect(bench.controller.preview.actionFailure == "Could not change full screen. Try again.")
     }
 
+    @Test("a show still reading when the pointer settles elsewhere never comes up; the panel on screen stays")
+    func aLeftBehindShowIsDropped() {
+        let (bench, _) = landed()
+        bench.ax.answer(pid: Bench.betaPID, [card(7, "Beta one")])
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        #expect(bench.lane.waiting == 1, "Beta's windows are out on the lane")
+        bench.controller.dropPendingShow(unlessHovered: bench.tile("Beta").hoverID)
+        #expect(bench.lane.waiting == 1, "the pointer still on Beta keeps its show")
+        bench.controller.dropPendingShow(unlessHovered: nil)
+        bench.lane.runAll()
+        #expect(bench.presented == ["Alpha"], "Beta never came up")
+        #expect(bench.controller.preview.appName == "Alpha")
+        #expect(bench.controller.previewUp)
+        #expect(bench.controller.landedHoverID == bench.tile("Alpha").hoverID)
+    }
+
+    @Test("with no panel up, a show left behind brings nothing up at all")
+    func aLeftBehindFirstShowIsDropped() {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.showPreview(for: bench.tile("Alpha"))
+        bench.controller.dropPendingShow(unlessHovered: bench.tile("Beta").hoverID)
+        bench.lane.runAll()
+        #expect(bench.presented.isEmpty)
+        #expect(!bench.controller.previewUp)
+        #expect(bench.controller.landedHoverID == nil)
+    }
+
+    @Test("⌥`'s show has no pointer on its tile and is not dropped for that")
+    func aKeyboardShowIsNotDropped() {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.showPreview(for: bench.tile("Alpha"), keyboardOpened: true)
+        bench.controller.dropPendingShow(unlessHovered: nil)
+        bench.lane.runAll()
+        #expect(bench.presented == ["Alpha"])
+    }
+
     @Test("New on an app with no New Window menu item says so and asks for nothing else")
     func newWindowWithoutAMenuItem() {
         let (bench, actions) = landed()
