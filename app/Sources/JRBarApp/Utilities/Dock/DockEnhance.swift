@@ -1268,6 +1268,7 @@ final class DockEnhanceController {
         }
         preview.compact = DockEnhanceMath.compactList(
             windowCount: preview.windows.count, limit: preferences.compactListLimit)
+        attachLastKnownStills()
         if let presenter {
             presenter(item, landing.generation)
         } else {
@@ -1279,6 +1280,23 @@ final class DockEnhanceController {
         guard landing.keyboardOpened, keyboardPinned else { return }
         preview.selectedWindowID = DockEnhanceMath.frontWalkStart(preview.windows)
         mirrorPreviewChars()
+    }
+
+    /// Put each window's last-known still on its card before the panel is
+    /// shown, so a repeat hover opens on pictures and not on icons. This
+    /// reads only JR-Bar's own store: no window listing, no capture, no
+    /// wait. A still that is no longer fresh is marked, and the capture
+    /// pass that follows the show replaces it.
+    private func attachLastKnownStills() {
+        guard preferences.showThumbnails, !preview.compact, screenCaptureGranted,
+              let pid = preview.processIdentifier else { return }
+        for index in preview.windows.indices where preview.windows[index].thumbnail == nil {
+            guard let windowID = preview.windows[index].windowID else { continue }
+            let tag = preview.agents[preview.windows[index].id]?.stillTag
+            guard let known = DockThumbnailer.lastKnown(pid: pid, windowID: windowID, tag: tag) else { continue }
+            preview.windows[index].thumbnail = known.image
+            preview.windows[index].thumbnailIsLastKnown = !known.fresh
+        }
     }
 
     /// The panel's show for cards that have landed: place it, start the
@@ -1392,6 +1410,13 @@ final class DockEnhanceController {
         switcher.setPreviewOpen(false)
         panel?.dismiss()
         autohideHold.release()
+        // The panel is off screen; its cards let go of their pictures. The
+        // store keeps the stills, inside its own size and age limits, so a
+        // hidden preview holds no second copy of every window.
+        for index in preview.windows.indices where preview.windows[index].thumbnail != nil {
+            preview.windows[index].thumbnail = nil
+            preview.windows[index].thumbnailIsLastKnown = false
+        }
     }
 
     /// The open pop's sort — the tile's, read at show.

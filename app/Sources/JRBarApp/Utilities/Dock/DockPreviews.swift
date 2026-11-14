@@ -234,7 +234,7 @@ enum DockThumbnailer {
     /// Each entry also carries the tag of the agent state the window
     /// showed when it was taken (`DockAgentMark.stillTag`): an agent
     /// that asked or moved on since makes the still stale early.
-    @MainActor private static var captureCache: [String: (image: NSImage, at: Date, tag: String?)] = [:]
+    @MainActor private static var captureCache = DockCaptureStore()
     private(set) static var captureEpoch = 0
 
     static func invalidateCaptures() {
@@ -243,11 +243,29 @@ enum DockThumbnailer {
     }
 
     static func cacheCapture(_ image: NSImage, pid: pid_t, windowID: CGWindowID,
-                             tag: String?, epoch: Int) -> NSImage? {
+                             tag: String?, epoch: Int, cost: Int? = nil, now: Date = Date()) -> NSImage? {
         guard epoch == captureEpoch else { return nil }
-        captureCache["\(pid):\(windowID)"] = (image, Date(), tag)
+        captureCache.store(image, key: DockCaptureStore.key(pid: pid, windowID: windowID),
+                           tag: tag, at: now, cost: cost)
         return image
     }
+
+    /// The window's last-known still, for the first frame of a show: any
+    /// still the store kept, with whether it is `fresh` enough to stand
+    /// in for a new capture (young, and taken under the agent state the
+    /// window is in now). A still that is not fresh is shown and then
+    /// replaced.
+    static func lastKnown(pid: pid_t, windowID: CGWindowID, tag: String?,
+                          now: Date = Date()) -> (image: NSImage, fresh: Bool)? {
+        guard let entry = captureCache.entry(DockCaptureStore.key(pid: pid, windowID: windowID), now: now)
+        else { return nil }
+        let fresh = cacheServes(age: now.timeIntervalSince(entry.at), maxAge: captureLifetime,
+                                cachedTag: entry.tag, tag: tag)
+        return (entry.image, fresh)
+    }
+
+    /// How many decoded bytes the stills hold, for the tests and Doctor.
+    static var cachedBytes: Int { captureCache.bytes }
     nonisolated static let captureLifetime: TimeInterval = 30
     /// The card under the pointer never shows a still older than this:
     /// a hover on a card whose still has aged past it re-takes that one
@@ -276,7 +294,7 @@ enum DockThumbnailer {
 
     /// The cached still's age and tag for one window, if any.
     static func cached(pid: pid_t, windowID: CGWindowID, now: Date = Date()) -> (age: TimeInterval, tag: String?)? {
-        captureCache["\(pid):\(windowID)"].map { (now.timeIntervalSince($0.at), $0.tag) }
+        captureCache.peek(DockCaptureStore.key(pid: pid, windowID: windowID), now: now)
     }
 
     /// Downsamples the capture to 8×8 and sums the alpha channel —
@@ -357,7 +375,8 @@ enum DockThumbnailer {
             guard let index = DockEnhanceMath.matchRow(
                 scFrame: scWindow.frame, scTitle: scWindow.title, rows: rows,
                 scWindowID: scWindow.windowID, rowWindowIDs: content.windows.map(\.windowID)),
-                  content.windows[index].thumbnail == nil else { continue }
+                  content.windows[index].thumbnail == nil || content.windows[index].thumbnailIsLastKnown
+            else { continue }
             // The row's identity, not its index: a card closed while
             // this capture was in flight would shift the rows under it.
             let rowID = content.windows[index].id
@@ -369,6 +388,7 @@ enum DockThumbnailer {
             guard !isStale(), epoch == captureEpoch, content.processIdentifier == pid,
                   let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
             content.windows[row].thumbnail = image
+            content.windows[row].thumbnailIsLastKnown = false
         }
     }
 
@@ -383,12 +403,12 @@ enum DockThumbnailer {
     static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat,
                         tag: String? = nil, maxAge: TimeInterval = captureLifetime) async -> NSImage? {
         let epoch = captureEpoch
-        let cacheKey = "\(pid):\(scWindow.windowID)"
+        let cacheKey = DockCaptureStore.key(pid: pid, windowID: scWindow.windowID)
         let now = Date()
-        if let cached = captureCache[cacheKey],
+        if let cached = captureCache.entry(cacheKey, now: now),
            cacheServes(age: now.timeIntervalSince(cached.at), maxAge: min(maxAge, captureLifetime),
                        cachedTag: cached.tag, tag: tag) { return cached.image }
-        captureCache = captureCache.filter { now.timeIntervalSince($0.value.at) < captureLifetime }
+        captureCache.prune(now: now)
         let configuration = SCStreamConfiguration()
         let bounds = scWindow.frame
         let factor = min(1, Self.pointLimit / max(bounds.width, bounds.height, 1)) * scale
@@ -406,7 +426,8 @@ enum DockThumbnailer {
             cgImage: trimmed,
             size: NSSize(width: CGFloat(trimmed.width) / scale,
                          height: CGFloat(trimmed.height) / scale))
-        return cacheCapture(image, pid: pid, windowID: scWindow.windowID, tag: tag, epoch: epoch)
+        return cacheCapture(image, pid: pid, windowID: scWindow.windowID, tag: tag, epoch: epoch,
+                            cost: trimmed.width * trimmed.height * 4)
     }
 
     /// One window's still re-taken for a hovered card — found by its

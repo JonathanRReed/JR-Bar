@@ -21,6 +21,9 @@ struct DockPreviewWindow: Identifiable {
     /// a card carrying a document drags it onto another app's Dock tile.
     var documentURL: URL? = nil
     var thumbnail: NSImage?
+    /// The thumbnail is the window's last-known still, shown on the first
+    /// frame while a new one is taken; the capture pass replaces it.
+    var thumbnailIsLastKnown = false
     /// The AX window element — the raise/close/minimize target. A card
     /// lives on the main actor; the switcher's commits carry the bare
     /// handle to `DockAXWorker` (`DockAXElement`) instead of the card.

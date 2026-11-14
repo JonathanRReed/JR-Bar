@@ -467,6 +467,28 @@ section covers the preview's air and where it sits.
   pane, row and strip insets and the card gap scale with it, the zoom
   pane narrows to 80 % at the tight end, and the glass corner is the
   card corner plus the strip inset less two (24 at Standard).
+- **A repeat hover opens on pictures.** The stills live in one store
+  (`DockCaptureStore`) with two ages. A still under half a minute old
+  stands in for a new capture, so hovering a window twice does not blink
+  the recording indicator twice. A still up to ten minutes old is the
+  window's last-known picture: when a preview's window list lands, each
+  card takes its last-known still from the store before the panel is
+  shown (`DockEnhanceController.attachLastKnownStills`), with no window
+  listing and no capture in the way, and the capture pass that follows
+  replaces any that is no longer fresh. The store is bounded at 32 MiB
+  of decoded pixels, least recently shown out first, and it is emptied
+  when Screen Recording is revoked. A hidden preview's cards let go of
+  their pictures, so nothing holds a second copy.
+- **A sweep along the Dock stays one gesture.** The first preview waits
+  out the hover delay. With a panel open, the next tile takes it after
+  60 ms (`DockHoverTracker.retargetDelay`); a pointer heading up to the
+  panel still pays the whole delay on a neighbour it crosses
+  (`DockPointerAim`). A preview whose window list is still being read
+  when the pointer settles elsewhere is dropped and never comes up.
+- **New** in the preview's header presses the app's own New Window menu
+  item through Accessibility. An app with no such item gets no press:
+  JR-Bar never posts a key in its place, and the preview says "This app
+  has no New Window menu item."
 - **Cards take each window's shape** (off): a card's width follows its
   window's aspect, held between 0.6 and 1.9 of the height, and the still
   fills it from the top-leading corner — no letterbox beside a portrait

@@ -146,6 +146,10 @@ struct DockCaptureRevocationTests {
         let firstEntered = await firstReply.waitUntilEntered()
         try #require(firstEntered)
         controller.hidePreview()
+        // Hidden cards let go of their pictures; the next show puts the
+        // window's still back on its card before anyone can hover it.
+        #expect(controller.preview.windows[0].thumbnail == nil)
+        controller.preview.windows[0].thumbnail = NSImage(size: NSSize(width: 3, height: 3))
         controller.freshThumbnail = { _, _, _ in await nextReply.read() }
         let nextTask = try #require(controller.freshenStill(controller.preview.windows[0]))
         let nextEntered = await nextReply.waitUntilEntered()
