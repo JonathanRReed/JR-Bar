@@ -155,7 +155,7 @@ read it only for a provider you turned on.
 
 | Feature | Who is asked | When | Where you turn it on |
 | --- | --- | --- | --- |
-| Claude usage | `api.anthropic.com`, with the sign-in Claude Code keeps in your Keychain | each usage refresh, while it is on | Settings > Agents & Usage > Provider usage; Setup; `jrbar providers usage claude on` |
+| Claude usage | `api.anthropic.com`, with the sign-in Claude Code keeps in your Keychain | each usage refresh, while it is on | Settings > Providers > Provider usage; Setup; `jrbar providers usage claude on` |
 | Codex usage | `chatgpt.com`, by running `codex app-server` with Codex's own sign-in | each usage refresh, while it is on | the same switch for Codex |
 | Cursor usage | `cursor.com`, with the token in Cursor's own database or a browser session you imported | each usage refresh, while it is on | the same switch for Cursor |
 | Devin usage | `app.devin.ai`, with a token you gave JR-Bar or a browser session you approved | each usage refresh, while it is on | the same switch for Devin |
@@ -163,11 +163,17 @@ read it only for a provider you turned on.
 | Gemini usage | `cloudcode-pa.googleapis.com` and `oauth2.googleapis.com`, with the sign-in in `~/.gemini/oauth_creds.json` | each usage refresh, while it is on | the same switch for Gemini |
 | OpenCode Go usage | `opencode.ai`, with your OpenCode Go key | each usage refresh, while it is on | the same switch for OpenCode |
 | OpenAI API spend | `api.openai.com`, with the Admin key you gave JR-Bar | each usage refresh, while it is on | the same switch for OpenAI API |
+| Factory usage | `api.factory.ai`, with an API key you saved or the browser sign-in you connected; `api.workos.com` renews that sign-in when you allowed it | each usage refresh, while it is on | Connect Factory in Settings > Providers or Usage Center, then the same switch for Factory |
+| Kimi usage | `api.kimi.ai` (`api.kimi.com` for a China-region sign-in), with Kimi Code's own sign-in, an API key or a web session you gave JR-Bar | each usage refresh, while it is on | the same switch for Kimi |
+| Kilo usage | `app.kilo.ai`, with the Kilo CLI's own sign-in or an API key you gave JR-Bar | each usage refresh, while it is on | the same switch for Kilo |
+| Kiro usage | Amazon's Kiro service (`codewhisperer.us-east-1.amazonaws.com` or `q.eu-central-1.amazonaws.com`), with the Kiro CLI's own sign-in | each usage refresh, while it is on | the same switch for Kiro |
 | Antigravity usage | nothing leaves the Mac; the running Antigravity app answers on `127.0.0.1` | each usage refresh, while it is on | the same switch for Antigravity |
-| Claude plan limits (monitor) | `api.anthropic.com`, with Claude's sign-in | while on | Settings > Agents & Usage > Claude |
-| Provider status pages | `status.anthropic.com`, `status.openai.com`, `status.cursor.com`, no key or account | every 10 minutes, only for a provider found here | Settings > Agents & Usage > Advanced > Incidents |
-| Agent update checks | `registry.npmjs.org`, no key or account | every 6 hours | Settings > Agents & Usage > Advanced > Updates |
-| App update checks | the signed Sparkle feed on GitHub | on your schedule | Settings > General |
+| Claude plan limits (monitor) | `api.anthropic.com`, with Claude's sign-in | while on | Settings > Providers > Claude > Read plan limits |
+| Provider status pages | `status.anthropic.com`, `status.openai.com`, `status.cursor.com`, no key or account | every 10 minutes, only for a provider found here | Settings > Privacy > Network requests > Provider status pages |
+| Agent update checks | `registry.npmjs.org`, no key or account | every 6 hours | Settings > Privacy > Network requests > Check for agent updates |
+| App update checks | the signed Sparkle feed on GitHub | on your schedule | Settings > General > Software Update |
+| Firmware update | `raw.githubusercontent.com`: one pinned firmware package, checked against a hash that ships with JR-Bar | only when you confirm an update for a device | Settings > Devices, the device's Firmware group; `jrbar firmware upgrade` |
+| Phone alert | `ntfy.sh` or your own ntfy server, with the topic you chose (see below) | per alert you chose | Settings > Alerts & Sounds > Phone alert |
 | Lyrics | `lrclib.net`: title, artist, album and length of the playing track | per new track | the notch card's Lyrics switch, then its agreement |
 | Webhook | the HTTPS address you type | per event you chose | Settings > Alerts & Sounds > Advanced > Webhook |
 | Remote peers and usage sync | your own other Mac, over `sftp` | while on | Settings > Remote > Peers |

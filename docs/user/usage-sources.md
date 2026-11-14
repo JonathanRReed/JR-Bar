@@ -188,7 +188,7 @@ providers' public status pages so the card says "incident" instead of
 looking like your fetch broke. This is a request that leaves your Mac, so
 it is **off until you turn it on**.
 
-Turn it on in Settings › Providers › Advanced › Incidents › Provider status pages, or:
+Turn it on in Settings › Privacy › Network requests › Provider status pages, or:
 
 ```sh
 jrbar set provider_status_feeds_enabled true
