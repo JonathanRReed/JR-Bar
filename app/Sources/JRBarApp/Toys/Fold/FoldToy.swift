@@ -937,7 +937,8 @@ final class FoldToy: Toy {
         // A lid resting at or below the eye's edge-on angle shows the
         // glass edge-on already: every pixel would be black, so the Duo
         // has nothing to fold from there.
-        guard FoldDuoModel.foldsFrom(reference: reference, perspective: settings.perspective)
+        guard FoldDuoModel.foldsFrom(reference: reference, perspective: settings.perspective,
+                                     classic: FoldDuoModel.classicWanted())
         else { return 0 }
         return (reference - max(0, angle)) * .pi / 180
     }
@@ -1079,7 +1080,8 @@ final class FoldToy: Toy {
                                    theta: reference - displayedDelta * 180 / .pi,
                                    hold: settings.holdStrength, perspective: settings.perspective,
                                    blur: settings.blur, shade: settings.shade,
-                                   fadeLength: settings.fadeLength, reduceMotion: reduceMotion)
+                                   fadeLength: settings.fadeLength, reduceMotion: reduceMotion,
+                                   classic: FoldDuoModel.classicWanted())
                 // The first degrees fade the overlay in, and so does the
                 // lid's next stretch of travel when a late first frame
                 // lands on a fold already under way.

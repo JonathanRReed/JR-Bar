@@ -587,9 +587,34 @@ enum FoldDuoModel {
     static let darkStart = 0.2
     /// The Duo's darkening exponent.
     static let gamma = 1.35
-    /// The end fade runs from black at edge-on + 2° to clear at + 22°.
+    /// The classic end fade runs from black at edge-on + 2° to clear at
+    /// + 22°.
     static let endFadeFrom = 2.0
     static let endFadeSpan = 20.0
+
+    // The page's shading: what the Duo draws by default. It follows the
+    // replay of Apple's own product-page renderer (docs/PRIOR-ART.md): the
+    // darkening is a gain on linear light, keyed partly to the glass and
+    // partly to the picture; the frost reaches the hinge; and the hinge
+    // band stays lit until the seated eye loses the glass.
+
+    /// The hidden defaults key that brings back the shading, front and
+    /// end fade the Duo drew through 0.10.2, for a side-by-side look.
+    static let classicKey = "jrbar.foldClassicShading"
+    /// The page's wipe amount once the travel covers the whole fade span.
+    static let wipeFull = 0.55
+    /// The wipe at which the picture's far edge is fully frosted.
+    static let wipeFrost = 0.3
+    /// The frost's share at the hinge row, and its rise across the leaf:
+    /// the page's blur runs from 0.5 to 0.95 of its own leaf.
+    static let frostHinge = 0.0909
+    static let frostRise = 0.818
+    /// The Shade at which the gain is the page's own.
+    static let pageShade = 0.67
+    /// The end fade runs from black at edge-on + 0.5° to clear at + 10.5°:
+    /// the hinge band stays at full brightness down to there.
+    static let pageEndFadeFrom = 0.5
+    static let pageEndFadeSpan = 10.0
     /// Degrees of travel over which the overlay fades in at the start.
     static let alphaSpan = 2.0
     /// Gaussian pyramid levels the renderer builds: enough to carry the
@@ -694,26 +719,81 @@ enum FoldDuoModel {
         return min(1, gain * motion * pow(g, gamma))
     }
 
-    /// The fade to black as the seated eye loses the glass: 1 (black)
-    /// at or under edge-on + 2°, 0 from edge-on + 22° up.
-    static func endFade(theta: Double, eye: SIMD2<Double>) -> Double {
-        let black = blackAngle(eye: eye)
-        return 1 - smoothstep(black, black + endFadeSpan, theta)
+    /// Whether the person asked for the classic shading back.
+    static func classicWanted(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: classicKey)
     }
 
-    /// The highest lid angle the end fade still draws all black:
-    /// edge-on + 2°, 39.6° for the default eye.
-    static func blackAngle(eye: SIMD2<Double>) -> Double {
-        edgeOn(eye: eye) + endFadeFrom
+    /// The page's wipe amount: the travel as a straight share of the fade
+    /// span, `wipeFull` when the span is covered and more past it. Linear
+    /// in degrees, like the page's own clip; nothing in it completes early.
+    static func wipe(delta: Double, reference: Double, fadeLength: Double) -> Double {
+        guard delta.isFinite, delta > 0 else { return 0 }
+        let span = FoldSettings.clampFadeLength(fadeLength) * max(1, reference - FoldPause.closedAngle)
+        return wipeFull * delta / span
+    }
+
+    /// The page's frost, 0…1, at picture row `e`: it starts at the hinge
+    /// row itself and rises in a straight line toward the far edge.
+    static func pageFrost(e: Double, wipe: Double) -> Double {
+        let row = e.isFinite ? min(1, max(0, e)) : 0
+        let w = wipe.isFinite ? max(0, wipe) : 0
+        return min(1, (frostHinge + frostRise * row) * w / wipeFrost)
+    }
+
+    /// The page's front, in screen heights: σ climbs `frontOctaves`
+    /// octaves from exactly 0 with no frost to the full frost.
+    static func pageSigma(e: Double, wipe: Double, blur: Double) -> Double {
+        let b = blur.isFinite ? min(1, max(0, blur)) : 0
+        let a = pageFrost(e: e, wipe: wipe)
+        return frontScale * b * (exp2(frontOctaves * a) - 1) / (exp2(frontOctaves) - 1)
+    }
+
+    /// The page's shading as a gain on linear light, 1 untouched … 0
+    /// black, at glass height `h` (0 the hinge, 1 the top of the glass)
+    /// and picture row `e`. Three terms: the wipe darkens the glass
+    /// toward its top; the inner shadow darkens the picture from the
+    /// hinge row outward and phases in over the first of the travel; and
+    /// a fully frosted row is dimmed a little more. The hinge row keeps
+    /// full brightness in all three.
+    static func pageGain(h: Double, e: Double, wipe: Double, shade: Double) -> Double {
+        let k = (shade.isFinite ? min(1, max(0, shade)) : 0) / pageShade
+        let w = wipe.isFinite ? max(0, wipe) : 0
+        let glass = 1 - min(1, max(0, smoothstep(0, 1, h) * w * 1.5 * k))
+        let phase = min(1, max(0, smoothstep(0, 0.55, w) * k))
+        let inner = 1 + (smoothstep(0, 1, 1 - e) - 1) * phase
+        let dim = frostDim(pageFrost(e: e, wipe: w))
+        return glass * inner * dim * dim
+    }
+
+    /// The page dims each of its two blur passes on a fully frosted row:
+    /// 1 up to a frost of 0.9, 0.84 at a frost of 1.
+    static func frostDim(_ frost: Double) -> Double {
+        let t = min(1, max(0, (1.3 - frost) / 0.4))
+        return t * t * (3 - 2 * t)
+    }
+
+    /// The fade to black as the seated eye loses the glass: 1 (black) at
+    /// or under the black angle, 0 once the lid is the fade's span above
+    /// it.
+    static func endFade(theta: Double, eye: SIMD2<Double>, classic: Bool = false) -> Double {
+        let black = blackAngle(eye: eye, classic: classic)
+        return 1 - smoothstep(black, black + (classic ? endFadeSpan : pageEndFadeSpan), theta)
+    }
+
+    /// The highest lid angle the end fade still draws all black: edge-on
+    /// + 0.5°, 38.1° for the default eye (classic: + 2°, 39.6°).
+    static func blackAngle(eye: SIMD2<Double>, classic: Bool = false) -> Double {
+        edgeOn(eye: eye) + (classic ? endFadeFrom : pageEndFadeFrom)
     }
 
     /// Whether a lid resting at `reference` has a picture to fold: above
     /// the angle the end fade draws all black. At or below it the seated
     /// eye is behind the resting plane, every pixel is invalid, and the
     /// whole screen would go black the moment the overlay ordered in.
-    static func foldsFrom(reference: Double, perspective: Double) -> Bool {
+    static func foldsFrom(reference: Double, perspective: Double, classic: Bool = false) -> Bool {
         guard reference.isFinite else { return false }
-        return reference > blackAngle(eye: eye(perspective: perspective))
+        return reference > blackAngle(eye: eye(perspective: perspective), classic: classic)
     }
 
     /// The reference a Duo frame draws from: taken when the overlay
@@ -738,17 +818,18 @@ enum FoldDuoModel {
     }
 
     /// The Duo's uniforms, written in place every vsync tick; like the
-    /// Room's `apply`, only the animatable fields — the upload's size and
+    /// Room's `apply`, only the animatable fields: the upload's size and
     /// level count and the encode's aspect survive. Reduce Motion keeps
-    /// the picture on the glass with no blur: it darkens only.
+    /// the picture on the glass with no blur: it darkens only. `classic`
+    /// writes the shading the Duo drew through 0.10.2.
     static func apply(to p: inout FoldRenderer.Params, reference: Double, theta: Double,
                       hold: Double, perspective: Double, blur: Double, shade: Double,
-                      fadeLength: Double, reduceMotion: Bool) {
+                      fadeLength: Double, reduceMotion: Bool, classic: Bool = false) {
         let delta = max(0, reference - theta)
         let e = eye(perspective: perspective)
         let m = motion(delta: delta, reference: reference, fadeLength: fadeLength)
         let b = blur.isFinite ? min(1, max(0, blur)) : 0
-        let progress = blurProgress(delta: delta, reference: reference, fadeLength: fadeLength)
+        let s = shade.isFinite ? min(1, max(0, shade)) : 0
         p.delta = Float(radians(delta))
         p.thetaRef = Float(radians(reference))
         p.theta = Float(radians(theta))
@@ -757,11 +838,20 @@ enum FoldDuoModel {
         p.hold = reduceMotion ? 0 : Float(hold.isFinite ? min(1, max(0, hold)) : 1)
         p.motion = Float(m)
         p.blurMax = reduceMotion ? 0 : Float(frontScale * b)
-        p.blurReach = Float(progress / frontSaturate)
         p.frontOctaves = Float(frontOctaves)
         p.frontStart = Float(frontStart)
-        p.darkGain = Float(darkScale * (shade.isFinite ? min(1, max(0, shade)) : 0))
-        p.endFade = Float(endFade(theta: theta, eye: e))
+        if classic {
+            let progress = blurProgress(delta: delta, reference: reference, fadeLength: fadeLength)
+            p.blurReach = Float(progress / frontSaturate)
+            p.darkGain = Float(darkScale * s)
+            p.wipe = -1
+        } else {
+            let w = wipe(delta: delta, reference: reference, fadeLength: fadeLength)
+            p.blurReach = Float(w / wipeFrost)
+            p.darkGain = Float(s / pageShade)
+            p.wipe = Float(w)
+        }
+        p.endFade = Float(endFade(theta: theta, eye: e, classic: classic))
         p.opacity = Float(alpha(delta: delta))
         p.blackout = 0
         p.mode = 0

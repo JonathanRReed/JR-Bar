@@ -4,6 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Fold's Duo look shades like the iPhone Duo. The hinge band stays lit and vivid until you lose sight of the glass, where it used to fade the whole screen to a dim slab from about 60°. The glass darkens toward its top and only ever darkens as the lid closes; it used to brighten again part-way down. The blur now reaches the hinge and rises more gently across the screen. The earlier look is one hidden setting away for a side-by-side (`jrbar.foldClassicShading`).
 - The Aquarium's fish are repainted. Each species has its own colours (an orange clownfish, a slate shark, a cream angelfish with blue sails, a yellow puffer, a crimson betta with violet veils, a blue tang) instead of the provider's accent, which made most of them blue on blue water. They are lit by the tank: a rim of surface light on the back, warm sand light under the belly, no heavy outline, smaller darker eyes.
 - A fish shows what its session is doing without a label: an ask glows amber with a speech bubble, a finished run leaves in gold sparkles, a failed run drains to grey and shuts its eye, an idle fish has a sleepy lid.
 - Sweeping along the Dock with a preview open moves the preview to the next app after a short rest, instead of paying the whole hover delay again on every icon. A pointer on its way up to the preview does not hand it to a neighbour it crosses.

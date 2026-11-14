@@ -200,9 +200,9 @@ Closing the lid folds the desktop. Two looks, picked on the card:
 - **Duo** (the default) is the iPhone Duo's fold: the picture stays put in
   space while the glass swings through it. A seated eye sees the desktop
   neither move nor shrink; only the glass silhouette drops, the picture
-  goes soft and dark away from the hinge (the hinge stays sharp and
-  bright), and the glass is black by the time the eye loses it edge-on.
-  No sheen, no seam, a pure black void.
+  goes soft and dark toward the top of the glass while the hinge row stays
+  at full brightness, and the hinge band stays lit until the eye loses the
+  glass edge-on. No sheen, no seam, a pure black void.
 - **Room** is the earlier portal: windows float as cards in a lit space,
   the wallpaper recedes behind them, and the whole thing blurs, fogs and
   dissolves toward the hinge, with Frost and the seam light.
@@ -423,29 +423,52 @@ and commits are in [PRIOR-ART.md](PRIOR-ART.md).
     pixel, on a lid drawn at θref − Hold·(θref − θ), casts a ray from the
     eye and shows the point it hits on the resting plane θref: the exact
     front-view hold, the identity at rest, the hinge row pinned. Below
-    edge-on (37.6° for the default eye) the pixel is black. `motion =
-    smoothstep(δ / (fadeLength·(θref − 5°)))` has zero slope at the
-    start. In the picture's own rows (e = 0 at the hinge row, 1 at the
-    far edge) the blur is a **front** (`FoldDuoModel.frontSigma`):
-    with r = (e − 0.07)/0.93 and the travel p = δ / (fadeLength·(θref −
-    5°)) capped at 1, a row's frost is a = min(1, r·p / 0.5) and its σ =
-    0.233·Blur·(2^(8a) − 1)/255 H. The pyramid level, which is log2 σ,
-    so rises in a straight line with distance and travel. The hinge-side
-    7 % never blurs, the middle stays sharper than it used to for longer,
-    and the outer band frosts hard by a third of the close: fully frosted
-    at 0.14 H (default Blur) from 29° down off a 110° rest. A reopen clears as a front from
-    the hinge outward: the fully frosted band retreats to the far edge,
-    which is the last to come into focus, still soft 10° from rest.
-    Under 0.82 px of blur the base is read as it is, so the first
-    degrees are the desktop itself. σ is read as one pyramid
-    level through a cubic B-spline (≈ 0.82·2^L px, MPS's decimation
-    offset undone; `FoldRendererTests` pins it within 6/255 of a
-    Gaussian, so no ghost copies). Darkening is
-    min(1, 3·Shade·motion·((e − 0.2)/0.8)^1.35): the hinge-side fifth
-    never darkens and the far edge is black once motion ≥ 0.5 at the
-    default Shade. The end fade runs from clear at edge-on + 22° to black
-    at edge-on + 2°. The overlay's alpha ramps over the first 2° of
-    travel. Reduce Motion: no warp, no blur, darkening only.
+    edge-on (37.6° for the default eye) the pixel is black.
+
+    The shading and the front follow the replay of Apple's own
+    product-page renderer, ported to a lid (docs/PRIOR-ART.md). One clock
+    drives both: the wipe `w = 0.55·δ / (fadeLength·(θref − 5°))`
+    (`FoldDuoModel.wipe`), linear in degrees and never capped, so at the
+    default Fade length the lid's whole travel is the page's whole fold
+    and nothing completes early.
+
+    In the picture's own rows (e = 0 at the hinge row, 1 at the far edge)
+    the blur is a **front** (`FoldDuoModel.pageSigma`): a row's frost is
+    a = min(1, (0.0909 + 0.818·e)·w / 0.3) and its σ =
+    0.233·Blur·(2^(8a) − 1)/255 H. The pyramid level, which is log2 σ, so
+    rises in a straight line with distance and travel. The front reaches
+    the hinge row itself: hinge text is soft by about 68° off a 110° rest,
+    as the far content stays soft on the device until it is nearly flat.
+    The far edge is fully frosted at 0.14 H (default Blur) once w reaches
+    0.33. At rest a is 0 and σ is exactly 0. A reopen clears as a front
+    from the hinge outward. Under 0.82 px of blur the base is read as it
+    is, so the first degrees are the desktop itself. σ is read as one
+    pyramid level through a cubic B-spline (≈ 0.82·2^L px, MPS's
+    decimation offset undone; `FoldRendererTests` pins it within 6/255 of
+    a Gaussian, so no ghost copies).
+
+    The darkening is a gain on linear light, applied before the encode
+    (`FoldDuoModel.pageGain`), with k = Shade / 0.67:
+    `(1 − clamp(S(h)·w·1.5·k)) · mix(1, S(1 − e), clamp(S(w / 0.55)·k)) ·
+    D(a)²`, where S is a smoothstep, h is the height on the glass and e
+    the picture row. The first term darkens the glass toward its top; the
+    second, the page's inner shadow, darkens the picture from the hinge
+    row outward and phases in over the first of the travel; D dims a fully
+    frosted row to 0.71. The hinge row keeps full brightness in all
+    three, and the top of the glass only ever darkens as the lid closes.
+    The picture's hinge edge is never feathered. The end fade runs from
+    clear at edge-on + 10.5° to black at edge-on + 0.5° (48.1° to 38.1°
+    for the default eye), so the hinge band stays lit until the seated eye
+    loses the glass. The overlay's alpha ramps over the first 2° of
+    travel. Reduce Motion: no warp, no blur, shading only.
+
+    The look through 0.10.2 is kept behind a hidden default for a
+    side-by-side: `defaults write com.jonathanreed.jrbar jrbar.foldClassicShading
+    -bool YES`. It leaves the hinge-side 7 % sharp
+    (`FoldDuoModel.frontSigma`), darkens the encoded value by
+    min(1, 3·Shade·motion·((e − 0.2)/0.8)^1.35) with `motion` a smoothstep
+    done by half-closed, and fades the whole glass from edge-on + 22° to
+    edge-on + 2°.
   - **Room** (`foldFragment`, `FoldPortalModel`): the model is a room,
     not a picture: the wallpaper is the far wall, each window a card
     floating in front of it at a depth from its stacking order, so the
@@ -1492,17 +1515,18 @@ copy (a few older card strings still carry them), no marketing words. Examples:
   each safety input (pure functions in `JRBarCore/FoldMath.swift`, tests
   in `FoldMathTests.swift`). The Duo: `FoldDuoModelTests` (identity at
   rest, pinned hinge row, the observer round trip at 100/90/75/60°,
-  79.4 % top-row width at 70°, motion, darkening, end fade, blackout and
-  the reopen's release),
+  79.4 % top-row width at 70°, the wipe, the page's front and shading,
+  the end fade, the classic switch, blackout and the reopen's release),
   `FoldMotionTests` (recorded-style 10 Hz traces replayed on an injected
   clock: 5, 20 and 90°/s closes for ripple, lag and plateaus, an
   open-close-open reversal, stops, a parked lid's flicker and its rest,
   the spring, the gate ease and the entry fade) and `FoldDrawClockTests`
   (no display link while the lid rests, one link per gesture, the draw
   gate that owes a frame instead of dropping it),
-  `FoldRendererTests` (GPU: identity at rest, sharp hinge against a soft
-  far band, black far edge, the pyramid read against a Gaussian, the
-  blackout) and `FoldRenderProofTests` (the seated eye's Dock and window
+  `FoldRendererTests` (GPU: identity at rest, a front that softens from
+  the hinge outward, a glass that only darkens toward its top with the
+  hinge row bright, the hinge band lit at 47°, the classic look behind
+  its switch, the pyramid read against a Gaussian, the blackout) and `FoldRenderProofTests` (the seated eye's Dock and window
   corner hold within 2 px from 110° to 75°; `JRBAR_RENDER_PROOF=1` writes
   `fold-duo-strip.png`, `fold-room-strip.png`, and the motion strips
   `fold-duo-slow-close-strip.png`, `fold-duo-entry-strip.png`,

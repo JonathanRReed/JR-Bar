@@ -253,16 +253,113 @@ struct FoldDuoModelTests {
 
 
 
-    @Test("the end fade is black at edge-on + 2° and clear from edge-on + 22°")
+    @Test("the end fade is black at edge-on + 0.5° and clear from edge-on + 10.5°: the hinge band stays lit until the eye loses the glass")
     func endFadeCurve() {
         let edge = FoldDuoModel.edgeOn(eye: eye)
-        #expect(FoldDuoModel.endFade(theta: edge + 2, eye: eye) == 1)
+        #expect(FoldDuoModel.endFade(theta: edge + 0.5, eye: eye) == 1)
         #expect(FoldDuoModel.endFade(theta: edge, eye: eye) == 1)
         #expect(FoldDuoModel.endFade(theta: 10, eye: eye) == 1)
-        #expect(FoldDuoModel.endFade(theta: edge + 22, eye: eye) == 0)
+        #expect(FoldDuoModel.endFade(theta: edge + 10.5, eye: eye) == 0)
         #expect(FoldDuoModel.endFade(theta: 110, eye: eye) == 0)
-        let mid = FoldDuoModel.endFade(theta: edge + 12, eye: eye)
+        let mid = FoldDuoModel.endFade(theta: edge + 5.5, eye: eye)
         #expect(mid > 0.4 && mid < 0.6)
+        // At 47° the classic fade had the whole glass at a third of its
+        // brightness; the page's is still clear there.
+        #expect(FoldDuoModel.endFade(theta: 48.2, eye: eye) == 0)
+        #expect(FoldDuoModel.endFade(theta: 47, eye: eye, classic: true) > 0.6)
+    }
+
+    @Test("the classic end fade is black at edge-on + 2° and clear from edge-on + 22°")
+    func classicEndFadeCurve() {
+        let edge = FoldDuoModel.edgeOn(eye: eye)
+        #expect(FoldDuoModel.endFade(theta: edge + 2, eye: eye, classic: true) == 1)
+        #expect(FoldDuoModel.endFade(theta: edge + 22, eye: eye, classic: true) == 0)
+        let mid = FoldDuoModel.endFade(theta: edge + 12, eye: eye, classic: true)
+        #expect(mid > 0.4 && mid < 0.6)
+        #expect(FoldDuoModel.blackAngle(eye: eye, classic: true) - FoldDuoModel.blackAngle(eye: eye) == 1.5)
+    }
+
+    @Test("the wipe is the travel as a straight share of the fade span: linear in degrees, never capped")
+    func wipeIsLinear() {
+        let span = 0.55 * (110 - FoldPause.closedAngle)
+        #expect(FoldDuoModel.wipe(delta: 0, reference: 110, fadeLength: 0.55) == 0)
+        #expect(FoldDuoModel.wipe(delta: -3, reference: 110, fadeLength: 0.55) == 0)
+        #expect(FoldDuoModel.wipe(delta: .nan, reference: 110, fadeLength: 0.55) == 0)
+        #expect(abs(FoldDuoModel.wipe(delta: span, reference: 110, fadeLength: 0.55) - 0.55) < 1e-12)
+        #expect(abs(FoldDuoModel.wipe(delta: span / 2, reference: 110, fadeLength: 0.55) - 0.275) < 1e-12)
+        #expect(FoldDuoModel.wipe(delta: span * 1.5, reference: 110, fadeLength: 0.55) > 0.8, "nothing completes early")
+        // At the default Fade length the whole travel is the page's whole
+        // fold: one degree of lid is one part in 105 of it.
+        #expect(abs(FoldDuoModel.wipe(delta: 21, reference: 110, fadeLength: 0.55) - 0.2) < 1e-12)
+    }
+
+    @Test("the page's front reaches the hinge row, rises gently and is exactly sharp at rest")
+    func pageFront() {
+        for e in stride(from: 0.0, through: 1.0, by: 0.1) {
+            #expect(FoldDuoModel.pageSigma(e: e, wipe: 0, blur: 1) == 0, "at rest, e \(e)")
+            #expect(FoldDuoModel.pageSigma(e: e, wipe: 0.3, blur: 0) == 0, "Blur 0 is sharp")
+        }
+        // The far edge is fully frosted at a wipe of 0.3, at 0.14 H by the default Blur.
+        #expect(abs(FoldDuoModel.pageFrost(e: 1, wipe: 0.3) - 0.9089) < 1e-3)
+        #expect(FoldDuoModel.pageFrost(e: 1, wipe: 0.4) == 1)
+        #expect(abs(FoldDuoModel.pageSigma(e: 1, wipe: 0.4, blur: 0.6) - 0.14) < 1e-12)
+        // The hinge row itself carries blur once the fold is under way,
+        // where the classic front left it sharp to the end.
+        #expect(FoldDuoModel.pageSigma(e: 0, wipe: 0.4, blur: 0.6) > 0)
+        #expect(FoldDuoModel.frontSigma(e: 0, progress: 1, blur: 0.6) == 0)
+        // A third of the way in, the hinge quarter carries about twice
+        // the classic blur and the outer band a little over half of it:
+        // the frost rises more gently across the leaf.
+        let w = FoldDuoModel.wipe(delta: 31.5, reference: 110, fadeLength: 0.55)
+        let p = FoldDuoModel.blurProgress(delta: 31.5, reference: 110, fadeLength: 0.55)
+        let quarter = FoldDuoModel.pageSigma(e: 0.25, wipe: w, blur: 0.6)
+            / FoldDuoModel.frontSigma(e: 0.25, progress: p, blur: 0.6)
+        #expect(quarter > 1.5 && quarter < 2.5, "hinge quarter \(quarter)x")
+        let outer = FoldDuoModel.pageSigma(e: 0.75, wipe: w, blur: 0.6)
+            / FoldDuoModel.frontSigma(e: 0.75, progress: p, blur: 0.6)
+        #expect(outer > 0.45 && outer < 0.75, "outer band \(outer)x")
+        // Every row only ever sharpens on a reopen.
+        for e in stride(from: 0.0, through: 1.0, by: 0.1) {
+            var last = Double.infinity
+            for wipe in stride(from: 0.5, through: 0.0, by: -0.05) {
+                let sigma = FoldDuoModel.pageSigma(e: e, wipe: wipe, blur: 0.6)
+                #expect(sigma <= last + 1e-12)
+                last = sigma
+            }
+        }
+    }
+
+    @Test("the page's shading keeps the hinge row at full brightness and only ever darkens the top of the glass")
+    func pageShading() {
+        let shade = FoldDuoModel.pageShade
+        // Untouched at rest.
+        for h in stride(from: 0.0, through: 1.0, by: 0.25) {
+            #expect(FoldDuoModel.pageGain(h: h, e: h, wipe: 0, shade: shade) == 1)
+        }
+        // The hinge row keeps full brightness through the whole close.
+        for wipe in stride(from: 0.0, through: 0.6, by: 0.05) {
+            #expect(FoldDuoModel.pageGain(h: 0, e: 0, wipe: wipe, shade: shade) == 1, "wipe \(wipe)")
+        }
+        // The top of the glass only darkens as the lid closes. The
+        // classic shading, keyed to the picture alone, brightened it
+        // again part-way through.
+        var last = 1.0
+        for wipe in stride(from: 0.0, through: 0.6, by: 0.02) {
+            let top = FoldDuoModel.pageGain(h: 1, e: 0.9, wipe: wipe, shade: shade)
+            #expect(top <= last + 1e-12, "wipe \(wipe)")
+            last = top
+        }
+        // Darker toward the top of the glass and toward the far edge.
+        #expect(FoldDuoModel.pageGain(h: 0.8, e: 0.5, wipe: 0.3, shade: shade)
+                < FoldDuoModel.pageGain(h: 0.3, e: 0.5, wipe: 0.3, shade: shade))
+        #expect(FoldDuoModel.pageGain(h: 0.5, e: 0.8, wipe: 0.3, shade: shade)
+                < FoldDuoModel.pageGain(h: 0.5, e: 0.3, wipe: 0.3, shade: shade))
+        // The floor is black, and Shade 0 never darkens past the frost's own dimming.
+        #expect(FoldDuoModel.pageGain(h: 1, e: 1, wipe: 0.8, shade: shade) == 0)
+        #expect(FoldDuoModel.pageGain(h: 1, e: 0.2, wipe: 0.3, shade: 0) == 1)
+        // A fully frosted row is dimmed to 0.71 of its light.
+        #expect(abs(FoldDuoModel.frostDim(1) * FoldDuoModel.frostDim(1) - 0.712) < 1e-3)
+        #expect(FoldDuoModel.frostDim(0.9) == 1)
     }
 
     @Test("Perspective moves the eye along its line: 0.6 is the seated eye")
@@ -281,34 +378,52 @@ struct FoldDuoModelTests {
         p.imageSize = .init(2560, 1662)
         p.lodCount = 8
         FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
-                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: false)
+                           blur: 0.6, shade: 0.67, fadeLength: 0.55, reduceMotion: false)
         #expect(abs(p.thetaRef - Float(110 * Double.pi / 180)) < 1e-6)
         #expect(abs(p.theta - Float(80 * Double.pi / 180)) < 1e-6)
         #expect(p.eyeF == 2.6 && p.eyeU == 2.0)
         #expect(p.hold == 1)
         #expect(abs(p.blurMax - 0.14) < 1e-6)
-        let reach = FoldDuoModel.blurProgress(delta: 30, reference: 110, fadeLength: 0.55) / 0.5
-        #expect(abs(Double(p.blurReach) - reach) < 1e-6)
-        #expect(p.frontOctaves == 8 && abs(p.frontStart - 0.07) < 1e-7)
-        #expect(abs(p.darkGain - 2) < 1e-5)
-        #expect(p.motion > 0.4 && p.motion < 0.7)
+        let wipe = FoldDuoModel.wipe(delta: 30, reference: 110, fadeLength: 0.55)
+        #expect(abs(Double(p.wipe) - wipe) < 1e-6)
+        #expect(abs(Double(p.blurReach) - wipe / 0.3) < 1e-6)
+        #expect(p.frontOctaves == 8)
+        #expect(abs(p.darkGain - 1) < 1e-5, "the default Shade is the page's own gain")
         #expect(p.endFade == 0)
         #expect(p.opacity == 1)
         #expect(p.blackout == 0)
         #expect(p.imageSize == SIMD2<Float>(2560, 1662), "the upload's size survives the tick")
         #expect(p.lodCount == 8)
-        // Reduce Motion: no warp and no blur, darkening only.
+        // Reduce Motion: no warp and no blur, shading only.
         FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
-                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: true)
+                           blur: 0.6, shade: 0.67, fadeLength: 0.55, reduceMotion: true)
         #expect(p.hold == 0)
         #expect(p.blurMax == 0)
-        #expect(p.darkGain > 0 && p.motion > 0)
+        #expect(p.darkGain > 0 && p.wipe > 0)
         // The first degrees fade the overlay in.
         FoldDuoModel.apply(to: &p, reference: 110, theta: 109, hold: 1, perspective: 0.6,
-                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: false)
+                           blur: 0.6, shade: 0.67, fadeLength: 0.55, reduceMotion: false)
         #expect(abs(p.opacity - 0.5) < 1e-6)
         FoldDuoModel.applyBlackout(to: &p)
         #expect(p.blackout == 1 && p.opacity == 1)
+    }
+
+    @Test("the classic switch writes the shading the Duo drew through 0.10.2")
+    func applyClassicUniforms() {
+        var p = FoldRenderer.Params()
+        FoldDuoModel.apply(to: &p, reference: 110, theta: 80, hold: 1, perspective: 0.6,
+                           blur: 0.6, shade: 2.0 / 3, fadeLength: 0.55, reduceMotion: false, classic: true)
+        #expect(p.wipe < 0, "a negative wipe tells the shader to draw the classic look")
+        let reach = FoldDuoModel.blurProgress(delta: 30, reference: 110, fadeLength: 0.55) / 0.5
+        #expect(abs(Double(p.blurReach) - reach) < 1e-6)
+        #expect(abs(p.frontStart - 0.07) < 1e-7)
+        #expect(abs(p.darkGain - 2) < 1e-5)
+        #expect(p.motion > 0.4 && p.motion < 0.7)
+        // The switch is a defaults key, off unless the person sets it.
+        let defaults = UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar-fold-classic"))!
+        #expect(!FoldDuoModel.classicWanted(defaults: defaults))
+        defaults.set(true, forKey: FoldDuoModel.classicKey)
+        #expect(FoldDuoModel.classicWanted(defaults: defaults))
     }
 
     @Test("the Swift uniforms keep the shader's layout: Room first, Duo appended")
@@ -324,6 +439,7 @@ struct FoldDuoModelTests {
         #expect(MemoryLayout<P>.offset(of: \P.blurReach) == 144)
         #expect(MemoryLayout<P>.offset(of: \P.frontOctaves) == 148)
         #expect(MemoryLayout<P>.offset(of: \P.frontStart) == 152)
+        #expect(MemoryLayout<P>.offset(of: \P.wipe) == 156)
         #expect(MemoryLayout<P>.stride == 160)
     }
 
@@ -401,8 +517,8 @@ struct FoldDuoModelTests {
             biggestStep = max(biggestStep, lastFade - fade)
             lastFade = fade
         }
-        #expect(lastFade == 0, "clear once the lid is above edge-on + 22°")
-        #expect(biggestStep < 0.1, "no degree of lid cuts from black to lit (\(biggestStep))")
+        #expect(lastFade == 0, "clear once the lid is above edge-on + 10.5°")
+        #expect(biggestStep < 0.16, "no degree of lid cuts from black to lit (\(biggestStep))")
     }
 
     @Test("one gesture draws from one reference, so a dwell re-seat never flashes black")

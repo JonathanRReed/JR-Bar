@@ -483,6 +483,15 @@ their READMEs.
   pyramid level rises in a straight line with distance from the hinge and
   with progress, saturating, so the blur clears as a front. Only the shape
   was taken, as numbers in our own model; none of its shader code.
+  Read again on 2026-11-14 at the same commit for the shading: the wipe
+  is a gain on linear light keyed to the screen's own height, an inner
+  shadow keyed to the picture phases in over the first of the fold, a
+  fully frosted row is dimmed, the blur starts at the hinge row
+  (`dist` 0.5 to 0.95 of the leaf), and no fade covers the whole glass.
+  Those formulas are restated in `FoldDuoModel.wipe`, `pageSigma` and
+  `pageGain` and in `duoFragment`; no code was copied. The comparison
+  that showed where the earlier look differed is in the round's Fold
+  research report.
 - [iphone-duo](https://github.com/jal-co/iphone-duo) by jal-co, MIT, at
   [`3674f334`](https://github.com/jal-co/iphone-duo/commit/3674f3343d20a72fd6c7277bdd5cfeffc9216f7d):
   its frame-by-frame review of real footage, which describes the focus

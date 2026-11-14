@@ -228,10 +228,10 @@ import Testing
     }
 
     private static func duo(_ renderer: FoldRenderer, theta: Double, blur: Double = 0.6,
-                            shade: Double = 2.0 / 3, fadeLength: Double = 0.55) {
+                            shade: Double = 2.0 / 3, fadeLength: Double = 0.55, classic: Bool = false) {
         FoldDuoModel.apply(to: &renderer.params, reference: 110, theta: theta, hold: 1,
                            perspective: 0.6, blur: blur, shade: shade,
-                           fadeLength: fadeLength, reduceMotion: false)
+                           fadeLength: fadeLength, reduceMotion: false, classic: classic)
     }
 
     /// Mean and standard deviation over a band of rows and columns.
@@ -283,11 +283,12 @@ import Testing
         #expect(far.sd < 0.25 * input, "far contrast \(far.sd / input)")
     }
 
-    @Test func theFrontKeepsTheMiddleSharpAndFrostsTheOuterBandOnTheGPU() throws {
+    @Test func theFrontSoftensFromTheHingeOutwardOnTheGPU() throws {
         // A third of the close (75° from 110°), no darkening. Glass rows
-        // 64–80 show picture rows e ≈ 0.43–0.35 and rows 0–8 e ≈ 0.78–0.73:
-        // the front keeps the first sharp and
-        // frosts the second flat, so the shape reaches the shader.
+        // 148–158 show the hinge, rows 64–80 picture rows e ≈ 0.43–0.35
+        // and rows 0–8 e ≈ 0.78–0.73. The page's front softens each band
+        // more than the one nearer the hinge and frosts the outer one
+        // flat; the classic front kept the middle as sharp as the hinge.
         let width = 256, height = 160
         let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { x, y in
             ((x / 8) + (y / 8)) % 2 == 0 ? 255 : 0
@@ -296,27 +297,85 @@ import Testing
         Self.duo(renderer, theta: 75, shade: 0)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         let px = Self.grays(out)
+        let hinge = Self.stats(px, width: width, rows: 148..<158, columns: 64..<192)
         let middle = Self.stats(px, width: width, rows: 64..<80, columns: 64..<192)
         let outer = Self.stats(px, width: width, rows: 0..<8, columns: 64..<192)
-        #expect(middle.sd >= 0.8 * 127.5, "the middle stays sharp: \(middle.sd)")
-        #expect(outer.sd < 6, "the outer band is frosted flat: \(outer.sd)")
+        #expect(hinge.sd >= 0.8 * 127.5, "the hinge band still reads: \(hinge.sd)")
+        #expect(middle.sd < hinge.sd, "the middle is softer than the hinge: \(middle.sd) against \(hinge.sd)")
+        #expect(middle.sd > outer.sd + 20, "and far sharper than the outer band: \(middle.sd) against \(outer.sd)")
+        #expect(outer.sd < 8, "the outer band is frosted flat: \(outer.sd)")
+        Self.duo(renderer, theta: 75, shade: 0, classic: true)
+        #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
+        let classic = Self.grays(out)
+        let classicMiddle = Self.stats(classic, width: width, rows: 64..<80, columns: 64..<192)
+        let classicOuter = Self.stats(classic, width: width, rows: 0..<8, columns: 64..<192)
+        #expect(classicMiddle.sd >= 0.8 * 127.5, "the classic middle stays sharp: \(classicMiddle.sd)")
+        #expect(classicOuter.sd < 6, "the classic outer band is frosted flat: \(classicOuter.sd)")
     }
 
-    @Test func duoTakesTheFarEdgeToBlackAndLeavesTheHingeBright() throws {
-        // Full motion (a short fade, lid at 75°): the far band is black,
-        // the hinge band as bright as the white it shows.
+    @Test func duoDarkensTowardTheTopOfTheGlassAndLeavesTheHingeBright() throws {
+        // Well into the close (a short fade, lid at 75°) on a white
+        // picture: the glass darkens steadily from the hinge row, which is
+        // as bright as the white it shows, to a top band that is nearly
+        // black. No band is brighter than the one below it.
         let width = 256, height = 160
         let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { _, _ in 255 })
         Self.duo(renderer, theta: 75, fadeLength: 0.3)
-        #expect(renderer.params.motion == 1)
+        #expect(renderer.params.wipe > 0.55)
         #expect(renderer.params.endFade == 0)
         let out = try Self.makeTarget(renderer.device, width: width, height: height)
         #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
         let px = Self.grays(out)
         let far = Self.stats(px, width: width, rows: 2..<14, columns: 96..<160)
         let hinge = Self.stats(px, width: width, rows: 148..<158, columns: 16..<240)
-        #expect(far.mean < 0.05 * 255, "far band \(far.mean)")
+        #expect(far.mean < 0.15 * 255, "far band \(far.mean)")
         #expect(hinge.mean >= 0.9 * 255, "hinge band \(hinge.mean)")
+        var below = Double.infinity
+        for top in stride(from: 144, through: 0, by: -16) {
+            let band = Self.stats(px, width: width, rows: top..<(top + 16), columns: 96..<160)
+            #expect(band.mean <= below + 1, "the band at row \(top) is brighter than the one below it")
+            below = band.mean
+        }
+    }
+
+    @Test func theHingeBandStaysLitAtFortySevenDegrees() throws {
+        // 47° from a 110° rest: the classic end fade had the whole glass
+        // at a third of its brightness there. The page's shading keeps the
+        // hinge band lit until the seated eye loses the glass.
+        let width = 256, height = 160
+        let renderer = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { _, _ in 255 })
+        let out = try Self.makeTarget(renderer.device, width: width, height: height)
+        Self.duo(renderer, theta: 47)
+        #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
+        let page = Self.stats(Self.grays(out), width: width, rows: 148..<158, columns: 96..<160)
+        Self.duo(renderer, theta: 47, classic: true)
+        #expect(renderer.render(to: out, size: CGSize(width: width, height: height)))
+        let classic = Self.stats(Self.grays(out), width: width, rows: 148..<158, columns: 96..<160)
+        #expect(page.mean >= 0.85 * 255, "the hinge band at 47°: \(page.mean)")
+        #expect(classic.mean < 0.5 * 255, "the classic hinge band at 47°: \(classic.mean)")
+    }
+
+    @Test func theClassicSwitchTakesTheFarEdgeToBlackAndKeepsTheHingeSharp() throws {
+        // The look through 0.10.2, behind its switch: full motion takes
+        // the far band to black, and the hinge band keeps a checkerboard's
+        // whole contrast.
+        let width = 256, height = 160
+        let white = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { _, _ in 255 })
+        Self.duo(white, theta: 75, fadeLength: 0.3, classic: true)
+        #expect(white.params.motion == 1)
+        let out = try Self.makeTarget(white.device, width: width, height: height)
+        #expect(white.render(to: out, size: CGSize(width: width, height: height)))
+        let px = Self.grays(out)
+        #expect(Self.stats(px, width: width, rows: 2..<14, columns: 96..<160).mean < 0.05 * 255)
+        #expect(Self.stats(px, width: width, rows: 148..<158, columns: 16..<240).mean >= 0.9 * 255)
+        let checker = try Self.duoRenderer(Self.makeFrame(width: width, height: height) { x, y in
+            ((x / 8) + (y / 8)) % 2 == 0 ? 255 : 0
+        })
+        Self.duo(checker, theta: 60, blur: 1, shade: 0, classic: true)
+        let sharp = try Self.makeTarget(checker.device, width: width, height: height)
+        #expect(checker.render(to: sharp, size: CGSize(width: width, height: height)))
+        let hinge = Self.stats(Self.grays(sharp), width: width, rows: 148..<158, columns: 64..<192)
+        #expect(hinge.sd >= 0.8 * 127.5, "classic hinge contrast \(hinge.sd / 127.5)")
     }
 
     @Test func duoPyramidReadsAsAGaussian() throws {

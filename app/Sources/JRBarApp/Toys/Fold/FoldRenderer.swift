@@ -252,7 +252,8 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         var motion: Float = 0
         /// σ at full frost, in screen heights.
         var blurMax: Float = 0
-        /// Darkening gain (2 is the Duo's own).
+        /// How strongly the page's shading applies (1 is the page's own).
+        /// Classic: the darkening gain, where 2 was the Duo's own.
         var darkGain: Float = 0
         /// 0…1 to black as the eye loses the glass.
         var endFade: Float = 0
@@ -264,13 +265,19 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         /// pixels right and down of where they belong, and the read
         /// shifts them back. 0 for plain mipmaps, which stay centred.
         var pyramidShift: Float = 0
-        /// The front's progress over its saturation: a row at distance r
-        /// past `frontStart` is fully frosted once r·blurReach ≥ 1.
+        /// The front's reach: the page's wipe over the wipe that frosts
+        /// the far edge. Classic: the progress over its saturation, where
+        /// a row at distance r past `frontStart` is fully frosted once
+        /// r·blurReach ≥ 1.
         var blurReach: Float = 0
-        /// The octaves the front's σ climbs, and the hinge-side share it
-        /// never blurs.
+        /// The octaves the front's σ climbs, and the hinge-side share the
+        /// classic front never blurs.
         var frontOctaves: Float = 8
         var frontStart: Float = 0.07
+        /// The page's wipe amount, which drives its shading. Negative
+        /// draws the classic shading and front instead; then `motion`,
+        /// `darkGain` and `blurReach` carry the classic values.
+        var wipe: Float = 0
     }
 
     let device: MTLDevice
@@ -711,7 +718,8 @@ struct FoldParams {
     float pyramidShift; // 1 = undo MPS's decimation offset
     float blurReach;    // the front's progress over its saturation
     float frontOctaves; // octaves from sharp to full frost
-    float frontStart;   // hinge-side share the front never blurs
+    float frontStart;   // hinge-side share the classic front never blurs
+    float wipe;         // the page's wipe amount; negative = classic shading
 };
 
 struct FoldOut {
@@ -995,8 +1003,12 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
     // Blur and darkening follow the PICTURE's rows, not the glass: e is
     // 0 at the hinge row and 1 at the far edge.
     float e = clamp(1.0 - src.y, 0.0, 1.0);
-    // Frost grows by octaves from the hinge toward the outer band.
-    float r = clamp((e - p.frontStart) / (1.0 - p.frontStart), 0.0, 1.0);
+    // Frost grows by octaves toward the outer band. The page's front
+    // starts at the hinge row itself and rises gently; the classic one
+    // leaves a hinge-side share sharp.
+    bool page = p.wipe >= 0.0;
+    float r = page ? (0.0909 + 0.818 * e)
+                   : clamp((e - p.frontStart) / (1.0 - p.frontStart), 0.0, 1.0);
     float a = clamp(r * p.blurReach, 0.0, 1.0);
     float sigma = p.blurMax * (exp2(p.frontOctaves * a) - 1.0) / (exp2(p.frontOctaves) - 1.0);
     // Pyramid level L read as a B-spline carries sigma ~= 0.82 * 2^L
@@ -1016,20 +1028,38 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
     // while it is sharp, so the resting frame is the desktop exactly.
     float2 inner = float2(2.5 * sigma / p.aspect, 2.5 * sigma) * p.cover;
     float2 outer = max(max(fwidth(tuv), float2(0.5 / p.imageSize.y)), inner);
-    float2 cov = smoothstep(-outer, inner, tuv)
-               * (1.0 - smoothstep(1.0 - inner, 1.0 + outer, tuv));
-    // The hinge-side fifth never darkens; past it the gain takes the
-    // far edge to black once the motion is under way.
-    float g = clamp((e - 0.2) / 0.8, 0.0, 1.0);
-    float dark = min(1.0, p.darkGain * p.motion * pow(g, 1.35));
-    float k = cov.x * cov.y * (1.0 - dark) * (1.0 - clamp(p.endFade, 0.0, 1.0));
-    // The blur mixed light; the darkening and the fades scale the encoded
-    // value, the way they were tuned.
+    // Left and top (far) edges always; the right edge too. The hinge
+    // edge feathers only in the classic look: the page's picture carries
+    // blur down to the hinge row, and a feather there would draw a dark
+    // line along the bottom of the glass.
+    float2 cov = smoothstep(-outer, inner, tuv);
+    cov.x *= 1.0 - smoothstep(1.0 - inner.x, 1.0 + outer.x, tuv.x);
+    float k = cov.x * cov.y * (1.0 - clamp(p.endFade, 0.0, 1.0));
+    if (page) {
+        // The page's shading, a gain on linear light. The wipe follows
+        // the GLASS height h; the inner shadow follows the PICTURE row e
+        // and phases in over the first of the travel; a fully frosted row
+        // dims a little more. The hinge row keeps full brightness.
+        float glass = 1.0 - clamp(smoothstep(0.0, 1.0, h) * p.wipe * 1.5 * p.darkGain, 0.0, 1.0);
+        float inner_shadow = mix(1.0, smoothstep(0.0, 1.0, 1.0 - e),
+                                 clamp(smoothstep(0.0, 0.55, p.wipe) * p.darkGain, 0.0, 1.0));
+        float dt = clamp((1.3 - a) / 0.4, 0.0, 1.0);
+        float frostDim = dt * dt * (3.0 - 2.0 * dt);
+        c *= glass * inner_shadow * frostDim * frostDim;
+    } else {
+        cov.y *= 1.0 - smoothstep(1.0 - inner.y, 1.0 + outer.y, tuv.y);
+        // The hinge-side fifth never darkens; past it the gain takes the
+        // far edge to black once the motion is under way. The darkening
+        // scales the encoded value, the way it was tuned.
+        float g = clamp((e - 0.2) / 0.8, 0.0, 1.0);
+        float dark = min(1.0, p.darkGain * p.motion * pow(g, 1.35));
+        k = cov.x * cov.y * (1.0 - dark) * (1.0 - clamp(p.endFade, 0.0, 1.0));
+    }
     float3 shown = duoEncode(c) * k;
     // Grain only where the fold changed the picture, and never past black
     // or white: the resting frame stays the desktop's own bytes, and the
     // void stays pure black.
-    if (lod > 0.0 || k < 0.998) {
+    if (lod > 0.0 || k < 0.998 || p.wipe > 0.0) {
         float3 steps = shown * 255.0;
         float3 room = clamp(min(steps, 255.0 - steps), 0.0, 1.0);
         shown += room * duoDither(in.position.xy);
