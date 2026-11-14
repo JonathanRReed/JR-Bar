@@ -901,4 +901,3 @@ def test_the_drainer_prunes_old_leftovers_at_most_once_an_hour(tmp_path, monkeyp
     ticks[0] = hook_pending.SPOOL_LEFTOVER_PRUNE_INTERVAL_SECONDS
     drainer.drain_now()
     assert calls == [tmp_path, tmp_path]
-

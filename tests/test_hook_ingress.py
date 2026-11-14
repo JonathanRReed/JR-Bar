@@ -863,4 +863,3 @@ def test_a_cut_short_frame_wakes_the_spool_drain(tmp_path: Path) -> None:
         assert woken == ["drain"]
     finally:
         assert service.close(timeout_seconds=1.0)
-

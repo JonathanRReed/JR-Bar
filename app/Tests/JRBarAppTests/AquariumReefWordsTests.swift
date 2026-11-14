@@ -128,4 +128,3 @@ struct AquariumReefWordsTests {
         #expect(AquariumView.gaze(from: fish, to: fish, facing: 1, reach: 200) == nil)
     }
 }
-

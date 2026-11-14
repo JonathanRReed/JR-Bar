@@ -195,4 +195,3 @@ struct BackgroundFileLookupTests {
         #expect(metadata.bundleID(URL(fileURLWithPath: "/synthetic/apps/Nothing.app")) == nil)
     }
 }
-

@@ -51,4 +51,3 @@ def test_a_result_shaped_value_without_every_field_says_nothing():
 
     assert install_note(SimpleNamespace(changed=True)) == ""
     assert install_note(SimpleNamespace(provider="codex")) == ""
-

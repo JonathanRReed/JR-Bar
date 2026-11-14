@@ -182,4 +182,3 @@ def test_a_summary_of_only_marks_is_no_summary(prompt):
 
 def test_a_summary_still_hides_private_paths():
     assert summarize_prompt("User: open /Users/synthetic/secret/notes.txt please") == "open ... please"
-

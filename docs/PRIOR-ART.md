@@ -1143,4 +1143,3 @@ tank never rewards keeping agents busy are JR-Bar's own. The fish's
 "lit, not inked" look was worked out against published stills of Abzû
 and Alto's Odyssey as references for rim light and depth fog; nothing
 was traced or copied.
-

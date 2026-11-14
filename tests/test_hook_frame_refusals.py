@@ -143,4 +143,3 @@ def test_doctor_counts_a_cut_short_event_as_late_not_refused(tmp_path: Path):
     assert both["today"] == 1 and both["late_today"] == 2
     assert both["sentence"] == ("1 hook event was refused today. The newest: the event's header could not be read. "
                                 "2 hook events arrived late today, queued while the monitor was busy.")
-

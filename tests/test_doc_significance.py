@@ -197,4 +197,3 @@ def test_a_dimming_factor_drifting_is_not_news_but_a_dimming_step_is() -> None:
     dimmer = copy.deepcopy(drifted)
     dimmer["surfaces"][0]["why_detail"]["dimming"] = ["auto_dim", "idle_dim"]
     assert not doc_significant_equal("lights", before, dimmer)
-
