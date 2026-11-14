@@ -728,6 +728,31 @@ enum ControlCenterPaletteRows {
         }
     }
 
+    /// Keep Awake for a typed length or until a typed time: "awake 45m",
+    /// "keep awake for 2h", "awake until 6pm". The row says when it ends
+    /// and that only the Mac is held: the display still sleeps unless
+    /// Keep the display on is set.
+    @MainActor
+    static func typedItems(query: String, now: Date, calendar: Calendar = .current,
+                           hold: @escaping @MainActor (Int) -> Void) -> [PaletteItem] {
+        guard let asked = PaletteArguments.awake(query, now: now, calendar: calendar) else { return [] }
+        let ends = PanelStore.clockTime(now.addingTimeInterval(TimeInterval(asked.seconds)))
+        let title = asked.until == nil
+            ? "Keep Awake for \(PaletteArguments.durationLabel(asked.seconds))"
+            : "Keep Awake until \(ends)"
+        let subtitle = asked.until == nil
+            ? "The Mac stays awake until \(ends)"
+            : "The Mac stays awake for \(PaletteArguments.durationLabel(asked.seconds / 60 * 60))"
+        return [PaletteItem(
+            id: "system.keepAwake.typed", title: title, subtitle: subtitle,
+            icon: .symbol(SystemToggle.keepAwake.symbol, tint(of: .keepAwake)),
+            kind: "Keep Awake", section: .controlCenter,
+            actions: [PaletteAction(id: "hold", title: "Start", symbol: SystemToggle.keepAwake.symbol) {
+                hold(asked.seconds)
+                return "Awake until \(ends)"
+            }])]
+    }
+
     /// The HUD's line. In-process flips (keep awake, mute) are true the
     /// moment they return; a shell-backed one is still settling, so it
     /// says so rather than claiming the result.

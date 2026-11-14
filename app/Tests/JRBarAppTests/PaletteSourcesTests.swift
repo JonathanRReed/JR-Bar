@@ -237,6 +237,56 @@ struct PaletteSourcesTests {
 
     // MARK: Typed arguments
 
+    @Test("awake takes a length or a time of day, and nothing vaguer")
+    func typedAwake() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+        // Saturday 14 November 2026, 3:20 PM in Chicago.
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 15, minute: 20)))
+        func awake(_ text: String) -> PaletteArguments.Awake? { PaletteArguments.awake(text, now: now, calendar: calendar) }
+        func hours(_ h: Double) -> Int { Int(h * 3600) }
+
+        #expect(awake("awake 45m") == .init(seconds: 45 * 60, until: nil))
+        #expect(awake("keep awake for 2h")?.seconds == hours(2))
+        #expect(awake("caffeinate 1:30")?.seconds == 90 * 60)
+        #expect(awake("Stay Awake 90 minutes")?.seconds == 90 * 60)
+
+        #expect(awake("awake until 6pm")?.seconds == hours(2) + 40 * 60)
+        #expect(awake("awake till 18:30")?.seconds == hours(3) + 10 * 60)
+        #expect(awake("awake until 6:30 pm")?.seconds == hours(3) + 10 * 60)
+        #expect(awake("awake until 6")?.seconds == hours(2) + 40 * 60, "a bare six is the next six: this evening")
+        #expect(awake("awake until 3")?.seconds == hours(11) + 40 * 60, "three has passed this afternoon: three in the morning")
+        #expect(awake("awake until 9am")?.seconds == hours(17) + 40 * 60, "tomorrow morning")
+        #expect(awake("awake until noon")?.seconds == hours(20) + 40 * 60)
+        #expect(awake("awake until midnight")?.seconds == hours(8) + 40 * 60)
+        #expect(awake("awake until 6pm")?.until == calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 18)))
+
+        #expect(awake("awake until 3:20pm")?.seconds == hours(24), "this very minute means this time tomorrow")
+        for nonsense in ["awake", "awake until", "awake until soon", "awake 0", "awake 25h", "awake until 25:00",
+                         "awake until 6:75", "awake until 13pm", "awaken 45m", "wake 45m",
+                         "quiet 45m", "awake until 123456", "awake until -6"] {
+            #expect(awake(nonsense) == nil, "“\(nonsense)”")
+        }
+    }
+
+    @Test("a typed Keep Awake row says when it ends and starts exactly that long a hold")
+    func typedAwakeRow() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago"))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 15, minute: 20)))
+        var held: [Int] = []
+        let rows = ControlCenterPaletteRows.typedItems(query: "awake 45m", now: now, calendar: calendar) { held.append($0) }
+        let row = try #require(rows.first)
+        #expect(rows.count == 1)
+        #expect(row.title == "Keep Awake for 45 minutes")
+        #expect(row.actions.first?.run() != nil)
+        #expect(held == [45 * 60])
+        let until = ControlCenterPaletteRows.typedItems(query: "awake until 6pm", now: now, calendar: calendar) { held.append($0) }
+        #expect(until.first?.title.hasPrefix("Keep Awake until") == true)
+        #expect(until.first?.subtitle == "The Mac stays awake for 2 hours 40 minutes")
+        #expect(ControlCenterPaletteRows.typedItems(query: "awake", now: now, calendar: calendar) { _ in }.isEmpty)
+    }
+
     @Test("a typed length reads the ways people write one, and nothing else")
     func typedDurations() {
         #expect(PaletteArguments.duration("45") == 45 * 60, "a bare number is minutes")

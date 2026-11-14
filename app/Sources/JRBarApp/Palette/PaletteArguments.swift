@@ -106,6 +106,86 @@ enum PaletteArguments {
         return nil
     }
 
+    /// The phrases that start a Keep Awake session.
+    static let awakeWords: Set<String> = ["awake", "keep awake", "stay awake", "caffeinate", "no sleep", "coffee"]
+
+    /// How long a typed Keep Awake asks for, and how it was asked.
+    struct Awake: Equatable {
+        var seconds: Int
+        /// The clock time named ("until 6pm"), nil for a length ("45m").
+        var until: Date?
+    }
+
+    /// "awake 45m", "keep awake for 2h", "caffeinate 1:30" → a length;
+    /// "awake until 6pm", "awake till 18:30", "awake until noon" → the
+    /// time from `now` to the next time the clock reads that. nil for
+    /// "awake" alone, for a length outside `durationRange`, and for a time
+    /// less than a minute or more than a day away.
+    static func awake(_ query: String, now: Date, calendar: Calendar = .current) -> Awake? {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        for length in [2, 1] where words.count > length {
+            guard awakeWords.contains(words.prefix(length).joined(separator: " ")) else { continue }
+            var rest = Array(words.dropFirst(length))
+            if rest.first == "until" || rest.first == "till" || rest.first == "til" {
+                rest.removeFirst()
+                guard !rest.isEmpty, let at = clock(rest.joined(), now: now, calendar: calendar) else { return nil }
+                let seconds = Int(at.timeIntervalSince(now).rounded(.down))
+                return durationRange.contains(seconds) ? Awake(seconds: seconds, until: at) : nil
+            }
+            if rest.first == "for" { rest.removeFirst() }
+            guard !rest.isEmpty, let seconds = duration(rest.joined(separator: " ")) else { return nil }
+            return Awake(seconds: seconds, until: nil)
+        }
+        return nil
+    }
+
+    /// The next time the clock reads `text` after `now`: "6pm", "6:30pm",
+    /// "18:30", "6:30", "noon", "midnight". A bare hour with no am or pm
+    /// ("6", "6:30") is whichever of the two comes next. nil for anything
+    /// that is not a time of day.
+    static func clock(_ text: String, now: Date, calendar: Calendar = .current) -> Date? {
+        var compact = text.lowercased().filter { !$0.isWhitespace && $0 != "." }
+        guard !compact.isEmpty else { return nil }
+        var hours: [Int]
+        var minute = 0
+        if compact == "noon" {
+            hours = [12]
+        } else if compact == "midnight" {
+            hours = [0]
+        } else {
+            var meridiem: String?
+            for suffix in ["am", "pm", "a", "p"] where compact.hasSuffix(suffix) {
+                meridiem = String(suffix.prefix(1))
+                compact.removeLast(suffix.count)
+                break
+            }
+            let parts = compact.split(separator: ":", omittingEmptySubsequences: false)
+            guard (1...2).contains(parts.count), let hour = Int(parts[0]),
+                  parts[0].count <= 2, parts[0].allSatisfy(\.isNumber) else { return nil }
+            if parts.count == 2 {
+                guard parts[1].count == 2, let m = Int(parts[1]), (0..<60).contains(m) else { return nil }
+                minute = m
+            }
+            switch meridiem {
+            case "a"?:
+                guard (1...12).contains(hour) else { return nil }
+                hours = [hour % 12]
+            case "p"?:
+                guard (1...12).contains(hour) else { return nil }
+                hours = [hour % 12 + 12]
+            default:
+                guard (0...23).contains(hour) else { return nil }
+                // "18:30" is itself; "6:30" is the morning or the evening, whichever is next.
+                hours = hour >= 13 || hour == 0 ? [hour] : (hour == 12 ? [12] : [hour, hour + 12])
+            }
+        }
+        let candidates = hours.compactMap { hour in
+            calendar.nextDate(after: now, matching: DateComponents(hour: hour, minute: minute, second: 0),
+                              matchingPolicy: .nextTime)
+        }
+        return candidates.min()
+    }
+
     /// "brightness 40", "led 40%", "leds to 75" → 0.4, 0.4, 0.75. Whole
     /// percents 0–100 only; the panel's slider covers the same range.
     static func brightness(_ query: String) -> Double? {

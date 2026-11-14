@@ -202,12 +202,15 @@ enum PaletteWiring {
     /// on open; the read-backs land while the palette is up and the rows
     /// re-gather with them.
     static func controlCenter(toggles: @escaping @MainActor () -> SystemTogglesStore?) -> PaletteClosureSource {
-        PaletteClosureSource(prepare: { toggles()?.refresh() }) {
+        PaletteClosureSource(prepare: { toggles()?.refresh() }, build: {
             guard let store = toggles() else { return [] }
             return ControlCenterPaletteRows.items(isOn: store.isOn, applying: store.applying) {
                 store.apply($0)
             }
-        }
+        }, typed: { query in
+            guard let store = toggles() else { return [] }
+            return ControlCenterPaletteRows.typedItems(query: query, now: Date()) { store.holdAwake(seconds: $0) }
+        })
     }
 
     static func usage(panel: PanelStore, windows: Windows) -> PaletteClosureSource {
