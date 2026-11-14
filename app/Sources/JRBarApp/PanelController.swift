@@ -300,6 +300,17 @@ final class PanelController {
         return true
     }
 
+    /// ⌘R asks for new usage readings while the panel shows its Usage
+    /// header's refresh button. The panel's key monitor sees every key
+    /// before SwiftUI does, so the key is handled here.
+    static func handleRefreshKey(characters: String?, flags: NSEvent.ModifierFlags, store: PanelStore) -> Bool {
+        let modifiers = flags.intersection([.command, .shift, .control, .option])
+        guard modifiers == .command, characters?.lowercased() == "r",
+              store.isLive, !store.editingProviders else { return false }
+        store.refreshAllUsage()
+        return true
+    }
+
     private func handleLocal(_ event: NSEvent) -> NSEvent? {
         switch event.type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
@@ -317,7 +328,7 @@ final class PanelController {
         case .keyDown:
             guard event.window === panel || panel.isKeyWindow else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            // The keys the More menu shows: ⌘Q, ⌘Y, ⌘R, ⌘O, ⌘U, ⌘, and
+            // The keys the More menu shows: ⌘Q, ⌘Y, ⌘E, ⌘O, ⌘U, ⌘, and
             // ⌘K (with or without ⇧), which folds the panel into the palette.
             if flags.contains(.command), flags.isDisjoint(with: [.control, .option]),
                let verb = AppMenuVerb.verb(forKey: event.charactersIgnoringModifiers) {
@@ -326,6 +337,8 @@ final class PanelController {
             }
             // A reply field being typed into keeps its own characters, and
             // its ⌘↩ and ⌘D: they never answer some other card.
+            if Self.handleRefreshKey(characters: event.charactersIgnoringModifiers, flags: flags,
+                                     store: store) { return nil }
             let typingInField = panel.firstResponder is NSTextView
             if Self.handleUndoKey(characters: event.charactersIgnoringModifiers, flags: flags,
                                   typingInField: typingInField, store: store) { return nil }
@@ -334,6 +347,12 @@ final class PanelController {
                store.denySelectedAsk(typingInField: typingInField, armed: armed) {
                 // ⌘D answers the selected ask card (the lone one, when none
                 // is selected) — registered once here, not once per ask row.
+                return nil
+            }
+            // ⌘1…⌘9 pick the selected question's option buttons, in order.
+            if !typingInField, flags.intersection([.command, .shift, .control, .option]) == .command,
+               let digit = event.charactersIgnoringModifiers.flatMap({ Int($0) }), (1...9).contains(digit),
+               store.chooseSelectedAsk(option: digit - 1, typingInField: typingInField, armed: armed) {
                 return nil
             }
             // A reply field keeps the keys that edit or submit its text:

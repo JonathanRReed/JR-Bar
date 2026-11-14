@@ -14,7 +14,7 @@ struct HooksDoctorRefusedTests {
 
     @Test func todaysRefusalsGetTheirOwnLine() async {
         let doctor = HooksDoctorModel()
-        let words = "3 hook events were refused today. The newest: the event arrived cut short."
+        let words = "3 hook events were refused today. The newest: the event's header could not be read."
         await doctor.refresh { CoreReply(id: "d", ok: true, result: Self.report(sentence: words)) }?.value
         #expect(doctor.refusedLine == words)
         await doctor.refresh { CoreReply(id: "d", ok: true, result: Self.report(sentence: nil)) }?.value

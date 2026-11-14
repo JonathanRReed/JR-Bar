@@ -695,7 +695,7 @@ three layers):
   (Pause, Dim, Mute, Asks only, Dark) and End quiet while one is ours, a
   mark for the awake hold when there is one, History (⌘Y), a More menu
   that shares the status item's verbs — Command Palette… ⇧⌘K, History…
-  ⌘Y, Events… ⌘R, Overview… ⌘O, Usage Center… ⌘U, Effect Studio…,
+  ⌘Y, Events… ⌘E, Overview… ⌘O, Usage Center… ⌘U, Effect Studio…,
   Creator Micro… once a pad has been seen, What's New…, Check for
   Updates…, Settings… ⌘, and Quit JR-Bar ⌘Q — and a gear for Settings…;
   every footer control's tooltip names its shortcut). Empty states are drawn, not

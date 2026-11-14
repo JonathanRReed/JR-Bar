@@ -44,4 +44,24 @@ struct PanelFooterLayoutTests {
         #expect(!PanelController.handleUndoKey(characters: "z", flags: .command, typingInField: false, store: store))
         #expect(batches == ["sample-batch"])
     }
+
+    @Test func commandRRefreshesUsageInsteadOfOpeningAWindow() async {
+        let store = PanelCompositionTests.store()
+        var asked: [[String]] = []
+        store.requestUsageRefresh = { providers in
+            asked.append(providers)
+            return CoreReply(id: "sample-reply", ok: true)
+        }
+        #expect(store.isLive)
+        #expect(!PanelController.handleRefreshKey(characters: "r", flags: [], store: store))
+        #expect(!PanelController.handleRefreshKey(characters: "r", flags: [.command, .shift], store: store))
+        #expect(!PanelController.handleRefreshKey(characters: "x", flags: .command, store: store))
+        store.editingProviders = true
+        #expect(!PanelController.handleRefreshKey(characters: "r", flags: .command, store: store))
+        store.editingProviders = false
+        #expect(asked.isEmpty)
+        #expect(PanelController.handleRefreshKey(characters: "R", flags: [.command, .capsLock], store: store))
+        await store.refreshAllUsage().value
+        #expect(asked == [[], []])
+    }
 }

@@ -353,7 +353,6 @@ struct PanelProviderSection: View {
                         Image(systemName: "arrow.clockwise").font(JRBarTokens.TypeStyle.caption.font)
                     }
                     .buttonStyle(.plain).foregroundStyle(JRBarTokens.Ink.secondary)
-                    .keyboardShortcut("r", modifiers: .command)
                     .help("Refresh usage (⌘R)").accessibilityLabel("Refresh usage")
                 }
                 Button(store.editingProviders ? "Done" : "Edit") { store.editingProviders.toggle(); editPage = 0 }

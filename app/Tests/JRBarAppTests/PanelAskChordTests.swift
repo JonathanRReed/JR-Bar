@@ -99,6 +99,38 @@ struct PanelAskChordTests {
         #expect(target(.approve, rows: [plain, question]) == .ask(id: Self.permission))
     }
 
+    @Test("⌘1 and up pick a held question's option buttons, and nothing else")
+    func optionKeysPickVisibleButtons() {
+        let question = row(Self.second, ask: heldQuestion(Self.second))
+        let plain = row(Self.permission, ask: permissionAsk(Self.permission))
+        #expect(PanelStore.optionLabel(heldQuestion(Self.second), index: 0) == "Postgres")
+        #expect(PanelStore.optionLabel(heldQuestion(Self.second), index: 1) == "SQLite")
+        #expect(PanelStore.optionLabel(heldQuestion(Self.second), index: 2) == nil)
+        #expect(PanelStore.optionLabel(permissionAsk(Self.permission), index: 0) == nil)
+        #expect(target(.option(0), rows: [plain, question]) == .ask(id: Self.second), "a plain ask is no candidate")
+        #expect(target(.option(2), rows: [question]) == .none, "no third button")
+        #expect(target(.option(0), typing: true, rows: [question]) == .none)
+        let other = row(Self.reply, ask: heldQuestion(Self.reply))
+        #expect(target(.option(0), rows: [question, other]) == .ambiguous)
+        #expect(target(.option(0), selected: Self.reply, rows: [question, other]) == .ask(id: Self.reply))
+
+        // Options folded into a menu are not on screen, so no key picks them.
+        let long = CoreAskChoice(question: "Which?", options: ["One", "Two", "Three", "Four"])
+        let many = CoreAsk(session: Self.second, kind: "permission", summary: "Which?", answerable: true,
+                           decision: CoreAskDecision(always: false, decided: false, choices: [long]))
+        #expect(PanelStore.optionLabel(many, index: 0) == nil)
+        let multi = CoreAskChoice(question: "Which?", options: ["One", "Two"], multi: true)
+        let several = CoreAsk(session: Self.second, kind: "permission", summary: "Which?", answerable: true,
+                              decision: CoreAskDecision(always: false, decided: false, choices: [multi]))
+        #expect(PanelStore.optionLabel(several, index: 0) == nil)
+
+        // A hold that has ended takes no key: the agent's own prompt carries on.
+        let lapsed = CoreAsk(session: Self.second, kind: "permission", summary: "Which?", answerable: true,
+                             decision: CoreAskDecision(holdUntil: 100, choices: Self.choices))
+        #expect(PanelStore.optionLabel(lapsed, index: 0, now: Date(timeIntervalSince1970: 101)) == nil)
+        #expect(PanelStore.optionLabel(lapsed, index: 0, now: Date(timeIntervalSince1970: 99)) == "Postgres")
+    }
+
     @Test("a selection that is not among the shown asks is ignored")
     func straySelectionFallsToTheRule() {
         let rows = [row(Self.permission, ask: permissionAsk(Self.permission))]
@@ -160,6 +192,27 @@ struct PanelAskChordTests {
         #expect(handled)
         #expect(store.toast != nil, "the desk's refusal is said, and nothing is approved")
         #expect(store.toast != PanelStore.chordAmbiguousLine)
+    }
+
+    @Test("⌘2 on a lone held question answers with its second option; other numbers are handed back")
+    func storeAnswersAnOptionKey() {
+        let ask = heldQuestion(Self.second)
+        let store = liveStore([(Self.second, ask)])
+        let beyond = store.chooseSelectedAsk(option: 5)
+        #expect(!beyond, "no sixth button: the key is left alone")
+        let unarmed = store.chooseSelectedAsk(option: 1, armed: false)
+        #expect(unarmed, "an unarmed key is swallowed")
+        #expect(!store.isAnswerPending(ask))
+        let typed = store.chooseSelectedAsk(option: 1, typingInField: true)
+        #expect(!typed)
+        let answered = store.chooseSelectedAsk(option: 1)
+        #expect(answered)
+        #expect(store.toast == nil, "the desk took the pick: no refusal is said")
+
+        let plain = liveStore([(Self.permission, permissionAsk(Self.permission))])
+        let nothing = plain.chooseSelectedAsk(option: 0)
+        #expect(!nothing, "a yes/no ask has no numbered option")
+        #expect(!plain.isAnswerPending(permissionAsk(Self.permission)))
     }
 
     @Test("a held key or a panel that just arrived answers nothing")

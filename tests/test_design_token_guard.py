@@ -122,6 +122,7 @@ def test_typography_migration_cannot_be_reopened_with_an_allowance():
     ('statusItem.setCore(description: "disconnected · \\(reason)")', "monitor-wording"),
     ('PaletteItem(title: "Monitor Not Connected")', "monitor-wording"),
     ('NSAttributedString(string: "Monitor: \\(description)")', "monitor-wording"),
+    ('Text("Rows appear as soon as the socket is live.")', "socket-words"),
     ('Text("Effect Studio")', "ui-name"),
     ('Text("Blend mode")', "ui-name"),
     ('Text("42% left")', "usage-direction"),

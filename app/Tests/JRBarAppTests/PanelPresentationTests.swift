@@ -59,7 +59,7 @@ struct PanelPresentationTests {
                               "gemini": .string("missing")])
         ]))
         try withPanel(missing) { store in
-            #expect(store.missingHooks == ["claude", "codex", "gemini"])
+            #expect(!store.hooksConnected)
             try render("panel-missing-hooks-guidance", store)
         }
         let busy = CoreState(devices: WindowsRenderProofTests.devices)

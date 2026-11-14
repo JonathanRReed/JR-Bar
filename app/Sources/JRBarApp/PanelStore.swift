@@ -1519,16 +1519,6 @@ final class PanelStore {
     }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
-    /// `state.health.hooks` providers the daemon reports as `missing`: the
-    /// empty state names them so "no sessions" is not mistaken for "quiet"
-    /// when nothing was ever wired up to report.
-    var missingHooks: [String] {
-        guard core.isLive, let hooks = core.state?.health?["hooks"]?.objectValue else { return [] }
-        return hooks.compactMap { provider, state in
-            state.stringValue == "missing" ? provider : nil
-        }.sorted()
-    }
-
     /// Whether any provider's hooks are installed. False only when the
     /// daemon reports hooks and none is live or quiet, so a fresh install
     /// is told to connect a provider rather than to start an agent. An
@@ -2123,7 +2113,19 @@ final class PanelStore {
     }
 
     /// The verdict a keyboard chord sends: ⌘↩ approves, ⌘D denies.
-    enum AskChord { case approve, deny }
+    /// `option` is ⌘1…⌘9 on a held question, counted from zero.
+    enum AskChord: Equatable { case approve, deny, option(Int) }
+
+    /// The label ⌘N answers with: the N-th option button the card shows.
+    /// Only a question drawn as buttons takes it (one question, one pick, a
+    /// few short labels), so a key never picks an option folded away in a
+    /// menu, and only while the agent's hook still holds the question.
+    nonisolated static func optionLabel(_ ask: CoreAsk, index: Int, now: Date = Date()) -> String? {
+        guard AskVerbs.chooses(ask, at: now),
+              case .buttons(let labels) = AskChoiceLayout.layout(ask.decision?.choices ?? []),
+              labels.indices.contains(index) else { return nil }
+        return labels[index]
+    }
 
     /// Which ask a chord answers, if any.
     enum AskChordTarget: Equatable {
@@ -2152,6 +2154,7 @@ final class PanelStore {
             switch chord {
             case .approve: takesVerdict = AskVerbs.approves(ask)
             case .deny: takesVerdict = AskVerbs.denies(ask, at: now)
+            case .option(let index): takesVerdict = optionLabel(ask, index: index, now: now) != nil
             }
             if takesVerdict { candidates.append(row.id) }
         }
@@ -2187,9 +2190,22 @@ final class PanelStore {
         answerFromKeyboard(.deny, typingInField: typingInField, armed: armed)
     }
 
+    /// ⌘1…⌘9 on the panel: the N-th option button of the selected held
+    /// question (the lone one, when none is selected). `option` counts
+    /// from zero. A card with no such button leaves the key alone.
+    @discardableResult
+    func chooseSelectedAsk(option: Int, typingInField: Bool = false, armed: Bool = true) -> Bool {
+        answerFromKeyboard(.option(option), typingInField: typingInField, armed: armed)
+    }
+
     private func answerFromKeyboard(_ chord: AskChord, typingInField: Bool, armed: Bool) -> Bool {
         let askRows = visibleAskRows
         let target = Self.chordTarget(chord, typingInField: typingInField, selectedID: selectedID, askRows: askRows)
+        if case .option(let index) = chord, case .ask(let id) = target {
+            // The selected card may be an ask with no option at that number.
+            guard let ask = askRows.first(where: { $0.id == id })?.ask,
+                  Self.optionLabel(ask, index: index) != nil else { return false }
+        }
         if target != .none, !armed { return true }
         switch target {
         case .none:
@@ -2202,6 +2218,10 @@ final class PanelStore {
             switch chord {
             case .approve: approve(ask)
             case .deny: deny(ask)
+            case .option(let index):
+                guard let label = Self.optionLabel(ask, index: index),
+                      let choice = ask.decision?.choices.first else { return false }
+                pick(label, in: choice, of: ask)
             }
             return true
         }

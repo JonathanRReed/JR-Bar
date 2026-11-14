@@ -829,7 +829,10 @@ struct AskRow: View {
     private var accessibilityHint: String {
         guard let ask = row.ask, !row.isRemote else { return "Answer it in the session's own window" }
         if let line = ask.decidedLine { return line }
-        if AskVerbs.chooses(ask) { return "Pick one of its options, or deny with ⌘D" }
+        if AskVerbs.chooses(ask) {
+            let keys = PanelStore.optionLabel(ask, index: 0) == nil ? "" : " with ⌘1 and up"
+            return "Pick one of its options\(keys), or deny with ⌘D"
+        }
         return ask.canAnswer ? "Approve with ⌘Return, deny with ⌘D" : "Answer it in the session's own window"
     }
 
@@ -857,7 +860,7 @@ struct AskRowChoices: View {
                     if let choice = choices.first { store.pick(label, in: choice, of: ask) }
                 }
                 .disabled(store.isAnswerPending(ask))
-                .help("Answer “\(label)” through the agent's own hook")
+                .help("Answer “\(label)” through the agent's own hook (⌘\(index + 1))")
             }
         case .menu:
             let picks = store.picks(for: ask)

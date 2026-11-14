@@ -47,6 +47,8 @@ PATTERNS = {
     # A reason code is a key into the daemon's sentences, never words on
     # its own: "cli_session_unavailable" must not become "cli session unavailable".
     "reason-code-words": re.compile(r'\breason\??\.replacingOccurrences\(of: "_"'),
+    # The connection to the monitor is "the monitor", never "the socket".
+    "socket-words": re.compile(r'"[^"\n]*\b(?:the|a) socket\b[^"\n]*"'),
 }
 #: A button whose label is a bare SF Symbol: VoiceOver needs a name, and
 #: `.help` is only a hint. Text or Label in the label names it.
@@ -186,13 +188,17 @@ def offenders(source: str, path: str = "") -> Counter[str]:
             continue
         if kind == "monitor-wording" and path.endswith("JRBarCore/StatusWords.swift"):
             continue
+        # The client's raw disconnect reasons go to the log and Diagnostics;
+        # StatusWords turns them into the words people read.
+        if kind == "socket-words" and path.endswith(("JRBarCore/StatusWords.swift", "JRBarCore/CoreClient.swift")):
+            continue
         if kind == "ui-name" and ("/Notch/" in path or "/Utilities/MenuBar/" in path or path.endswith("/WhatsNewCatalog.swift")):
             continue
         if kind == "usage-direction" and path.endswith(("/StatusIconRenderer.swift", "/StatusItemController.swift", "/ClaudeStatusLineSection.swift")):
             continue
         if kind == "quota-tone" and ("/Notch/" in path or path.endswith("JRBarUI/StatusBadge.swift")):
             continue
-        text_checks = {"retired-page", "error-words", "reason-code-words", "raw-code-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction"}
+        text_checks = {"retired-page", "error-words", "reason-code-words", "raw-code-words", "block-meter", "spaced-percent", "elapsed-unit", "fixed-clock", "missing-clock-minutes", "currency-table", "monitor-wording", "ui-name", "usage-direction", "socket-words"}
         for match in pattern.finditer(text if kind in text_checks else code):
             line = source.count("\n", 0, match.start())
             if line in exception_lines:

@@ -303,7 +303,7 @@ struct OverviewView: View {
             Divider()
             if !store.isLive, store.roster.isEmpty {
                 OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
-                                   text: "The roster comes from the monitor. Rows appear as soon as the socket is live.",
+                                   text: "The roster comes from the monitor. Rows appear when the monitor reconnects.",
                                    tint: Tone.neutral.color)
             } else if !store.isLive {
                 // The window is the record of what happened — a dead

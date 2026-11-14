@@ -66,7 +66,7 @@ struct EffectStudioView: View {
         Group {
             if !store.isLive {
                 WindowEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
-                                 text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.",
+                                 text: "The effect registry, packs and assignments live in the monitor. The studio fills in when the monitor reconnects.",
                                  tint: Tone.neutral.color)
             } else if store.catalog == nil, let error = store.loadError, !store.loading {
                 WindowEmptyState(symbol: "exclamationmark.triangle", title: "Could not load effects",

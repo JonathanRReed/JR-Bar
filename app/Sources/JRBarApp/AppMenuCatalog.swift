@@ -41,12 +41,13 @@ enum AppMenuVerb: String, CaseIterable, Identifiable, Sendable {
 
     /// The key, always with ⌘; `shift` adds ⇧. No two verbs share a
     /// character, so the panel matches on the character alone and ⌘K
-    /// opens the palette as ⇧⌘K does.
+    /// opens the palette as ⇧⌘K does. ⌘R belongs to no verb: it is
+    /// Refresh in the panel, Usage Center, Studio and Overview.
     var key: (character: Character, shift: Bool)? {
         switch self {
         case .commandPalette: return ("k", true)
         case .history: return ("y", false)
-        case .events: return ("r", false)
+        case .events: return ("e", false)
         case .overview: return ("o", false)
         case .usageCenter: return ("u", false)
         case .settings: return (",", false)

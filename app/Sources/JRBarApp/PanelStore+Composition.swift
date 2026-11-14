@@ -206,7 +206,8 @@ extension PanelStore {
     /// ⌘R in the panel: ask every provider the person turned on for a new
     /// reading. Nothing new leaves the Mac; a provider without consent is
     /// not asked.
-    func refreshAllUsage() {
+    @discardableResult
+    func refreshAllUsage() -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
             do {

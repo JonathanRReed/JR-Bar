@@ -55,7 +55,7 @@ struct OverviewGraphView: View {
     private var emptyState: some View {
         if !store.isLive, store.roster.isEmpty {
             OverviewEmptyState(symbol: "bolt.horizontal.circle", title: MonitorWords.label,
-                               text: "The graph draws the monitor's roster. It fills in as soon as the socket is live.")
+                               text: "The graph draws the monitor's roster. It fills in when the monitor reconnects.")
         } else if store.graphScope == .active {
             OverviewEmptyState(symbol: "point.3.connected.trianglepath.dotted", title: "Nothing running",
                                text: store.search.isEmpty

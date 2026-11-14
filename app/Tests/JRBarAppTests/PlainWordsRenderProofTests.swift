@@ -34,8 +34,8 @@ struct PlainWordsRenderProofTests {
             "checked_at": .number(Date().timeIntervalSince1970 - 30),
             "ingress_socket": .object(["answers": .bool(true)]),
             "providers": .array([]),
-            "rejected": .object(["today": .number(3), "newest_detail": .string("bad_lengths"),
-                                 "sentence": .string("3 hook events were refused today. The newest: the event arrived cut short.")]),
+            "rejected": .object(["today": .number(3), "newest_detail": .string("bad_header"),
+                                 "sentence": .string("3 hook events were refused today. The newest: the event's header could not be read.")]),
         ])
         await doctor.refresh { CoreReply(id: "report", ok: true, result: result) }?.value
         try WindowsRenderProofTests.write("plain-hooks-refused", size: CGSize(width: 640, height: 140)) {

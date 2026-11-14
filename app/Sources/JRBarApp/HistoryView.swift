@@ -885,7 +885,7 @@ struct HistoryEmptyState: View {
     var body: some View {
         if !store.isLive {
             WindowEmptyState(symbol: "antenna.radiowaves.left.and.right.slash", title: MonitorWords.label,
-                             text: store.error ?? "History lives in the monitor. The rows come back as soon as the socket is live.",
+                             text: store.error ?? "History lives in the monitor. The rows come back when the monitor reconnects.",
                              tint: Tone.neutral.color)
         } else if store.loading {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Loading history…",
