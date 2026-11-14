@@ -174,4 +174,25 @@ struct BackgroundFileLookupTests {
         #expect(DockEnhanceController.folderListing(of: url).state == .failed)
     }
 
+
+    @MainActor
+    @Test("a path's standard form is worked out once and remembered, within a bound")
+    func standardPathsAreRemembered() {
+        let metadata = ExternalFileMetadata(home: "/Users/synthetic", reader: { _ in nil })
+        let url = URL(fileURLWithPath: "/Applications/../Applications/Synthetic.app")
+        #expect(metadata.standardPath(url) == url.standardizedFileURL.path)
+        #expect(metadata.standardPath(url) == "/Applications/Synthetic.app")
+        // The same raw path is the same answer however often it is asked.
+        for _ in 0..<50 { #expect(metadata.standardPath(url) == "/Applications/Synthetic.app") }
+        // Far more distinct paths than it keeps: every answer is still right.
+        for index in 0..<(ExternalFileMetadata.standardPathsKept * 2 + 7) {
+            let other = URL(fileURLWithPath: "/synthetic/./apps/App\(index).app")
+            #expect(metadata.standardPath(other) == "/synthetic/apps/App\(index).app")
+        }
+        #expect(metadata.standardPath(url) == "/Applications/Synthetic.app")
+        // A URL that is no running app's bundle matches none, and falls
+        // back to the file's own snapshot, which this reader does not have.
+        #expect(metadata.bundleID(URL(fileURLWithPath: "/synthetic/apps/Nothing.app")) == nil)
+    }
 }
+

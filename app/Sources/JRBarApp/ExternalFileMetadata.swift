@@ -199,10 +199,36 @@ final class ExternalFileMetadata {
 
     private func iconRequest(_ url: URL) -> Request {
         var lookup = request(url)
-        lookup.iconPID = RunningApps.shared.apps.first {
-            $0.bundleURL?.standardizedFileURL == url
-        }?.pid
+        lookup.iconPID = runningApp(at: url)?.pid
         return lookup
+    }
+
+    /// A path's standard form, remembered. Standardising a file URL asks
+    /// the file system about it every time, and the Dock asks which
+    /// running app each of its tiles is whenever it re-reads them: with
+    /// the answer worked out afresh for every tile against every running
+    /// app, that was thousands of file-system calls a pass, on the main
+    /// thread. Used only to match a URL to a running app, where an answer
+    /// a moment out of date does no harm; what a file may be read for is
+    /// still decided on a fresh standard form (`ExternalFilePolicy`).
+    @ObservationIgnored private var standardPaths: [String: String] = [:]
+    static let standardPathsKept = 1024
+
+    func standardPath(_ url: URL) -> String {
+        let raw = url.path
+        if let known = standardPaths[raw] { return known }
+        let standard = url.standardizedFileURL.path
+        if standardPaths.count >= Self.standardPathsKept { standardPaths.removeAll(keepingCapacity: true) }
+        standardPaths[raw] = standard
+        return standard
+    }
+
+    /// The running app whose bundle is at `url`, if one is.
+    private func runningApp(at url: URL) -> RunningApp? {
+        let path = standardPath(url)
+        return RunningApps.shared.apps.first { app in
+            app.bundleURL.map { self.standardPath($0) } == path
+        }
     }
 
     func resolveIcon(_ url: URL) async -> NSImage? {
@@ -226,9 +252,7 @@ final class ExternalFileMetadata {
     }
 
     func bundleID(_ url: URL) -> String? {
-        if let app = RunningApps.shared.apps.first(where: { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL }) {
-            return app.bundleID
-        }
+        if let app = runningApp(at: url) { return app.bundleID }
         return snapshot(url)?.bundleID
     }
 
