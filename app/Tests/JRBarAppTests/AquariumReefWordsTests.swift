@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import JRBarCore
 @testable import JRBarApp
@@ -68,4 +69,45 @@ struct AquariumReefWordsTests {
         #expect(TankReefWords.care(game)
                 == "This tank adds 13 % to every builder: 1 raised fish, a 3-day streak, 2 decor pieces.")
     }
+
+    @Test("the bed in the tank grows with the kelp level and lights a pod for each doubling of the harvest")
+    func bedInTheTank() {
+        #expect(AquariumView.reefBedHeight(level: 1) == 70)
+        #expect(AquariumView.reefBedHeight(level: 4) == 100)
+        #expect(AquariumView.reefBedHeight(level: 200) == 132, "it settles at its full height")
+        var last = 0.0
+        for level in 1...60 {
+            let height = AquariumView.reefBedHeight(level: level)
+            #expect(height >= last)
+            last = height
+        }
+        #expect(AquariumView.reefBedBlades(level: 1) == 3)
+        #expect(AquariumView.reefBedBlades(level: 5) == 4)
+        #expect(AquariumView.reefBedBlades(level: 100) == 9)
+        #expect(AquariumView.reefPods(waiting: 0) == 0)
+        #expect(AquariumView.reefPods(waiting: 1) == 1)
+        #expect(AquariumView.reefPods(waiting: 19) == 1)
+        #expect(AquariumView.reefPods(waiting: 20) == 2)
+        #expect(AquariumView.reefPods(waiting: 79) == 3)
+        #expect(AquariumView.reefPods(waiting: 80) == 4)
+        #expect(AquariumView.reefPods(waiting: 1_000_000) == 6)
+    }
+
+    @Test("the bed takes a tap only while a harvest waits")
+    func bedTapBox() {
+        var fixture = AquariumView.Fixture(fish: [], game: AquariumGame(), night: 0)
+        let empty = AquariumView(fixture: fixture)
+        _ = ImageRenderer(content: Canvas { c, size in empty.drawReefBed(canvas: &c, size: size, t: 0) }
+            .frame(width: 600, height: 400)).cgImage
+        #expect(empty.motion.reefBox == nil)
+        fixture.game?.reef.harvest = ["kelp": 45]
+        let ready = AquariumView(fixture: fixture)
+        _ = ImageRenderer(content: Canvas { c, size in ready.drawReefBed(canvas: &c, size: size, t: 0) }
+            .frame(width: 600, height: 400)).cgImage
+        let box = ready.motion.reefBox
+        #expect(box != nil)
+        #expect(box.map { $0.contains(CGPoint(x: 600 * AquariumView.reefBedX, y: $0.midY)) } == true)
+        #expect(ready.motion.reefPods.count == 3)
+    }
 }
+

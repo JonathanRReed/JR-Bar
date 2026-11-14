@@ -619,6 +619,13 @@ one tap brings it in with a tenth more for collecting by hand; a snail
 brings it in at the plain rate while the tank is closed. A harvest never
 decays and has no cap, so nothing is lost by not looking.
 
+The kelp bed stands in the tank itself (`AquariumViewReef.swift`), on
+the front sand: its blades are as tall and as many as the bed's level,
+and each carries a pod. The pods are dim buds while the reef holds
+nothing and swell and glow as a harvest builds, one more for each
+doubling. A tap on the bed brings the harvest in, and a pearl flies home
+to the counter from every lit pod.
+
 The reef never rewards keeping agents busy. Agent-hours and finished
 runs count in full up to four agent-hours and twelve runs a day, by half
 up to twice that and by a quarter beyond. Starting a session pays

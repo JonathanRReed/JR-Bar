@@ -444,6 +444,7 @@ struct AquariumView: View {
                                           now: context.date)
                     }
                     drawOyster(canvas: &canvas, size: size, t: t)
+                    drawReefBed(canvas: &canvas, size: size, t: t)
                     drawDrops(canvas: &canvas, size: size, t: t,
                               layouts: layouts)
                     if !isStill {
@@ -519,6 +520,18 @@ struct AquariumView: View {
                 motion.puffs.append((x: box.midX / max(1, motion.size.width),
                                      y: box.maxY / max(1, motion.size.height) - 0.03, bornAt: Date()))
                 motion.flights.append((from: CGPoint(x: box.midX, y: box.midY), bornAt: Date()))
+                return
+            }
+            // The reef's harvest, where it grew: a tap on the bed brings it
+            // in, and a pearl flies home from every lit pod.
+            if let box = motion.reefBox, box.contains(value.location), (toy?.game.reef.waiting ?? 0) > 0 {
+                let pods = motion.reefPods
+                toy?.collectHarvest()
+                for pod in pods {
+                    motion.flights.append((from: pod, bornAt: Date()))
+                }
+                motion.puffs.append((x: box.midX / max(1, motion.size.width),
+                                     y: box.midY / max(1, motion.size.height), bornAt: Date()))
                 return
             }
             if let box = motion.alienBox, box.contains(value.location),
@@ -794,6 +807,10 @@ struct AquariumView: View {
         var snailClaimed: Set<String> = []
         /// The oyster's tap box this frame, when it's in the tank.
         var oysterBox: CGRect?
+        /// The reef bed's tap box this frame, while a harvest waits, and
+        /// where its lit pods sit, for the pearls' flight home.
+        var reefBox: CGRect?
+        var reefPods: [CGPoint] = []
         /// The alien's tap box this frame, and the taps it has taken
         /// this visit (keyed by when the visit started).
         var alienBox: CGRect?

@@ -362,6 +362,15 @@ struct AquariumRenderProofTests {
         reefFixture.game?.streakDays = 4
         reefFixture.game?.reef = AquariumReef(bought: ["kelp": 8, "oyster": 2, "anemone": 1],
                                               harvest: ["kelp": 131.4, "oyster": 22, "anemone": 9])
+        // The kelp bed in the tank: a new bed, a grown one holding a
+        // harvest, and a tall one glowing with a big one.
+        for (name, level, harvest) in [("new", 1, 0.0), ("grown", 9, 45.0), ("tall", 30, 900.0)] {
+            var bed = Self.fixture(themeID: "classic", substrateID: "classic", backdropID: "classic",
+                                   night: 0, visitor: nil)
+            bed.game?.reef = AquariumReef(bought: ["kelp": level - 1], harvest: ["kelp": harvest])
+            if try Self.writePNG(AquariumView(fixture: bed), size: CGSize(width: 640, height: 400),
+                                 name: "aquarium-reef-bed-\(name)", into: dir) { written += 1 }
+        }
         let reefTank = AquariumView(fixture: reefFixture)
         for dark in [false, true] {
             let page = reefTank.shopPanel(fish: reefFixture.fish, page: .reef)
@@ -431,7 +440,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 27)
+        #expect(written == shots.count + 30)
     }
 
     // MARK: The Arcade tank
