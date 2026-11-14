@@ -985,7 +985,7 @@ enum ToyPaletteRows {
             id: "toys.buddy", title: "Notch Buddy",
             subtitle: isOn ? (isFree ? "Floating on the desktop" : "Under the notch") : "A creature that lives by your agents",
             keywords: ["pet", "creature", "companion", "tamagotchi", "float", "dock"],
-            icon: .symbol("face.smiling.inverse", .orange),
+            icon: .symbol("face.smiling.inverse", .yellow),
             tags: [PaletteTag(text: isOn ? "On" : "Off", tone: isOn ? .positive : .neutral)],
             kind: "Toy", section: .toys, actions: actions)]
     }
