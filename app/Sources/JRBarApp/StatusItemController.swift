@@ -32,6 +32,38 @@ struct StatusItemPlan: Equatable {
 /// small chevron beside it while anything is tucked away; a click on
 /// the blank part is the reveal, a click on the icon is the panel as
 /// ever.
+/// The folded icon for each face the status item has worn. The breathing dot
+/// cycles through four faces twice a second; with one remembered face, each
+/// beat composed and drew the icon again for as long as an agent worked. The
+/// renderer hands back the same image for the same face, so the face's
+/// identity is the key, and the entry keeps the face alive so that identity
+/// cannot pass to another image while the entry stands.
+struct FoldedIconCache {
+    private struct Key: Hashable {
+        let source: ObjectIdentifier
+        let spacer: CGFloat
+        let chevron: Bool
+        let appearance: String
+    }
+
+    static let limit = 24
+    private var entries: [Key: (source: NSImage, image: NSImage)] = [:]
+    /// How many icons were composed, not found.
+    private(set) var compositions = 0
+    var count: Int { entries.count }
+
+    mutating func image(for source: NSImage, spacer: CGFloat, chevron: Bool, appearance: String,
+                        compose: () -> NSImage) -> NSImage {
+        let key = Key(source: ObjectIdentifier(source), spacer: spacer, chevron: chevron, appearance: appearance)
+        if let entry = entries[key], entry.source === source { return entry.image }
+        let image = compose()
+        compositions += 1
+        if entries.count >= Self.limit { entries.removeAll(keepingCapacity: true) }
+        entries[key] = (source, image)
+        return image
+    }
+}
+
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost {
     /// The `AXIdentifier` JR-Bar's own status item carries.
@@ -75,7 +107,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The composite face for the current spacer, memoised on the
     /// natural image's identity: the breathing dot redraws twice a
     /// second and must not re-rasterise a 200-point image each time.
-    private var foldedCache: (source: NSImage, spacer: CGFloat, chevron: Bool, appearance: String, image: NSImage)?
+    private var foldedCache = FoldedIconCache()
     /// The Menu Bar utility's hooks: a click on the blank part of the
     /// item, and the "Hidden Items" submenu it builds for the menu.
     var onBoundaryClick: (@MainActor () -> Void)?
@@ -644,14 +676,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             appearance.performAsCurrentDrawingAppearance {
                 tint = NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
             }
-            let folded: NSImage
-            if let cache = foldedCache, cache.source === source, cache.spacer == boundarySpacer,
-               cache.chevron == chevron, cache.appearance == appearance.name.rawValue {
-                folded = cache.image
-            } else {
-                folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron,
-                                     hintTint: source.isTemplate ? nil : tint)
-                foldedCache = (source, boundarySpacer, chevron, appearance.name.rawValue, folded)
+            let spacer = boundarySpacer
+            let folded = foldedCache.image(for: source, spacer: spacer, chevron: chevron,
+                                           appearance: appearance.name.rawValue) {
+                Self.folded(source, spacer: spacer, chevron: chevron,
+                            hintTint: source.isTemplate ? nil : tint)
             }
             wornImage = folded
             button.imageScaling = .scaleNone
@@ -871,11 +900,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         if wanted, breathing == nil {
             phase = 0.5
             let timer = Timer(timeInterval: Self.breathingInterval, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.phase = (self.phase + 0.25).truncatingRemainder(dividingBy: 1)
-                    self.redraw()
-                }
+                MainActor.assumeIsolated { self?.stepBreathing() }
             }
             RunLoop.main.add(timer, forMode: .common)
             breathing = timer
@@ -884,6 +909,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             breathing = nil
             phase = 0.5
         }
+    }
+
+    /// One beat of the breathing clock: the next of the dot's four faces.
+    /// The timer calls it; a test cranks it by hand.
+    func stepBreathing() {
+        phase = (phase + 0.25).truncatingRemainder(dividingBy: 1)
+        redraw()
     }
 
     /// Whether the breathing clock should run. Nobody sees the menu bar

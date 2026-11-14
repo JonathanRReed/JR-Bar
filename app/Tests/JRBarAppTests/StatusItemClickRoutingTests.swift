@@ -1,4 +1,5 @@
 import AppKit
+import JRBarUI
 import Testing
 @testable import JRBarApp
 
@@ -13,6 +14,35 @@ struct StatusItemClickRoutingTests {
         #expect(!StatusItemController.breathes(moving: true, reduceMotion: false, displayAsleep: true))
         #expect(!StatusItemController.breathes(moving: true, reduceMotion: true, displayAsleep: false))
         #expect(!StatusItemController.breathes(moving: false, reduceMotion: false, displayAsleep: false))
+    }
+
+    @Test("the breathing dot's four faces are each folded once, however long it breathes")
+    func breathingReusesItsFoldedFaces() {
+        var cache = FoldedIconCache()
+        let faces = (0..<4).map { _ in NSImage(size: NSSize(width: 18, height: 18)) }
+        var worn: [NSImage] = []
+        for beat in 0..<40 {
+            let face = faces[beat % 4]
+            worn.append(cache.image(for: face, spacer: 120, chevron: true, appearance: "dark") {
+                NSImage(size: NSSize(width: 138, height: 18))
+            })
+        }
+        #expect(cache.compositions == 4, "four faces, composed once each")
+        #expect(worn[0] === worn[4] && worn[1] === worn[37])
+        #expect(worn[0] !== worn[1])
+
+        // A wider spacer, the chevron or the bar's appearance each make a different icon.
+        _ = cache.image(for: faces[0], spacer: 140, chevron: true, appearance: "dark") { NSImage() }
+        _ = cache.image(for: faces[0], spacer: 120, chevron: false, appearance: "dark") { NSImage() }
+        _ = cache.image(for: faces[0], spacer: 120, chevron: true, appearance: "light") { NSImage() }
+        #expect(cache.compositions == 7)
+
+        // It never grows without bound.
+        for index in 0..<100 {
+            _ = cache.image(for: NSImage(size: NSSize(width: CGFloat(index + 1), height: 18)), spacer: 120,
+                            chevron: true, appearance: "dark") { NSImage() }
+        }
+        #expect(cache.count <= FoldedIconCache.limit)
     }
 
     @Test("a centered native status event cannot turn an icon click into a spacer click")
