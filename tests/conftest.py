@@ -192,6 +192,15 @@ def close_test_history_indexes(tmp_path):
                 index.close()
 
 
+@pytest.fixture(autouse=True)
+def history_work_ends_with_its_test():
+    """A daemon's history warm-up never scans during a later test."""
+    from tests.history_threads import history_work_ends_here
+
+    with history_work_ends_here():
+        yield
+
+
 @pytest.fixture
 def short_tmp_path(tmp_path_factory):
     """A fixture-owned path short enough for macOS's 104-byte Unix sockets."""
