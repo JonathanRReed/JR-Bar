@@ -399,10 +399,10 @@ class HookIngressService:
         self._process = process
         self._maximum_accepted = maximum_accepted
         self._maximum_outstanding_bytes = maximum_outstanding_bytes
-        # A shim told refused_full spools its payload (hook_pending); once
-        # the queue that refused it is empty again the spool is drained at
-        # once, not at the next 30 s pass, so the refused events land before
-        # the next human-paced one instead of after it.
+        # A shim told refused_full spools its payload (hook_pending), and so
+        # does one whose send was cut short; once the queue is empty again
+        # the spool is drained at once, not at the next 30 s pass, so those
+        # events land before the next human-paced one instead of after it.
         self._backlog_cleared = backlog_cleared or nudge_pending_drains
         self._refused_since_idle = False
         self._receipt_handler = receipt_handler
@@ -626,6 +626,21 @@ class HookIngressService:
         )
         self._publish(receipt)
         return receipt
+
+    def _expect_spooled_event(self) -> None:
+        """A hook whose send was cut short has queued its event on disk.
+        Drain the spool as soon as the queue is empty, which is now when
+        nothing is running, instead of at the next 30 s pass: the lights
+        and the panel should not trail a large tool call by half a minute."""
+        with self._condition:
+            idle = self._running is None and not self._pending
+            if not idle:
+                self._refused_since_idle = True
+        if idle:
+            try:
+                self._backlog_cleared()
+            except Exception:
+                pass
 
     def wait_idle(self, *, timeout_seconds: float) -> bool:
         deadline = self._deadline(timeout_seconds)
@@ -1055,6 +1070,8 @@ class HookIngressService:
             refusal, provider = explain_hook_ingress_refusal(frame)
             self.refuse_invalid(refusal, provider=provider, frame_bytes=len(frame))
             disposition = HookIngressDisposition.REFUSED_INVALID
+            if refusal == "cut_short":
+                self._expect_spooled_event()
         elif request.kind == HOOK_INGRESS_KIND_STATUSLINE:
             # Claude Code's statusLine (jrbar-hook --statusline): rate
             # limits for the quota source, and never a hook event, so it

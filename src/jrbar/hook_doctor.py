@@ -157,7 +157,7 @@ def socket_answers(path: Path, timeout: float = 0.3) -> bool:
 _REFUSAL_WORDS = {
     "not_a_frame": "something other than the hook connected",
     "short_frame": "the hook stopped before sending a whole event",
-    "bad_lengths": "the event arrived cut short",
+    "bad_lengths": "the event's length did not match its header",
     "too_large": "the event was too large",
     "bad_header": "the event's header could not be read",
     "bad_fields": "the event's header was missing a field",
@@ -177,6 +177,7 @@ def rejected_hook_frames(state_dir: Path, *, now: float | None = None) -> dict[s
     moment = time.time() if now is None else now
     today = time.strftime("%Y-%m-%d", time.localtime(moment))
     count = 0
+    late = 0
     newest: dict[str, Any] | None = None
     try:
         text = (state_dir / "hook-ingress-rejections.jsonl").read_text(encoding="utf-8", errors="replace")
@@ -190,18 +191,30 @@ def rejected_hook_frames(state_dir: Path, *, now: float | None = None) -> dict[s
             continue
         if time.strftime("%Y-%m-%d", time.localtime(at)) != today:
             continue
+        if row.get("detail") == "cut_short":
+            # Not a refusal: the hook queued the event and the monitor read
+            # it from the queue a moment later.
+            late += 1
+            continue
         count += 1
         newest = {"at": at, "detail": row.get("detail") or row.get("reason"), "provider": row.get("provider")}
+    late_sentence = None
+    if late:
+        events = "1 hook event" if late == 1 else f"{late} hook events"
+        late_sentence = f"{events} arrived late today, queued while the monitor was busy."
     if not count or newest is None:
-        return {"today": 0, "newest_at": None, "newest_detail": None, "newest_provider": None, "sentence": None}
+        return {"today": 0, "late_today": late, "newest_at": None, "newest_detail": None,
+                "newest_provider": None, "sentence": late_sentence}
     events = "1 hook event was" if count == 1 else f"{count} hook events were"
     why = _REFUSAL_WORDS.get(str(newest["detail"]), "the event could not be read")
+    sentence = f"{events} refused today. The newest: {why}."
     return {
         "today": count,
+        "late_today": late,
         "newest_at": round(newest["at"], 3),
         "newest_detail": newest["detail"],
         "newest_provider": newest["provider"] if isinstance(newest["provider"], str) else None,
-        "sentence": f"{events} refused today. The newest: {why}.",
+        "sentence": sentence if late_sentence is None else f"{sentence} {late_sentence}",
     }
 
 
@@ -338,7 +351,8 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
     else:
         lines.append("pending hook payloads: none")
     rejected = report.get("rejected") or {}
-    lines.append(f"refused hook events: {rejected.get('sentence') or 'none today'}")
+    sentence = rejected.get("sentence")
+    lines.append(f"hook events: {sentence}" if sentence else "refused hook events: none today")
     lines.append("providers:")
     for entry in report["providers"]:
         state = "installed" if entry.get("installed") else "not installed"

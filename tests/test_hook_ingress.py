@@ -727,7 +727,7 @@ def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
         assert len(lines) == 1
         document = json.loads(lines[0])
         assert document["reason"] == "refused_invalid"
-        assert document["detail"] == "bad_lengths"
+        assert document["detail"] == "cut_short"
         assert document["provider"] == "claude"
         assert document["bytes"] == len(truncated)
         assert frozenset(document) == {
@@ -841,3 +841,26 @@ def test_a_peer_cannot_aim_the_app_owned_processor_at_a_file_outside_the_state_d
 
     managed = state / "claude.jsonl"
     assert seen == [managed] * 5 + [managed, state / "codex.jsonl"]
+
+
+def test_a_cut_short_frame_wakes_the_spool_drain(tmp_path: Path) -> None:
+    """A hook that ran out of time mid-send queues its event on disk. The
+    daemon drains the queue at once instead of at the next 30 s pass, so the
+    lights do not trail a large tool call. A frame refused for any other
+    reason was never queued and wakes nothing."""
+    woken: list[str] = []
+    service = HookIngressService(
+        process=lambda _request_value: None,
+        rejection_path=tmp_path / "rejections.jsonl",
+        peer_uid_reader=lambda _connection: os.geteuid(),
+        backlog_cleared=lambda: woken.append("drain"),
+    )
+    try:
+        whole = encode_hook_ingress_request(_request("x" * 2000))
+        assert _serve_one_connection(service, whole + b"x") == b"refused_invalid\n"
+        assert woken == []
+        assert _serve_one_connection(service, whole[:1024]) == b"refused_invalid\n"
+        assert woken == ["drain"]
+    finally:
+        assert service.close(timeout_seconds=1.0)
+

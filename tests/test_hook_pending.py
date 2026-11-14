@@ -859,3 +859,46 @@ def test_partial_append_failure_keeps_another_writers_completed_record(tmp_path,
     monkeypatch.setattr(os, "ftruncate", truncate)
     assert not hook_pending._append_lines(pending, [_line(payload='{"n":2}')])
     assert pending.read_bytes().startswith(previous + other)
+
+
+def test_old_overflow_and_rejected_files_are_removed_and_the_queue_is_left_alone(tmp_path) -> None:
+    """Overflow and rejected files hold whole hook payloads. One nothing has
+    written to for two weeks goes; a fresh one, and anything still queued,
+    stays."""
+    from jrbar import hook_pending
+
+    now = 1_800_000_000.0
+    old = now - hook_pending.SPOOL_LEFTOVER_MAX_AGE_SECONDS - 60
+    names = {
+        "codex.overflow.jsonl": old, "claude.rejected.jsonl": old,
+        "grok.overflow.jsonl": now - 3600, "claude.pending.jsonl": old,
+        "codex.pending.jsonl.draining-1-1": old, "notes.jsonl": old,
+    }
+    for name, modified in names.items():
+        path = tmp_path / name
+        path.write_text("{}\n")
+        os.utime(path, (modified, modified))
+    (tmp_path / "linked.overflow.jsonl").symlink_to(tmp_path / "notes.jsonl")
+
+    assert hook_pending.prune_spool_leftovers(tmp_path, now=now) == 2
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "claude.pending.jsonl", "codex.pending.jsonl.draining-1-1", "grok.overflow.jsonl",
+        "linked.overflow.jsonl", "notes.jsonl",
+    ]
+    assert hook_pending.prune_spool_leftovers(tmp_path / "missing", now=now) == 0
+
+
+def test_the_drainer_prunes_old_leftovers_at_most_once_an_hour(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    ticks = [0.0]
+    calls: list[Path] = []
+    monkeypatch.setattr(hook_pending, "prune_spool_leftovers", lambda state_dir: calls.append(state_dir) or 0)
+    drainer = hook_pending.PendingHookDrainer(lambda _request: None, state_dir=tmp_path, clock=lambda: ticks[0])
+    drainer.drain_now()
+    drainer.drain_now()
+    assert calls == [tmp_path]
+    ticks[0] = hook_pending.SPOOL_LEFTOVER_PRUNE_INTERVAL_SECONDS
+    drainer.drain_now()
+    assert calls == [tmp_path, tmp_path]
+

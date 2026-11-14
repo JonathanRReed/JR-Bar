@@ -7,7 +7,8 @@ state directory, rotating the file to ``<provider>.overflow.jsonl`` once it
 reaches 16 MiB; the Python hook client appends the same line through
 ``spool_pending_hook``. The daemon drains those files when it starts, every
 ``PENDING_DRAIN_INTERVAL_SECONDS`` after that, and at once when the ingress
-queue that refused a payload is empty again (``nudge_pending_drains``). A
+queue that refused a payload, or read a frame the shim cut short, is empty
+again (``nudge_pending_drains``). A
 file is renamed before it is read so a shim appending at the same moment
 starts a fresh file instead of racing the reader. Every shim appends under
 an ``flock`` on the file its path still names, and the drain takes that
@@ -36,6 +37,7 @@ import fcntl
 import json
 import math
 import os
+import stat
 import threading
 import time
 from collections import deque
@@ -76,6 +78,11 @@ PENDING_NUDGE_SETTLE_SECONDS: Final = 0.3
 # Long enough for the usual backlog (a restart's few hundred lines) to land
 # whole, short enough that a long outage's does not leave the app waiting.
 PENDING_STARTUP_BUDGET_SECONDS: Final = 1.5
+# Overflow and rejected files are kept as evidence of what a drain could not
+# replay. They hold whole hook payloads, so they are not kept for ever: one
+# untouched for this long is removed.
+SPOOL_LEFTOVER_MAX_AGE_SECONDS: Final = 14 * 24 * 3600.0
+SPOOL_LEFTOVER_PRUNE_INTERVAL_SECONDS: Final = 3600.0
 
 _drainers_lock = threading.Lock()
 _running_drainers: set[PendingHookDrainer] = set()
@@ -383,6 +390,38 @@ def spool_pending_hook(
     )
 
 
+def prune_spool_leftovers(
+    state_dir: Path | None = None,
+    *,
+    now: float | None = None,
+    max_age_seconds: float = SPOOL_LEFTOVER_MAX_AGE_SECONDS,
+) -> int:
+    """Remove ``*.overflow.jsonl`` and ``*.rejected.jsonl`` files nothing has
+    written to for ``max_age_seconds``, and say how many went. A shim only
+    rotates into an overflow file and a drain only appends to a rejected one,
+    so an old modification time means both are done with it. Pending and
+    draining files are never touched here."""
+    base = Path(state_dir) if state_dir is not None else default_state_dir()
+    moment = time.time() if now is None else now
+    removed = 0
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        if not path.name.endswith((OVERFLOW_SUFFIX, REJECTED_SUFFIX)):
+            continue
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or moment - info.st_mtime < max_age_seconds:
+                continue
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def nudge_pending_drains() -> None:
     """Drain the spool now rather than at the next interval: the ingress
     calls this once the queue that refused a payload is empty again."""
@@ -661,6 +700,7 @@ class PendingHookDrainer:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._next_prune = clock()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -709,7 +749,21 @@ class PendingHookDrainer:
             self._after_pass()
         if count:
             self._log(f"hook_pending drained={count}")
+        self._prune_leftovers()
         return count
+
+    def _prune_leftovers(self) -> None:
+        """Once an hour, drop overflow and rejected files past their age."""
+        if self._clock() < self._next_prune:
+            return
+        self._next_prune = self._clock() + SPOOL_LEFTOVER_PRUNE_INTERVAL_SECONDS
+        try:
+            removed = prune_spool_leftovers(self._state_dir)
+        except Exception as exc:
+            self._log(f"hook_pending could not prune old spool files: {exc}")
+            return
+        if removed:
+            self._log(f"hook_pending removed {removed} old overflow or rejected files")
 
     def _after_pass(self) -> None:
         if self._after_drain is not None:
@@ -815,6 +869,7 @@ __all__ = [
     "drain_pending_hooks",
     "nudge_pending_drains",
     "pending_hook_files",
+    "prune_spool_leftovers",
     "request_from_pending_line",
     "spool_pending_hook",
 ]

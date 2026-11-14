@@ -211,7 +211,9 @@ def encode_hook_ingress_request(request: HookIngressRequest) -> bytes:
 HOOK_FRAME_REFUSALS: Final = (
     "not_a_frame",       # no magic: something other than the shim connected
     "short_frame",       # closed before the lengths arrived
-    "bad_lengths",       # a length out of bounds, or the frame was cut short
+    "bad_lengths",       # a length out of bounds, or bytes past the frame's end
+    "cut_short",         # ended before its declared length: the hook ran out
+                         # of time mid-send and queued the event instead
     "too_large",         # past the wire limit
     "bad_header",        # the header is not strict JSON or the text is not UTF-8
     "bad_fields",        # a missing, extra or wrongly typed header field
@@ -268,8 +270,15 @@ def _decode_hook_ingress_request(payload: bytes) -> tuple[HookIngressRequest | N
         header_size <= 0
         or header_size > MAX_HOOK_INGRESS_HEADER_BYTES
         or body_size > MAX_HOOK_INGRESS_PAYLOAD_BYTES
-        or len(payload) != header_at + header_size + body_size
     ):
+        return None, "bad_lengths", _peek_provider(payload, header_at, header_size)
+    declared = header_at + header_size + body_size
+    if len(payload) < declared:
+        # Sound lengths and too few bytes: the shim's send budget ran out
+        # while the daemon was slow to read. It queues the event for the
+        # drain (jrbar-hook.c, `deliver` returning -2), so nothing is lost.
+        return None, "cut_short", _peek_provider(payload, header_at, header_size)
+    if len(payload) != declared:
         return None, "bad_lengths", _peek_provider(payload, header_at, header_size)
     header_end = header_at + header_size
     try:

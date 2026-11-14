@@ -44,7 +44,9 @@ def test_the_frame_helper_builds_what_the_encoder_builds():
 @pytest.mark.parametrize("payload,reason,provider", [
     (b"GET / HTTP/1.1\r\n", "not_a_frame", None),
     (b"JRBARHOOK\x01\x00", "short_frame", None),
-    (frame(good_header())[:-1], "bad_lengths", "codex"),
+    (frame(good_header())[:-1], "cut_short", "codex"),
+    (frame(good_header(), body="x" * 9000)[:8192], "cut_short", "codex"),
+    (frame(good_header()) + b"x", "bad_lengths", "codex"),
     (frame(good_header(version=99)), "wrong_version", "codex"),
     (frame(good_header(log_path=None)), "bad_fields", "codex"),
     (frame(good_header(ppid=1, decide_ms=50000)), "orphaned_decide", "codex"),
@@ -103,6 +105,7 @@ def test_doctor_counts_today_and_names_the_newest_reason(tmp_path: Path):
         log.write("not json\n")
     summary = rejected_hook_frames(tmp_path, now=now)
     assert summary["today"] == 2
+    assert summary["late_today"] == 0
     assert summary["newest_detail"] == "wrong_version"
     assert summary["newest_provider"] == "codex"
     assert summary["sentence"] == ("2 hook events were refused today. "
@@ -111,7 +114,33 @@ def test_doctor_counts_today_and_names_the_newest_reason(tmp_path: Path):
 
 def test_doctor_says_nothing_when_nothing_was_refused(tmp_path: Path):
     summary = rejected_hook_frames(tmp_path, now=1_800_000_000)
-    assert summary == {"today": 0, "newest_at": None, "newest_detail": None, "newest_provider": None, "sentence": None}
+    assert summary == {"today": 0, "late_today": 0, "newest_at": None, "newest_detail": None,
+                       "newest_provider": None, "sentence": None}
     report = {"state_dir": "/tmp/x", "shim": None, "ingress_socket": {"path": "a", "answers": False},
               "core_socket": {"path": "b", "answers": False}, "pending": [], "providers": [], "rejected": summary}
     assert "refused hook events: none today" in render_hook_doctor(report)
+
+
+def test_doctor_counts_a_cut_short_event_as_late_not_refused(tmp_path: Path):
+    """The hook queued the event and the monitor read it from the queue."""
+    now = time.mktime((2026, 11, 14, 15, 0, 0, 0, 0, -1))
+    late = {"reason": "refused_invalid", "detail": "cut_short", "provider": "codex"}
+    write_log(tmp_path, [{"recorded_at": stamp(now - 120), **late}, {"recorded_at": stamp(now - 60), **late}])
+    summary = rejected_hook_frames(tmp_path, now=now)
+    assert summary["today"] == 0 and summary["late_today"] == 2
+    assert summary["newest_detail"] is None
+    assert summary["sentence"] == "2 hook events arrived late today, queued while the monitor was busy."
+    report = {"state_dir": "/tmp/x", "shim": None, "ingress_socket": {"path": "a", "answers": False},
+              "core_socket": {"path": "b", "answers": False}, "pending": [], "providers": [], "rejected": summary}
+    rendered = render_hook_doctor(report)
+    assert "hook events: 2 hook events arrived late today" in rendered
+    assert "refused hook events" not in rendered
+
+    with (tmp_path / "hook-ingress-rejections.jsonl").open("a") as log:
+        log.write(json.dumps({"recorded_at": stamp(now - 30), "reason": "refused_invalid",
+                              "detail": "bad_header", "provider": "claude"}) + "\n")
+    both = rejected_hook_frames(tmp_path, now=now)
+    assert both["today"] == 1 and both["late_today"] == 2
+    assert both["sentence"] == ("1 hook event was refused today. The newest: the event's header could not be read. "
+                                "2 hook events arrived late today, queued while the monitor was busy.")
+
