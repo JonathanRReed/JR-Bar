@@ -210,6 +210,101 @@ import Testing
         #expect(ScreenBarWingGeometry(notchWidth: 185).menuRowStemWidth == 185)
     }
 
+    /// Cutouts as screens report them, in points: the 2026 OLED MacBook
+    /// Pro's small Dynamic Island cutout (its exact size is not published,
+    /// so several small widths stand in), a classic notch in Larger Text,
+    /// default and More Space modes, and one wider than any Mac ships.
+    static let cutouts: [(width: CGFloat, depth: CGFloat)] = [
+        (28, 24), (48, 28), (64, 30), (96, 34), (125.3, 21.7), (162, 32), (185, 32), (200.5, 32),
+        (220.2, 38), (260, 38), (340, 44),
+    ]
+
+    @Test func theBandSlotIsTheCutoutBoundedToAReadableBand() {
+        #expect(ScreenBarGeometry.slotWidth(hardware: nil) == ScreenBarDesign.windowWidth)
+        for cutout in Self.cutouts {
+            let slot = ScreenBarGeometry.slotWidth(hardware: cutout.width)
+            #expect(slot == max(ScreenBarDesign.minBandWidth, min(ScreenBarGeometry.maximumSlotWidth, cutout.width)))
+            #expect(slot >= ScreenBarDesign.minBandWidth && slot <= ScreenBarGeometry.maximumSlotWidth)
+        }
+        // A classic notch keeps its own width, as before.
+        #expect(ScreenBarGeometry.slotWidth(hardware: 185) == 185)
+        #expect(ScreenBarGeometry.slotWidth(hardware: 220.2) == 220.2)
+    }
+
+    @Test func aCutoutOfAnyRealWidthIsMeasuredAndASliverIsNot() {
+        func areas(gap: CGFloat) -> (CGRect, CGRect) {
+            let side = (1512 - gap) / 2
+            return (CGRect(x: 0, y: 950, width: side, height: 32),
+                    CGRect(x: side + gap, y: 950, width: side, height: 32))
+        }
+        for cutout in Self.cutouts {
+            let (left, right) = areas(gap: cutout.width)
+            let measured = ScreenBarGeometry.hardwareSlotWidth(auxLeft: left, auxRight: right)
+            #expect(measured.map { abs($0 - cutout.width) < 1e-9 } == true, "\(cutout.width)")
+        }
+        let (left, right) = areas(gap: 6)
+        #expect(ScreenBarGeometry.hardwareSlotWidth(auxLeft: left, auxRight: right) == nil,
+                "a few points between the areas is a screen changing shape, not a camera")
+        #expect(ScreenBarGeometry.hardwareSlotWidth(auxLeft: left, auxRight: nil) == nil)
+        #expect(ScreenBarGeometry.hardwareSlotWidth(auxLeft: nil, auxRight: nil) == nil)
+    }
+
+    @Test func earsAndTraySitAgainstTheCutoutAtEverySize() throws {
+        for cutout in Self.cutouts where cutout.depth >= ScreenBarGeometry.wingSeatHeight {
+            let slot = ScreenBarGeometry.slotWidth(hardware: cutout.width)
+            let geometry = ScreenBarWingGeometry(notchWidth: slot, notchDepth: cutout.depth,
+                                                 leftExtent: 100, rightExtent: 100,
+                                                 menuRowStemWidth: cutout.width)
+            let size = NSSize(width: slot + 200, height: cutout.depth + 8)
+            let ears = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry)
+            let left = try #require(ears.left, "\(cutout.width)")
+            let right = try #require(ears.right, "\(cutout.width)")
+            let cutoutLeft = (size.width - cutout.width) / 2
+            let cutoutRight = cutoutLeft + cutout.width
+            // Each ear starts at the hardware's edge and reaches away from it.
+            #expect(abs(left.maxX - cutoutLeft) < 1e-9, "\(cutout.width)")
+            #expect(abs(right.minX - cutoutRight) < 1e-9, "\(cutout.width)")
+            #expect(left.width == right.width && left.width <= ScreenBarGeometry.wingMenuRowExtent)
+            #expect(left.minY >= 0 && left.maxY <= size.height)
+
+            // The tray never paints wider than the cutout and its two ears.
+            let tray = ScreenBarGeometry.trayPath(CGRect(origin: .zero, size: size), stemWidth: cutout.width,
+                                                  notchDepth: cutout.depth, radius: 8)
+            let box = tray.boundingBoxOfPath
+            #expect(box.width <= cutout.width + 2 * ScreenBarGeometry.wingMenuRowExtent + 1e-6, "\(cutout.width)")
+            #expect(abs(box.midX - size.width / 2) < 1e-6)
+
+            // And nothing a housing draws in the menu row escapes that span.
+            let everything = CGPath(rect: CGRect(origin: .zero, size: size), transform: nil)
+            let safe = ScreenBarGeometry.menuSafePath(everything, in: size, stemWidth: cutout.width,
+                                                      notchDepth: cutout.depth)
+            // A hair inside the row: the floor below it is the whole view's width by design.
+            let menuRow = CGRect(x: 0, y: size.height - cutout.depth + 0.5, width: size.width,
+                                 height: cutout.depth - 0.5)
+            let inRow = safe.intersection(CGPath(rect: menuRow, transform: nil)).boundingBoxOfPath
+            #expect(inRow.width <= cutout.width + 2 * ScreenBarGeometry.wingMenuRowExtent + 1e-6, "\(cutout.width)")
+        }
+    }
+
+    @Test func theWindowIsCentredOnScreenAndHoldsAReadableBandAtEveryCutout() {
+        for cutout in Self.cutouts {
+            let slot = ScreenBarGeometry.slotWidth(hardware: cutout.width)
+            let side = (Self.screen.width - cutout.width) / 2
+            let frame = ScreenBarGeometry.windowFrame(
+                screenFrame: Self.screen, slotWidth: slot, notchDepth: cutout.depth,
+                auxiliaryLeft: side, auxiliaryRight: side, hardwareSlot: cutout.width, wrapMenuBar: true)
+            #expect(abs(frame.midX - Self.screen.midX) < 1e-9, "\(cutout.width)")
+            #expect(Self.screen.contains(frame), "\(cutout.width)")
+            #expect(frame.maxY == Self.screen.maxY)
+            #expect(frame.height >= cutout.depth)
+            let band = ScreenBarGeometry.bandRect(in: frame.size, preferredSpan: frame.width,
+                                                  underBezel: cutout.depth)
+            #expect(band.width >= ScreenBarDesign.minBandWidth - 2 * ScreenBarDesign.edgeInset - 1e-9,
+                    "\(cutout.width): \(band.width)")
+            #expect(abs(band.midX - frame.width / 2) < 1e-9)
+        }
+    }
+
     @Test func notchedWingSeatsStayInsideTheirCanvas() {
         let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
                                              leftExtent: 132, rightExtent: 132)

@@ -1298,7 +1298,7 @@ final class ScreenBarController {
         let wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
                                                   bandSpan: bandSpan,
                                                   leftExtent: extents.left, rightExtent: extents.right,
-                                                  menuRowStemWidth: ScreenBarGeometry.slotWidth(of: screen))
+                                                  menuRowStemWidth: Self.menuRowStemWidth(of: screen))
         // Each ear stops short of the nearest status item or app menu
         // title on its flank — the « a hidden run keeps beside the notch,
         // our own chevron, whatever macOS parks there, a long menu bar's
@@ -1707,6 +1707,15 @@ final class ScreenBarController {
             })
         }
         view.setAccessibilityCustomActions(actions)
+    }
+
+    /// The stem the ears and the tray stand on in the menu row: the camera
+    /// cutout's own measured width, so they sit against the hardware's edges
+    /// on every Mac. The band's slot is clamped to a readable width and was
+    /// used here before: a cutout narrower than that had a tray drawn wider
+    /// than itself, over the menu bar beside it.
+    static func menuRowStemWidth(of screen: NSScreen) -> CGFloat {
+        ScreenBarGeometry.hardwareSlotWidth(of: screen) ?? ScreenBarGeometry.slotWidth(of: screen)
     }
 
     // MARK: Frame clock (fallback)

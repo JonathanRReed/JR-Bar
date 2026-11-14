@@ -4,6 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- The notch and the Screen Bar fit every camera cutout, from the small Dynamic Island cutout of the 2026 OLED MacBook Pro to a classic notch in any display mode. The Screen Bar used to assume a 260-point notch for any cutout narrower than 120 points, and 180 points for one a little wider, then seated its ears and drew its tray to that assumed width: over the menu bar beside a small cutout, and about 27 points past each side of a notch in Larger Text mode. Both now sit against the measured edges of the hardware.
 - The Screen Bar no longer redraws 60 times a second while an agent works. With a colour calibration set, dim and fast light programs (most of the provider animations) could not be handed to the system to play, so the app drew every frame itself. They now play as the smooth fade the strip's steps approximate, and the app does no per-frame work for them.
 - The monitor stops resending every provider's usage to the app each time a reading gets a few seconds older. On a working Mac that was four fifths of what the monitor sent.
 - ⌘R in the panel refreshes usage, as 0.10.1 promised; it used to open Events. Events is now ⌘E.

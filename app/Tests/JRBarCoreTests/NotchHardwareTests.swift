@@ -80,6 +80,72 @@ struct NotchHardwareTests {
         }
     }
 
+    /// Every cutout a Mac reports: the 2026 OLED MacBook Pro's small
+    /// Dynamic Island cutout (its size is not published, so several small
+    /// widths stand in), classic notches in Larger Text, default and More
+    /// Space modes, on screens at the origin and beside another display.
+    @Test func theIslandFitsEveryCutoutFromTheSmallestToTheWidest() {
+        let cutouts: [(gap: CGFloat, depth: CGFloat)] = [
+            (28, 24), (48, 28), (64, 30), (96, 34), (125.3, 21.7), (162, 32), (185, 32), (200.5, 32),
+            (220.2, 38), (260, 38), (340, 44),
+        ]
+        let screens: [(width: CGFloat, height: CGFloat, origin: CGPoint)] = [
+            (1512, 982, .zero), (1024, 665, .zero), (2056, 1329, .zero), (1728, 1117, CGPoint(x: -1728, y: 240)),
+        ]
+        for screen in screens {
+            for cutout in cutouts {
+                for scale: CGFloat in [1, 2, 3] {
+                    let metrics = laptop(width: screen.width, height: screen.height, gap: cutout.gap,
+                                         depth: cutout.depth, scale: scale, origin: screen.origin)
+                    let label = "\(cutout.gap)x\(cutout.depth) @\(scale) on \(screen.width)"
+                    let hardware = NotchHardware.resolve(metrics, simulated: false)
+                    #expect(hardware.kind == .notched, "\(label)")
+                    let rect = hardware.rect
+                    // The housing covers the hardware, flush with the top edge, on whole pixels.
+                    #expect(rect.minX <= metrics.auxLeft!.maxX && rect.maxX >= metrics.auxRight!.minX, "\(label)")
+                    #expect(rect.width - cutout.gap <= 4 / scale + 1e-9, "\(label)")
+                    #expect(rect.maxY == metrics.frame.maxY, "\(label)")
+                    #expect(rect.height >= cutout.depth, "\(label)")
+                    #expect(abs(hardware.centerX - metrics.frame.midX) <= 1 / scale, "\(label)")
+                    for edge in [rect.minX, rect.maxX, rect.minY, rect.maxY] {
+                        #expect(onPixels(edge - metrics.frame.minX, scale: scale) || onPixels(edge, scale: scale), "\(label)")
+                    }
+
+                    // The resting island: the housing with a shoulder each side, exactly as deep
+                    // as the cutout, centred on it, on screen, and never short of the hardware.
+                    for shoulder: CGFloat in [0, NotchIslandLayout.shoulder, 46] {
+                        let size = NotchIslandLayout.idleSize(slotWidth: hardware.width, notchDepth: hardware.depth,
+                                                              leftShoulder: shoulder, rightShoulder: shoulder)
+                        let frame = NotchIslandLayout.settled(
+                            NotchIslandLayout.frame(screenFrame: metrics.frame, centerX: hardware.centerX, size: size),
+                            scale: scale, over: rect)
+                        #expect(frame.contains(rect), "\(label) shoulder \(shoulder)")
+                        #expect(metrics.frame.contains(frame), "\(label) shoulder \(shoulder)")
+                        #expect(abs(frame.midX - hardware.centerX) <= 1 / scale, "\(label) shoulder \(shoulder)")
+                        #expect(frame.maxY == metrics.frame.maxY, "\(label)")
+                        #expect(frame.height - hardware.depth < 1 / scale + 1e-9, "\(label)")
+                        #expect(frame.width >= hardware.width + 2 * shoulder - 1e-9, "\(label)")
+                    }
+
+                    // The grown card: wide enough for its rows, wider than the cutout, on screen,
+                    // and its content starts below the hardware.
+                    let width = NotchIslandLayout.expandedWidth(slotWidth: hardware.width)
+                    #expect(width >= NotchIslandLayout.expandedMinWidth, "\(label)")
+                    #expect(width <= NotchIslandLayout.expandedMaxWidth, "\(label)")
+                    if hardware.width <= NotchIslandLayout.expandedMaxWidth - 2 * NotchIslandLayout.expandedNotchInset {
+                        #expect(width >= hardware.width + 2 * NotchIslandLayout.expandedNotchInset, "\(label)")
+                    }
+                    #expect(NotchIslandLayout.expandedTopInset(notchDepth: hardware.depth)
+                            == hardware.depth + NotchIslandLayout.expandedNotchInset, "\(label)")
+                    let card = NotchIslandLayout.frame(screenFrame: metrics.frame, centerX: hardware.centerX,
+                                                       size: CGSize(width: width, height: 360))
+                    #expect(metrics.frame.contains(card), "\(label)")
+                    #expect(abs(card.midX - hardware.centerX) <= 0.5, "\(label)")
+                }
+            }
+        }
+    }
+
     @Test func floatNoiseDoesNotGrowAPixel() {
         let grid = NotchPixelGrid.snapOut(
             CGRect(x: 663.5 + 1e-12, y: 950, width: 185 - 2e-12, height: 32), scale: 2)

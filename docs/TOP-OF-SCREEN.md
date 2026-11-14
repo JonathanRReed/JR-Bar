@@ -28,8 +28,31 @@ Screen Bar's housing under a notice, an ask or the card did take the frame, and
 stepped out past the island by 4 pt on each side.
 
 `ScreenBarGeometry` is the only source of notch truth: `notchDepth`,
-`slotWidth` (auxiliary-areas gap), `preferredScreen`, band rects, wing
-extents, corner radii from `NotchProfile`. Nothing else measures the notch.
+`hardwareSlotWidth` (the gap between the two menu-bar areas, as measured),
+`slotWidth` (that gap bounded to a readable band), `preferredScreen`, band
+rects, wing extents, corner radii from `NotchProfile`. Nothing else measures
+the notch.
+
+Cutouts differ, and nothing may assume one. A classic notch is about 185 pt
+wide and 32 deep at a 14-inch MacBook Pro's default size, about 125 by 22 in
+its Larger Text mode and about 220 by 38 in More Space; the 2026 OLED MacBook
+Pro has a much smaller Dynamic Island cutout whose size Apple does not
+publish. Two widths follow from one measurement:
+
+- What sits against the hardware reads `hardwareSlotWidth`, never clamped: the
+  island's housing (`NotchHardware.resolve`), the ears' seats and the tray in
+  the menu row (`ScreenBarWingGeometry.menuRowStemWidth`). A tray drawn wider
+  than the cutout paints over the menu bar beside it.
+- The band reads `slotWidth`: the same measurement, no narrower than
+  `ScreenBarDesign.minBandWidth` and no wider than `maximumSlotWidth`. Under a
+  small cutout the band is wider than the cutout and centred on it.
+
+A gap under `minimumCutoutWidth` (16 pt) is a screen changing shape, not a
+camera. `NotchHardwareTests` and `ScreenBarGeometryTests` run the island, the
+card, the ears, the tray and the band over cutouts from 28 to 340 pt wide and
+22 to 44 deep, at three backing scales, on screens at and away from the
+origin. No Mac with the new cutout has run JR-Bar yet, and how macOS draws its
+own Dynamic Island there is not known, so that Mac needs a look by hand.
 The notch itself is resolved by `NotchHardware.resolve`, a pure function of
 injected screen metrics (frame, safe-area inset, the two menu-bar areas, backing
 scale, built-in or not): a real notch needs both areas and a gap between them,

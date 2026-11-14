@@ -372,13 +372,42 @@ public enum ScreenBarGeometry {
 
     public static func hasNotch(_ screen: NSScreen) -> Bool { notchDepth(of: screen) > 0 }
 
-    /// The system-reported gap between the notch's left and right areas.
+    /// The narrowest gap between the two menu-bar areas that is a camera
+    /// cutout. Anything smaller is a screen mid-reconfiguration, not
+    /// hardware. Cutouts differ a great deal: a classic notch is about
+    /// 185 points at a 14-inch MacBook Pro's default size, about 125 in its
+    /// Larger Text mode and about 220 in More Space, and the Dynamic Island
+    /// cutout of the 2026 OLED MacBook Pro is far narrower than any of them.
+    public static let minimumCutoutWidth: CGFloat = 16
+    /// The widest slot the band is centred on.
+    public static let maximumSlotWidth: CGFloat = 320
+
+    /// The camera cutout's own width as the screen reports it: the gap
+    /// between its two menu-bar areas, never clamped. nil where the screen
+    /// has no cutout to measure. Everything that sits against the hardware's
+    /// edges (the ears, the tray in the menu row) reads this.
+    public static func hardwareSlotWidth(auxLeft: CGRect?, auxRight: CGRect?) -> CGFloat? {
+        guard let auxLeft, let auxRight else { return nil }
+        let width = auxRight.origin.x - auxLeft.maxX
+        return width.isFinite && width >= minimumCutoutWidth ? width : nil
+    }
+
+    public static func hardwareSlotWidth(of screen: NSScreen) -> CGFloat? {
+        hardwareSlotWidth(auxLeft: screen.auxiliaryTopLeftArea, auxRight: screen.auxiliaryTopRightArea)
+    }
+
+    /// The width the band is centred on: the cutout's own width, but never
+    /// narrower than a readable band nor wider than `maximumSlotWidth`. A
+    /// small cutout gets a band wider than itself, centred under it; the
+    /// band is a light, not a ruler. With no cutout it is the design width.
+    public static func slotWidth(hardware: CGFloat?) -> CGFloat {
+        guard let hardware else { return ScreenBarDesign.windowWidth }
+        return max(ScreenBarDesign.minBandWidth, min(maximumSlotWidth, hardware))
+    }
+
+    /// The band's slot for `screen` (`slotWidth(hardware:)`).
     public static func slotWidth(of screen: NSScreen) -> CGFloat {
-        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
-            let width = right.origin.x - left.maxX
-            if width >= 120.0 { return max(180.0, min(320.0, width)) }
-        }
-        return ScreenBarDesign.windowWidth
+        slotWidth(hardware: hardwareSlotWidth(of: screen))
     }
 
     /// How far the glow may extend past each side of the notch
