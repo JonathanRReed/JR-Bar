@@ -313,6 +313,12 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("health", "intake", "silence_seconds"),
         ("usage", "providers", "*", "forecast", "exhausts_at"),
         ("usage", "providers", "*", "windows", "*", "forecast", "exhausts_at"),
+        # How old a quota reading is grows with the clock. Sending the whole
+        # usage slice each time it ticked was four fifths of the state bytes
+        # on a working Mac (measured 2026-11-14). The app ages a reading
+        # from ``read_at`` on its own clock; a new read, a reset or a state
+        # change still earns a broadcast.
+        ("usage", "providers", "*", "last_good_age_seconds"),
         # Battery estimates move on every read; a percent step or a plug
         # change is what earns a broadcast.
         ("power", "battery", "minutes_left"),
@@ -335,6 +341,12 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         # A duration that grows every second, not a stamp: a client that
         # prints it as received shows the value of the last broadcast.
         ("surfaces", "*", "why_detail", "seconds_in_state"),
+        # The product of the dimming steps, to three places: it drifts with
+        # the ambient sensor while the light looks the same. A surface's own
+        # brightness, its program and the list of dimming steps are what a
+        # person can see change, and each of those earns a broadcast that
+        # carries the factor with it.
+        ("surfaces", "*", "why_detail", "brightness_factor"),
         ("linked_skew_at",),
         ("linked_skew_ms",),
         ("auto_dim", "lux"),

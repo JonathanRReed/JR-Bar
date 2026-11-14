@@ -156,3 +156,45 @@ def test_the_moments_a_client_ages_a_wait_from_stay_significant() -> None:
     # The duration itself stays the volatile one: it is the field a client
     # must not print as received.
     assert _path_is_volatile(("surfaces", "0", "why_detail", "seconds_in_state"), _VOLATILE_DOC_PATHS["lights"])
+
+
+def test_a_quota_reading_growing_older_is_not_news_but_a_new_reading_is() -> None:
+    """The age of a reading ticks with the clock. A rebuild where only that
+    moved sends no usage slice; the app ages the reading from ``read_at``.
+    Anything a person would see change still does."""
+    before = _state()
+    row = before["usage"]["providers"][0]
+    row.update({"read_at": 940.0, "observed_at": 940.0, "last_good_age_seconds": 60.0,
+                "availability": "available", "status_text": None})
+    older = copy.deepcopy(before)
+    older["now"] = 1030.0
+    older["usage"]["providers"][0]["last_good_age_seconds"] = 90.0
+    assert doc_significant_equal("state", before, older)
+    assert _walk("state", before, older)
+
+    for field, value in (("read_at", 1025.0), ("percent", 43), ("availability", "stale"),
+                         ("status_text", "Sign in to Claude")):
+        changed = copy.deepcopy(older)
+        changed["usage"]["providers"][0][field] = value
+        assert not doc_significant_equal("state", before, changed), field
+    # The stamp the app ages from must always reach it.
+    assert not _path_is_volatile(("usage", "providers", "0", "read_at"), _VOLATILE_DOC_PATHS["state"])
+    assert not _path_is_volatile(("usage", "providers", "0", "observed_at"), _VOLATILE_DOC_PATHS["state"])
+
+
+def test_a_dimming_factor_drifting_is_not_news_but_a_dimming_step_is() -> None:
+    before = _lights()
+    before["surfaces"][0].update({"brightness": 0.43})
+    before["surfaces"][0]["why_detail"].update({"brightness_factor": 0.431, "dimming": ["auto_dim"]})
+    drifted = copy.deepcopy(before)
+    drifted["surfaces"][0]["why_detail"]["brightness_factor"] = 0.433
+    assert doc_significant_equal("lights", before, drifted)
+    assert _walk("lights", before, drifted)
+
+    stepped = copy.deepcopy(drifted)
+    stepped["surfaces"][0]["brightness"] = 0.44
+    assert not doc_significant_equal("lights", before, stepped)
+    dimmer = copy.deepcopy(drifted)
+    dimmer["surfaces"][0]["why_detail"]["dimming"] = ["auto_dim", "idle_dim"]
+    assert not doc_significant_equal("lights", before, dimmer)
+
