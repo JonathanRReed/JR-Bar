@@ -1096,4 +1096,12 @@ research report, not yet a doc here. Taken so far:
   `liveness_sweep.BACKGROUND_WAIT_MAX_SECONDS`). The issue's suggested patch
   was read; none of it was copied. The hook's fields were checked against
   Claude Code's hooks reference on 2026-11-14.
+- Issue #82, "Claude: auto-compaction of an idle session leaves it in Working
+  until the next prompt". JR-Bar mapped both compaction events to work too.
+  Here Claude's PreCompact and PostCompact carry no lifecycle of their own
+  (`_CLAUDE_PRE_COMPACT`, `_CLAUDE_POST_COMPACT`), the SessionStart whose
+  source is `compact` is read as the end of that compaction and not as a new
+  idle session, and the row's overlay follows a compaction only in the
+  middle of a turn (`collector.is_compaction_record`). The issue's event log
+  gave the sequence the tests replay; no code was taken.
 

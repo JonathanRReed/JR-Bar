@@ -379,6 +379,26 @@ _POST_COMPACT = _rule(
     NextActor.PROVIDER,
     26,
 )
+# Claude Code compacts a conversation in the middle of a turn, and also on
+# its own about an hour after a turn ended ("idle compaction": PreCompact,
+# a summary SubagentStop, SessionStart with source "compact", PostCompact,
+# and then nothing). Compaction is maintenance: it never starts a turn. With
+# a lifecycle of its own it moved a finished session to active, and with no
+# Stop to follow the lights played "working" all night (SidePulse issue
+# #82). These rules carry no lifecycle, so the work keeps the state it had:
+# active in the middle of a turn, finished or idle after one.
+_CLAUDE_PRE_COMPACT = _rule(
+    ProviderEventName.PRE_COMPACT,
+    None,
+    NextActor.UNKNOWN,
+    25,
+)
+_CLAUDE_POST_COMPACT = _rule(
+    ProviderEventName.POST_COMPACT,
+    None,
+    NextActor.UNKNOWN,
+    26,
+)
 _SUBAGENT_START = _rule(
     ProviderEventName.SUBAGENT_START,
     WorkLifecycle.ACTIVE,
@@ -525,8 +545,8 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "PostToolUseFailure": _FAILURE,
         "PermissionRequest": _PERMISSION_REQUEST,
         "Notification": _NOTIFICATION,
-        "PreCompact": _PRE_COMPACT,
-        "PostCompact": _POST_COMPACT,
+        "PreCompact": _CLAUDE_PRE_COMPACT,
+        "PostCompact": _CLAUDE_POST_COMPACT,
         "SubagentStart": _SUBAGENT_START,
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
@@ -1476,7 +1496,21 @@ def _provider_event_rule(record: HookEvent) -> tuple[_EventRule | None, str | No
         return _devin_event_rule(record)
     if record.provider == "claude" and record.event_name == "Stop" and running_background_tasks(record.raw):
         return _STOP_BACKGROUND, None
+    if is_compaction_boundary(record):
+        # The session Claude restarts after compacting is the same turn, or
+        # the same finished one: not a new idle session.
+        return _CLAUDE_POST_COMPACT, None
     return _PROVIDER_EVENT_RULES.get(record.provider, {}).get(record.event_name), None
+
+
+def is_compaction_boundary(record: HookEvent) -> bool:
+    """Claude Code's SessionStart after a compaction (``source: "compact"``)."""
+    return (
+        record.provider == "claude"
+        and record.event_name == "SessionStart"
+        and isinstance(record.raw, Mapping)
+        and record.raw.get("source") == "compact"
+    )
 
 
 #: A background task's status that says it is over. Claude Code lists only

@@ -536,8 +536,10 @@ _CONFORMANCE = (
     ("claude", "PostToolUseFailure", "post_tool_use_failure", WorkLifecycle.ACTIVE, False),
     ("claude", "PermissionRequest", "permission_request", WorkLifecycle.WAITING, True),
     ("claude", "Notification", "notification", None, False),
-    ("claude", "PreCompact", "pre_compact", WorkLifecycle.ACTIVE, False),
-    ("claude", "PostCompact", "post_compact", WorkLifecycle.ACTIVE, False),
+    # Compaction is maintenance on Claude: it never starts a turn, so it
+    # carries no lifecycle and the work keeps the state it had.
+    ("claude", "PreCompact", "pre_compact", None, False),
+    ("claude", "PostCompact", "post_compact", None, False),
     ("claude", "SubagentStop", "subagent_stop", WorkLifecycle.COMPLETED, False),
     ("claude", "Stop", "stop", WorkLifecycle.COMPLETED, False),
     ("claude", "SessionEnd", "session_end", WorkLifecycle.COMPLETED, False),

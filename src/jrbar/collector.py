@@ -83,6 +83,7 @@ from .private_io import (
 from .project_names import repository_project as project_name
 from .provider_adapters import (
     NormalizedProviderRecord,
+    is_compaction_boundary,
     minimize_hook_event,
     normalized_provider_record_from_payload,
     provider_facts_for_record,
@@ -1052,6 +1053,7 @@ class AgentMonitor(LiveSessionMemory):
                     status,
                     pending_permissions_by_key.get(status.agent_id, set()),
                     requests_input=notification_requests_input(record),
+                    maintenance=is_compaction_record(record),
                 )
                 if keep_status:
                     compatibility_statuses_by_agent_id[status.agent_id] = status
@@ -1079,6 +1081,8 @@ class AgentMonitor(LiveSessionMemory):
                         preserve_display_name=True,
                         preserve_details=transcript_source,
                     )
+                if not batch.work_facts and is_compaction_record(record):
+                    _restate_overlay(status_overlays, status)
             batches.append(batch)
         batches = sorted(batches, key=_batch_sort_key)
         if self._initial_replay_failures is None:
@@ -1191,6 +1195,7 @@ class AgentMonitor(LiveSessionMemory):
                     status,
                     pending_permissions_by_key.get(status.agent_id, set()),
                     requests_input=notification_requests_input(record),
+                    maintenance=is_compaction_record(record),
                 ):
                     continue
                 statuses_by_key[status.agent_id] = status
@@ -1576,6 +1581,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                     status,
                     self._pending_permissions_by_key.get(status.agent_id, set()),
                     requests_input=notification_requests_input(record),
+                    maintenance=is_compaction_record(record),
                 )
                 transcript_source = record.raw.get("source") in {
                     CODEX_TRANSCRIPT_PROVIDER,
@@ -1636,6 +1642,8 @@ class LiveAgentMonitor(LiveSessionMemory):
                             preserve_display_name=transcript_source,
                             preserve_details=True,
                         )
+                    if not batch.work_facts and is_compaction_record(record):
+                        _restate_overlay(self._status_overlays_by_work_key, status)
             elif record.event_name in {"Stop", "SessionEnd", "UserPromptSubmit"}:
                 self._pending_permissions_by_key.pop(record.status_key, None)
             self.revision += 1
@@ -4183,6 +4191,28 @@ def permission_signature(record: HookEvent) -> str | None:
     return None
 
 
+def _restate_overlay(overlays: dict, status: AgentStatus) -> None:
+    """Give the overlay a session already has its newest word. A compaction
+    in the middle of a turn carries no work fact to land an overlay on (it
+    changes no lifecycle), but it is still what the agent is doing, so the
+    row says "compacting" until the turn's next event."""
+    for key, overlay in overlays.items():
+        if overlay.status.agent_id == status.agent_id:
+            overlays[key] = replace(overlay, status=status)
+            return
+
+
+_WORKING_SHAPED_MODES = frozenset({AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS})
+
+
+def is_compaction_record(record: HookEvent) -> bool:
+    """A Claude Code compaction event: PreCompact, PostCompact, or the
+    SessionStart that follows a compaction (provider_adapters, issue #82)."""
+    return record.provider == "claude" and (
+        record.event_name in {"PreCompact", "PostCompact"} or is_compaction_boundary(record)
+    )
+
+
 def is_background_wait(status: AgentStatus | None) -> bool:
     """A Claude session whose last turn ended with background work still in
     flight (``mode_for_event``): paused, waiting for that work to wake it."""
@@ -4200,7 +4230,19 @@ def should_ignore_status_transition(
     pending_permission_signatures: set[str],
     *,
     requests_input: bool = False,
+    maintenance: bool = False,
 ) -> bool:
+    # Compaction never starts a turn. In the middle of one it is the row's
+    # current fact ("compacting"); on a session that was finished, idle or
+    # waiting on the owner it changes nothing, and neither does the session
+    # Claude restarts after compacting, whatever came before.
+    if maintenance and (
+        previous is None
+        or previous.mode not in _WORKING_SHAPED_MODES
+        or current.event_name == "SessionStart"
+    ):
+        return True
+
     # The idle nudge after a Stop is not news -- but a dialog that waits on
     # the owner (``requests_input``: a background agent blocked after the
     # turn ended) is, finished turn or not.

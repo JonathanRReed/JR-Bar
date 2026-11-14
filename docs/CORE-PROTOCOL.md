@@ -572,7 +572,11 @@ Vocabulary:
     stays `active` with `mode: long_task_progress` and `event: "Stop"`, the
     app captions it "background job running", and it completes on the next
     `Stop` with nothing in flight. Only the count of in-flight tasks is
-    read, never a description or a command. This is the green
+    read, never a description or a command. Claude's compaction events
+    (`PreCompact`, `PostCompact`, and the `SessionStart` whose source is
+    `compact`) change no lifecycle either: a row in the middle of a turn
+    carries `event: "PreCompact"` or `"PostCompact"` and stays `active`, and
+    a finished, idle or asking row is left exactly as it was. This is the green
     check, so it is only ever a report, never a guess. **A real terminal
     event wins over a dead process**: `codex exec`, `claude -p` and `pi -p`
     each send a real `Stop` and `SessionEnd` and then exit, and that is the
