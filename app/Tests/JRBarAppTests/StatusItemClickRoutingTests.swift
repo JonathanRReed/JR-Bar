@@ -7,6 +7,14 @@ import Testing
 struct StatusItemClickRoutingTests {
     init() { _ = NSApplication.shared }
 
+    @Test("the breathing dot rests while the display sleeps, under Reduce Motion, and when nothing moves")
+    func breathingRestsWhenNobodyCanSeeIt() {
+        #expect(StatusItemController.breathes(moving: true, reduceMotion: false, displayAsleep: false))
+        #expect(!StatusItemController.breathes(moving: true, reduceMotion: false, displayAsleep: true))
+        #expect(!StatusItemController.breathes(moving: true, reduceMotion: true, displayAsleep: false))
+        #expect(!StatusItemController.breathes(moving: false, reduceMotion: false, displayAsleep: false))
+    }
+
     @Test("a centered native status event cannot turn an icon click into a spacer click")
     func centeredNativeEventUsesPointer() throws {
         let window = NSWindow(contentRect: NSRect(x: 800, y: 600, width: 220, height: 80),

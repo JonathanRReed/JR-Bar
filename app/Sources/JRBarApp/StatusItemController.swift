@@ -171,6 +171,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         statusItem = desktop.makeStatusItem(NSStatusItem.squareLength)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(self, selector: #selector(displaySleepChanged(_:)),
+                              name: NSWorkspace.screensDidSleepNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(displaySleepChanged(_:)),
+                              name: NSWorkspace.screensDidWakeNotification, object: nil)
         wireStatusItem()
         // Created visible, always: a saved "not visible" (a ⌘-drag off the
         // bar, an old build's write) must not outlive the launch.
@@ -860,7 +865,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private func syncBreathing() {
         let moving = (iconStyle.isMeters && dotState.animates)
             || (iconStyle == .agents && sessionDots.contains { $0.state.breathes && !$0.dimmed })
-        let wanted = moving && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let wanted = Self.breathes(moving: moving,
+                                   reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                                   displayAsleep: displayAsleep)
         if wanted, breathing == nil {
             phase = 0.5
             let timer = Timer(timeInterval: Self.breathingInterval, repeats: true) { [weak self] _ in
@@ -877,6 +884,27 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             breathing = nil
             phase = 0.5
         }
+    }
+
+    /// Whether the breathing clock should run. Nobody sees the menu bar
+    /// while the display sleeps, so an overnight run redraws nothing there.
+    nonisolated static func breathes(moving: Bool, reduceMotion: Bool, displayAsleep: Bool) -> Bool {
+        moving && !reduceMotion && !displayAsleep
+    }
+
+    /// The displays went to sleep or woke. The dot picks its breath back up
+    /// on wake, and its colour was current all along: only the motion rests.
+    private(set) var displayAsleep = false
+
+    func setDisplayAsleep(_ asleep: Bool) {
+        guard asleep != displayAsleep else { return }
+        displayAsleep = asleep
+        syncBreathing()
+        if !asleep { redraw() }
+    }
+
+    @objc private func displaySleepChanged(_ note: Notification) {
+        setDisplayAsleep(note.name == NSWorkspace.screensDidSleepNotification)
     }
 
     /// Stage-2 escalation: the icon breathes amber until the ask resolves.

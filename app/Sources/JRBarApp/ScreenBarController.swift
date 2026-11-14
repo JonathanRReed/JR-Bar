@@ -88,7 +88,10 @@ final class ScreenBarPlanQueue {
             guard !Task.isCancelled else { return }
             let plan: LEDSKeyframePlan?
             if let transfer = request.transfer {
-                plan = await Task.detached(priority: .userInitiated) {
+                // The frame clock is already showing this program. The plan
+                // only decides when that clock can stop, so it yields to
+                // anything a person is waiting on.
+                plan = await Task.detached(priority: .utility) {
                     ScreenBarLightTransfer.plan(sampler: request.sampler, transfer: transfer)
                 }.value
             } else {

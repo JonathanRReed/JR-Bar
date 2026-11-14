@@ -73,6 +73,157 @@ struct ScreenBarKeyframePerformanceTests {
         #expect(worst <= 2.0 / 255)
     }
 
+    /// The program One at a Time plays for a working provider, as the daemon
+    /// sent it on 2026-11-14: three dim lit LEDs rolling across eight, six
+    /// two-second rolls a pass. With the owner's calibration the band played
+    /// it from the 60 Hz frame clock.
+    static let rollingWork = """
+        brightness 141
+        #0E040A #0E050D #0A040E #000000 #000000 #000000 #000000 #000000 250ms cosine
+        roll-right 2s linear
+        roll-right 2s linear
+        roll-right 2s linear
+        roll-right 2s linear
+        roll-right 2s linear
+        roll-right 2s linear
+        repeat
+        """
+
+    private func rollingWorkSampler() throws -> (LEDSSampler, CoreStripTransfer) {
+        let transfer = try #require(CoreStripTransfer(channelGains: [0.3, 0.31797572544642855, 1.3034388950892857]))
+        let program = try LEDSProgram.parse(Self.rollingWork, ledCount: 8)
+        let sampler = LEDSSampler(program: program, ledCount: 8,
+                                  initialCodes: Array(repeating: RGB8(r: 0, g: 0, b: 0), count: 8),
+                                  outputLedCount: ScreenBarGeometry.ledCount)
+        return (sampler, transfer)
+    }
+
+    @Test("a dim roll whose 8-bit steps cannot be keyframed plays as the fade they approximate, not from the frame clock")
+    func dimRollPlaysSmooth() throws {
+        let (sampler, transfer) = try rollingWorkSampler()
+        // Every step of the strip, within two display codes, is thousands of keyframes.
+        let stepped = try #require(LEDSKeyframePlan.render(sampler: sampler, tolerance: 2, maxKeyframes: .max,
+            sampleColors: { t in
+                ScreenBarLightTransfer.colors(sampler.rawCodes(atMilliseconds: t), brightness: sampler.brightness,
+                                              transfer: transfer)
+            }))
+        #expect(stepped.keyframeCount > LEDSKeyframePlan.defaultMaxKeyframes)
+
+        let plan = try #require(ScreenBarLightTransfer.plan(sampler: sampler, transfer: transfer),
+                                "the band keeps its 60 Hz clock for this program")
+        #expect(plan.keyframeCount <= LEDSKeyframePlan.defaultMaxKeyframes)
+        #expect(plan.loop != nil)
+
+        // The plan stays within two display codes of the smooth fade for two whole passes.
+        var worst = 0.0
+        for t in stride(from: 0, through: 24_500, by: 3) {
+            let expected = ScreenBarLightTransfer.colors(light: sampler.smoothRawLight(atMilliseconds: t),
+                                                         brightness: sampler.brightness, transfer: transfer)
+            for (a, b) in zip(plan.codes(atMilliseconds: t).map(\.rgb), expected) {
+                worst = max(worst, abs(a.r - b.r), abs(a.g - b.g), abs(a.b - b.b))
+            }
+        }
+        #expect(worst <= 2.0 / 255, "error=\(worst * 255) codes")
+    }
+
+    @Test("the smooth fade is never a whole strip step away from the strip's own state")
+    func smoothLightStaysWithinOneStep() throws {
+        let programs = [
+            Self.rollingWork,
+            "#10121F 250ms linear\n#000000 250ms linear\nrepeat",
+            "brightness 40\n#DB704D #2961CF #DB704D #2961CF #DB704D #2961CF #DB704D #2961CF\nroll-left 1s linear\nrepeat",
+            "#FF0000 1s ease\n#0000FF 400ms cosine 200ms\nroll-right 3s ease\nrepeat 2\n#00FF00 500ms",
+            "0:#FFFFFF 3:#102030 700ms\nroll-left 900ms\n#000000",
+        ]
+        for text in programs {
+            let sampler = LEDSSampler(program: try LEDSProgram.parse(text, ledCount: 8))
+            var worst = 0.0
+            for t in stride(from: 0, through: 30_000, by: 7) {
+                for (stepped, smooth) in zip(sampler.rawCodes(atMilliseconds: t), sampler.smoothRawLight(atMilliseconds: t)) {
+                    worst = max(worst, abs(Double(stepped.r) - smooth.r * 255), abs(Double(stepped.g) - smooth.g * 255),
+                                abs(Double(stepped.b) - smooth.b * 255))
+                }
+            }
+            #expect(worst < 1.0, "program \(text.prefix(24)): \(worst) codes")
+        }
+    }
+
+    /// Knight Rider cycling between two providers, as the audit matrix
+    /// delivers it: bright sweeps that reverse every 857 ms.
+    static let cyclingSweep = """
+        #164880 #091E35 #000000 #000000 #000000 #000000 #000000 #091E35 400ms cosine
+        roll-right 1800ms linear
+        roll-left 1800ms linear
+        #6C3C2C #2D1912 #000000 #000000 #000000 #000000 #000000 #2D1912 400ms cosine
+        roll-right 857ms linear
+        roll-left 857ms linear
+        #6C3C2C #2D1912 #000000 #000000 #000000 #000000 #000000 #2D1912 171ms cosine
+        roll-right 857ms linear
+        roll-left 857ms linear
+        repeat
+        """
+
+    @Test("a fast sweep under a strong calibration plays from keyframes within five display codes of its fade")
+    func fastSweepPlaysSmooth() throws {
+        let transfer = try #require(CoreStripTransfer(channelGains: [0.3, 0.31797572544642855, 1.3034388950892857]))
+        let text = "brightness 141\n" + Self.cyclingSweep
+        let sampler = LEDSSampler(program: try LEDSProgram.parse(text, ledCount: 8), ledCount: 8,
+                                  outputLedCount: ScreenBarGeometry.ledCount)
+        let plan = try #require(ScreenBarLightTransfer.plan(sampler: sampler, transfer: transfer))
+        #expect(plan.keyframeCount <= LEDSKeyframePlan.defaultMaxKeyframes)
+        var worst = 0.0
+        for t in stride(from: 0, through: 16_000, by: 3) {
+            let expected = ScreenBarLightTransfer.colors(light: sampler.smoothRawLight(atMilliseconds: t),
+                                                         brightness: sampler.brightness, transfer: transfer)
+            for (a, b) in zip(plan.codes(atMilliseconds: t).map(\.rgb), expected) {
+                worst = max(worst, abs(a.r - b.r), abs(a.g - b.g), abs(a.b - b.b))
+            }
+        }
+        #expect(worst <= Double(ScreenBarLightTransfer.smoothTolerances.upperBound) / 255, "error=\(worst * 255) codes")
+    }
+
+    /// `scripts/audit_lights.py` writes every program the daemon's matrix
+    /// delivers (animations by mixes by provider counts by states) to
+    /// `delivered-programs.json`. With `JRBAR_AUDIT_PROGRAMS` naming that
+    /// file, this plans each one under a strong calibration and counts how
+    /// it would play: the strip's own steps, the smooth fade, or the frame
+    /// clock. Without it the test has nothing to read and says so.
+    @Test("every program the daemon delivers plays from keyframes under a strong calibration")
+    func deliveredProgramsPlan() throws {
+        guard let path = ProcessInfo.processInfo.environment["JRBAR_AUDIT_PROGRAMS"], !path.isEmpty else { return }
+        struct Row: Decodable { let leds: Int; let program: String; let `case`: String }
+        let rows = try JSONDecoder().decode([Row].self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        let transfer = try #require(CoreStripTransfer(channelGains: [0.3, 0.31797572544642855, 1.3034388950892857]))
+        var stepped = 0, smooth = 0, clock: [String] = [], seen = Set<String>()
+        for row in rows where row.leds == 8 && seen.insert(row.program).inserted {
+            // The band's own brightness, the way the daemon sends it.
+            let text = row.program.replacingOccurrences(of: #"(?m)^brightness \d+$"#, with: "brightness 141",
+                                                        options: .regularExpression)
+            guard let program = try? LEDSProgram.parse(text, ledCount: 8) else { continue }
+            let sampler = LEDSSampler(program: program, ledCount: 8, outputLedCount: ScreenBarGeometry.ledCount)
+            if sampler.isStatic { continue }
+            var exact: LEDSKeyframePlan?
+            for tolerance in 1...2 where exact == nil {
+                if let plan = LEDSKeyframePlan.render(sampler: sampler, tolerance: tolerance, maxKeyframes: .max,
+                    sampleColors: { t in
+                        ScreenBarLightTransfer.colors(sampler.rawCodes(atMilliseconds: t),
+                                                      brightness: sampler.brightness, transfer: transfer)
+                    }), plan.keyframeCount <= LEDSKeyframePlan.defaultMaxKeyframes { exact = plan }
+            }
+            if exact != nil {
+                stepped += 1
+            } else if ScreenBarLightTransfer.smoothPlan(sampler: sampler, transfer: transfer) != nil {
+                smooth += 1
+            } else {
+                clock.append(row.case)
+            }
+        }
+        print("AUDIT stepped \(stepped) smooth \(smooth) frame clock \(clock.count)")
+        for name in clock.prefix(40) { print("AUDIT frame clock:", name) }
+        #expect(stepped + smooth > 0)
+        #expect(clock.isEmpty, "\(clock.count) delivered programs still need the 60 Hz frame clock")
+    }
+
     @MainActor
     final class GradientGate {
         var pending: CheckedContinuation<ScreenBarGradientFrames, Never>?

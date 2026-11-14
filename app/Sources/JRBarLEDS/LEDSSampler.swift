@@ -63,6 +63,17 @@ public final class LEDSSampler: Sendable {
         return (0..<ledCount).map { source[$0 * source.count / ledCount] }
     }
 
+    /// The stored LED state before brightness as drive fractions (code /
+    /// 255), without the firmware's 8-bit rounding inside a line: the fade
+    /// the firmware's steps approximate. Each line still starts from the
+    /// rounded state the firmware holds, so this never drifts from
+    /// `rawCodes` by a whole code. A consumer that cannot afford every step
+    /// of a dim fade (the Screen Bar's keyframes) plays this instead.
+    public func smoothRawLight(atMilliseconds milliseconds: Int) -> [RGB] {
+        let source = timeline.light(at: max(0, milliseconds))
+        return (0..<ledCount).map { source[$0 * source.count / ledCount] }
+    }
+
     /// Float colours in 0...1 (codes / 255) at `seconds` after the parse.
     public func colors(at seconds: Double) -> [RGB] {
         codes(atMilliseconds: Int((seconds * 1000.0).rounded(.down))).map(\.rgb)
@@ -123,6 +134,15 @@ struct ResolvedTarget: Sendable {
             b: Timeline.mix(start.b, target.b, f)
         )
     }
+
+    /// `value(from:at:)` without the rounding, as drive fractions.
+    func light(from start: RGB8, at tau: Int) -> RGB {
+        let elapsed = tau - delayMs
+        if elapsed < 0 { return start.rgb }
+        if isInstant { return target.rgb }
+        let p = min(1.0, Double(elapsed) / Double(durationMs))
+        return Timeline.blend(start, target, easing.value(p))
+    }
 }
 
 enum CompiledLine: Sendable {
@@ -177,6 +197,29 @@ enum CompiledLine: Sendable {
         }
     }
 
+    /// `value(from:at:)` without the rounding, as drive fractions.
+    func light(from start: [RGB8], at tau: Int) -> [RGB] {
+        switch self {
+        case .paint(let targets, _):
+            return start.indices.map { index in
+                targets[index]?.light(from: start[index], at: tau) ?? start[index].rgb
+            }
+        case .roll(let duration, let direction, let easing):
+            let n = start.count
+            guard n > 0, duration > 0 else { return start.map(\.rgb) }
+            let p = min(1.0, Double(tau) / Double(duration))
+            var shift = easing.value(p) * Double(n)
+            if shift >= Double(n) { shift = 0 }
+            return (0..<n).map { index in
+                let position = direction == .right ? Double(index) - shift : Double(index) + shift
+                let floorPosition = position.rounded(.down)
+                let base = Int(floorPosition)
+                return Timeline.blend(start[Timeline.wrap(base, n)], start[Timeline.wrap(base + 1, n)],
+                                      position - floorPosition)
+            }
+        }
+    }
+
     func endState(from start: [RGB8]) -> [RGB8] { value(from: start, at: spanMs) }
 }
 
@@ -214,12 +257,24 @@ struct Pass: Sendable {
 
     func codes(at local: Int) -> [RGB8] {
         if local >= span { return end }
+        let index = lineIndex(at: local)
+        return lines[index].value(from: starts[index], at: local - offsets[index])
+    }
+
+    /// `codes(at:)` without the rounding inside a line.
+    func light(at local: Int) -> [RGB] {
+        if local >= span || lines.isEmpty { return end.map(\.rgb) }
+        let index = lineIndex(at: local)
+        return lines[index].light(from: starts[index], at: local - offsets[index])
+    }
+
+    private func lineIndex(at local: Int) -> Int {
         // Lines are few (<= 20); a linear scan beats anything cleverer.
         var index = lines.count - 1
         while index > 0, offsets[index] > local { index -= 1 }
         // Skip zero-span lines that start exactly here in favour of the one that runs.
         while index + 1 < lines.count, offsets[index + 1] <= local { index += 1 }
-        return lines[index].value(from: starts[index], at: local - offsets[index])
+        return index
     }
 }
 
@@ -317,6 +372,26 @@ struct Timeline: Sendable {
             if ms >= loopsEnd { return tail.codes(at: ms - loopsEnd) }
         }
         return steady.codes(at: (ms - loopSpan) % loopSpan)
+    }
+
+    /// `codes(at:)` without the rounding inside a line, as drive fractions.
+    func light(at ms: Int) -> [RGB] {
+        if !hasRepeat { return first.light(at: ms) }
+        if loopSpan == 0 { return tail.light(at: ms) }
+        if ms < loopSpan { return first.light(at: ms) }
+        guard let steady else { return first.light(at: ms) }
+        if let count = repeatCount {
+            let loopsEnd = loopSpan * count
+            if ms >= loopsEnd { return tail.light(at: ms - loopsEnd) }
+        }
+        return steady.light(at: (ms - loopSpan) % loopSpan)
+    }
+
+    /// `a + (b - a) * f` with no rounding, as drive fractions.
+    @inline(__always)
+    static func blend(_ a: RGB8, _ b: RGB8, _ f: Double) -> RGB {
+        func channel(_ x: UInt8, _ y: UInt8) -> Double { (Double(x) + (Double(y) - Double(x)) * f) / 255.0 }
+        return RGB(r: channel(a.r, b.r), g: channel(a.g, b.g), b: channel(a.b, b.b))
     }
 
     /// `a + (b - a) * f` the way the firmware rounds it: the delta's magnitude
