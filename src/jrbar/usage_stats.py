@@ -150,19 +150,26 @@ _CACHE_BYTES_PER_ENTRY = 320
 DEDUPE_DIGEST_HEX_CHARS = 32
 USAGE_MARKER = '"usage"'
 CODEX_MARKER = '"token_count"'
-PRICING_TABLE_VERSION = "jrbar-rates-v4"
-PRICING_TABLE_AS_OF = "2026-10-07"
+PRICING_TABLE_VERSION = "jrbar-rates-v5"
+PRICING_TABLE_AS_OF = "2026-11-14"
 
 
 # (input $/MTok, output $/MTok) by model-id substring, first match wins,
 # so the most specific markers come first. Cache reads bill at 0.1x input
 # unless CACHE_READ_RATE_OVERRIDES says otherwise; cache writes at 1.25x.
-# Rates checked 2026-10-07 against platform.claude.com/docs/en/about-claude/pricing:
-# Fable 5.1 / Mythos 5.1 $10/$50 (cache read 0.025x); Fable 5 / Mythos 5
-# $10/$50; Opus 5.5 $4/$20 (cache read 0.05x); Opus 4.5-4.8 and Opus 5
-# $5/$25; Opus 4 / 4.1 $15/$75; Sonnet 5 and 5.5 $2/$10; Sonnet 4-4.6
-# $3/$15; Haiku 4.5 $1/$5; Haiku 3.5 $0.80/$4.
+# Rates checked 2026-11-14 against platform.claude.com/docs/en/about-claude/pricing:
+# Fable 5.2 / Mythos 5.2 $8/$40 (cache read 0.025x, $0.20); Fable 5.1 /
+# Mythos 5.1 $10/$50 (cache read 0.025x); Fable 5 / Mythos 5 $10/$50; Opus
+# 5.5 $4/$20 (cache read 0.05x); Opus 4.5-4.8 and Opus 5 $5/$25; Opus 4 /
+# 4.1 $15/$75; Sonnet 5 and 5.5 $2/$10 (Sonnet 5.5 cache read 0.05x,
+# $0.10); Sonnet 4-4.6 $3/$15; Haiku 5.5 $0.10/$0.50 up to a 100,000-token
+# prompt and five times that over it (LONG_CONTEXT_RULES); Haiku 4.5 $1/$5;
+# Haiku 3.5 $0.80/$4.
 MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("fable-5-2", 8.0, 40.0),
+    ("fable-5.2", 8.0, 40.0),
+    ("mythos-5-2", 8.0, 40.0),
+    ("mythos-5.2", 8.0, 40.0),
     ("fable", 10.0, 50.0),
     ("mythos", 10.0, 50.0),
     ("opus-5-5", 4.0, 20.0),
@@ -189,12 +196,22 @@ MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("3-5-haiku", 0.80, 4.0),
     ("3.5-haiku", 0.80, 4.0),
     ("haiku-3", 0.80, 4.0),
+    ("haiku-5-5", 0.10, 0.50),
+    ("haiku-5.5", 0.10, 0.50),
     ("haiku", 1.0, 5.0),
 )
 # Per-marker cache-read multipliers where a model departs from 0.1x.
-# Fable 5.1 and Mythos 5.1 read cache at 0.025x base input ($0.25/MTok);
-# every other model uses 0.1x.
+# Fable and Mythos 5.1 and 5.2 read cache at 0.025x base input ($0.25 and
+# $0.20/MTok), Sonnet 5.5 at 0.05x ($0.10), GPT-6.1 Terra at 0.05x ($0.05);
+# a model with no row here uses 0.1x.
 CACHE_READ_RATE_OVERRIDES: dict[str, float] = {
+    "fable-5-2": 0.025,
+    "fable-5.2": 0.025,
+    "mythos-5-2": 0.025,
+    "mythos-5.2": 0.025,
+    "sonnet-5-5": 0.05,
+    "sonnet-5.5": 0.05,
+    "gpt-6.1-terra": 0.05,
     "fable-5-1": 0.025,
     "fable-5.1": 0.025,
     "mythos-5-1": 0.025,
@@ -205,16 +222,17 @@ CACHE_READ_RATE_OVERRIDES: dict[str, float] = {
     "opus-5.5": 0.05,
     "gpt-6.1-sol": 0.05,
 }
-# Codex models, same substring-match convention. Checked 2026-10-07
+# Codex models, same substring-match convention. Checked 2026-11-14
 # against developers.openai.com/api/docs/pricing (standard tier, short
 # context, at most 272K input): GPT-6 Astra $10/$50; GPT-6.1 Sol and GPT-6
-# Sol $2/$10; GPT-6 Luna $0.10/$0.50; GPT-5.6 Sol $4/$20, Terra $2/$12,
+# Sol $2/$10; GPT-6.1 Terra $1/$5; GPT-6 Luna $0.10/$0.50; GPT-5.6 Sol $4/$20, Terra $2/$12,
 # Luna $0.20/$1.20; GPT-5.5 $5/$30; GPT-5.4 $2.50/$15; Pro tiers $30/$180
 # (GPT-5.2 Pro $21/$168); GPT-5.3-Codex and GPT-5.2 $1.75/$14; GPT-5.1 and
 # GPT-5 $1.25/$10. Requests past 272K input reprice at 2x input and 1.5x
 # output (LONG_CONTEXT_TOKEN_LIMIT, applied per record).
 GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("gpt-6.1-sol", 2.0, 10.0),
+    ("gpt-6.1-terra", 1.0, 5.0),
     ("gpt-6-sol", 2.0, 10.0),
     ("gpt-6-luna", 0.10, 0.50),
     ("gpt-6-astra", 10.0, 50.0),
@@ -275,6 +293,16 @@ LONG_CONTEXT_OUTPUT_MULTIPLIER = 1.5
 #: substring match the price table uses; the small and Cyber models do not.
 _LONG_CONTEXT_MODELS = ("gpt-6", "gpt-5.6", "gpt-5.5", "gpt-5.4")
 _NO_LONG_CONTEXT_MODELS = ("cyber", "mini", "nano")
+#: Every model that reprices a whole request past a prompt size: the markers
+#: that name it, the markers that exclude it, the prompt size it must exceed,
+#: and what the input side and the output then cost, as multiples of the
+#: table's rate. Claude Haiku 5.5 is $0.10/$0.50 up to a 100,000-token prompt
+#: and $0.50/$2.50 over it, cache reads and writes included.
+LONG_CONTEXT_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], int, float, float], ...] = (
+    (_LONG_CONTEXT_MODELS, _NO_LONG_CONTEXT_MODELS, LONG_CONTEXT_TOKEN_LIMIT,
+     LONG_CONTEXT_INPUT_MULTIPLIER, LONG_CONTEXT_OUTPUT_MULTIPLIER),
+    (("haiku-5-5", "haiku-5.5"), (), 100_000, 5.0, 5.0),
+)
 #: A one-hour cache write bills at 2x the input rate (Anthropic's price page).
 ONE_HOUR_CACHE_WRITE_RATE = 2.0
 #: A Claude message that wrote some of its cache for an hour is stored as two
@@ -327,13 +355,14 @@ def cache_read_rate_for_model(model: str) -> float:
         return prices["cache_read"] / prices["input"]
     lowered = str(model or "").lower()
     for marker, rate in CACHE_READ_RATE_OVERRIDES.items():
-        if marker in lowered:
+        if price_marker_matches(marker, lowered):
             return rate
     return CACHE_READ_RATE
 
 
 def is_long_context_request(provider: str, model: str, prompt_tokens: int) -> bool:
-    """Whether one request is billed at OpenAI's long-context rates.
+    """Whether one request is billed at its model's long-context rates
+    (OpenAI's 272K line, Claude Haiku 5.5's 100K line).
 
     ``prompt_tokens`` is the whole prompt (uncached, cached and written
     input). A person's own price for the model is their rate and is left as
@@ -341,14 +370,30 @@ def is_long_context_request(provider: str, model: str, prompt_tokens: int) -> bo
     which table a record came from; only the model name decides today.
     """
     del provider
-    if prompt_tokens <= LONG_CONTEXT_TOKEN_LIMIT:
-        return False
-    lowered = str(model or "").lower()
-    if not any(marker in lowered for marker in _LONG_CONTEXT_MODELS):
-        return False
-    if any(marker in lowered for marker in _NO_LONG_CONTEXT_MODELS):
+    rule = _long_context_rule(model)
+    if rule is None or prompt_tokens <= rule[2]:
         return False
     return _override_rates(model) is None
+
+
+def _long_context_rule(model: str):
+    lowered = str(model or "").lower()
+    for rule in LONG_CONTEXT_RULES:
+        if any(price_marker_matches(marker, lowered) for marker in rule[0]) and not any(
+            marker in lowered for marker in rule[1]
+        ):
+            return rule
+    return None
+
+
+def long_context_multipliers(model: str) -> tuple[float, float]:
+    """What a long-context request of ``model`` costs, as multiples of its
+    table rate: ``(input side, output)``. A model with no such tier answers
+    OpenAI's, which no caller asks for."""
+    rule = _long_context_rule(model)
+    if rule is None:
+        return LONG_CONTEXT_INPUT_MULTIPLIER, LONG_CONTEXT_OUTPUT_MULTIPLIER
+    return rule[3], rule[4]
 
 
 def base_model_key(model: str) -> str:
@@ -718,10 +763,26 @@ class _CoverageState:
         )
 
 
+def price_marker_matches(marker: str, lowered: str) -> bool:
+    """Whether ``marker`` names the model ``lowered``. A marker that ends in
+    a digit must end the number it names: ``fable-5-2`` is Fable 5.2
+    (``claude-fable-5-2``, ``claude-fable-5-2-20261101``), never a dated
+    Fable 5 (``claude-fable-5-20260115``)."""
+    if not marker or not marker[-1].isdigit():
+        return marker in lowered
+    start = lowered.find(marker)
+    while start >= 0:
+        end = start + len(marker)
+        if end >= len(lowered) or not lowered[end].isdigit():
+            return True
+        start = lowered.find(marker, start + 1)
+    return False
+
+
 def _pricing_key_for_model(model: str) -> str:
     lowered = model.lower()
     for marker, _input_rate, _output_rate in MODEL_PRICING:
-        if marker in lowered:
+        if price_marker_matches(marker, lowered):
             return marker
     return "unknown"
 
@@ -743,7 +804,7 @@ def _gpt_pricing_for_model(model: str) -> tuple[float, float] | None:
         return override
     lowered = str(model or "").lower()
     for marker, input_rate, output_rate in GPT_MODEL_PRICING:
-        if marker in lowered:
+        if price_marker_matches(marker, lowered):
             return input_rate, output_rate
     return None
 
@@ -754,7 +815,7 @@ def _gemini_pricing_for_model(model: str) -> tuple[float, float] | None:
         return override
     lowered = str(model or "").lower()
     for marker, input_rate, output_rate in GEMINI_MODEL_PRICING:
-        if marker in lowered:
+        if price_marker_matches(marker, lowered):
             return input_rate, output_rate
     return None
 
@@ -820,7 +881,7 @@ def _record_model_key(model: str) -> str:
     ``_pricing_for_model`` works on them unchanged."""
     lowered = str(model or "").lower()
     for marker in CACHE_READ_RATE_OVERRIDES:
-        if marker in lowered:
+        if price_marker_matches(marker, lowered):
             return marker
     return _pricing_key_for_model(model)
 
@@ -4401,14 +4462,15 @@ def daily_buckets(
         long_request = getattr(record, "long_context", None)
         if long_request is None:
             long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
+        input_uplift, output_uplift = long_context_multipliers(model) if long_request else (1.0, 1.0)
         cost = (
             (
                 inp * rates.input_rate
                 + cached_in * rates.input_rate * cache_read_rate
                 + cache_create * rates.input_rate * cache_write_rate
             )
-            * (LONG_CONTEXT_INPUT_MULTIPLIER if long_request else 1.0)
-            + out * rates.output_rate * (LONG_CONTEXT_OUTPUT_MULTIPLIER if long_request else 1.0)
+            * input_uplift
+            + out * rates.output_rate * output_uplift
         ) / 1_000_000.0
         provider_bucket["cost"] += cost
         if provider == "claude":

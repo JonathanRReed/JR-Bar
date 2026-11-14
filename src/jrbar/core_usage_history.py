@@ -147,8 +147,9 @@ def quote_cost(
     """Dollars for these tokens at ``quote``. A pass over many records of one
     model passes ``write_rate`` (``quote_write_rate``) so the person's
     overrides are read once, not once per record. ``long_context`` marks one
-    request over OpenAI's 272K prompt line, billed at 2x input-side and 1.5x
-    output; the caller decides it per request, never from a sum."""
+    request over its model's prompt line (OpenAI's 272K at 2x input-side and
+    1.5x output, Claude Haiku 5.5's 100K at 5x both); the caller decides it
+    per request, never from a sum."""
     if quote is None:
         return 0.0
     input_rate, output_rate, cache_rate = quote.input_per_mtok, quote.output_per_mtok, quote.cache_read_per_mtok
@@ -156,8 +157,9 @@ def quote_cost(
         write_rate = quote_write_rate(provider, quote)
     input_side = inp * input_rate + cached_in * cache_rate + cache_create * write_rate
     if long_context:
-        input_side *= usage_stats.LONG_CONTEXT_INPUT_MULTIPLIER
-        output_side = out * output_rate * usage_stats.LONG_CONTEXT_OUTPUT_MULTIPLIER
+        input_uplift, output_uplift = usage_stats.long_context_multipliers(quote.model)
+        input_side *= input_uplift
+        output_side = out * output_rate * output_uplift
     else:
         output_side = out * output_rate
     return (input_side + output_side) / 1_000_000.0

@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "anthropic": [
+    ["fable-5-2", 8.0, 40.0],
+    ["fable-5.2", 8.0, 40.0],
+    ["mythos-5-2", 8.0, 40.0],
+    ["mythos-5.2", 8.0, 40.0],
     ["fable", 10.0, 50.0],
     ["mythos", 10.0, 50.0],
     ["opus-5-5", 4.0, 20.0],
@@ -23,10 +27,13 @@
     ["3-5-haiku", 0.8, 4.0],
     ["3.5-haiku", 0.8, 4.0],
     ["haiku-3", 0.8, 4.0],
+    ["haiku-5-5", 0.1, 0.5],
+    ["haiku-5.5", 0.1, 0.5],
     ["haiku", 1.0, 5.0]
   ],
   "openai": [
     ["gpt-6.1-sol", 2.0, 10.0],
+    ["gpt-6.1-terra", 1.0, 5.0],
     ["gpt-6-sol", 2.0, 10.0],
     ["gpt-6-luna", 0.1, 0.5],
     ["gpt-6-astra", 10.0, 50.0],
@@ -66,7 +73,7 @@
     ["2.5-pro", 1.25, 10.0],
     ["pro", 2.0, 12.0]
   ],
-  "cacheReadOverrides": {"fable-5-1": 0.025, "fable-5.1": 0.025, "gpt-6.1-sol": 0.05, "mythos-5-1": 0.025, "mythos-5.1": 0.025, "opus-5-5": 0.05, "opus-5.5": 0.05},
-  "asOf": "2026-10-07",
-  "source": "usage_stats hand table (jrbar-rates-v4)"
+  "cacheReadOverrides": {"fable-5-1": 0.025, "fable-5-2": 0.025, "fable-5.1": 0.025, "fable-5.2": 0.025, "gpt-6.1-sol": 0.05, "gpt-6.1-terra": 0.05, "mythos-5-1": 0.025, "mythos-5-2": 0.025, "mythos-5.1": 0.025, "mythos-5.2": 0.025, "opus-5-5": 0.05, "opus-5.5": 0.05, "sonnet-5-5": 0.05, "sonnet-5.5": 0.05},
+  "asOf": "2026-11-14",
+  "source": "usage_stats hand table (jrbar-rates-v5)"
 }

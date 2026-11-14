@@ -1,7 +1,7 @@
-"""The jrbar-rates-v4 price table (usage_stats.py MODEL_PRICING /
+"""The jrbar-rates-v5 price table (usage_stats.py MODEL_PRICING /
 GPT_MODEL_PRICING / GEMINI_MODEL_PRICING + CACHE_READ_RATE_OVERRIDES),
 pinned row by row so a marker reorder or a rate typo fails loudly.
-Rates checked 2026-10-07; do not relax a pin without re-checking the
+Rates checked 2026-11-14; do not relax a pin without re-checking the
 provider's pricing page."""
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _record(provider: str, model: str, when: datetime, *, inp=1000, cached=500, 
         # Opus 5.5 is $4/$20 and reads cache at 0.05x ($0.20).
         ("claude", "claude-opus-5-5", 4.0, 20.0, 0.2),
         ("claude", "claude-opus-5.5-20261001", 4.0, 20.0, 0.2),
-        ("claude", "claude-sonnet-5-5", 2.0, 10.0, 0.2),
+        ("claude", "claude-sonnet-5-5", 2.0, 10.0, 0.1),
         ("claude", "claude-opus-4-7", 5.0, 25.0, 0.5),
         ("claude", "claude-opus-4-1", 15.0, 75.0, 1.5),
         ("claude", "claude-opus-4-20250514", 15.0, 75.0, 1.5),
@@ -133,8 +133,8 @@ def test_table_version_and_as_of_reach_the_coverage_metrics_and_document(tmp_pat
     )
     totals = usage_stats.scan_usage(root, None)
     metrics = totals.pricing_coverage
-    assert metrics.table_version == usage_stats.PRICING_TABLE_VERSION == "jrbar-rates-v4"
-    assert metrics.table_as_of == usage_stats.PRICING_TABLE_AS_OF == "2026-10-07"
+    assert metrics.table_version == usage_stats.PRICING_TABLE_VERSION == "jrbar-rates-v5"
+    assert metrics.table_as_of == usage_stats.PRICING_TABLE_AS_OF == "2026-11-14"
 
     document = history.usage_history_document(
         [_record("claude", "claude-sonnet-5", NOW, dedupe="v")],
@@ -142,8 +142,8 @@ def test_table_version_and_as_of_reach_the_coverage_metrics_and_document(tmp_pat
         range_name="7d",
         now=NOW.timestamp(),
     )
-    assert document["pricing"]["table_version"] == "jrbar-rates-v4"
-    assert document["pricing"]["as_of"] == "2026-10-07"
+    assert document["pricing"]["table_version"] == "jrbar-rates-v5"
+    assert document["pricing"]["as_of"] == "2026-11-14"
 
 
 def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> None:
@@ -172,7 +172,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
     assert totals.input_tokens == 7 and cache.exists()
 
     payload = json.loads(cache.read_text())
-    assert payload["pricing_semantics_version"] == "jrbar-rates-v4"
+    assert payload["pricing_semantics_version"] == "jrbar-rates-v5"
     assert usage_stats._load_cache(cache)  # warm: the fresh cache loads
 
     # A cache written under the previous table (no stamp, or an old one)
@@ -188,7 +188,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
         rescan = usage_stats.scan_usage(root, cache)
         assert rescan.input_tokens == 7
         rewritten = json.loads(cache.read_text())
-        assert rewritten["pricing_semantics_version"] == "jrbar-rates-v4"
+        assert rewritten["pricing_semantics_version"] == "jrbar-rates-v5"
 
     # The result-level guard agrees: a priced result stamped for an
     # older table cannot validate, so callers must rescan.
@@ -203,7 +203,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
         and row.observation_invocation_allowed
     )
     result, _ = usage_stats._scan_provider_usage_with_totals(source, root, None, since_epoch=0.0)
-    assert result.pricing_as_of == "2026-10-07"
+    assert result.pricing_as_of == "2026-11-14"
     with pytest.raises(ValueError):
         dataclasses.replace(result, pricing_as_of="2026-08-26")
 
