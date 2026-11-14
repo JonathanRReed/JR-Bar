@@ -272,6 +272,20 @@ and the caller keeps its frame clock. `KeyframeTests` check every parity
 fixture: the plan equals the sampler within one code at its keyframes and
 within the tolerance at the firmware's own sample times.
 
+The Screen Bar with a colour calibration plans through
+`ScreenBarLightTransfer.plan`, which converts PWM codes to display light
+before choosing keyframes. It first follows the strip's own 8-bit steps
+within one, then two display codes. Under a strong calibration gain one step
+of the strip is many codes on the display, so a dim or fast program needs
+thousands of keyframes that way; such a program plays the fade those steps
+approximate instead (`LEDSSampler.smoothRawLight`, `smoothPlan`), within two
+to five display codes of it and never a whole strip step from what the strip
+shows. Only a program that fits neither keeps the 60 Hz frame clock. The
+lights audit's delivered programs can be planned in bulk: run
+`scripts/audit_lights.py --quick --skip-integration --out DIR`, then
+`JRBAR_AUDIT_PROGRAMS=DIR/delivered-programs.json swift test --filter
+ScreenBarKeyframePerformanceTests/deliveredProgramsPlan`.
+
 ### Parity
 
 `scripts/gen_leds_fixtures.py` samples 30 programs through

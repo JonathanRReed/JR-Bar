@@ -944,7 +944,10 @@ Vocabulary:
   provider's sign-in flow; `resign_in` re-reads Claude's Keychain access.
   Retry is reserved for a read that can recover without a new sign-in or
   permission. `last_good_age_seconds`
-  is null when there has been no reading. `panel_visible: false` suppresses
+  is null when there has been no reading. It is a volatile field
+  (2026-11-14): a state that differs only in it is not sent, so a client
+  ages a reading on its own clock from `read_at` (else `observed_at`) and
+  reads the number only for whether a reading exists. `panel_visible: false` suppresses
   a never-used, absent provider or a row the person explicitly hid. Settings
   still lists it. A removed provider keeps its stale reading for seven days,
   then says "Not found on this Mac" and offers Hide. Nothing hides itself.
@@ -1481,7 +1484,11 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
   fields), so a held frame's number goes stale. A client that shows it live
   ages it on its own clock from `sessions[].since` (or `asks[].opened_at`
   for a light that is about an ask), and falls back to the number when it
-  has no such anchor.
+  has no such anchor. `brightness_factor` is volatile too (2026-11-14): it
+  is the product of the dimming steps to three places and drifts with the
+  ambient sensor. A surface's `brightness`, its `program` and the `dimming`
+  list are what earn a frame, and that frame carries the factor of the
+  moment.
   Every duration-shaped field in `state` and `lights` carries the same
   bound (`core_projection.MAX_DURATION_SECONDS`), `health.sources.*.heard_age_seconds`
   included; `health.intake.silence_seconds` is the policy window, not an

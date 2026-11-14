@@ -2,6 +2,20 @@
 
 All notable changes to JR-Bar are documented here.
 
+## Unreleased
+
+- The Screen Bar no longer redraws 60 times a second while an agent works. With a colour calibration set, dim and fast light programs (most of the provider animations) could not be handed to the system to play, so the app drew every frame itself. They now play as the smooth fade the strip's steps approximate, and the app does no per-frame work for them.
+- The monitor stops resending every provider's usage to the app each time a reading gets a few seconds older. On a working Mac that was four fifths of what the monitor sent.
+- ⌘R in the panel refreshes usage, as 0.10.1 promised; it used to open Events. Events is now ⌘E.
+- ⌘1 to ⌘9 answer a question an agent is holding, when its options show as buttons on the selected card.
+- Cost estimates use the published rates for Claude Fable 5.2 and Mythos 5.2 ($8 in, $40 out), Claude Haiku 5.5 (with its higher rate for prompts over 100,000 tokens), Sonnet 5.5 cache reads and GPT-6.1 Terra. They had inherited an older model's price.
+- A large hook event that arrives while the monitor is busy is read at once instead of up to 30 seconds later, so the lights no longer trail a big tool call. Hooks doctor counts these as late, not refused.
+- A T3 Code thread whose own agent exited while a worker it started keeps running is no longer ended again every 30 seconds behind the scenes.
+- The menu bar dot rests its breathing while the display sleeps.
+- Empty windows say "when the monitor reconnects" instead of naming a socket.
+- SECURITY.md's table of outbound requests names every request (Factory, Kimi, Kilo, Kiro, the firmware download and the phone alert were missing) and points at the Settings pages that exist now.
+- Old overflow and rejected hook queue files, which hold whole hook payloads, are removed after 14 days.
+
 ## 0.10.2
 
 JR-Bar 0.10.2 fixes permissions a signed build could never get, reads Devin and Factory subscriptions again, shows every provider's usage the way its plan is shaped, and turns the Dock's previews into widgets in three sizes, with new ones for Music, Reminders and Shortcuts.

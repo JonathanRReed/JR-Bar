@@ -234,17 +234,21 @@ struct NotchIslandView: View {
             working: summary.working > 0, shown: toy.islandVisible, reduceMotion: reduceMotion,
             bare: notched && layout.bare, power: PowerConditions.shared.policy)
         let live = breath.live
+        // The face is built once per state change, outside the breath's
+        // clock: a tick only changes its opacity. Building the shoulders
+        // inside the timeline rebuilt every mark fifteen times a second.
+        let face = Group {
+            if notched {
+                shoulders(summary: summary, layout: layout)
+            } else {
+                centredRow(summary: summary)
+            }
+        }
         return TimelineView(.animation(minimumInterval: breath.interval, paused: !live)) { context in
             let swell = live
                 ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
                 : 0
-            Group {
-                if notched {
-                    shoulders(summary: summary, layout: layout)
-                } else {
-                    centredRow(summary: summary)
-                }
-            }
+            face
             .opacity(0.85 + 0.15 * swell)
             // The hover wink's other half — the frame grows a few
             // points (the toy's `islandHoverPeek` reframe), and the

@@ -1071,3 +1071,12 @@ Its `apps/desktop/dist-electron/main.cjs` contains the bundled
 These establish the environment/thread URL shape, registration before app
 readiness, and queued delivery to the renderer. JR-Bar constructs that URL
 from its own read-only thread binding. No upstream code was copied.
+
+## Vibe Island, 2026-11-14
+
+Read the product's public site only, during the 2026-11-14 review of agent
+monitors; no source is published and none was read. Its ⌘1 to ⌘3 keys for
+an agent's question prompted JR-Bar's ⌘1 to ⌘9 in the panel, which pick the
+option buttons a held question shows and nothing folded into a menu
+(`PanelStore.optionLabel`). The design and code are JR-Bar's own.
+
