@@ -643,6 +643,15 @@ public enum AquariumEvent: Equatable, Sendable {
     /// The fifth tap on the alien: it zips off and pays its bounty once
     /// per visit.
     case shooAlien
+    /// An ask closed while its session kept going: the anemone's fact.
+    /// One ask pays once; an ask that ended with its session, was
+    /// dismissed or expired is never sent.
+    case askSettled(id: String)
+    /// Take what the reef has grown. A tap (`byHand`) adds the hand's
+    /// share; the snail collects without it.
+    case collectHarvest(byHand: Bool)
+    /// Buy a builder's next level.
+    case growBuilder(ReefBuilder)
 }
 
 /// The three surfaces a tank dresses: the water, the floor and the
@@ -699,6 +708,12 @@ public enum AquariumGameEffect: Equatable, Sendable {
     case oysterReady
     /// The alien was shooed off; carries its bounty.
     case alienShooed(Int)
+    /// The reef's harvest went into the wallet; carries the pearls.
+    case harvestCollected(Int)
+    /// A builder reached this level.
+    case builderGrew(ReefBuilder, level: Int)
+    /// A builder did not grow, and why.
+    case growDenied(ReefBuilder, ReefGrowDenial)
 }
 
 /// A mark a fish earns from its session's real work (docs/TOYS.md) —
@@ -804,6 +819,8 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     /// When the alien's current parade began (0 when none) — the one
     /// window a shoo can pay in.
     public var alienShownAt: Double = 0
+    /// The reef: the four builders' levels and the harvest they hold.
+    public var reef = AquariumReef()
     /// Card › Fine-tune › Visitors: while false no visitor queues at all,
     /// the alien included, and turning it off sends away any that were
     /// already waiting. A setting, not part of the save — the toy keeps
@@ -962,6 +979,11 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 earn(earned)
                 effects.append(.pearlsEarned(earned))
             }
+            // The kelp bed grows on the same agent-hours. The wallet took
+            // the old income above; what the bed adds waits as a harvest.
+            reef.grow(.kelp, units: seconds / 3600 * mult,
+                      day: calendar.startOfDay(for: now).timeIntervalSince1970,
+                      careBonus: reefCareBonus, basePaid: ReefBuilder.kelp.baseYield)
             // The oyster grows its pearl on the same work, one at a time.
             if shows(.oyster), !oysterReady {
                 oysterWork += seconds
@@ -999,6 +1021,10 @@ public struct AquariumGame: Codable, Equatable, Sendable {
             // The daily streak: one counted completion per calendar
             // day, consecutive days extend it, a gap restarts it.
             let today = calendar.startOfDay(for: now).timeIntervalSince1970
+            // The oyster bed makes more of the run than the five pearls
+            // the wallet just took.
+            reef.grow(.oyster, units: 1, day: today, careBonus: reefCareBonus,
+                      basePaid: ReefBuilder.oyster.baseYield)
             fleet.noteCompletion(day: today)
             completionsToday = lastStreakDay == today ? completionsToday + 1 : 1
             if completionsToday >= AquariumRules.diverCompletions {
@@ -1011,6 +1037,8 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 streakDays = lastStreakDay == yesterday ? streakDays + 1 : 1
                 lastStreakDay = today
                 effects.append(.streakDay(streakDays))
+                // A new day on the streak fills the tide pool.
+                reef.grow(.tide, units: 1, day: today, careBonus: reefCareBonus, basePaid: 0)
             }
 
         case .pelletEaten(let fishID):
@@ -1142,6 +1170,31 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
         case .quotaReset:
             queueVisitor(.submarine, now: now, effects: &effects)
+            reef.grow(.tide, units: 1, day: calendar.startOfDay(for: now).timeIntervalSince1970,
+                      careBonus: reefCareBonus, basePaid: 0)
+
+        case .askSettled(let askID):
+            guard reef.level(.anemone) > 0, reef.noteSettled(askID) else { break }
+            reef.grow(.anemone, units: 1, day: calendar.startOfDay(for: now).timeIntervalSince1970,
+                      careBonus: reefCareBonus, basePaid: 0)
+
+        case .collectHarvest(let byHand):
+            let paid = reef.collect(byHand: byHand)
+            guard paid > 0 else { break }
+            earn(paid)
+            effects.append(.harvestCollected(paid))
+            effects.append(.pearlsEarned(paid))
+
+        case .growBuilder(let builder):
+            if let denial = growDenial(builder) {
+                effects.append(.growDenied(builder, denial))
+                break
+            }
+            let cost = growCost(builder)
+            pearls -= cost
+            reef.bought[builder.rawValue, default: 0] += 1
+            effects.append(.pearlsSpent(cost))
+            effects.append(.builderGrew(builder, level: reef.level(builder)))
 
         case .collectDrop(let dropID):
             if let drop = drops.first(where: { $0.id == dropID }) {
@@ -1179,6 +1232,16 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                     : AquariumRules.snailCollectAfter
                 for drop in drops where nowS - drop.at >= wait {
                     collect(drop, effects: &effects)
+                }
+            }
+            // The snail brings the reef's harvest in too, at the plain
+            // rate, while nobody is at the glass to tap it.
+            if shows(.snail), !windowOpen {
+                let paid = reef.collect(byHand: false)
+                if paid > 0 {
+                    earn(paid)
+                    effects.append(.harvestCollected(paid))
+                    effects.append(.pearlsEarned(paid))
                 }
             }
             // Quiet too long after the last work beat — the marathon
@@ -1504,6 +1567,64 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         AquariumProgression.tankLevel(lifetimePearls: lifetimePearls)
     }
 
+    // MARK: The reef
+
+    /// What the tank around the reef adds to every builder: raised fish,
+    /// the streak and the decor on the sand (`AquariumReef.careBonus`).
+    public var reefCareBonus: Double {
+        AquariumReef.careBonus(
+            residents: pets.values.filter { $0.stage >= AquariumRules.maxStage }.count,
+            streakDays: streakDays,
+            decor: ShopItem.allCases.filter { $0.category == .decor && shows($0) }.count)
+    }
+
+    /// Pearls one unit of the builder's fact pays now, everything counted.
+    public func reefRate(_ builder: ReefBuilder) -> Double {
+        AquariumReef.rate(builder, level: reef.level(builder), careBonus: reefCareBonus)
+    }
+
+    /// Pearls an hour the tank earns while `working` sessions work, before
+    /// the day's soft limit: the kelp bed's rate at today's concurrency.
+    public func workRate(working: Int) -> Double {
+        guard working > 0 else { return 0 }
+        let mult = min(AquariumRules.concurrencyCap,
+                       1 + AquariumRules.concurrencyBonusPerExtra * Double(working - 1))
+        return max(ReefBuilder.kelp.baseYield, reefRate(.kelp)) * mult
+    }
+
+    /// The price of the builder's next level.
+    public func growCost(_ builder: ReefBuilder) -> Int {
+        AquariumReef.cost(builder, level: reef.level(builder))
+    }
+
+    /// Why the builder cannot grow now, or nil when it can.
+    public func growDenial(_ builder: ReefBuilder) -> ReefGrowDenial? {
+        if tankLevel < builder.opensAtLevel { return .locked(needsLevel: builder.opensAtLevel) }
+        let cap = AquariumReef.cap(tankLevel: tankLevel)
+        if reef.level(builder) >= cap { return .full(cap: cap) }
+        let cost = growCost(builder)
+        if pearls < cost { return .cannotAfford(cost: cost) }
+        return nil
+    }
+
+    /// The builder that pays its price back soonest among those that can
+    /// grow now, judged on a plain day: four agent-hours, three finished
+    /// runs, four asks, two resets. Nil when nothing can grow.
+    public var bestGrow: ReefBuilder? {
+        let plainDay: [ReefBuilder: Double] = [.kelp: 4, .oyster: 3, .anemone: 4, .tide: 2]
+        var best: (builder: ReefBuilder, days: Double)?
+        for builder in ReefBuilder.allCases where growDenial(builder) == nil {
+            let level = reef.level(builder)
+            let gain = AquariumReef.rate(builder, level: level + 1, careBonus: reefCareBonus)
+                - AquariumReef.rate(builder, level: level, careBonus: reefCareBonus)
+            let perDay = gain * (plainDay[builder] ?? 1)
+            guard perDay > 0 else { continue }
+            let days = Double(growCost(builder)) / perDay
+            if best == nil || days < best!.days { best = (builder, days) }
+        }
+        return best?.builder
+    }
+
     /// The item the fish wears, if any.
     public func hat(for fishID: String) -> ShopItem? {
         hats[fishID].flatMap(ShopItem.init(rawValue:))
@@ -1533,7 +1654,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
              unlocked, dailyGoal, goalCarrySeconds, treasure, lastTreasureAt,
              pendingVisitors, lastVisitorAt, continuousWorkSeconds,
              lastWorkAt, completionsToday, fleet
-        case stored, oysterWork, oysterReady, alienShownAt
+        case stored, oysterWork, oysterReady, alienShownAt, reef
     }
 
     /// The most a counter (pearls, a streak, a total) may read from a
@@ -1625,6 +1746,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         oysterReady = (try? c.decodeIfPresent(Bool.self, forKey: .oysterReady)) ?? false
         let shown = (try? c.decodeIfPresent(Double.self, forKey: .alienShownAt)) ?? 0
         alienShownAt = shown.isFinite ? max(0, shown) : 0
+        reef = (try? c.decodeIfPresent(AquariumReef.self, forKey: .reef)) ?? AquariumReef()
         // A corrupt care record can't sink the file — clamp the stage.
         for (id, var care) in pets where care.stage < 0 || care.stage > AquariumRules.maxStage {
             care.stage = min(AquariumRules.maxStage, max(0, care.stage))
@@ -1670,5 +1792,6 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         try c.encode(oysterWork, forKey: .oysterWork)
         try c.encode(oysterReady, forKey: .oysterReady)
         try c.encode(alienShownAt, forKey: .alienShownAt)
+        try c.encode(reef, forKey: .reef)
     }
 }

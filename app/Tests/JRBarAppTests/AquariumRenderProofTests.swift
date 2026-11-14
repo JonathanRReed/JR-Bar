@@ -345,11 +345,30 @@ struct AquariumRenderProofTests {
         // Hosted, so the In tank switches draw as the shop shows them.
         purse.game?.stored = ["rock"]
         for dark in [false, true] {
-            let shelves = shopTank.shopPanel(fish: purse.fish)
+            let shelves = shopTank.shopPanel(fish: purse.fish, page: .shop)
                 .background(Color(nsColor: .windowBackgroundColor))
             let rep = try Self.hostedSnapshot(shelves, size: CGSize(width: 380, height: 480), dark: dark)
             if let png = rep.representation(using: .png, properties: [:]) {
                 try png.write(to: dir.appendingPathComponent("aquarium-shop-\(dark ? "dark" : "light").png"))
+                written += 1
+            }
+        }
+        // The Reef page a week in: a grown kelp bed about to double, an
+        // oyster bed, a first anemone, the tide pool still locked, a
+        // harvest waiting and one builder the wallet cannot reach.
+        var reefFixture = purse
+        reefFixture.game?.pearls = 96
+        reefFixture.game?.lifetimePearls = 520
+        reefFixture.game?.streakDays = 4
+        reefFixture.game?.reef = AquariumReef(bought: ["kelp": 8, "oyster": 2, "anemone": 1],
+                                              harvest: ["kelp": 131.4, "oyster": 22, "anemone": 9])
+        let reefTank = AquariumView(fixture: reefFixture)
+        for dark in [false, true] {
+            let page = reefTank.shopPanel(fish: reefFixture.fish, page: .reef)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let rep = try Self.hostedSnapshot(page, size: CGSize(width: 380, height: 480), dark: dark)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: dir.appendingPathComponent("aquarium-reef-\(dark ? "dark" : "light").png"))
                 written += 1
             }
         }
@@ -412,7 +431,7 @@ struct AquariumRenderProofTests {
                 written += 1
             }
         }
-        #expect(written == shots.count + 25)
+        #expect(written == shots.count + 27)
     }
 
     // MARK: The Arcade tank

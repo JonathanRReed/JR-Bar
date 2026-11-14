@@ -587,12 +587,49 @@ A fish says what its session is doing without a label:
 - **Idle**: a sleepy lid sits over the top of its eye, by day as well as
   at night.
 
-It's also a small idle game (`JRBarCore/AquariumGame.swift`, the
+It's also an idle game (`JRBarCore/AquariumGame.swift`, the
 `GameStore` on `AquariumStore`): while sessions work, the tank earns
 **pearls**; a completion drops a bonus. Lifetime pearls raise the
-**tank level** (`AquariumProgression`), and the Shop's pricier shelves
-unlock by tier as it climbs — the shop shows the level, progress to
-the next, and what each locked row wants. Pearls spend in the Shop
+**tank level** (`AquariumProgression`, twenty levels), and the Shop's
+pricier shelves unlock by tier as it climbs.
+
+**The reef** (`JRBarCore/AquariumReef.swift`) is the engine. Four
+builders each turn one real fact into pearls, pearls grow the builders,
+a grown builder pays more and its next level costs more, so the rate
+keeps climbing and there is always a next thing to buy:
+
+| Builder | Eats | Opens | Level 1 pays | Each level adds | First price | Each price |
+| --- | --- | --- | --- | --- | --- | --- |
+| Kelp bed | agent-hours of work (1 + 0.25 for each extra worker, at most 3) | from the start | 12 an agent-hour | 4 | 20 | × 1.15 |
+| Oyster bed | finished runs | from the start | 5 a run | 2 | 35 | × 1.17 |
+| Anemone | asks that closed while their session lived | tank level 2 | 3 an ask | 1.5 | 60 | × 1.18 |
+| Tide pool | quota resets and new streak days | tank level 4 | 6 a unit | 3 | 120 | × 1.20 |
+
+A builder's whole yield doubles at levels 10, 25, 50 and 100. A tank that
+is looked after pays more: 5 % for each fish raised to full size (up to
+six), 2 % for each day of the streak (up to fifteen) and 1 % for each
+decor piece on the sand (up to twenty-five). A builder cannot pass
+5 + 3 × the tank level, so the reef grows with the tank.
+
+The kelp and oyster beds' first levels are the tank's old income, and
+that still goes straight into the wallet: a pearl for every five minutes
+of agent work and five for a finished run. Everything the reef adds on
+top waits as a **harvest**. A chip in the HUD says how much is ready, and
+one tap brings it in with a tenth more for collecting by hand; a snail
+brings it in at the plain rate while the tank is closed. A harvest never
+decays and has no cap, so nothing is lost by not looking.
+
+The reef never rewards keeping agents busy. Agent-hours and finished
+runs count in full up to four agent-hours and twelve runs a day, by half
+up to twice that and by a quarter beyond. Starting a session pays
+nothing, an answered ask pays the same however long it took, and nothing
+the tank does can answer an agent: it only reads. An ask counts when it
+is gone and its session is still listed and neither ended nor failed
+(`AquariumToy.settledAsks`), once per ask.
+
+The sheet behind the bag button has three pages: **Reef** (the harvest,
+each builder's level, what it pays in words, its next price, and which
+one pays its price back soonest), **Shop** and **Goals**. Pearls spend in the Shop
 (a popover from the bag button) on decor (a leafy plant, a rock, a
 treasure chest, a little castle, a shipwreck, ruins, a volcano,
 driftwood, an anemone bed, a bubble wall, a moon-jelly lamp, a statue,

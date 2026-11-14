@@ -27,6 +27,7 @@ extension AquariumView {
             HStack(spacing: 8) {
                 if let game = toy?.game {
                     pearlChip(game)
+                    if game.reef.waiting > 0 { harvestChip(game) }
                     if game.streakDays > 1 {
                         hudChip {
                             HStack(spacing: 4) {
@@ -136,6 +137,30 @@ extension AquariumView {
         } action: { point in
             motion.pearlChip = point
         }
+    }
+
+    /// The reef's harvest, waiting: one tap brings it all in with the
+    /// hand's tenth on top. It never expires, so the chip never nags; it
+    /// is only there while there is something to take.
+    private func harvestChip(_ game: AquariumGame) -> some View {
+        let waiting = game.reef.waiting
+        return Button {
+            toy?.collectHarvest()
+        } label: {
+            hudChip {
+                HStack(spacing: 4) {
+                    Image(systemName: "leaf.fill")
+                        .jrbarType(.caption).fontWeight(.semibold)
+                        .foregroundStyle(Tone.live.color.gradient)
+                    Text("+\(waiting.formatted()) ready")
+                        .contentTransition(.numericText())
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Collect \(waiting) pearls from the reef")
+        .help("The reef has grown \(waiting.formatted()) pearls. Tap to bring them in, with a tenth more for collecting by hand.")
+        .transition(hudTransition(edge: .top))
     }
 
     /// A HUD chip: a small capsule of glass over the water.
@@ -304,17 +329,20 @@ extension AquariumView {
     /// price button when buyable, a lock while the tank level is short,
     /// a state control once owned. The game's reducer is the only money
     /// handler; the rows just send events.
-    func shopPanel(fish: [Fish]) -> some View {
+    func shopPanel(fish: [Fish], page: TankSheetPage? = nil) -> some View {
         let game = self.game ?? AquariumGame()
+        // A proof pins the page; the tank shows the one last picked.
+        let shown = page ?? shopPage
         let adults = fish.filter { !$0.isFry && $0.state != .leaving }
         return VStack(spacing: 12) {
-            Picker("Tank shop", selection: $shopGoals) {
-                Text("Shop").tag(false)
-                Text("Goals").tag(true)
+            Picker("Tank shop", selection: $shopPage) {
+                Text("Reef").tag(TankSheetPage.reef)
+                Text("Shop").tag(TankSheetPage.shop)
+                Text("Goals").tag(TankSheetPage.goals)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if !shopGoals {
+            if shown == .shop {
                 Picker("Category", selection: $shopCategory) {
                     ForEach(ShopItem.Category.allCases, id: \.self) { category in
                         Text(category.displayName).tag(category)
@@ -323,15 +351,127 @@ extension AquariumView {
                 .labelsHidden()
             }
             ScrollView {
-                if shopGoals {
-                    goalsShelf(game: game)
-                } else {
-                    shopShelves(game: game, adults: adults)
+                switch shown {
+                case .reef: reefShelf(game: game)
+                case .shop: shopShelves(game: game, adults: adults)
+                case .goals: goalsShelf(game: game)
                 }
             }
         }
         .padding(16)
         .frame(width: 380, height: 480)
+    }
+
+    // MARK: Reef
+
+    /// The Reef page: what is waiting, the four builders with what each
+    /// pays and what its next level costs, and what the tank around them
+    /// adds. Numbers and words only.
+    func reefShelf(game: AquariumGame) -> some View {
+        let best = game.bestGrow
+        return VStack(alignment: .leading, spacing: 14) {
+            shopHeader(game, title: "The reef")
+            reefHarvestRow(game)
+            VStack(spacing: 2) {
+                ForEach(ReefBuilder.allCases, id: \.self) { builder in
+                    reefRow(builder, game: game, best: best == builder)
+                }
+            }
+            Text(TankReefWords.care(game))
+                .jrbarType(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private func reefHarvestRow(_ game: AquariumGame) -> some View {
+        let waiting = game.reef.waiting
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(waiting > 0 ? "\(waiting.formatted()) pearls ready" : "Nothing to harvest yet")
+                    .jrbarType(.callout).fontWeight(.medium)
+                    .monospacedDigit()
+                Text(waiting > 0
+                     ? "A tap adds a tenth. A snail brings it in at the plain rate while the tank is closed."
+                     : "The reef fills as agents work, finish runs and have their asks answered. It never empties on its own.")
+                    .jrbarType(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            Button("Collect") { toy?.collectHarvest() }
+                .buttonStyle(.borderedProminent)
+                .tint(Self.shopAccent)
+                .controlSize(.small)
+                .disabled(waiting == 0)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.35),
+                    in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.group, style: .continuous))
+    }
+
+    private func reefRow(_ builder: ReefBuilder, game: AquariumGame, best: Bool) -> some View {
+        let level = game.reef.level(builder)
+        let denial = game.growDenial(builder)
+        let locked: Bool = { if case .locked = denial { return true }; return false }()
+        return HStack(alignment: .center, spacing: 10) {
+            Image(systemName: TankReefWords.symbol(builder))
+                .jrbarType(.title3).fontWeight(.semibold)
+                .foregroundStyle(Self.shopAccent)
+                .frame(width: 30, height: 30)
+                .background(Self.shopAccent.opacity(0.14),
+                            in: RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(builder.displayName)
+                        .jrbarType(.callout).fontWeight(.medium)
+                    if level > 0 {
+                        Text("Level \(level)")
+                            .jrbarType(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    if best {
+                        Text("Pays back soonest")
+                            .jrbarType(.caption)
+                            .foregroundStyle(Self.shopAccent)
+                    }
+                }
+                Text(TankReefWords.line(builder, game: game))
+                    .jrbarType(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            if !locked, !{ if case .full = denial { return true }; return false }() {
+                growButton(builder, game: game, affordable: denial == nil)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .opacity(locked ? 0.5 : 1)
+    }
+
+    private func growButton(_ builder: ReefBuilder, game: AquariumGame, affordable: Bool) -> some View {
+        let cost = game.growCost(builder)
+        return Button {
+            toy?.growBuilder(builder)
+        } label: {
+            HStack(spacing: 4) {
+                PearlGlyph(size: 8)
+                Text(cost.formatted())
+                    .monospacedDigit()
+            }
+            .frame(minWidth: 40)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Self.shopAccent)
+        .controlSize(.small)
+        .accessibilityLabel("Grow the \(builder.displayName.lowercased()) to level \(game.reef.level(builder) + 1) for \(cost) pearls")
+        .disabled(!affordable)
     }
 
     func goalsShelf(game: AquariumGame) -> some View {
@@ -365,10 +505,10 @@ extension AquariumView {
 
     /// The economy's vitals over the shelves: the bank, the tank's
     /// level and how far to the next, the streak, and today's chore.
-    private func shopHeader(_ game: AquariumGame) -> some View {
+    private func shopHeader(_ game: AquariumGame, title: String = "Tank shop") -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
-                Text("Tank shop")
+                Text(title)
                     .font(.system(size: 17, weight: .semibold))
                 Spacer()
                 HStack(spacing: 5) {

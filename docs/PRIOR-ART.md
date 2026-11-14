@@ -1122,3 +1122,20 @@ research report, not yet a doc here. Taken so far:
   keeps its name. Both were written here from the pull requests'
   descriptions; no code was copied.
 
+### The Aquarium's reef, 2026-11-14
+
+The reef's shape (generators that eat different facts, prices that grow
+by a fixed ratio a level while yields grow in a straight line, doublings
+at milestone levels) follows the published design writing on idle games:
+Anthony Pecorella's "The Math of Idle Games", parts
+[I](https://gamedeveloper.com/design/the-math-of-idle-games-part-i),
+[II](https://www.gamedeveloper.com/game-platforms/the-math-of-idle-games-part-ii)
+and [III](https://gamedeveloper.com/design/the-math-of-idle-games-part-iii),
+and Eric Guan's
+[Idle Game Design Principles](https://ericguan.substack.com/p/idle-game-design-principles).
+Articles only; the numbers, the daily soft limit and the rule that the
+tank never rewards keeping agents busy are JR-Bar's own. The fish's
+"lit, not inked" look was worked out against published stills of Abzû
+and Alto's Odyssey as references for rim light and depth fog; nothing
+was traced or copied.
+

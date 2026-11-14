@@ -6,8 +6,11 @@ import Foundation
 /// save's own counters; nothing here reads a clock.
 public enum AquariumProgression {
     /// Lifetime pearls required for each tank level, ascending.
+    /// The first ten are the tank's original ladder; the reef's rising
+    /// rate carries a tank on through ten more.
     public static let levelThresholds: [Int] =
-        [0, 50, 150, 400, 900, 1800, 3200, 5200, 8000, 12000]
+        [0, 50, 150, 400, 900, 1800, 3200, 5200, 8000, 12000,
+         18000, 27000, 40000, 60000, 90000, 135_000, 200_000, 300_000, 450_000, 675_000]
     /// The tank level that opens each shop tier.
     public static let tierUnlockLevels: [Int] = [0, 1, 3, 5, 7]
 

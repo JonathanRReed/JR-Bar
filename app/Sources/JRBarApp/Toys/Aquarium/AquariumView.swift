@@ -177,7 +177,7 @@ struct AquariumView: View {
     /// The shop popover's open flag.
     @ViewState var showShop = false
     @ViewState var shopCategory: ShopItem.Category = .decor
-    @ViewState var shopGoals = false
+    @ViewState var shopPage = TankSheetPage.reef
     @ViewState var fishMenuNow = Date()
     /// Light or Dark, as the window wears it — a flip starts the ease.
     @Environment(\.colorScheme) private var colorScheme

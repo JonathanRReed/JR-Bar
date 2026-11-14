@@ -527,6 +527,70 @@ final class AquariumToy: Toy {
         if game != before { persist() }
     }
 
+    /// Asks the tank saw open at the last refresh, by ask id, with the
+    /// session each belonged to. Nil until the first live document, so a
+    /// launch never pays for asks it did not watch close.
+    @ObservationIgnored private var openAsks: [String: String]?
+
+    /// An ask that was open and is gone, on a session that is still here
+    /// and neither ended nor failed, was settled: the anemone's fact. The
+    /// tank only reads this. How the ask was answered, and by whom, is
+    /// nobody's business here, and an ask that left with its session, was
+    /// dismissed with it or failed pays nothing.
+    private func noteSettledAsks(now: Date) {
+        guard core.isLive, let state = core.state else { return }
+        var open: [String: String] = [:]
+        for ask in state.asks {
+            if let session = ask.session { open[ask.id] = session }
+        }
+        defer { openAsks = open }
+        guard let before = openAsks else { return }
+        let settled = Self.settledAsks(before: before, open: open,
+                                       activities: Dictionary(
+                                        state.sessions.map { ($0.id, SessionActivity.reduce($0)) },
+                                        uniquingKeysWith: { first, _ in first }))
+        guard !settled.isEmpty else { return }
+        let was = game
+        for id in settled {
+            note(game.apply(.askSettled(id: id), now: now), now: now)
+        }
+        if game != was { persist() }
+    }
+
+    /// The asks in `before` that closed while their session lived: gone
+    /// from `open`, their session still listed, not ended or failed, and
+    /// with no ask open on it now. The last rule keeps an ask whose id
+    /// changed under it (the daemon learned its request) from reading as
+    /// one that closed.
+    static func settledAsks(before: [String: String], open: [String: String],
+                            activities: [String: SessionActivity]) -> [String] {
+        let asking = Set(open.values)
+        return before.keys.sorted().filter { id in
+            guard open[id] == nil, let session = before[id], !asking.contains(session),
+                  let activity = activities[session] else { return false }
+            return activity != .ended && activity != .failed
+        }
+    }
+
+    /// Take the reef's harvest by hand: the tap on the chip.
+    func collectHarvest() {
+        let now = Date()
+        let before = game
+        note(game.apply(.collectHarvest(byHand: true), now: now), now: now)
+        if game != before {
+            persist()
+            playSound(.gulp)
+        }
+    }
+
+    /// Buy a builder's next level from the Reef page.
+    func growBuilder(_ builder: ReefBuilder) {
+        let now = Date()
+        let before = game
+        note(game.apply(.growBuilder(builder), now: now), now: now)
+        if game != before { persist() }
+    }
+
     /// A pellet reached a fish's mouth (the view calls this when the
     /// seeker arrives — food is a tap, not a session fact).
     func pelletEaten(by fishID: String) {
@@ -774,6 +838,8 @@ final class AquariumToy: Toy {
         var earned = 0
         var oysterOpened = false
         var shooed: Int?
+        var harvested = 0
+        var grew: (builder: ReefBuilder, level: Int)?
         var milestone = game.tankLevel > knownLevel
         knownLevel = max(knownLevel, game.tankLevel)
         for effect in effects {
@@ -813,11 +879,34 @@ final class AquariumToy: Toy {
                 case .tide: toast = ("\(label(for: id)) earned its tide stripe", now)
                 case .starry: toast = ("\(label(for: id)) is starry now", now)
                 }
+            case .harvestCollected(let n):
+                harvested += n
+            case .builderGrew(let builder, let level):
+                grew = (builder, level)
+            case .growDenied(let builder, let denial):
+                switch denial {
+                case .locked(let needs):
+                    toast = ("The \(builder.displayName.lowercased()) opens at tank level \(needs)", now)
+                case .full(let cap):
+                    toast = ("The \(builder.displayName.lowercased()) is as big as this tank holds (level \(cap))", now)
+                case .cannotAfford(let cost):
+                    toast = ("The next level costs \(cost) pearls", now)
+                }
             case .pearlsSpent, .purchaseDenied: break
             }
         }
         if earned > 0 {
             toast = ("+\(earned) pearl\(earned == 1 ? "" : "s")", now)
+        }
+        if harvested > 0 {
+            toast = ("Harvest in · +\(harvested) pearl\(harvested == 1 ? "" : "s")", now)
+        }
+        if let grew {
+            let doubled = AquariumReef.milestones.contains(grew.level)
+            toast = (doubled
+                     ? "\(grew.builder.displayName) reached level \(grew.level) · it pays double now"
+                     : "\(grew.builder.displayName) grew to level \(grew.level)", now)
+            if doubled { milestone = true }
         }
         if oysterOpened {
             toast = ("The oyster opened — there's a pearl inside", now)
@@ -890,6 +979,7 @@ final class AquariumToy: Toy {
                                  stages: self.game.pets.mapValues(\.stage))
         scheduleRecap(everyone, now: now)
         noteCompletions(now: now)
+        noteSettledAsks(now: now)
         noteFleet(now: now)
         let base = AquariumWaterMood.base(core.state)
         if base != waterBase { waterBase = base }
