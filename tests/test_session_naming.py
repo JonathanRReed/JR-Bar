@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from jrbar.collector import _merged_status_candidates
+from jrbar.collector import _merged_status_candidates, summarize_prompt
 from jrbar.core_projection import project_session_rows, session_label
 from jrbar.models import AgentMode, AgentStatus, ParentLink
-from jrbar.project_names import project_name, repository_project
+from jrbar.project_names import is_temp_root, project_name, repository_project
 
 NOW = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
 BAD = re.compile(r"\b[0-9a-fA-F]{8,}\b|^t3-|^session$|unknown project|/worktrees/", re.I)
@@ -131,3 +131,55 @@ def test_a_submodule_without_a_commondir_keeps_its_repository_name(tmp_path):
     (root / '.git' / 'modules' / 'Child').mkdir(parents=True)
     (module / '.git').write_text('gitdir: ../.git/modules/Child')
     assert repository_project(str(module)) == 'Child'
+
+
+@pytest.mark.parametrize("root", [
+    "/var/folders/ab/synthetic0000gn/T",
+    "/private/var/folders/ab/synthetic0000gn/T/",
+    "/tmp",
+    "/private/tmp",
+    "/var/tmp",
+    "/private/var/tmp/",
+])
+def test_a_temporary_root_is_not_a_project(root):
+    assert is_temp_root(root)
+    assert project_name(root) is None
+    assert repository_project(root) is None
+    name = session_label(provider="codex", session_id="deadbeef-0000-4000-8000-000000000000",
+                         agent_id="codex:session:deadbeef", display_name=None, cwd=root, extras=None)
+    assert name == "Codex session"
+
+
+def test_a_folder_or_checkout_inside_a_temporary_root_keeps_its_name(tmp_path):
+    assert project_name("/private/var/folders/ab/synthetic0000gn/T/Sample") == "Sample"
+    assert project_name("/tmp/Sample/src") == "src"
+    assert project_name("/synthetic/T") == "T", "a folder that is only named T is a project"
+    assert not is_temp_root("/var/folders/ab/synthetic0000gn/T/Sample")
+    assert not is_temp_root(None)
+    root = tmp_path / "Sample"
+    (root / ".git").mkdir(parents=True)
+    (root / "src").mkdir()
+    assert repository_project(str(root / "src")) == "Sample"
+
+
+@pytest.mark.parametrize(("prompt", "summary"), [
+    ("User: fix the failing sample test", "fix the failing sample test"),
+    ("user : fix the failing sample test", "fix the failing sample test"),
+    ("USER:fix the failing sample test", "fix the failing sample test"),
+    ("Tell the user: restart the sample", "Tell the user: restart the sample"),
+    ("\u23fa Update(sample.py)\n  \u23bf  Updated sample.py with 3 additions", "Update(sample.py) Updated sample.py with 3 additions"),
+    ("\u251c\u2500\u2500 src\n\u2502   \u2514\u2500\u2500 sample.py\nwhy is this layout wrong", "src sample.py why is this layout wrong"),
+    ("\u2022 User: tidy the sample", "tidy the sample"),
+])
+def test_a_pasted_transcript_loses_its_marks_and_speaker_label(prompt, summary):
+    assert summarize_prompt(prompt) == summary
+
+
+@pytest.mark.parametrize("prompt", ["\u2502 \u2514\u2500\u2500", "\u23fa \u23bf", "User:", " user : "])
+def test_a_summary_of_only_marks_is_no_summary(prompt):
+    assert summarize_prompt(prompt) is None
+
+
+def test_a_summary_still_hides_private_paths():
+    assert summarize_prompt("User: open /Users/synthetic/secret/notes.txt please") == "open ... please"
+

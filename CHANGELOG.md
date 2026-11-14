@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- A session started in the Mac's temporary folder is no longer filed under a project called "T", and a task named from a pasted transcript drops the leading "User:" and the tree lines.
+- The Dock preview's New presses the app's own New Window menu item and nothing else. Where an app had no such item, JR-Bar used to post ⌘N to it; now the preview says "This app has no New Window menu item." A guard keeps every part of the app from posting a key or a click.
 - The command palette has the buddy (pet it, let it float, dock it at the notch) and Fold's Try It.
 - The floating buddy's walk moves on every frame the display draws; it stepped visibly on a 120 Hz screen.
 - JR-Bar notices the newer apps that share its surfaces: Thaw and IceMelt in the menu bar, Vibe Island, Vibe Notch and Notchi at the notch, Keepresso for keeping awake.

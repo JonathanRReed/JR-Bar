@@ -3,6 +3,16 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+#: The Mac's temporary roots and their canonical aliases. A session started
+#: in one is in no project: the per-user root's last folder is the letter
+#: "T", which read as a project's name. A folder beneath one keeps its name.
+_TEMP_ROOT = re.compile(r"(?:/private)?(?:/var/folders/[^/]+/[^/]+/T|/tmp|/var/tmp)")
+
+
+def is_temp_root(cwd: str | None) -> bool:
+    """Whether `cwd` is a temporary root itself, not a folder inside one."""
+    return bool(_TEMP_ROOT.fullmatch(str(cwd or "").strip().rstrip("/")))
+
 
 def project_name(cwd: str | None, *, common_dir: str | None = None) -> str | None:
     """Fold known worktree layouts, or a proven git common directory."""
@@ -17,6 +27,8 @@ def project_name(cwd: str | None, *, common_dir: str | None = None) -> str | Non
             return parts[index - 1]
         if part == ".claude" and parts[index + 1:index + 2] == ["worktrees"] and index:
             return parts[index - 1]
+    if is_temp_root(cwd):
+        return None
     tail = parts[-1]
     return tail if tail and not re.fullmatch(r"t3-.*|[0-9a-fA-F]{8,}", tail) else None
 

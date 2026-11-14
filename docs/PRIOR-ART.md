@@ -1104,4 +1104,12 @@ research report, not yet a doc here. Taken so far:
   idle session, and the row's overlay follows a compaction only in the
   middle of a turn (`collector.is_compaction_record`). The issue's event log
   gave the sequence the tests replay; no code was taken.
+- Pull requests #75 at `f651b937` and #77 at `346fd86b` (both open). A
+  summary made from a pasted transcript loses its leading "User:" and its
+  tree and output marks (`collector.summarize_prompt`), and a session
+  started in the Mac's temporary root is in no project, where the root's
+  last folder, the letter "T", used to read as one
+  (`project_names.is_temp_root`). A folder or checkout inside the root
+  keeps its name. Both were written here from the pull requests'
+  descriptions; no code was copied.
 

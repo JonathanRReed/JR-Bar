@@ -4418,11 +4418,23 @@ def summarize_prompt(value: object, max_len: int = 72) -> str | None:
     text = re.sub(r"(?:~|/Users|/var|/private|/tmp)/[^\s,;)'\"`]+", "...", text)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"#+\s*", " ", text)
-    text = re.sub(r"\s+", " ", text).strip(" -:\n\t")
+    # A pasted terminal transcript brings its tree lines and output marks.
+    text = _TRANSCRIPT_GLYPHS.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # ... and its speaker label, which names nobody's task.
+    text = _SPEAKER_LABEL.sub("", text.lstrip(" -:")).strip(" -:\n\t")
 
     if not text:
         return None
     return truncate_text(text, max_len)
+
+
+#: Box-drawing characters, and the marks Claude Code and Codex print in
+#: front of a tool call and its output.
+_TRANSCRIPT_GLYPHS = re.compile("[\u2500-\u257f\u23bf\u23fa\u25cf\u2022]+")
+#: "User:" at the very start of a summary, in any case. One further into
+#: the sentence is the person's own words and stays.
+_SPEAKER_LABEL = re.compile(r"^user\s*:\s*", re.IGNORECASE)
 
 
 def display_name_for_record(
