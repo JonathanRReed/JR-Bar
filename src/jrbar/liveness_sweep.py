@@ -262,14 +262,15 @@ def reap_dead_agents(
     return SweepResult(tuple(dead), synthesized, frozenset(live), failed, idled, tuple(expired))
 
 
+def _is_background_stop(status: AgentStatus) -> bool:
+    """A turn that ended with background work still in flight
+    (``collector.is_background_wait``)."""
+    return status.mode == AgentMode.LONG_TASK_PROGRESS and status.event_name == "Stop"
+
+
 def _waits_on_background_work(status: AgentStatus, now: float) -> bool:
-    """A turn that ended with background work still in flight, inside the
-    time that wait is believed (``collector.is_background_wait``)."""
-    return (
-        status.mode == AgentMode.LONG_TASK_PROGRESS
-        and status.event_name == "Stop"
-        and now - status.updated_at.timestamp() <= BACKGROUND_WAIT_MAX_SECONDS
-    )
+    """That wait, inside the time it is believed."""
+    return _is_background_stop(status) and now - status.updated_at.timestamp() <= BACKGROUND_WAIT_MAX_SECONDS
 
 
 def _idle_claude_turns(
@@ -301,12 +302,15 @@ def _idle_claude_turns(
     ended: list[tuple[AgentStatus, float]] = []
     for status in candidates:
         seen = activity.get(status.session_id or "")
-        if (
-            seen is not None
-            and seen.status == "idle"
-            and seen.changed_at > status.updated_at.timestamp() + IDLE_GRACE_SECONDS
-        ):
+        if seen is None or seen.status != "idle":
+            continue
+        if seen.changed_at > status.updated_at.timestamp() + IDLE_GRACE_SECONDS:
             ended.append((status, seen.changed_at))
+        elif _is_background_stop(status):
+            # A background wait past its time. Its file went idle with the
+            # Stop itself, inside the grace, and never changed again, so the
+            # usual test can never pass: an idle file is enough now.
+            ended.append((status, moment))
     return ended
 
 

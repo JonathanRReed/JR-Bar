@@ -262,3 +262,17 @@ def test_a_background_wait_is_believed_for_six_hours_not_for_ever(tmp_path: Path
     assert _reap(tmp_path, row, now=LAST_HOOK.timestamp() + BACKGROUND_WAIT_MAX_SECONDS - 1) == []
     (ended,) = _reap(tmp_path, row, now=LAST_HOOK.timestamp() + BACKGROUND_WAIT_MAX_SECONDS + 1)
     assert ended["hook_event_name"] == "Interrupt" and ended["session_id"] == SESSION
+
+
+def test_the_wait_ends_even_when_the_file_went_idle_with_the_stop_itself(tmp_path: Path) -> None:
+    """The usual sign of a stopped turn is a file that went idle after the last
+    hook. A background Stop's file goes idle with the hook and never changes
+    again, so past six hours an idle file alone has to be enough."""
+    _session_file(tmp_path, idle_after_seconds=1)
+    row = _row(AgentMode.LONG_TASK_PROGRESS, "Stop")
+    assert _reap(tmp_path, row, now=LAST_HOOK.timestamp() + 3600) == []
+    (ended,) = _reap(tmp_path, row, now=LAST_HOOK.timestamp() + BACKGROUND_WAIT_MAX_SECONDS + 1)
+    assert ended["hook_event_name"] == "Interrupt"
+    # An ordinary working turn whose file went idle inside the grace is still left alone.
+    assert _reap(tmp_path, _row(AgentMode.WORKING, "PostToolUse"),
+                 now=LAST_HOOK.timestamp() + BACKGROUND_WAIT_MAX_SECONDS + 1) == []

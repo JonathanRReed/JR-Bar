@@ -122,7 +122,9 @@ def test_idle_compaction_leaves_a_finished_session_finished() -> None:
     run = _Run()
     done = run.feed(PROMPT, STOP, NUDGE)
     assert done.mode is AgentMode.COMPLETED and run.lifecycle() is WorkLifecycle.COMPLETED
-    for payload in (PRE, RESTART, POST):
+    summary = {**BASE, "hook_event_name": "SubagentStop", "agent_id": "compaction-summary",
+               "last_assistant_message": "synthetic summary"}
+    for payload in (PRE, summary, RESTART, POST):
         after = run.feed(payload)
         assert after.mode is AgentMode.COMPLETED, payload["hook_event_name"]
         assert after.event_name == "Stop"
