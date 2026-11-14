@@ -122,4 +122,4 @@ __all__ = [
     "write_mode_to_leds",
 ]
 
-__version__ = "0.10.2"
+__version__ = "0.10.3"

@@ -33,30 +33,29 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.10.2"
+    static let releaseID = "0.10.3"
 
     /// The header's one line.
-    static let headline = "Every plan, every provider, and more of your Mac in the Dock."
+    static let headline = "A reef in the tank, a truer Fold, and a much lighter app."
 
     /// The window has room for this many rows and no more: the lead and
     /// four cards. The view draws exactly this many.
     static let maximumRows = 5
 
     static let entries: [WhatsNewEntry] = [
-        WhatsNewEntry(id: "plan-meters", symbol: "chart.bar", title: "Meters that fit your plan",
-            detail: "One limit gets a full-width bar, two limits sit side by side, and credits and daily allowances finally show.",
-            tryIt: .panel(toggle: false), opens: "Opens the panel"),
-        WhatsNewEntry(id: "connect-factory", symbol: "person.badge.key", title: "Factory and Devin connect again",
-            detail: "Choose the browser profile where you're signed in, allow it, and JR-Bar reads your subscription.",
-            tryIt: .settings(page: "providers"), opens: "Opens Providers"),
-        WhatsNewEntry(id: "dock-cards", symbol: "dock.rectangle", title: "Dock widgets in three sizes",
-            detail: "Hover Music, Calendar, Reminders or Shortcuts for a widget, Small, Medium or Large.",
+        WhatsNewEntry(id: "reef", symbol: "leaf", title: "The Aquarium is a game",
+            detail: "Fish wear their own colours, and a reef of four builders turns your agents' work into pearls you harvest with one tap.",
+            tryIt: .aquarium, opens: "Opens the Aquarium"),
+        WhatsNewEntry(id: "fold-duo", symbol: "laptopcomputer", title: "Fold shades like the Duo",
+            detail: "Close the lid partway and the hinge band stays lit while the glass darkens and blurs toward its top.",
             tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
-        WhatsNewEntry(id: "t3-open", symbol: "arrow.up.forward.app", title: "Open lands in T3 Code",
-            detail: "Open on an agent running in T3 Code goes straight to its thread."),
-        WhatsNewEntry(id: "permissions", symbol: "lock.open", title: "Allow Access works",
-            detail: "Calendar, Reminders, the camera and system audio can ask for access, and every Allow button now does something.",
-            tryIt: .settings(page: "privacy"), opens: "Opens Privacy"),
+        WhatsNewEntry(id: "dock-pictures", symbol: "dock.rectangle", title: "Dock previews open on pictures",
+            detail: "Hover an icon you looked at in the last ten minutes and its windows' pictures are there at once.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
+        WhatsNewEntry(id: "claude-background", symbol: "clock.arrow.2.circlepath", title: "Background jobs stay Working",
+            detail: "A Claude Code turn that ends with a job still running stays Working, and compacting an idle session no longer does."),
+        WhatsNewEntry(id: "lighter", symbol: "gauge.with.dots.needle.33percent", title: "Lighter on your Mac",
+            detail: "While agents work the app uses about a quarter of the processor time it did and wakes far less often."),
     ]
 }
 

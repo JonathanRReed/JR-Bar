@@ -102,7 +102,7 @@ import Testing
     }
 
     @Test func whatsNewWaitsForAsksAndListsThisRelease() {
-        #expect(WhatsNewCatalog.entries.map(\.id) == ["plan-meters", "connect-factory", "dock-cards", "t3-open", "permissions"])
+        #expect(WhatsNewCatalog.entries.map(\.id) == ["reef", "fold-duo", "dock-pictures", "claude-background", "lighter"])
         #expect(!WhatsNewGate.isRight(.init(coreLive: true, locked: false, fullScreenInFront: false, asksWaiting: true)))
     }
 }

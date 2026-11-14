@@ -2,43 +2,44 @@
 
 All notable changes to JR-Bar are documented here.
 
-## Unreleased
+## 0.10.3
 
-- The Dock utility no longer asks the file system thousands of times a pass which running app each Dock tile is. It was freezing the app for moments at a time whenever the Dock was re-read, including while you used the notch.
-- The notch no longer stutters when you hover it or open and close its card. The Screen Bar under it was rebuilding its light animation on every step of the island's move, about a fifth of a second of frozen screen each time. It now waits until the island is back home and still.
-- Installing or repairing Codex hooks says that a new Codex session is needed to use them. A session that is already running keeps the hooks it started with, and JR-Bar never restarts an agent itself.
-- Fish near the pointer look at it.
-- The reef's kelp bed grows in the tank: taller and fuller with each level, with pods that glow as a harvest builds. Tap the bed to bring the harvest in.
-- Hovering a Dock icon you looked at in the last ten minutes opens on the windows' pictures at once. The preview used to open on app icons and fill the pictures in after macOS had listed every window. A picture that has gone stale is shown and then replaced.
-- The window pictures the Dock previews keep are held to 32 MiB, and a preview that is closed no longer keeps a copy of every picture it showed.
-- A new ask announces itself with two slow red pulses, one a second, before it holds steady. The two taps used to land inside half a second, which was two red flashes faster than JR-Bar allows anywhere else.
-- A quota reset plays its refill on the PulseDot. It was drawn for eight LEDs everywhere, and the Dot, which has two, was refused the program and showed nothing.
+JR-Bar 0.10.3 turns the Aquarium into an idle game with repainted fish, makes Fold shade like the iPhone Duo, opens Dock previews on the windows' pictures at once, keeps Claude Code sessions truthful through background jobs and compaction, and cuts the app's processor time to about a quarter of what 0.10.2 used while agents work.
+
 - The Aquarium is an idle game now, not a shop. The tank has a reef of four builders: a kelp bed that grows on agent work, an oyster bed on finished runs, an anemone on asks that get settled and a tide pool on quota resets and streak days. Pearls grow the builders, each level pays more and costs more, and a builder's yield doubles at levels 10, 25, 50 and 100. What the reef grows waits as a harvest: a chip says how much is ready and one tap brings it in. It never decays. The old income is unchanged and still goes straight to the wallet.
+- The reef's kelp bed grows in the tank: taller and fuller with each level, with pods that glow as a harvest builds. Tap the bed to bring the harvest in.
 - The reef never rewards keeping agents busy: past four agent-hours or twelve finished runs in a day the rest counts for less, starting a session pays nothing, and an answered ask pays the same however long it took.
 - The tank level ladder runs to twenty levels; the first ten are where they were.
-- Fold's Duo look shades like the iPhone Duo. The hinge band stays lit and vivid until you lose sight of the glass, where it used to fade the whole screen to a dim slab from about 60°. The glass darkens toward its top and only ever darkens as the lid closes; it used to brighten again part-way down. The blur now reaches the hinge and rises more gently across the screen. The earlier look is one hidden setting away for a side-by-side (`jrbar.foldClassicShading`).
 - The Aquarium's fish are repainted. Each species has its own colours (an orange clownfish, a slate shark, a cream angelfish with blue sails, a yellow puffer, a crimson betta with violet veils, a blue tang) instead of the provider's accent, which made most of them blue on blue water. They are lit by the tank: a rim of surface light on the back, warm sand light under the belly, no heavy outline, smaller darker eyes.
 - A fish shows what its session is doing without a label: an ask glows amber with a speech bubble, a finished run leaves in gold sparkles, a failed run drains to grey and shuts its eye, an idle fish has a sleepy lid.
+- Fish near the pointer look at it.
+- Fold's Duo look shades like the iPhone Duo. The hinge band stays lit and vivid until you lose sight of the glass, where it used to fade the whole screen to a dim slab from about 60°. The glass darkens toward its top and only ever darkens as the lid closes; it used to brighten again part-way down. The blur now reaches the hinge and rises more gently across the screen. The earlier look is one hidden setting away for a side-by-side (`jrbar.foldClassicShading`).
+- Hovering a Dock icon you looked at in the last ten minutes opens on the windows' pictures at once. The preview used to open on app icons and fill the pictures in after macOS had listed every window. A picture that has gone stale is shown and then replaced.
 - Sweeping along the Dock with a preview open moves the preview to the next app after a short rest, instead of paying the whole hover delay again on every icon. A pointer on its way up to the preview does not hand it to a neighbour it crosses.
 - A Dock preview that was still reading an app's windows no longer pops up after the pointer has moved on to another icon or left the Dock.
-- A session started in the Mac's temporary folder is no longer filed under a project called "T", and a task named from a pasted transcript drops the leading "User:" and the tree lines.
 - The Dock preview's New presses the app's own New Window menu item and nothing else. Where an app had no such item, JR-Bar used to post ⌘N to it; now the preview says "This app has no New Window menu item." A guard keeps every part of the app from posting a key or a click.
-- The command palette has the buddy (pet it, let it float, dock it at the notch) and Fold's Try It.
-- The floating buddy's walk moves on every frame the display draws; it stepped visibly on a 120 Hz screen.
-- JR-Bar notices the newer apps that share its surfaces: Thaw and IceMelt in the menu bar, Vibe Island, Vibe Notch and Notchi at the notch, Keepresso for keeping awake.
-- The command palette takes Keep Awake with a length or a time: "awake 45m", "keep awake for 2h", "awake until 6pm". The row says when the hold ends.
-- Claude Code compacting a conversation no longer makes a finished session read Working. Claude compacts idle sessions on its own about an hour after a turn ends, and with nothing to follow it the lights played "working" until the next prompt. Compaction now keeps whatever state the session had: a row in the middle of a turn still says "compacting", a finished one stays finished, and an open ask stays open.
+- The window pictures the Dock previews keep are held to 32 MiB, and a preview that is closed no longer keeps a copy of every picture it showed.
+- The Dock utility no longer asks the file system thousands of times a pass which running app each Dock tile is. It was freezing the app for moments at a time whenever the Dock was re-read, including while you used the notch.
 - A Claude Code turn that ends while a background job is still running stays Working, and Keep Awake holds, instead of showing Done and letting the Mac sleep partway through a long test run. The row says "background job running". It completes, once, when Claude's next turn ends with nothing left running. The "waiting for your input" notice Claude sends a minute after such a turn is no longer read as an ask.
-- The notch and the Screen Bar fit every camera cutout, from the small Dynamic Island cutout of the 2026 OLED MacBook Pro to a classic notch in any display mode. The Screen Bar used to assume a 260-point notch for any cutout narrower than 120 points, and 180 points for one a little wider, then seated its ears and drew its tray to that assumed width: over the menu bar beside a small cutout, and about 27 points past each side of a notch in Larger Text mode. Both now sit against the measured edges of the hardware.
-- The Screen Bar no longer redraws 60 times a second while an agent works. With a colour calibration set, dim and fast light programs (most of the provider animations) could not be handed to the system to play, so the app drew every frame itself. They now play as the smooth fade the strip's steps approximate, and the app does no per-frame work for them.
-- The monitor stops resending every provider's usage to the app each time a reading gets a few seconds older. On a working Mac that was four fifths of what the monitor sent.
+- Claude Code compacting a conversation no longer makes a finished session read Working. Claude compacts idle sessions on its own about an hour after a turn ends, and with nothing to follow it the lights played "working" until the next prompt. Compaction now keeps whatever state the session had: a row in the middle of a turn still says "compacting", a finished one stays finished, and an open ask stays open.
+- A T3 Code thread whose own agent exited while a worker it started keeps running is no longer ended again every 30 seconds behind the scenes.
+- A large hook event that arrives while the monitor is busy is read at once instead of up to 30 seconds later, so the lights no longer trail a big tool call. Hooks doctor counts these as late, not refused.
+- Installing or repairing Codex hooks says that a new Codex session is needed to use them. A session that is already running keeps the hooks it started with, and JR-Bar never restarts an agent itself.
+- A session started in the Mac's temporary folder is no longer filed under a project called "T", and a task named from a pasted transcript drops the leading "User:" and the tree lines.
 - ⌘R in the panel refreshes usage, as 0.10.1 promised; it used to open Events. Events is now ⌘E.
 - ⌘1 to ⌘9 answer a question an agent is holding, when its options show as buttons on the selected card.
+- The command palette takes Keep Awake with a length or a time: "awake 45m", "keep awake for 2h", "awake until 6pm". The row says when the hold ends.
+- The command palette has the buddy (pet it, let it float, dock it at the notch) and Fold's Try It.
 - Cost estimates use the published rates for Claude Fable 5.2 and Mythos 5.2 ($8 in, $40 out), Claude Haiku 5.5 (with its higher rate for prompts over 100,000 tokens), Sonnet 5.5 cache reads and GPT-6.1 Terra. They had inherited an older model's price.
-- A large hook event that arrives while the monitor is busy is read at once instead of up to 30 seconds later, so the lights no longer trail a big tool call. Hooks doctor counts these as late, not refused.
-- A T3 Code thread whose own agent exited while a worker it started keeps running is no longer ended again every 30 seconds behind the scenes.
+- The notch and the Screen Bar fit every camera cutout, from the small Dynamic Island cutout of the 2026 OLED MacBook Pro to a classic notch in any display mode. The Screen Bar used to assume a 260-point notch for any cutout narrower than 120 points, and 180 points for one a little wider, then seated its ears and drew its tray to that assumed width: over the menu bar beside a small cutout, and about 27 points past each side of a notch in Larger Text mode. Both now sit against the measured edges of the hardware.
+- A new ask announces itself with two slow red pulses, one a second, before it holds steady. The two taps used to land inside half a second, which was two red flashes faster than JR-Bar allows anywhere else.
+- A quota reset plays its refill on the PulseDot. It was drawn for eight LEDs everywhere, and the Dot, which has two, was refused the program and showed nothing.
+- The Screen Bar no longer redraws 60 times a second while an agent works. With a colour calibration set, dim and fast light programs (most of the provider animations) could not be handed to the system to play, so the app drew every frame itself. They now play as the smooth fade the strip's steps approximate, and the app does no per-frame work for them.
 - The app no longer runs its whole status refresh once a second while an agent works. That refresh only kept the seconds in the icon's tooltip current; the tooltip now counts whole minutes and the refresh runs once a minute.
 - The menu bar icon no longer rebuilds itself twice a second while an agent works: the breathing dot's four frames are each drawn once and reused. The dot also rests while the display sleeps.
+- The monitor stops resending every provider's usage to the app each time a reading gets a few seconds older. On a working Mac that was four fifths of what the monitor sent.
+- The floating buddy's walk moves on every frame the display draws; it stepped visibly on a 120 Hz screen.
+- JR-Bar notices the newer apps that share its surfaces: Thaw and IceMelt in the menu bar, Vibe Island, Vibe Notch and Notchi at the notch, Keepresso for keeping awake.
 - Empty windows say "when the monitor reconnects" instead of naming a socket.
 - SECURITY.md's table of outbound requests names every request (Factory, Kimi, Kilo, Kiro, the firmware download and the phone alert were missing) and points at the Settings pages that exist now.
 - Old overflow and rejected hook queue files, which hold whole hook payloads, are removed after 14 days.

@@ -85,14 +85,14 @@ struct ScreenBarInstallHoldTests {
     @Test("a band changing size installs nothing until it has held still for the settle, however many steps the move took")
     func resizeWaitsForTheSettle() async throws {
         let bench = Bench()
-        let plan = try plan()
-        bench.view.play(plan: plan, anchor: bench.now)
+        let program = try plan()
+        bench.view.play(plan: program, anchor: bench.now)
         await bench.view.waitForKeyframes()
         #expect(bench.renders == 1)
         // The island opens: thirty steps of a morph, each a new width.
         for step in 1...30 {
             bench.resize(to: 220 + CGFloat(step) * 8)
-            bench.view.play(plan: plan, anchor: 1_000)
+            bench.view.play(plan: program, anchor: 1_000)
             await bench.advance(1.0 / 120)
             #expect(!bench.view.keyframesInstalled, "step \(step) put a plan on the layers")
             #expect(bench.view.isPlayingKeyframes && bench.view.installWaiting)
