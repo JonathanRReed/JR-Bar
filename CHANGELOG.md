@@ -4,6 +4,7 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Installing or repairing Codex hooks says that a new Codex session is needed to use them. A session that is already running keeps the hooks it started with, and JR-Bar never restarts an agent itself.
 - Fish near the pointer look at it.
 - The reef's kelp bed grows in the tank: taller and fuller with each level, with pods that glow as a harvest builds. Tap the bed to bring the harvest in.
 - Hovering a Dock icon you looked at in the last ten minutes opens on the windows' pictures at once. The preview used to open on app icons and fill the pictures in after macOS had listed every window. A picture that has gone stale is shown and then replaced.

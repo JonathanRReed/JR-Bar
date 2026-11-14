@@ -3478,7 +3478,7 @@ def _cmd_ntfy_test(self, args):
 
 
 def _hooks_command(self, args, *, install: bool):
-    from .install import install_provider_hooks, uninstall_provider_hooks
+    from .install import install_note, install_provider_hooks, uninstall_provider_hooks
     from .state_paths import default_state_dir
 
     providers = [p for p in (args.get("providers") or []) if isinstance(p, str) and p]
@@ -3511,6 +3511,9 @@ def _hooks_command(self, args, *, install: bool):
                 "ok": True,
                 "detected": detected.get(provider),
                 **result.to_dict(),
+                # What the person still has to do, when an install changed
+                # something and the agent needs a new session to see it.
+                "note": install_note(result) if install else "",
             }
         except Exception as exc:
             results[provider] = {

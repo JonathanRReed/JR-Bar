@@ -1626,7 +1626,9 @@ final class SettingsStore {
                     self.noteHook(provider, warning, isError: true)
                     self.report(error: "\(ProviderPalette.displayName(for: provider)): \(warning)")
                 } else {
-                    self.noteHook(provider, verb == "Install" ? "Hooks installed" : "Removed",
+                    self.noteHook(provider,
+                                  verb == "Install" ? HookInstallWords.installed(note: result?["note"]?.stringValue)
+                                                    : "Removed",
                                   isError: false)
                     self.show(status: verb == "Install" ? "Hooks installed for \(ProviderPalette.displayName(for: provider))" : "Hooks removed for \(ProviderPalette.displayName(for: provider))")
                 }

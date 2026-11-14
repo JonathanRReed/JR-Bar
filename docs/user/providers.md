@@ -40,6 +40,14 @@ interruptions, use a real provider session and confirm its outcome there.
 After reconnecting, recheck to see the new receiver report. The demo ask does
 not test a provider integration.
 
+### After installing Codex hooks
+
+Codex reads its hooks when a session starts. A session that was already
+running when you installed or repaired them keeps the hooks it started
+with, so JR-Bar says so after an install that changed something: "Hooks
+installed. Start a new Codex session to use them." JR-Bar never restarts
+or closes an agent for you.
+
 ### A moved Claude Code or Codex home
 
 If you moved either one with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, JR-Bar

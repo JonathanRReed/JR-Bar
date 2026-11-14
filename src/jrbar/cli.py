@@ -35,6 +35,7 @@ from .install import (
     HookVerificationError,
     InstallResult,
     hook_command_arguments,
+    install_note,
     install_provider_hooks,
     uninstall_provider_hooks,
 )
@@ -1384,6 +1385,9 @@ def print_install_results(results, *, dry_run: bool) -> None:
         print(f"  log: {result.log_path}")
         if result.backup_path:
             print(f"  backup: {result.backup_path}")
+        note = "" if dry_run else install_note(result)
+        if note:
+            print(f"  {note}")
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:

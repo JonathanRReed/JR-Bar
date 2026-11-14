@@ -395,7 +395,7 @@ extension SetupModel {
             if let warning = result?["warning"]?.stringValue, !warning.isEmpty {
                 return SetupNote(warning, isError: true)
             }
-            return SetupNote("Hooks installed", isError: false)
+            return SetupNote(HookInstallWords.installed(note: result?["note"]?.stringValue), isError: false)
         } catch {
             return SetupNote(MonitorWords.reason(error), isError: true)
         }
@@ -795,5 +795,16 @@ extension SetupModel {
         case .ended: return 5
         case .idle: return 6
         }
+    }
+}
+
+/// What a successful hook install says. The monitor adds a note when the
+/// agent needs a new session before the hooks run (Codex reads them at
+/// start); JR-Bar never restarts an agent itself, so the line tells the
+/// person.
+enum HookInstallWords {
+    static func installed(note: String?) -> String {
+        guard let note, !note.isEmpty else { return "Hooks installed" }
+        return "Hooks installed. \(note)"
     }
 }

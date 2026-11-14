@@ -400,6 +400,28 @@ class CodexHookTrust:
             raise ValueError("only a trusted handshake carries hashes")
 
 
+#: What a person has to do after Codex's hooks change. A Codex session reads
+#: its hook configuration when it starts, so one that is already running goes
+#: on with the hooks it started with. JR-Bar never restarts or closes an agent
+#: to pick them up; it says so and leaves that to the person.
+CODEX_NEW_SESSION_NOTE = (
+    "Start a new Codex session to use them. A session that is already running "
+    "keeps the hooks it started with."
+)
+
+
+def install_note(result: InstallResult) -> str:
+    """The line to show after an install that really changed something, or "".
+
+    Nothing for a dry run (nothing was installed), for an install that
+    found the hooks already in place, or for a provider that picks its
+    hooks up without a new session.
+    """
+    if getattr(result, "dry_run", False) or not result.changed or result.provider != "codex":
+        return ""
+    return CODEX_NEW_SESSION_NOTE
+
+
 @dataclass(frozen=True)
 class InstallResult:
     provider: str

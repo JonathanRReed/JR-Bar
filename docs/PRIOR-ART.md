@@ -1121,6 +1121,11 @@ research report, not yet a doc here. Taken so far:
   (`project_names.is_temp_root`). A folder or checkout inside the root
   keeps its name. Both were written here from the pull requests'
   descriptions; no code was copied.
+- Commit [`ffb1d3c2`](https://github.com/inteliwear/sidepulse/commit/ffb1d3c2),
+  "Show restart guidance after installing Codex hooks". JR-Bar's installer
+  now returns a note after an install that changed Codex's hooks
+  (`install.install_note`), and the CLI, Settings and Setup show it. The
+  idea was taken; the wording and code are JR-Bar's own.
 
 ### The Aquarium's reef, 2026-11-14
 
